@@ -18,8 +18,8 @@ This document provides technical context and architectural guidelines for develo
 
 ### UI Best Practices & Ergonomics
 - **Material 3 for XR:** Standard Material 3 components (NavigationRail, NavigationBar, TopAppBar) automatically adapt to **XR Orbiters** in spatial environments. They float in 3D space around the main panel rather than being pinned inside it.
-- **Adaptive Layouts:** Multi-pane scaffolds (ListDetailPaneScaffold, SupportingPaneScaffold) map panes 1:1 to individual **XR spatial panels**, allowing for a decentralized, immersive layout. A curve radius of **825dp** is recommended so panels comfortably surround the user.
-- **IMAX Scale:** For a cinematic experience, use large `SpatialPanel` dimensions (e.g., 1400dp width). Large panels in Android XR natively curve to fill the user's field of view.
+- **Adaptive Layouts:** Multi-pane scaffolds (ListDetailPaneScaffold, SupportingPaneScaffold) map panes 1:1 to individual **XR spatial panels**, allowing for a decentralized, immersive layout. 
+- **IMAX Scale:** For a cinematic experience, use large `SpatialPanel` dimensions (e.g., 1400dp width). Large panels in Android XR natively to fill the user's field of view.
 - **Depth and Focus:** Use `SpatialDialog` or `SpatialPopup` which automatically pushes the background panel back by **125dp**, creating visual hierarchy.
 - **User Agency:** Provide visual cues for interactivity. Use `MovableComponent` and `ResizableComponent` to allow users to customize their workspace.
 
