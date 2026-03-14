@@ -47,7 +47,9 @@ import kotlinx.coroutines.delay
 fun FilmSearchBar(
     state: SearchState,
     expanded: Boolean,
+    initialQuery: String? = null,
     onExpand: (Boolean) -> Unit,
+    onInitialQueryConsumed: () -> Unit = {},
     onAction: (SearchAction) -> Unit,
     modifier: Modifier = Modifier,
     paddingStart: Dp = 0.dp,
@@ -85,6 +87,15 @@ fun FilmSearchBar(
     LaunchedEffect(expanded) {
         if (expanded) {
             focusRequester.requestFocus()
+        }
+    }
+
+    LaunchedEffect(initialQuery) {
+        val trimmed = initialQuery?.trim().orEmpty()
+        if (trimmed.isNotEmpty() && query != trimmed) {
+            query = trimmed
+            onExpand(true)
+            onInitialQueryConsumed()
         }
     }
 

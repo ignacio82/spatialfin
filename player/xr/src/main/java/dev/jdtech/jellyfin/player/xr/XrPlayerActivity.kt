@@ -185,13 +185,13 @@ class XrPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        viewModel.playWhenReady = viewModel.player.playWhenReady
-        viewModel.player.playWhenReady = false
         viewModel.updatePlaybackProgress()
     }
 
     override fun onStop() {
         super.onStop()
+        viewModel.playWhenReady = viewModel.player.playWhenReady
+        viewModel.player.playWhenReady = false
         try {
             if (!isFinishing) {
                 xrSession?.scene?.requestHomeSpaceMode()

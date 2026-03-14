@@ -1,8 +1,11 @@
 package dev.spatialfin
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
@@ -21,6 +24,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.rememberNavController
+import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -53,13 +57,23 @@ import timber.log.Timber
 @OptIn(ExperimentalMaterial3XrApi::class)
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
+    companion object {
+        const val EXTRA_INITIAL_SEARCH_QUERY = "initial_search_query"
+        private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
+        private const val PERMISSIONS_PREFS = "startup_permissions"
+        private const val STARTUP_PERMISSIONS_REQUESTED_KEY = "startup_permissions_requested"
+    }
+
     private val viewModel: MainViewModel by viewModels()
     private var xrSession: Session? = null
+    private val startupPermissionsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
+        requestStartupPermissionsIfNeeded()
 
         // Ensure window is transparent so we can see the XR scene behind the UI
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
@@ -83,6 +97,8 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Timber.w(e, "XR session not available")
         }
+
+        val initialSearchQuery = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
@@ -171,6 +187,7 @@ class MainActivity : AppCompatActivity() {
                                                     hasServers = state.hasServers,
                                                     hasCurrentServer = state.hasCurrentServer,
                                                     hasCurrentUser = state.hasCurrentUser,
+                                                    initialSearchQuery = initialSearchQuery,
                                                 )
                                             }
                                         }
@@ -183,6 +200,7 @@ class MainActivity : AppCompatActivity() {
                                 hasServers = state.hasServers,
                                 hasCurrentServer = state.hasCurrentServer,
                                 hasCurrentUser = state.hasCurrentUser,
+                                initialSearchQuery = initialSearchQuery,
                             )
                         }
                     }
@@ -191,6 +209,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         scheduleUserDataSync()
+    }
+
+    private fun requestStartupPermissionsIfNeeded() {
+        val prefs = getSharedPreferences(PERMISSIONS_PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, false)) return
+
+        val missingPermissions =
+            listOf(Manifest.permission.RECORD_AUDIO, HAND_TRACKING_PERMISSION).filter { permission ->
+                ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
+            }
+
+        prefs.edit().putBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, true).apply()
+        if (missingPermissions.isNotEmpty()) {
+            startupPermissionsLauncher.launch(missingPermissions.toTypedArray())
+        }
     }
 
     private fun scheduleUserDataSync() {

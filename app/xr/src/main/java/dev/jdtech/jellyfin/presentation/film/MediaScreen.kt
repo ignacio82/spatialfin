@@ -49,6 +49,8 @@ fun MediaScreen(
     onFavoritesClick: () -> Unit,
     searchExpanded: Boolean,
     onSearchExpand: (Boolean) -> Unit,
+    initialSearchQuery: String? = null,
+    onInitialSearchConsumed: () -> Unit = {},
     viewModel: MediaViewModel = hiltViewModel(),
     searchViewModel: SearchViewModel = hiltViewModel(),
 ) {
@@ -61,7 +63,9 @@ fun MediaScreen(
         state = state,
         searchState = searchState,
         searchExpanded = searchExpanded,
+        initialSearchQuery = initialSearchQuery,
         onSearchExpand = onSearchExpand,
+        onInitialSearchConsumed = onInitialSearchConsumed,
         onAction = { action ->
             when (action) {
                 is MediaAction.OnItemClick -> onItemClick(action.item)
@@ -85,7 +89,9 @@ private fun MediaScreenLayout(
     state: MediaState,
     searchState: SearchState,
     searchExpanded: Boolean,
+    initialSearchQuery: String?,
     onSearchExpand: (Boolean) -> Unit,
+    onInitialSearchConsumed: () -> Unit,
     onAction: (MediaAction) -> Unit,
     onSearchAction: (SearchAction) -> Unit,
 ) {
@@ -123,7 +129,9 @@ private fun MediaScreenLayout(
         FilmSearchBar(
             state = searchState,
             expanded = searchExpanded,
+            initialQuery = initialSearchQuery,
             onExpand = onSearchExpand,
+            onInitialQueryConsumed = onInitialSearchConsumed,
             onAction = onSearchAction,
             modifier = Modifier.fillMaxWidth(),
             paddingStart = paddingStart,
@@ -185,7 +193,9 @@ private fun MediaScreenLayoutPreview() {
                 MediaState(libraries = dummyCollections, error = Exception("Failed to load data")),
             searchState = SearchState(),
             searchExpanded = false,
+            initialSearchQuery = null,
             onSearchExpand = {},
+            onInitialSearchConsumed = {},
             onAction = {},
             onSearchAction = {},
         )

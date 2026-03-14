@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -134,6 +135,7 @@ fun NavigationRoot(
     hasServers: Boolean,
     hasCurrentServer: Boolean,
     hasCurrentUser: Boolean,
+    initialSearchQuery: String? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -155,9 +157,21 @@ fun NavigationRoot(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
 
     var searchExpanded by remember { mutableStateOf(false) }
+    var pendingInitialSearchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
 
     val currentRoute = navBackStackEntry?.destination?.route
     val showBottomBar = currentRoute in navigationItemClassNames && !searchExpanded
+
+    LaunchedEffect(pendingInitialSearchQuery, currentRoute) {
+        if (!pendingInitialSearchQuery.isNullOrBlank() && currentRoute != MediaRoute::class.qualifiedName) {
+            searchExpanded = true
+            navController.navigate(MediaRoute) {
+                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
 
     // Use NavigationRail directly to avoid the broken androidx.xr.compose.material3
     // NavigationSuiteScaffold XR override, which calls Subspace() with an incompatible
@@ -309,6 +323,8 @@ fun NavigationRoot(
                     onFavoritesClick = { navController.safeNavigate(FavoritesRoute) },
                     searchExpanded = searchExpanded,
                     onSearchExpand = { searchExpanded = it },
+                    initialSearchQuery = pendingInitialSearchQuery,
+                    onInitialSearchConsumed = { pendingInitialSearchQuery = null },
                 )
             }
             composable<DownloadsRoute> {

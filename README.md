@@ -16,14 +16,25 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
 - **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
+- **Hands-Free Voice Control** — Pinch-to-talk on the secondary hand or use the mic orbiter button to control playback, audio, subtitles, and search with on-device speech recognition plus Gemini Nano intent parsing.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Offline Playback** — Download media for offline viewing.
 
 ## Requirements
 
 - Android XR device (requires `android.hardware.xr.immersive` feature)
-- Android 9 (API 28) or higher
+- Android 12 (API 31) or higher
 - A running [Jellyfin](https://jellyfin.org) server
+
+## Voice Control
+
+SpatialFin now supports hands-free voice control in the XR player.
+
+- Pinch your secondary hand to start listening and release to stop.
+- Use the mic button in the player orbiter as a fallback.
+- Speech recognition runs on-device and prefers offline recognition.
+- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, and search.
+- On first app launch, SpatialFin requests the microphone and hand-tracking permissions needed for voice input.
 
 ## Architecture
 

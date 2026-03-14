@@ -61,6 +61,8 @@ dependencies {
     implementation(libs.androidx.xr.runtime)
     implementation(libs.androidx.xr.scenecore)
     implementation(libs.androidx.xr.compose)
+    implementation("androidx.xr.arcore:arcore:1.0.0-alpha11")
+    implementation("com.google.ai.edge.aicore:aicore:0.0.1-exp01")
 
     // Image loading (for next-episode artwork in the next-up panel)
     implementation(libs.coil.compose)

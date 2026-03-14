@@ -6,7 +6,7 @@ object Versions {
 
     const val COMPILE_SDK = 36
     const val TARGET_SDK = 36
-    const val MIN_SDK = 28
+    const val MIN_SDK = 31
     const val BUILD_TOOLS = "36.1.0"
 
     val JAVA = JavaVersion.VERSION_21

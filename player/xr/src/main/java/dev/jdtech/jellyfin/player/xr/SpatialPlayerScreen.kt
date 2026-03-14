@@ -1,10 +1,16 @@
 package dev.jdtech.jellyfin.player.xr
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import android.graphics.Bitmap
 import android.util.TypedValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -47,6 +53,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +63,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -80,6 +88,7 @@ import androidx.xr.compose.subspace.layout.offset
 import androidx.xr.compose.subspace.layout.rotate
 import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.Session
+import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
@@ -90,11 +99,19 @@ import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.GroupEntity
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.scenecore.scene
+import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.xr.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
+import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
+import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
+import dev.jdtech.jellyfin.player.xr.voice.VoiceCommandDispatcher
+import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import java.util.UUID
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
@@ -107,6 +124,7 @@ import dev.jdtech.jellyfin.player.local.R as LocalR
 
 // ── Next-episode panel threshold ───────────────────────────────────────────────────
 private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2 minutes
+private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 
 /**
  * SpatialPlayerScreen — IMAX-style immersive XR playback experience.
@@ -132,10 +150,50 @@ fun SpatialPlayerScreen(
     libassRenderer: LibassRenderer?,
     onBackClick: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+    val voiceControlEnabled = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceControlEnabled)
+    val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
+    val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
+    val voiceState by voiceService.state.collectAsState()
+    var voiceFeedback by remember { mutableStateOf<String?>(null) }
+    var shouldStartVoiceCapture by remember { mutableStateOf(false) }
+    var hasAudioPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var hasHandTrackingPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, HAND_TRACKING_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val pinchDetector =
+        remember(session, activity) { activity?.let { SecondaryHandPinchDetector(session, it) } }
+
+    val audioPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasAudioPermission = granted
+            if (!granted) {
+                shouldStartVoiceCapture = false
+                voiceFeedback = "Microphone permission required"
+                voiceService.resetState()
+            }
+        }
+    val handTrackingPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasHandTrackingPermission = granted
+            if (!granted) {
+                voiceFeedback = "Hand tracking permission denied"
+            }
+        }
     
     // --- Libass state ---
     var useLibass by remember { mutableStateOf(false) }
@@ -213,6 +271,51 @@ fun SpatialPlayerScreen(
         hideTimestamp = System.currentTimeMillis()
     }
 
+    val voiceDispatcher =
+        remember(player, viewModel, activity) {
+            VoiceCommandDispatcher(
+                viewModel = viewModel,
+                player = player,
+                onControlsVisibilityChange = { controlsVisible = it },
+                onNavigateBack = onBackClick,
+                onSearch = { query ->
+                    val launchIntent =
+                        Intent().setClassName(context, "dev.spatialfin.MainActivity")
+                            .putExtra("initial_search_query", query)
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    runCatching { context.startActivity(launchIntent) }
+                        .onSuccess { activity?.finish() }
+                        .onFailure { voiceFeedback = "Search unavailable" }
+                },
+            )
+        }
+
+    fun requestVoiceCommand() {
+        if (!voiceControlEnabled) {
+            voiceFeedback = "Voice control disabled"
+            return
+        }
+        if (!voiceService.isAvailable()) {
+            voiceFeedback = "On-device speech unavailable"
+            return
+        }
+        if (!hasAudioPermission) {
+            shouldStartVoiceCapture = true
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        shouldStartVoiceCapture = false
+        startVoiceCapture(
+            voiceService = voiceService,
+            commandCoordinator = commandCoordinator,
+            player = player,
+            viewModel = viewModel,
+            dispatcher = voiceDispatcher,
+            onResult = { voiceFeedback = it },
+            scope = coroutineScope,
+        )
+    }
+
     // Auto-hide controls after 10 s during playback
     LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
         if (controlsVisible && isPlaying && !isLocked) {
@@ -231,6 +334,50 @@ fun SpatialPlayerScreen(
                 null
             }
         } catch (_: Exception) {}
+    }
+
+    LaunchedEffect(voiceControlEnabled) {
+        if (voiceControlEnabled) {
+            commandCoordinator.initialize()
+        }
+    }
+
+    LaunchedEffect(session, voiceControlEnabled, hasHandTrackingPermission) {
+        if (!voiceControlEnabled || !hasHandTrackingPermission) return@LaunchedEffect
+        runCatching {
+            session.configure(session.config.copy(handTracking = HandTrackingMode.BOTH))
+        }.onFailure { Timber.w(it, "VOICE: Hand tracking not available") }
+    }
+
+    LaunchedEffect(voiceControlEnabled) {
+        if (voiceControlEnabled && !hasHandTrackingPermission && activity != null) {
+            handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
+        }
+    }
+
+    LaunchedEffect(hasAudioPermission, shouldStartVoiceCapture) {
+        if (hasAudioPermission && shouldStartVoiceCapture) {
+            shouldStartVoiceCapture = false
+            requestVoiceCommand()
+        }
+    }
+
+    LaunchedEffect(pinchDetector, voiceControlEnabled, hasHandTrackingPermission) {
+        if (!voiceControlEnabled || !hasHandTrackingPermission) return@LaunchedEffect
+        pinchDetector?.pinchEvents?.collect { event ->
+            when (event) {
+                SecondaryHandPinchDetector.PinchEvent.STARTED -> requestVoiceCommand()
+                SecondaryHandPinchDetector.PinchEvent.ENDED -> voiceService.stopListening()
+            }
+        }
+    }
+
+    LaunchedEffect(voiceFeedback) {
+        if (voiceFeedback != null) {
+            delay(2_000L)
+            voiceFeedback = null
+            voiceService.resetState()
+        }
     }
 
     // Subtitle cue listener
@@ -362,6 +509,8 @@ fun SpatialPlayerScreen(
         } catch (_: Exception) {}
 
         onDispose {
+            voiceService.destroy()
+            commandCoordinator.destroy()
             videoEntity.value?.dispose()
             videoEntity.value = null
             rootEntity.value?.dispose()
@@ -557,6 +706,13 @@ fun SpatialPlayerScreen(
                         onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
                         onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
                         onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
+                        onVoiceClick = {
+                            requestVoiceCommand()
+                            resetAutoHide()
+                        },
+                        voiceControlEnabled = voiceControlEnabled,
+                        voiceAvailable = voiceService.isAvailable(),
+                        voiceState = voiceState,
                     )
                 }
             }
@@ -612,6 +768,28 @@ fun SpatialPlayerScreen(
                                 onClick = { controlsVisible = true; resetAutoHide() },
                             ),
                     )
+                }
+
+                AnimatedVisibility(
+                    visible = voiceFeedback != null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    voiceFeedback?.let { text ->
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color.Black.copy(alpha = 0.85f),
+                            modifier = Modifier.padding(16.dp),
+                        ) {
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineSmall,
+                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                            )
+                        }
+                    }
                 }
             }
 
@@ -760,6 +938,10 @@ private fun SecondaryControlsOrbiter(
     onSubtitleClick: () -> Unit,
     onSpeedClick: () -> Unit,
     onCastCrewClick: () -> Unit,
+    onVoiceClick: () -> Unit,
+    voiceControlEnabled: Boolean,
+    voiceAvailable: Boolean,
+    voiceState: VoiceState,
 ) {
     Surface(
         shape = RoundedCornerShape(40.dp),
@@ -803,8 +985,78 @@ private fun SecondaryControlsOrbiter(
                     modifier = Modifier.size(48.dp),
                 )
             }
+            if (voiceControlEnabled) {
+                IconButton(onClick = onVoiceClick, modifier = Modifier.size(80.dp)) {
+                    Icon(
+                        painterResource(CoreR.drawable.ic_microphone),
+                        contentDescription = "Voice command",
+                        tint =
+                            if (!voiceAvailable) {
+                                Color.White.copy(alpha = 0.45f)
+                            } else {
+                                when (voiceState) {
+                                    VoiceState.LISTENING -> Color(0xFF4FC3F7)
+                                    VoiceState.PROCESSING -> Color(0xFFFFA726)
+                                    VoiceState.ERROR -> Color(0xFFEF5350)
+                                    VoiceState.IDLE -> Color.White
+                                }
+                            },
+                        modifier = Modifier.size(48.dp),
+                    )
+                }
+            }
         }
     }
+}
+
+private fun startVoiceCapture(
+    voiceService: SpatialVoiceService,
+    commandCoordinator: SpatialCommandCoordinator,
+    player: Player,
+    viewModel: PlayerViewModel,
+    dispatcher: VoiceCommandDispatcher? = null,
+    onResult: (String) -> Unit,
+    scope: kotlinx.coroutines.CoroutineScope,
+) {
+    voiceService.startListening { transcript ->
+        scope.launch {
+            val snapshot =
+                PlayerStateSnapshot(
+                    isPlaying = player.isPlaying,
+                    positionSeconds = player.currentPosition / 1_000L,
+                    durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
+                    audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
+                    subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
+                    currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
+                    currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
+                )
+            val action = commandCoordinator.parse(transcript, snapshot)
+            val feedback = dispatcher?.dispatch(action) ?: "Voice action unavailable"
+            onResult(feedback)
+        }
+    }
+}
+
+private fun trackNames(player: Player, trackType: @C.TrackType Int): List<String> {
+    return player.currentTracks.groups
+        .filter { it.type == trackType && it.isSupported }
+        .map { group ->
+            group.getTrackFormat(0).label
+                ?: group.getTrackFormat(0).language
+                ?: "Unknown"
+        }
+}
+
+private fun selectedTrackName(player: Player, trackType: @C.TrackType Int): String? {
+    return player.currentTracks.groups
+        .firstOrNull { it.type == trackType && it.isSupported && groupIsSelected(it) }
+        ?.let { group ->
+            group.getTrackFormat(0).label ?: group.getTrackFormat(0).language
+        }
+}
+
+private fun groupIsSelected(group: androidx.media3.common.Tracks.Group): Boolean {
+    return (0 until group.length).any { group.isTrackSelected(it) }
 }
 
 // ── Control Panel UI ──────────────────────────────────────────────────────────────

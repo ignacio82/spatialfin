@@ -1,0 +1,170 @@
+package dev.jdtech.jellyfin.player.xr.voice
+
+import androidx.media3.common.C
+import androidx.media3.common.Player
+import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import timber.log.Timber
+
+class VoiceCommandDispatcher(
+    private val viewModel: PlayerViewModel,
+    private val player: Player,
+    private val onControlsVisibilityChange: (Boolean) -> Unit,
+    private val onNavigateBack: () -> Unit,
+    private val onSearch: (String) -> Unit,
+) {
+    fun dispatch(action: XrPlayerAction): String {
+        Timber.d("VOICE: Dispatching %s", action)
+        return when (action) {
+            is XrPlayerAction.Play -> {
+                player.play()
+                "Playing"
+            }
+            is XrPlayerAction.Pause -> {
+                player.pause()
+                "Paused"
+            }
+            is XrPlayerAction.TogglePlayPause -> {
+                if (player.isPlaying) {
+                    player.pause()
+                    "Paused"
+                } else {
+                    player.play()
+                    "Playing"
+                }
+            }
+            is XrPlayerAction.SeekForward -> {
+                player.seekTo(player.currentPosition + action.seconds * 1_000L)
+                "Skipped forward ${action.seconds}s"
+            }
+            is XrPlayerAction.SeekBackward -> {
+                player.seekTo((player.currentPosition - action.seconds * 1_000L).coerceAtLeast(0))
+                "Rewound ${action.seconds}s"
+            }
+            is XrPlayerAction.SeekTo -> {
+                player.seekTo(action.positionSeconds * 1_000L)
+                "Seeked to ${action.positionSeconds}s"
+            }
+            is XrPlayerAction.SkipIntro -> {
+                val segment = viewModel.uiState.value.currentSegment
+                if (segment != null) {
+                    viewModel.skipSegment(segment)
+                    "Skipping intro"
+                } else {
+                    "No skippable intro right now"
+                }
+            }
+            is XrPlayerAction.SkipOutro -> {
+                val segment = viewModel.uiState.value.currentSegment
+                if (segment != null) {
+                    viewModel.skipSegment(segment)
+                    "Skipping outro"
+                } else {
+                    "No skippable outro right now"
+                }
+            }
+            is XrPlayerAction.NextEpisode -> {
+                player.seekToNextMediaItem()
+                "Next episode"
+            }
+            is XrPlayerAction.PreviousEpisode -> {
+                player.seekToPreviousMediaItem()
+                "Previous episode"
+            }
+            is XrPlayerAction.SetSpeed -> {
+                viewModel.selectSpeed(action.speed)
+                "${action.speed}x speed"
+            }
+            is XrPlayerAction.SelectAudioTrack -> {
+                dispatchTrackSelection(
+                    trackType = C.TRACK_TYPE_AUDIO,
+                    language = action.language,
+                    directIndex = action.index,
+                    successPrefix = "Audio",
+                    failureText = "Audio track not found",
+                )
+            }
+            is XrPlayerAction.SelectSubtitleTrack -> {
+                dispatchTrackSelection(
+                    trackType = C.TRACK_TYPE_TEXT,
+                    language = action.language,
+                    directIndex = action.index,
+                    successPrefix = "Subtitles",
+                    failureText = "Subtitle track not found",
+                )
+            }
+            is XrPlayerAction.DisableSubtitles -> {
+                viewModel.switchToTrack(C.TRACK_TYPE_TEXT, -1)
+                "Subtitles off"
+            }
+            is XrPlayerAction.Search -> {
+                onSearch(action.query)
+                "Searching: ${action.query}"
+            }
+            is XrPlayerAction.GoBack -> {
+                onNavigateBack()
+                "Going back"
+            }
+            is XrPlayerAction.ShowControls -> {
+                onControlsVisibilityChange(true)
+                "Controls shown"
+            }
+            is XrPlayerAction.HideControls -> {
+                onControlsVisibilityChange(false)
+                "Controls hidden"
+            }
+            is XrPlayerAction.Unrecognized -> {
+                "Sorry, I didn't understand: ${action.transcript}"
+            }
+        }
+    }
+
+    private fun dispatchTrackSelection(
+        trackType: @C.TrackType Int,
+        language: String?,
+        directIndex: Int?,
+        successPrefix: String,
+        failureText: String,
+    ): String {
+        val index = resolveTrackIndex(trackType = trackType, language = language, directIndex = directIndex)
+            ?: return failureText
+        viewModel.switchToTrack(trackType, index)
+        return "$successPrefix: ${language ?: "track ${index + 1}"}"
+    }
+
+    private fun resolveTrackIndex(
+        trackType: @C.TrackType Int,
+        language: String?,
+        directIndex: Int?,
+    ): Int? {
+        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+        if (directIndex != null) return directIndex.takeIf { it in groups.indices }
+        if (language == null) return null
+
+        val normalized = language.lowercase()
+        return groups.indexOfFirst { group ->
+            val format = group.getTrackFormat(0)
+            val langTag = format.language?.lowercase().orEmpty()
+            val label = format.label?.lowercase().orEmpty()
+            langTag.startsWith(normalized) ||
+                label.contains(normalized) ||
+                languageAliases(normalized).any { alias ->
+                    langTag.startsWith(alias) || label.contains(alias)
+                }
+        }.takeIf { it >= 0 }
+    }
+
+    private fun languageAliases(input: String): List<String> =
+        when (input) {
+            "japanese" -> listOf("ja", "jpn")
+            "english" -> listOf("en", "eng")
+            "spanish" -> listOf("es", "spa")
+            "french" -> listOf("fr", "fra", "fre")
+            "german" -> listOf("de", "deu", "ger")
+            "chinese" -> listOf("zh", "zho", "chi", "cmn")
+            "korean" -> listOf("ko", "kor")
+            "portuguese" -> listOf("pt", "por")
+            "italian" -> listOf("it", "ita")
+            "russian" -> listOf("ru", "rus")
+            else -> listOf(input.take(2))
+        }
+}
