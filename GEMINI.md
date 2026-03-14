@@ -18,10 +18,23 @@ This document provides technical context and architectural guidelines for develo
 
 ### UI Best Practices & Ergonomics
 - **Material 3 for XR:** Standard Material 3 components (NavigationRail, NavigationBar, TopAppBar) automatically adapt to **XR Orbiters** in spatial environments. They float in 3D space around the main panel rather than being pinned inside it.
-- **Adaptive Layouts:** Multi-pane scaffolds (ListDetailPaneScaffold, SupportingPaneScaffold) map panes 1:1 to individual **XR spatial panels**, allowing for a decentralized, immersive layout. 
+- **Adaptive Layouts:** Multi-pane scaffolds (ListDetailPaneScaffold, SupportingPaneScaffold) map panes 1:1 to individual **XR spatial panels**, allowing for a decentralized, immersive layout.
 - **IMAX Scale:** For a cinematic experience, use large `SpatialPanel` dimensions (e.g., 1400dp width). Large panels in Android XR natively to fill the user's field of view.
 - **Depth and Focus:** Use `SpatialDialog` or `SpatialPopup` which automatically pushes the background panel back by **125dp**, creating visual hierarchy.
 - **User Agency:** Provide visual cues for interactivity. Use `MovableComponent` and `ResizableComponent` to allow users to customize their workspace.
+
+### Spatial Panel Placement (from Android XR Design Guide)
+- **Spawn distance:** Place panel centers **1.75 m** from the user's line of sight. This is the system default and the ergonomic sweet spot.
+- **Vertical offset:** Place the panel's vertical center **5° below eye level** — users naturally look slightly downward.
+- **Field of view:** Keep interactive content within the **center 41°** of the user's FOV to avoid excessive head movement.
+- **Depth limits:** Panels must stay between **0.75 m** (minimum) and **5 m** (maximum) from the user to avoid conflicts with system UI. The 5 m limit is also the comfortable maximum for large video surfaces.
+- **Orbiter offset:** Use **20 dp** as the visual distance between an Orbiter and its parent panel (SDK default).
+- **Orbiter count:** Use orbiters sparingly — too many competing spatial elements causes "content fatigue." Stick to one orbiter per panel unless there's a strong reason for more.
+
+### SpatialPanel Gesture Blocking — Critical Pitfall
+- **Empty panels still intercept raycasts.** A `SpatialPanel` with no visible content (e.g., hidden via `AnimatedVisibility`) still exists in the scene and will block pointer/grab events for any entity behind it. This means: if an empty panel is placed between the user and a `MovableComponent` entity, the user cannot grab and move that entity.
+- **Fix:** Make the `SceneCoreEntity`/`SpatialPanel` conditional in the Subspace composition — only add it when it needs to be visible. `AnimatedVisibility` alone is not sufficient; the panel container itself must be removed from composition.
+- **Scrollable content vs. MovableComponent:** If a panel with scrollable content lives inside an entity that has a `MovableComponent`, scroll gestures may be intercepted and interpreted as "move" commands. Workaround: use a separate `GroupEntity` (without `MovableComponent`) for the scrollable panel, positioned so it does not sit between the user and the movable entity.
 
 ### Spatial Hierarchy & Parenting
 To ensure low-latency movement of complex UIs (e.g., a video player with controls and subtitles), follow the SceneCore Entity Hierarchy.

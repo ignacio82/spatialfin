@@ -47,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -83,6 +85,7 @@ import androidx.xr.scenecore.GroupEntity
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.scenecore.scene
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -226,6 +229,15 @@ fun SpatialPlayerScreen(
         onDispose { player.removeListener(listener) }
     }
 
+    // Navigate back when playback ends (movie finished or last episode of season)
+    LaunchedEffect(Unit) {
+        viewModel.eventsChannelFlow.collect { event ->
+            if (event is PlayerEvents.NavigateBack) {
+                onBackClick()
+            }
+        }
+    }
+
     // Poll playback state (position, duration, isPlaying, segments)
     LaunchedEffect(player) {
         while (true) {
@@ -240,14 +252,32 @@ fun SpatialPlayerScreen(
     // --- SceneCore video entity ---
     val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
+    // Separate entity for the cast panel — deliberately has NO MovableComponent so
+    // scroll gestures inside the panel are never intercepted by the video's grab handle.
+    val castPanelEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
+
+    LaunchedEffect(controlsVisible, rootEntity.value) {
+        val root = rootEntity.value ?: return@LaunchedEffect
+        if (controlsVisible) {
+            if (movableComponent.value == null) {
+                val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session)
+                root.addComponent(movable)
+                movableComponent.value = movable
+            }
+        } else {
+            movableComponent.value?.let {
+                root.removeComponent(it)
+                movableComponent.value = null
+            }
+        }
+    }
 
     DisposableEffect(session) {
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(10.0f, 5.625f))
         try {
             // Place root at the origin. UIs will be offset manually relative to the root.
             val root = GroupEntity.create(session, "PlayerRoot", Pose(Vector3(0f, 0f, 0f), Quaternion.Identity))
-            val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session)
-            root.addComponent(movable)
             rootEntity.value = root
 
             // Place the video at -5.0f relative to the root.
@@ -261,16 +291,22 @@ fun SpatialPlayerScreen(
             }
             root.addChild(entity)
             videoEntity.value = entity
-            } catch (_: Exception) {}
 
-            onDispose {
+            // Cast panel root: centered, 3.5 m in front, no movable component.
+            val castRoot = GroupEntity.create(session, "CastPanelRoot", Pose(Vector3(0f, 0f, -3.5f), Quaternion.Identity))
+            castPanelEntity.value = castRoot
+        } catch (_: Exception) {}
+
+        onDispose {
             videoEntity.value?.dispose()
             videoEntity.value = null
             rootEntity.value?.dispose()
             rootEntity.value = null
+            castPanelEntity.value?.dispose()
+            castPanelEntity.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
-            }
-            }
+        }
+    }
 
             var playerInitialized by remember { mutableStateOf(false) }
 
@@ -317,7 +353,8 @@ fun SpatialPlayerScreen(
 
     // --- Layout calculations ---
     val videoDepth = 5.0f
-    val subtitleDepth = 2.0f
+    // XR guide: spawn panel center 1.75 m from user's line of sight (max depth: 5 m).
+    val subtitleDepth = 1.75f
     val subtitleScaleFactor = subtitleDepth / videoDepth
     val scaledVideoWidthDp = videoWidth * subtitleScaleFactor * 1000f
     val scaledVideoHeightDp = videoHeight * subtitleScaleFactor * 1000f
@@ -325,13 +362,13 @@ fun SpatialPlayerScreen(
     val subtitlePanelHeightDp = scaledVideoHeightDp.coerceAtMost(2500f)
     val finalSubtitleSize = xrSubtitleSize * (subtitlePanelHeightDp / 600f).coerceAtLeast(1f)
     // Controls sit further below the video surface to prevent overlap
-    val controlsPanelY = -(scaledVideoHeightDp / 2f + 800f)
+    val controlsPanelY = -(scaledVideoHeightDp / 2f + 1400f)
 
-    // Flat mode Z depth: -2.0 meters (-2000 dp) from user, which is -2000 offset relative to 0,0,0 root
-    val uiAnchorZDp = -2000f
+    // XR guide recommended spawn depth: 1.75 m (-1750 dp) from user.
+    val uiAnchorZDp = -1750f
 
-    // Controls sit closer to the user to avoid intersecting the curved screen
-    val controlsZDp = -2000f
+    // Controls at same depth as UI anchor.
+    val controlsZDp = -1750f
 
     Subspace {
         val root = rootEntity.value
@@ -425,28 +462,9 @@ fun SpatialPlayerScreen(
                 }
             }
 
-            // ── Orbiter: reveal button (bottom edge, only when controls hidden) ──
-            if (!controlsVisible) {
-                Orbiter(
-                    position = ContentEdge.Bottom,
-                    alignment = Alignment.CenterHorizontally,
-                    offset = 40.dp,
-                ) {
-                    IconButton(
-                        onClick = { controlsVisible = true; resetAutoHide() },
-                        modifier = Modifier.size(80.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_eye),
-                            contentDescription = "Show Controls",
-                            tint = Color.White.copy(alpha = 0.4f),
-                            modifier = Modifier.size(48.dp),
-                        )
-                    }
-                }
-            }
-
             // ── Main control content ──────────────────────────────────────────────
+            // When controls are hidden the whole panel area is tappable.  A faint glass
+            // background makes the tap target discoverable without cluttering the view.
             Box(modifier = Modifier.fillMaxSize()) {
                 AnimatedVisibility(
                     visible = controlsVisible,
@@ -475,6 +493,20 @@ fun SpatialPlayerScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .clip(RoundedCornerShape(48.dp))
+                            .background(Color.Transparent)
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        if (event.type == PointerEventType.Enter || 
+                                            event.type == PointerEventType.Move) {
+                                            controlsVisible = true
+                                            resetAutoHide()
+                                        }
+                                    }
+                                }
+                            }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -587,28 +619,35 @@ fun SpatialPlayerScreen(
                 )
             }
                 }
-            }
 
-        // ── Cast & Info Panel (auto-visible when paused) ──────────────────────────
-        // Placed OUTSIDE the SceneCoreEntity so the MovableComponent on the root
-        // GroupEntity does not intercept scroll gestures or button taps on this panel.
-        // z = -1000 dp (1 m) puts it clearly in front of the video (-5 m) and controls
-        // (-2 m) so depth-ordering also unambiguously gives it input priority.
-        if (showCastCrewPanel && (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())) {
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(1400.dp)
-                    .height(1600.dp)
-                    .offset(x = 0.dp, y = 0.dp, z = (-1000).dp),
-            ) {
-                CastCrewPanelContent(
-                    title = uiState.currentItemTitle,
-                    overview = uiState.currentOverview,
-                    people = uiState.currentPeople,
-                    onResume = { player.play() },
-                )
             }
         }
+
+        // ── Cast & Info Panel (auto-visible when paused) ──────────────────────────
+        // Uses its own GroupEntity (castPanelEntity) which has NO MovableComponent so
+        // scroll gestures inside the panel are not intercepted by the video's grab handle.
+        // The SceneCoreEntity is only added to Subspace when the panel should be visible —
+        // an invisible (empty) SpatialPanel still intercepts raycasts and would block the
+        // user from grabbing and moving the video entity.
+        val castRoot = castPanelEntity.value
+        val shouldShowCastPanel = showCastCrewPanel &&
+            (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())
+        if (castRoot != null && shouldShowCastPanel) {
+            SceneCoreEntity(factory = { castRoot }, modifier = SubspaceModifier) {
+                SpatialPanel(
+                    modifier = SubspaceModifier
+                        .width(1400.dp)
+                        .height(1600.dp)
+                        .offset(x = 0.dp, y = 0.dp, z = 0.dp),
+                ) {
+                    CastCrewPanelContent(
+                        title = uiState.currentItemTitle,
+                        overview = uiState.currentOverview,
+                        people = uiState.currentPeople,
+                        onResume = { player.play() },
+                    )
+                }
+            }
         }
     }
 }
@@ -713,7 +752,7 @@ private fun ControlPanelUI(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = uiState.currentItemTitle,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.displaySmall,
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -724,7 +763,7 @@ private fun ControlPanelUI(
                             spatialAudioAvailable -> "Spatial Playback • Spatial Audio"
                             else -> "Spatial Playback"
                         },
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.headlineSmall,
                         color = if (spatialAudioAvailable && !isLocked)
                             Color(0xFF4FC3F7).copy(alpha = 0.8f)
                         else
@@ -1403,7 +1442,7 @@ private fun ProgressSection(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 formatTime(currentPosition),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.headlineSmall,
                 color = Color.White.copy(alpha = 0.8f),
             )
             // Slider wrapped in a Box so we can overlay chapter tick marks on the track.
@@ -1421,15 +1460,15 @@ private fun ProgressSection(
                         // each side (same value as the Slider's own padding modifier below).
                         val padPx = sliderHPad.toPx()
                         val trackWidth = size.width - 2 * padPx
-                        val markerH = 14f
-                        val markerW = 3f
+                        val markerH = 24f
+                        val markerW = 6f
                         val centerY = size.height / 2f
                         chapters.forEach { chapter ->
                             val fraction = (chapter.startPosition.toFloat() / duration.toFloat())
                                 .coerceIn(0f, 1f)
                             val x = padPx + fraction * trackWidth
                             drawRect(
-                                color = Color.White.copy(alpha = 0.55f),
+                                color = Color(0xFF4FC3F7),
                                 topLeft = Offset(x - markerW / 2, centerY - markerH / 2),
                                 size = Size(markerW, markerH),
                             )
@@ -1455,7 +1494,7 @@ private fun ProgressSection(
             }
             Text(
                 formatTime(duration),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.headlineSmall,
                 color = Color.White.copy(alpha = 0.8f),
             )
         }
