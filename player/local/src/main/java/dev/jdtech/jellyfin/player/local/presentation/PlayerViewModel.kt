@@ -21,12 +21,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinSegmentType
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
 import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
 import java.util.UUID
@@ -53,6 +55,7 @@ constructor(
     private val application: Application,
     private val playlistManager: PlaylistManager,
     private val repository: JellyfinRepository,
+    private val localMediaRepository: LocalMediaRepository,
     val appPreferences: AppPreferences,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel(), Player.Listener {
@@ -224,6 +227,56 @@ constructor(
         }
     }
 
+    fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
+        player.addListener(this)
+
+        viewModelScope.launch {
+            val startItem =
+                try {
+                    localMediaRepository.getVideo(localMediaId)?.let { item ->
+                        PlayerItem(
+                            name = item.name,
+                            itemId = item.id,
+                            mediaSourceId = "local-$localMediaId",
+                            playbackPosition =
+                                if (startFromBeginning) 0L else item.playbackPositionTicks / 10000L,
+                            mediaSourceUri = item.contentUri.toString(),
+                            chapters = emptyList(),
+                            people = emptyList(),
+                            overview = item.overview,
+                            backdropImageUri = null,
+                            seriesName = null,
+                            contentSource = PlayerContentSource.LOCAL,
+                            localMediaId = localMediaId,
+                        )
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e)
+                    Toast.makeText(application, e.localizedMessage, Toast.LENGTH_LONG).show()
+                    null
+                }
+
+            if (startItem == null) {
+                Timber.e("No local start item, stopping player initialization")
+                return@launch
+            }
+
+            items = mutableListOf(startItem)
+            currentMediaItemIndex = 0
+
+            val startPosition =
+                if (playbackPosition == 0L) {
+                    startItem.playbackPosition.takeIf { !startFromBeginning } ?: C.TIME_UNSET
+                } else {
+                    playbackPosition
+                }
+
+            player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
+            player.prepare()
+            player.play()
+        }
+    }
+
     private fun PlayerItem.toMediaItem(): MediaItem {
         val streamUrl = mediaSourceUri
         val mediaSubtitles =
@@ -253,15 +306,31 @@ constructor(
         val mediaId = player.currentMediaItem?.mediaId
         val position = player.currentPosition
         val duration = player.duration
+        val currentItem = currentPlayerItem()
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
-                if (mediaId != null && duration != C.TIME_UNSET) {
-                    Timber.d("Sending playback stop")
-                    repository.postPlaybackStop(
-                        UUID.fromString(mediaId),
-                        position.times(10000),
-                        position.div(duration.toFloat()).times(100).toInt(),
-                    )
+                if (currentItem != null && duration != C.TIME_UNSET) {
+                    when (currentItem.contentSource) {
+                        PlayerContentSource.JELLYFIN -> {
+                            if (mediaId != null) {
+                                Timber.d("Sending playback stop")
+                                repository.postPlaybackStop(
+                                    UUID.fromString(mediaId),
+                                    position.times(10000),
+                                    position.div(duration.toFloat()).times(100).toInt(),
+                                )
+                            }
+                        }
+                        PlayerContentSource.LOCAL -> {
+                            currentItem.localMediaId?.let { localMediaId ->
+                                localMediaRepository.updatePlaybackState(
+                                    mediaStoreId = localMediaId,
+                                    positionMs = position,
+                                    durationMs = duration,
+                                )
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Timber.e(e)
@@ -280,14 +349,27 @@ constructor(
         Timber.d("Updating playback progress")
         viewModelScope.launch(Dispatchers.Main) {
             savedStateHandle["position"] = player.currentPosition
-            if (player.currentMediaItem != null && player.currentMediaItem!!.mediaId.isNotEmpty()) {
-                val itemId = UUID.fromString(player.currentMediaItem!!.mediaId)
+            currentPlayerItem()?.let { currentItem ->
                 try {
-                    repository.postPlaybackProgress(
-                        itemId,
-                        player.currentPosition.times(10000),
-                        !player.isPlaying,
-                    )
+                    when (currentItem.contentSource) {
+                        PlayerContentSource.JELLYFIN -> {
+                            val itemId = UUID.fromString(player.currentMediaItem!!.mediaId)
+                            repository.postPlaybackProgress(
+                                itemId,
+                                player.currentPosition.times(10000),
+                                !player.isPlaying,
+                            )
+                        }
+                        PlayerContentSource.LOCAL -> {
+                            currentItem.localMediaId?.let { localMediaId ->
+                                localMediaRepository.updatePlaybackState(
+                                    mediaStoreId = localMediaId,
+                                    positionMs = player.currentPosition,
+                                    durationMs = player.duration.coerceAtLeast(0L),
+                                )
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
                     Timber.e(e)
                 }
@@ -370,36 +452,46 @@ constructor(
                             )
                         }
 
-                        repository.postPlaybackStart(item.itemId)
+                        if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            repository.postPlaybackStart(item.itemId)
 
-                        if (segmentsSkipButton || segmentsAutoSkip) {
-                            getSegments(item.itemId)
+                            if (segmentsSkipButton || segmentsAutoSkip) {
+                                getSegments(item.itemId)
+                            }
+
+                            if (appPreferences.getValue(appPreferences.playerTrickplay)) {
+                                getTrickplay(item)
+                            }
+                        } else {
+                            currentMediaItemSegments = emptyList()
                         }
 
-                        if (appPreferences.getValue(appPreferences.playerTrickplay)) {
-                            getTrickplay(item)
+                        if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            playlistManager.setCurrentMediaItemIndex(item.itemId)
                         }
 
-                        playlistManager.setCurrentMediaItemIndex(item.itemId)
+                        if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            val previousItem = playlistManager.getPreviousPlayerItem()
+                            if (previousItem != null) {
+                                items.add(player.currentMediaItemIndex, previousItem)
+                                player.addMediaItem(
+                                    player.currentMediaItemIndex,
+                                    previousItem.toMediaItem(),
+                                )
+                            }
 
-                        val previousItem = playlistManager.getPreviousPlayerItem()
-                        if (previousItem != null) {
-                            items.add(player.currentMediaItemIndex, previousItem)
-                            player.addMediaItem(
-                                player.currentMediaItemIndex,
-                                previousItem.toMediaItem(),
-                            )
-                        }
-
-                        val nextItem = playlistManager.getNextPlayerItem()
-                        // Expose the next episode (if any) so the XR next-up panel can display it.
-                        _uiState.update { it.copy(nextEpisode = nextItem) }
-                        if (nextItem != null) {
-                            items.add(player.currentMediaItemIndex + 1, nextItem)
-                            player.addMediaItem(
-                                player.currentMediaItemIndex + 1,
-                                nextItem.toMediaItem(),
-                            )
+                            val nextItem = playlistManager.getNextPlayerItem()
+                            // Expose the next episode (if any) so the XR next-up panel can display it.
+                            _uiState.update { it.copy(nextEpisode = nextItem) }
+                            if (nextItem != null) {
+                                items.add(player.currentMediaItemIndex + 1, nextItem)
+                                player.addMediaItem(
+                                    player.currentMediaItemIndex + 1,
+                                    nextItem.toMediaItem(),
+                                )
+                            }
+                        } else {
+                            _uiState.update { it.copy(nextEpisode = null) }
                         }
 
                         Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
@@ -422,16 +514,32 @@ constructor(
                 val position = player.currentPosition
                 val duration = player.duration
                 try {
-                    repository.postPlaybackStop(
-                        UUID.fromString(mediaId),
-                        position.times(10000),
-                        position.div(duration.toFloat()).times(100).toInt(),
-                    )
+                    when (currentPlayerItem()?.contentSource) {
+                        PlayerContentSource.JELLYFIN -> {
+                            repository.postPlaybackStop(
+                                UUID.fromString(mediaId),
+                                position.times(10000),
+                                position.div(duration.toFloat()).times(100).toInt(),
+                            )
+                        }
+                        PlayerContentSource.LOCAL -> {
+                            currentPlayerItem()?.localMediaId?.let { localMediaId ->
+                                localMediaRepository.updatePlaybackState(
+                                    mediaStoreId = localMediaId,
+                                    positionMs = position,
+                                    durationMs = duration,
+                                )
+                            }
+                        }
+                        null -> Unit
+                    }
                 } catch (e: Exception) {
                     Timber.e(e)
                 }
-                player.seekToNextMediaItem()
-                player.play()
+                if (player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem()
+                    player.play()
+                }
             }
         }
     }
@@ -544,10 +652,15 @@ constructor(
                     }
                 }
             }
+
             _uiState.update {
                 it.copy(currentTrickplay = Trickplay(trickplayInfo.interval, bitmaps))
             }
         }
+    }
+
+    private fun currentPlayerItem(): PlayerItem? {
+        return items.firstOrNull { it.itemId.toString() == player.currentMediaItem?.mediaId }
     }
 
     fun skipSegment(segment: SpatialFinSegment) {

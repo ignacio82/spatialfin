@@ -33,6 +33,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.toRoute
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.LocalVideoItem
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -52,6 +53,8 @@ import dev.jdtech.jellyfin.presentation.film.MovieScreen
 import dev.jdtech.jellyfin.presentation.film.PersonScreen
 import dev.jdtech.jellyfin.presentation.film.SeasonScreen
 import dev.jdtech.jellyfin.presentation.film.ShowScreen
+import dev.jdtech.jellyfin.presentation.local.LocalMediaScreen
+import dev.jdtech.jellyfin.presentation.local.LocalVideoScreen
 import dev.jdtech.jellyfin.presentation.settings.AboutScreen
 import dev.jdtech.jellyfin.presentation.settings.SettingsScreen
 import dev.jdtech.jellyfin.presentation.setup.addresses.ServerAddressesScreen
@@ -80,6 +83,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object MediaRoute
 
+@Serializable data object LocalRoute
+
 @Serializable data object DownloadsRoute
 
 @Serializable
@@ -98,6 +103,8 @@ data class LibraryRoute(
 @Serializable data class ShowRoute(val showId: String)
 
 @Serializable data class EpisodeRoute(val episodeId: String)
+
+@Serializable data class LocalVideoRoute(val mediaStoreId: Long)
 
 @Serializable data class SeasonRoute(val seasonId: String)
 
@@ -122,6 +129,12 @@ val mediaTab =
         icon = CoreR.drawable.ic_library,
         route = MediaRoute,
     )
+val localTab =
+    TabBarItem(
+        title = CoreR.string.title_local,
+        icon = CoreR.drawable.ic_folder,
+        route = LocalRoute,
+    )
 val downloadsTab =
     TabBarItem(
         title = CoreR.string.title_download,
@@ -144,13 +157,13 @@ fun NavigationRoot(
             hasServers && hasCurrentServer && hasCurrentUser -> HomeRoute
             hasServers && hasCurrentServer -> UsersRoute
             hasServers -> ServersRoute
-            else -> WelcomeRoute
+            else -> LocalRoute
         }
 
     val navigationItems =
         when (isOfflineMode) {
-            false -> listOf(homeTab, mediaTab, downloadsTab)
-            true -> listOf(homeTab, downloadsTab)
+            false -> if (hasServers) listOf(homeTab, mediaTab, localTab, downloadsTab) else listOf(localTab)
+            true -> if (hasServers) listOf(homeTab, localTab, downloadsTab) else listOf(localTab)
         }
     val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
 
@@ -327,6 +340,20 @@ fun NavigationRoot(
                     onInitialSearchConsumed = { pendingInitialSearchQuery = null },
                 )
             }
+            composable<LocalRoute> {
+                LocalMediaScreen(
+                    hasServers = hasServers,
+                    onItemClick = { item ->
+                        navController.safeNavigate(LocalVideoRoute(item.mediaStoreId))
+                    },
+                    onManageServersClick = { navController.safeNavigate(ServersRoute) },
+                    onSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(indexes = intArrayOf(CoreR.string.title_settings))
+                        )
+                    },
+                )
+            }
             composable<DownloadsRoute> {
                 DownloadsScreen(
                     onItemClick = { item ->
@@ -424,6 +451,13 @@ fun NavigationRoot(
                     },
                 )
             }
+            composable<LocalVideoRoute> { backStackEntry ->
+                val route: LocalVideoRoute = backStackEntry.toRoute()
+                LocalVideoScreen(
+                    mediaStoreId = route.mediaStoreId,
+                    navigateBack = { navController.safePopBackStack() },
+                )
+            }
             composable<PersonRoute> { backStackEntry ->
                 val route: PersonRoute = backStackEntry.toRoute()
                 PersonScreen(
@@ -481,6 +515,7 @@ private fun navigateToItem(navController: NavHostController, item: SpatialFinIte
                     libraryType = item.type,
                 )
             )
+        is LocalVideoItem -> navController.safeNavigate(LocalVideoRoute(item.mediaStoreId))
         is SpatialFinFolder ->
             navController.safeNavigate(
                 LibraryRoute(

@@ -20,13 +20,24 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
+- **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
 - **Offline Playback** — Download media for offline viewing.
 
 ## Requirements
 
 - Android XR device (requires `android.hardware.xr.immersive` feature)
 - Android 12 (API 31) or higher
-- A running [Jellyfin](https://jellyfin.org) server
+- Optional: a running [Jellyfin](https://jellyfin.org) server
+
+## Local Library
+
+SpatialFin can now operate as a local-first XR player, even without a Jellyfin server.
+
+- A dedicated `Local` category scans videos stored on the headset through `MediaStore`.
+- Local playback works online or offline.
+- SpatialFin parses file names to infer cleaner titles and basic season/episode or year metadata when possible.
+- Local watch progress and watched/unwatched state are stored on-device, so resume works without any server.
+- On first app launch, SpatialFin also requests video-library permission so the local library can be populated immediately.
 
 ## Voice Control
 
@@ -38,7 +49,7 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, controls visibility, next/previous episode, and search.
 - Search results are shown in a spatial in-player overlay with a clear path back to the current video.
 - Voice parsing uses both deterministic command handling and richer multimodal player context for compatible on-device AI devices.
-- On first app launch, SpatialFin requests the microphone and hand-tracking permissions needed for voice input.
+- On first app launch, SpatialFin requests the microphone, hand-tracking, and local video permissions needed for voice input and the on-device library.
 - Voice settings include status, command examples, and a local telemetry dashboard for iteration and debugging.
 
 ## Architecture

@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
+import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
 import dev.jdtech.jellyfin.models.SpatialFinMediaStreamDto
 import dev.jdtech.jellyfin.models.SpatialFinMovieDto
 import dev.jdtech.jellyfin.models.SpatialFinSeasonDto
@@ -257,4 +258,13 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM trickplayInfos WHERE sourceId = :sourceId")
     fun getTrickplayInfo(sourceId: String): SpatialFinTrickplayInfoDto?
+
+    @Query("SELECT * FROM localMediaPlaybackState")
+    fun getAllLocalMediaPlaybackStates(): List<LocalMediaPlaybackStateDto>
+
+    @Query("SELECT * FROM localMediaPlaybackState WHERE mediaStoreId = :mediaStoreId")
+    fun getLocalMediaPlaybackState(mediaStoreId: Long): LocalMediaPlaybackStateDto?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertLocalMediaPlaybackState(state: LocalMediaPlaybackStateDto)
 }

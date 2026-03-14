@@ -152,7 +152,8 @@ fun SpatialPlayerScreen(
     viewModel: PlayerViewModel,
     session: Session,
     initialStereoMode: String,
-    itemId: UUID,
+    itemId: UUID?,
+    localMediaId: Long?,
     itemKind: String,
     startFromBeginning: Boolean,
     libassRenderer: LibassRenderer?,
@@ -577,11 +578,21 @@ fun SpatialPlayerScreen(
             videoEntity.value?.let { entity ->
             player.setVideoSurface(entity.getSurface())
             if (!playerInitialized) {
-                viewModel.initializePlayer(
-                    itemId = itemId,
-                    itemKind = itemKind,
-                    startFromBeginning = startFromBeginning,
-                )
+                when {
+                    localMediaId != null -> {
+                        viewModel.initializeLocalPlayer(
+                            localMediaId = localMediaId,
+                            startFromBeginning = startFromBeginning,
+                        )
+                    }
+                    itemId != null -> {
+                        viewModel.initializePlayer(
+                            itemId = itemId,
+                            itemKind = itemKind,
+                            startFromBeginning = startFromBeginning,
+                        )
+                    }
+                }
                 playerInitialized = true
             }
             }

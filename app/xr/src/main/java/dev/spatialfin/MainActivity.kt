@@ -49,6 +49,7 @@ import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
+import dev.jdtech.jellyfin.presentation.local.localVideoPermission
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
 import kotlinx.coroutines.delay
@@ -216,7 +217,11 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, false)) return
 
         val missingPermissions =
-            listOf(Manifest.permission.RECORD_AUDIO, HAND_TRACKING_PERMISSION).filter { permission ->
+            listOf(
+                Manifest.permission.RECORD_AUDIO,
+                HAND_TRACKING_PERMISSION,
+                localVideoPermission(),
+            ).distinct().filter { permission ->
                 ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
             }
 

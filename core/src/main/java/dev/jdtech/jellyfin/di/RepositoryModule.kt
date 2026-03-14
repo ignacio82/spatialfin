@@ -10,6 +10,8 @@ import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.JellyfinRepositoryImpl
 import dev.jdtech.jellyfin.repository.JellyfinRepositoryOfflineImpl
+import dev.jdtech.jellyfin.repository.LocalMediaRepository
+import dev.jdtech.jellyfin.repository.LocalMediaRepositoryImpl
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
 
@@ -58,4 +60,11 @@ object RepositoryModule {
             false -> jellyfinRepositoryImpl
         }
     }
+
+    @Singleton
+    @Provides
+    fun provideLocalMediaRepository(
+        application: Application,
+        serverDatabase: ServerDatabaseDao,
+    ): LocalMediaRepository = LocalMediaRepositoryImpl(application, serverDatabase)
 }

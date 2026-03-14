@@ -71,6 +71,19 @@ class XrPlayerActivity : AppCompatActivity() {
             }
         }
 
+        fun createIntentForLocalMedia(
+            context: android.content.Context,
+            mediaStoreId: Long,
+            startFromBeginning: Boolean = false,
+            stereoMode: String = "mono",
+        ): android.content.Intent {
+            return android.content.Intent(context, XrPlayerActivity::class.java).apply {
+                putExtra("localMediaId", mediaStoreId)
+                putExtra("startFromBeginning", startFromBeginning)
+                putExtra("stereoMode", stereoMode)
+            }
+        }
+
         fun createIntentForItem(
             context: android.content.Context,
             item: SpatialFinItem,
@@ -102,12 +115,13 @@ class XrPlayerActivity : AppCompatActivity() {
         window.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
 
         val itemIdString = intent.extras?.getString("itemId")
-        if (itemIdString == null) {
+        val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
+        if (itemIdString == null && localMediaId == null) {
             finish()
             return
         }
-        val itemId = UUID.fromString(itemIdString)
-        val itemKind = intent.extras!!.getString("itemKind") ?: ""
+        val itemId = itemIdString?.let(UUID::fromString)
+        val itemKind = intent.extras?.getString("itemKind") ?: ""
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
         currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
@@ -203,6 +217,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         session = session,
                         initialStereoMode = currentStereoMode,
                         itemId = itemId,
+                        localMediaId = localMediaId,
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
                         libassRenderer = libassRenderer,
