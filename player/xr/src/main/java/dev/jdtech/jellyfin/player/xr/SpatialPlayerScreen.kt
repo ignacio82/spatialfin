@@ -161,6 +161,16 @@ fun SpatialPlayerScreen(
     var videoHeight by remember { mutableFloatStateOf(5.625f) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
 
+    var showCastCrewPanel by remember { mutableStateOf(false) }
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) {
+            delay(1500)
+            showCastCrewPanel = true
+        } else {
+            showCastCrewPanel = false
+        }
+    }
+
     // --- Controls UI state ---
     var controlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
@@ -584,7 +594,7 @@ fun SpatialPlayerScreen(
         // GroupEntity does not intercept scroll gestures or button taps on this panel.
         // z = -1000 dp (1 m) puts it clearly in front of the video (-5 m) and controls
         // (-2 m) so depth-ordering also unambiguously gives it input priority.
-        if (!isPlaying && (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())) {
+        if (showCastCrewPanel && (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())) {
             SpatialPanel(
                 modifier = SubspaceModifier
                     .width(1400.dp)
