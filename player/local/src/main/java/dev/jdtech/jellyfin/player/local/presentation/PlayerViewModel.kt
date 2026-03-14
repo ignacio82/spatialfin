@@ -154,7 +154,7 @@ constructor(
                 // decoder fails, rather than surfacing an error to the user.
                 .setEnableDecoderFallback(true)
         val initialPlayer = ExoPlayer.Builder(application, renderersFactory)
-            .setAudioAttributes(audioAttributes, true)
+            .setAudioAttributes(audioAttributes, false)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(
                 appPreferences.getValue(appPreferences.playerSeekBackInc)

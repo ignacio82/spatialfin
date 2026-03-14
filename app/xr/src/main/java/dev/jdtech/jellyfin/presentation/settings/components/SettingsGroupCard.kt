@@ -23,6 +23,7 @@ import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceAppLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceGroup
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceInfo
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
@@ -54,6 +55,12 @@ fun SettingsGroupCard(
                 when (preference) {
                     is PreferenceCategory ->
                         SettingsCategoryCard(
+                            preference = preference,
+                            onClick = { onAction(SettingsAction.OnPreferenceClick(preference)) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    is PreferenceInfo ->
+                        SettingsInfoCard(
                             preference = preference,
                             modifier = Modifier.fillMaxWidth(),
                         )

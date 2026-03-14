@@ -23,10 +23,14 @@ import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 
 @Composable
-fun SettingsCategoryCard(preference: PreferenceCategory, modifier: Modifier = Modifier) {
+fun SettingsCategoryCard(
+    preference: PreferenceCategory,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     SettingsBaseCard(
         preference = preference,
-        onClick = { preference.onClick(preference) },
+        onClick = onClick,
         modifier = modifier,
     ) {
         Row(
@@ -69,7 +73,8 @@ private fun SettingsCategoryCardPreview() {
                 PreferenceCategory(
                     nameStringResource = SettingsR.string.settings_category_player,
                     iconDrawableId = CoreR.drawable.ic_play,
-                )
+                ),
+            onClick = {},
         )
     }
 }

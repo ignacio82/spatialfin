@@ -115,4 +115,10 @@
 
     <string name="logging_enabled">Enable Logging</string>
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
+    <string name="voice_controls">Voice controls</string>
+    <string name="voice_controls_summary">Configure on-device XR voice commands, permissions, and diagnostics</string>
+    <string name="voice_permissions">App permissions</string>
+    <string name="voice_permissions_summary">Open app settings to review microphone and hand-tracking permissions</string>
+    <string name="voice_status">Voice status</string>
+    <string name="voice_telemetry_dashboard">Voice telemetry dashboard</string>
 </resources>

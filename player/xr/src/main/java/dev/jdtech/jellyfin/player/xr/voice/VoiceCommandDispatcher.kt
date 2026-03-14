@@ -138,7 +138,18 @@ class VoiceCommandDispatcher(
     ): Int? {
         val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
         if (directIndex != null) return directIndex.takeIf { it in groups.indices }
-        if (language == null) return null
+        if (language == null) {
+            val selectedIndex = groups.indexOfFirst(::groupIsSelected)
+            return when (trackType) {
+                C.TRACK_TYPE_TEXT -> groups.indices.firstOrNull()
+                C.TRACK_TYPE_AUDIO -> {
+                    if (groups.isEmpty()) null
+                    else if (selectedIndex >= 0 && groups.size > 1) (selectedIndex + 1) % groups.size
+                    else groups.indices.firstOrNull()
+                }
+                else -> null
+            }
+        }
 
         val normalized = language.lowercase()
         return groups.indexOfFirst { group ->
@@ -167,4 +178,8 @@ class VoiceCommandDispatcher(
             "russian" -> listOf("ru", "rus")
             else -> listOf(input.take(2))
         }
+
+    private fun groupIsSelected(group: androidx.media3.common.Tracks.Group): Boolean {
+        return (0 until group.length).any(group::isTrackSelected)
+    }
 }

@@ -29,13 +29,24 @@ import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateSuccess
 import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSeason
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.util.UUID
+import javax.inject.Inject
 import kotlinx.coroutines.delay
 import timber.log.Timber
 
 @AndroidEntryPoint
 class XrPlayerActivity : AppCompatActivity() {
+    @Inject lateinit var repository: JellyfinRepository
+
+    @Inject lateinit var voiceTelemetryStore: VoiceTelemetryStore
 
     private val viewModel: PlayerViewModel by viewModels()
 
@@ -43,6 +54,45 @@ class XrPlayerActivity : AppCompatActivity() {
     private var mediaSession: MediaSession? = null
     private var currentStereoMode: String = "mono"
     private var libassRenderer: LibassRenderer? = null
+
+    companion object {
+        fun createIntent(
+            context: android.content.Context,
+            itemId: UUID,
+            itemKind: String,
+            startFromBeginning: Boolean = false,
+            stereoMode: String = "mono",
+        ): android.content.Intent {
+            return android.content.Intent(context, XrPlayerActivity::class.java).apply {
+                putExtra("itemId", itemId.toString())
+                putExtra("itemKind", itemKind)
+                putExtra("startFromBeginning", startFromBeginning)
+                putExtra("stereoMode", stereoMode)
+            }
+        }
+
+        fun createIntentForItem(
+            context: android.content.Context,
+            item: SpatialFinItem,
+            startFromBeginning: Boolean = false,
+        ): android.content.Intent? {
+            val itemKind =
+                when (item) {
+                    is SpatialFinMovie -> "Movie"
+                    is SpatialFinEpisode -> "Episode"
+                    is SpatialFinSeason -> "Season"
+                    is SpatialFinShow -> "Series"
+                    else -> null
+                } ?: return null
+
+            return createIntent(
+                context = context,
+                itemId = item.id,
+                itemKind = itemKind,
+                startFromBeginning = startFromBeginning,
+            )
+        }
+    }
 
     @OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,7 +165,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
         val player = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
-            .setAudioAttributes(audioAttributes, true)
+            .setAudioAttributes(audioAttributes, false)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
             .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
@@ -156,6 +206,14 @@ class XrPlayerActivity : AppCompatActivity() {
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
                         libassRenderer = libassRenderer,
+                        onSearchQuery = { query -> repository.getSearchItems(query) },
+                        onLaunchSearchResult = { item ->
+                            createIntentForItem(this, item)?.let { launchIntent ->
+                                startActivity(launchIntent)
+                                finish()
+                            }
+                        },
+                        telemetryStore = voiceTelemetryStore,
                         onBackClick = { finish() }
                     )
                 } else {

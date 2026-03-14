@@ -17,6 +17,8 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
 - **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
 - **Hands-Free Voice Control** — Pinch-to-talk on the secondary hand or use the mic orbiter button to control playback, audio, subtitles, and search with on-device speech recognition plus Gemini Nano intent parsing.
+- **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search and launch new media without breaking immersion.
+- **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Offline Playback** — Download media for offline viewing.
 
@@ -33,8 +35,11 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Pinch your secondary hand to start listening and release to stop.
 - Use the mic button in the player orbiter as a fallback.
 - Speech recognition runs on-device and prefers offline recognition.
-- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, and search.
+- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, controls visibility, next/previous episode, and search.
+- Search results are shown in a spatial in-player overlay with a clear path back to the current video.
+- Voice parsing uses both deterministic command handling and richer multimodal player context for compatible on-device AI devices.
 - On first app launch, SpatialFin requests the microphone and hand-tracking permissions needed for voice input.
+- Voice settings include status, command examples, and a local telemetry dashboard for iteration and debugging.
 
 ## Architecture
 

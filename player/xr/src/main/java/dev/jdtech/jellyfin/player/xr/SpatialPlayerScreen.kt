@@ -2,7 +2,6 @@ package dev.jdtech.jellyfin.player.xr
 
 import android.Manifest
 import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -103,12 +102,20 @@ import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.VoiceCommandDispatcher
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSeason
+import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -148,6 +155,9 @@ fun SpatialPlayerScreen(
     itemKind: String,
     startFromBeginning: Boolean,
     libassRenderer: LibassRenderer?,
+    onSearchQuery: suspend (String) -> List<SpatialFinItem>,
+    onLaunchSearchResult: (SpatialFinItem) -> Unit,
+    telemetryStore: VoiceTelemetryStore,
     onBackClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -266,9 +276,33 @@ fun SpatialPlayerScreen(
 
     // --- Dialog state (lifted here so SpatialDialog lives inside the control SpatialPanel) ---
     var activeDialog by remember { mutableStateOf<String?>(null) }
+    var voiceSearchQuery by remember { mutableStateOf("") }
+    var voiceSearchResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
+    var voiceSearchLoading by remember { mutableStateOf(false) }
+    var voiceSearchError by remember { mutableStateOf<String?>(null) }
 
     fun resetAutoHide() {
         hideTimestamp = System.currentTimeMillis()
+    }
+
+    fun openVoiceSearch(query: String) {
+        voiceSearchQuery = query
+        voiceSearchLoading = true
+        voiceSearchError = null
+        activeDialog = "voice_search"
+        coroutineScope.launch {
+            runCatching { onSearchQuery(query) }
+                .onSuccess { results ->
+                    voiceSearchResults = results
+                    voiceSearchLoading = false
+                    voiceSearchError = null
+                }
+                .onFailure {
+                    voiceSearchResults = emptyList()
+                    voiceSearchLoading = false
+                    voiceSearchError = "Search failed"
+                }
+        }
     }
 
     val voiceDispatcher =
@@ -278,15 +312,7 @@ fun SpatialPlayerScreen(
                 player = player,
                 onControlsVisibilityChange = { controlsVisible = it },
                 onNavigateBack = onBackClick,
-                onSearch = { query ->
-                    val launchIntent =
-                        Intent().setClassName(context, "dev.spatialfin.MainActivity")
-                            .putExtra("initial_search_query", query)
-                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    runCatching { context.startActivity(launchIntent) }
-                        .onSuccess { activity?.finish() }
-                        .onFailure { voiceFeedback = "Search unavailable" }
-                },
+                onSearch = ::openVoiceSearch,
             )
         }
 
@@ -310,7 +336,10 @@ fun SpatialPlayerScreen(
             commandCoordinator = commandCoordinator,
             player = player,
             viewModel = viewModel,
+            uiState = uiState,
+            controlsVisible = controlsVisible,
             dispatcher = voiceDispatcher,
+            telemetryStore = telemetryStore,
             onResult = { voiceFeedback = it },
             scope = coroutineScope,
         )
@@ -369,6 +398,14 @@ fun SpatialPlayerScreen(
                 SecondaryHandPinchDetector.PinchEvent.STARTED -> requestVoiceCommand()
                 SecondaryHandPinchDetector.PinchEvent.ENDED -> voiceService.stopListening()
             }
+        }
+    }
+
+    LaunchedEffect(voiceState) {
+        if (voiceState == VoiceState.LISTENING) {
+            player.volume = 0.2f
+        } else {
+            player.volume = 1.0f
         }
     }
 
@@ -838,6 +875,22 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
+            if (activeDialog == "voice_search") {
+                SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                    VoiceSearchDialogContent(
+                        query = voiceSearchQuery,
+                        loading = voiceSearchLoading,
+                        error = voiceSearchError,
+                        results = voiceSearchResults,
+                        currentItemTitle = uiState.currentItemTitle,
+                        onPlayResult = {
+                            onLaunchSearchResult(it)
+                            activeDialog = null
+                        },
+                        onDismiss = { activeDialog = null },
+                    )
+                }
+            }
         }
 
         // ── Contextual Skip Panel ────────────────────────────────────────────────
@@ -1014,10 +1067,14 @@ private fun startVoiceCapture(
     commandCoordinator: SpatialCommandCoordinator,
     player: Player,
     viewModel: PlayerViewModel,
+    uiState: PlayerViewModel.UiState,
+    controlsVisible: Boolean,
     dispatcher: VoiceCommandDispatcher? = null,
+    telemetryStore: VoiceTelemetryStore,
     onResult: (String) -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
+    val startedAtMs = System.currentTimeMillis()
     voiceService.startListening { transcript ->
         scope.launch {
             val snapshot =
@@ -1025,16 +1082,48 @@ private fun startVoiceCapture(
                     isPlaying = player.isPlaying,
                     positionSeconds = player.currentPosition / 1_000L,
                     durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
+                    controlsVisible = controlsVisible,
+                    currentItemTitle = uiState.currentItemTitle,
+                    currentSegmentType = uiState.currentSegment?.type?.toString(),
+                    currentChapterName = currentChapterName(uiState, player.currentPosition),
+                    nextEpisodeTitle = uiState.nextEpisode?.name,
                     audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
                     subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
+                    chapterNames = uiState.currentChapters.mapNotNull { it.name },
                     currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
                     currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
                 )
-            val action = commandCoordinator.parse(transcript, snapshot)
-            val feedback = dispatcher?.dispatch(action) ?: "Voice action unavailable"
+            val parseResult = commandCoordinator.parse(transcript, snapshot)
+            val feedback = dispatchVoiceParseResult(dispatcher, parseResult)
+            telemetryStore.record(
+                VoiceTelemetryEntry(
+                    transcript = transcript,
+                    action = parseResult.action::class.simpleName ?: "Unknown",
+                    strategy = parseResult.strategy.name,
+                    latencyMs = System.currentTimeMillis() - startedAtMs,
+                    success = parseResult.action !is dev.jdtech.jellyfin.player.xr.voice.XrPlayerAction.Unrecognized,
+                )
+            )
             onResult(feedback)
         }
     }
+}
+
+private fun dispatchVoiceParseResult(
+    dispatcher: VoiceCommandDispatcher?,
+    parseResult: VoiceParseResult,
+): String {
+    return dispatcher?.dispatch(parseResult.action) ?: "Voice action unavailable"
+}
+
+private fun currentChapterName(
+    uiState: PlayerViewModel.UiState,
+    currentPositionMs: Long,
+): String? {
+    return uiState.currentChapters
+        .sortedBy { it.startPosition }
+        .lastOrNull { chapter -> currentPositionMs >= chapter.startPosition }
+        ?.name
 }
 
 private fun trackNames(player: Player, trackType: @C.TrackType Int): List<String> {
@@ -1057,6 +1146,102 @@ private fun selectedTrackName(player: Player, trackType: @C.TrackType Int): Stri
 
 private fun groupIsSelected(group: androidx.media3.common.Tracks.Group): Boolean {
     return (0 until group.length).any { group.isTrackSelected(it) }
+}
+
+@Composable
+private fun VoiceSearchDialogContent(
+    query: String,
+    loading: Boolean,
+    error: String?,
+    results: List<SpatialFinItem>,
+    currentItemTitle: String,
+    onPlayResult: (SpatialFinItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(36.dp),
+        color = Color.Black.copy(alpha = 0.92f),
+        modifier = Modifier.width(900.dp).height(760.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Text(
+                text = "Voice Search",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+            )
+            Text(
+                text = "Query: $query",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White.copy(alpha = 0.9f),
+            )
+            Text(
+                text = "Current playback stays active. Close this panel to continue $currentItemTitle.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+            when {
+                loading -> Text("Searching...", color = Color.White)
+                error != null -> Text(error, color = Color(0xFFEF5350))
+                results.isEmpty() -> Text("No results found", color = Color.White.copy(alpha = 0.75f))
+                else -> {
+                    Column(
+                        modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        results.forEach { item ->
+                            Surface(
+                                shape = RoundedCornerShape(24.dp),
+                                color = Color.White.copy(alpha = 0.08f),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.name,
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                        Text(
+                                            text = searchResultTypeLabel(item),
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
+                                    if (canPlayFromVoiceSearch(item)) {
+                                        Button(onClick = { onPlayResult(item) }) {
+                                            Text("Play")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(onClick = onDismiss) { Text("Resume Current Video") }
+            }
+        }
+    }
+}
+
+private fun searchResultTypeLabel(item: SpatialFinItem): String =
+    when (item) {
+        is SpatialFinMovie -> "Movie"
+        is SpatialFinEpisode -> "Episode"
+        is SpatialFinSeason -> "Season"
+        is SpatialFinShow -> "Series"
+        else -> "Item"
+    }
+
+private fun canPlayFromVoiceSearch(item: SpatialFinItem): Boolean {
+    return item.canPlay && (item is SpatialFinMovie || item is SpatialFinEpisode || item is SpatialFinSeason || item is SpatialFinShow)
 }
 
 // ── Control Panel UI ──────────────────────────────────────────────────────────────

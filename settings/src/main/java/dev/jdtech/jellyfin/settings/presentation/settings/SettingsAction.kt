@@ -6,4 +6,6 @@ sealed interface SettingsAction {
     data object OnBackClick : SettingsAction
 
     data class OnUpdate(val preference: Preference) : SettingsAction
+
+    data class OnPreferenceClick(val preference: Preference) : SettingsAction
 }

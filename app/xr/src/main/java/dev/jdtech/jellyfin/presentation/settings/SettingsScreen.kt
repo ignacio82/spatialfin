@@ -122,6 +122,10 @@ fun SettingsScreen(
         onAction = { action ->
             when (action) {
                 is SettingsAction.OnBackClick -> navigateBack()
+                is SettingsAction.OnPreferenceClick -> {
+                    viewModel.onAction(action)
+                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                }
                 is SettingsAction.OnUpdate -> {
                     viewModel.onAction(action)
                     viewModel.loadPreferences(indexes, DeviceType.XR)

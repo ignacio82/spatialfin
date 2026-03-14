@@ -1,11 +1,16 @@
 package dev.jdtech.jellyfin.settings.presentation.settings
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import android.speech.SpeechRecognizer
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.settings.R
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.DeviceType
@@ -13,11 +18,13 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceAppLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceFloatInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceGroup
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceInfo
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import javax.inject.Inject
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +33,11 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 @HiltViewModel
-class SettingsViewModel @Inject constructor(private val appPreferences: AppPreferences) :
+class SettingsViewModel @Inject constructor(
+    private val appPreferences: AppPreferences,
+    @ApplicationContext private val context: Context,
+    private val voiceTelemetryStore: VoiceTelemetryStore,
+) :
     ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
     val state = _state.asStateFlow()
@@ -259,7 +270,26 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                     options = R.array.libass_subtitle_usage_options,
                                                     optionValues = R.array.libass_subtitle_usage_values,
                                                     supportedDeviceTypes = listOf(DeviceType.XR),
-                                                )
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.voice_controls,
+                                                    descriptionStringRes = R.string.voice_controls_summary,
+                                                    iconDrawableId = R.drawable.ic_microphone,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(
+                                                                SettingsEvent.NavigateToSettings(
+                                                                    intArrayOf(
+                                                                        R.string.settings_category_player,
+                                                                        R.string.voice_controls,
+                                                                    )
+                                                                )
+                                                            )
+                                                        }
+                                                    },
+                                                    nestedPreferenceGroups = voicePreferenceGroups(),
+                                                ),
                                             )
                                     ),
                                     PreferenceGroup(
@@ -694,6 +724,12 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
 
     fun onAction(action: SettingsAction) {
         when (action) {
+            is SettingsAction.OnPreferenceClick -> {
+                when (action.preference) {
+                    is PreferenceCategory -> action.preference.onClick(action.preference)
+                    else -> Unit
+                }
+            }
             is SettingsAction.OnUpdate -> {
                 when (action.preference) {
                     is PreferenceSwitch ->
@@ -725,5 +761,96 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
             }
             else -> Unit
         }
+    }
+
+    private fun voicePreferenceGroups(): List<PreferenceGroup> {
+        val handTrackingPermission = "android.permission.HAND_TRACKING"
+        val hasMicPermission =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasHandPermission =
+            ContextCompat.checkSelfPermission(context, handTrackingPermission) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        val speechAvailable = SpeechRecognizer.isRecognitionAvailable(context)
+        val telemetry = voiceTelemetryStore.summary()
+        val recentEntries =
+            telemetry.recentEntries.joinToString("\n") { entry ->
+                "${entry.action} via ${entry.strategy} in ${entry.latencyMs}ms"
+            }.ifBlank { "No voice sessions recorded yet." }
+
+        return listOf(
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceSwitch(
+                            nameStringResource = R.string.voice_controls,
+                            descriptionStringRes = R.string.voice_controls_summary,
+                            iconDrawableId = R.drawable.ic_microphone,
+                            backendPreference = appPreferences.voiceControlEnabled,
+                        ),
+                        PreferenceCategory(
+                            nameStringResource = R.string.voice_permissions,
+                            descriptionStringRes = R.string.voice_permissions_summary,
+                            iconDrawableId = R.drawable.ic_info,
+                            onClick = {
+                                viewModelScope.launch {
+                                    val intent =
+                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                            data = android.net.Uri.parse("package:${context.packageName}")
+                                        }
+                                    eventsChannel.send(SettingsEvent.LaunchIntent(intent))
+                                }
+                            },
+                        ),
+                    )
+            ),
+            PreferenceGroup(
+                nameStringResource = R.string.voice_status,
+                preferences =
+                    listOf(
+                        PreferenceInfo(
+                            title = "Permissions",
+                            description =
+                                "Microphone: ${if (hasMicPermission) "Granted" else "Missing"}\n" +
+                                    "Hand tracking: ${if (hasHandPermission) "Granted" else "Missing"}",
+                            iconDrawableId = R.drawable.ic_info,
+                        ),
+                        PreferenceInfo(
+                            title = "On-device availability",
+                            description =
+                                "Offline speech recognition: ${if (speechAvailable) "Available" else "Unavailable"}\n" +
+                                    "Gemini Nano parsing: Compatible devices only",
+                            iconDrawableId = R.drawable.ic_microphone,
+                        ),
+                        PreferenceInfo(
+                            title = "Example commands",
+                            description =
+                                "pause\nrewind 30 seconds\nturn off subtitles\nswitch to Japanese audio\nsearch for Cowboy Bebop",
+                            iconDrawableId = R.drawable.ic_info,
+                        ),
+                    )
+            ),
+            PreferenceGroup(
+                nameStringResource = R.string.voice_telemetry_dashboard,
+                preferences =
+                    listOf(
+                        PreferenceInfo(
+                            title = "Summary",
+                            description =
+                                "Attempts: ${telemetry.totalAttempts}\n" +
+                                    "Successful: ${telemetry.successfulAttempts}\n" +
+                                    "Average latency: ${telemetry.averageLatencyMs}ms\n" +
+                                    "Last transcript: ${telemetry.lastTranscript}\n" +
+                                    "Last action: ${telemetry.lastAction}",
+                            iconDrawableId = R.drawable.ic_info,
+                        ),
+                        PreferenceInfo(
+                            title = "Recent sessions",
+                            description = recentEntries,
+                            iconDrawableId = R.drawable.ic_info,
+                        ),
+                    )
+            ),
+        )
     }
 }

@@ -16,10 +16,28 @@ data class PlayerStateSnapshot(
     val isPlaying: Boolean = false,
     val positionSeconds: Long = 0,
     val durationSeconds: Long = 0,
+    val controlsVisible: Boolean = false,
+    val currentItemTitle: String = "",
+    val currentSegmentType: String? = null,
+    val currentChapterName: String? = null,
+    val nextEpisodeTitle: String? = null,
     val audioTrackNames: List<String> = emptyList(),
     val subtitleTrackNames: List<String> = emptyList(),
+    val chapterNames: List<String> = emptyList(),
     val currentAudioTrack: String? = null,
     val currentSubtitleTrack: String? = null,
+)
+
+enum class VoiceParseStrategy {
+    KEYWORD,
+    MODEL,
+    FALLBACK,
+}
+
+data class VoiceParseResult(
+    val action: XrPlayerAction,
+    val strategy: VoiceParseStrategy,
+    val normalizedTranscript: String,
 )
 
 class SpatialCommandCoordinator(private val appContext: Context) {
@@ -62,24 +80,38 @@ class SpatialCommandCoordinator(private val appContext: Context) {
     suspend fun parse(
         transcript: String,
         playerState: PlayerStateSnapshot = PlayerStateSnapshot(),
-    ): XrPlayerAction {
+    ): VoiceParseResult {
         val normalized =
             transcript.trim()
                 .lowercase()
                 .replace(Regex("[^a-z0-9\\s]"), " ")
                 .replace(Regex("\\s+"), " ")
                 .trim()
-        if (normalized.isBlank()) return XrPlayerAction.Unrecognized(transcript)
+        if (normalized.isBlank()) {
+            return VoiceParseResult(
+                action = XrPlayerAction.Unrecognized(transcript),
+                strategy = VoiceParseStrategy.FALLBACK,
+                normalizedTranscript = normalized,
+            )
+        }
 
-        keywordMatch(normalized)?.let { return it }
+        keywordMatch(normalized, playerState)?.let {
+            return VoiceParseResult(it, VoiceParseStrategy.KEYWORD, normalized)
+        }
 
         if (isModelAvailable) {
             val nanoResult =
                 withTimeoutOrNull(3_000L) { nanoInfer(transcript = transcript, playerState = playerState) }
-            if (nanoResult != null) return nanoResult
+            if (nanoResult != null) {
+                return VoiceParseResult(nanoResult, VoiceParseStrategy.MODEL, normalized)
+            }
         }
 
-        return XrPlayerAction.Unrecognized(transcript)
+        return VoiceParseResult(
+            action = XrPlayerAction.Unrecognized(transcript),
+            strategy = VoiceParseStrategy.FALLBACK,
+            normalizedTranscript = normalized,
+        )
     }
 
     fun destroy() {
@@ -88,12 +120,16 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         isModelAvailable = false
     }
 
-    private fun keywordMatch(text: String): XrPlayerAction? {
+    private fun keywordMatch(text: String, playerState: PlayerStateSnapshot): XrPlayerAction? {
         val searchQuery = extractSearchQuery(text)
         if (searchQuery != null) return XrPlayerAction.Search(searchQuery)
 
+        if (isSubtitleEnableCommand(text)) return XrPlayerAction.SelectSubtitleTrack()
+
         val subtitleLanguage = extractLanguageTarget(text, "subtitles?|subs?")
         if (subtitleLanguage != null) return XrPlayerAction.SelectSubtitleTrack(language = subtitleLanguage)
+
+        if (isGenericAudioSwitchCommand(text)) return XrPlayerAction.SelectAudioTrack()
 
         val audioLanguage = extractLanguageTarget(text, "audio|dub|track")
         if (audioLanguage != null) return XrPlayerAction.SelectAudioTrack(language = audioLanguage)
@@ -104,6 +140,11 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex("^(play|resume|start|unpause)$")) -> XrPlayerAction.Play
             text.matches(Regex("^(pause|stop|hold)$")) -> XrPlayerAction.Pause
             text.matches(Regex("^(toggle|play pause)$")) -> XrPlayerAction.TogglePlayPause
+            text.matches(Regex(".*(next chapter|skip chapter).*")) -> {
+                playerState.chapterNames
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { XrPlayerAction.SeekForward(60) }
+            }
             text.matches(Regex(".*(skip intro|skip opening).*")) -> XrPlayerAction.SkipIntro
             text.matches(Regex(".*(skip outro|skip ending|skip credits).*")) -> XrPlayerAction.SkipOutro
             text.matches(Regex(".*(next episode|play next|next one).*")) -> XrPlayerAction.NextEpisode
@@ -113,6 +154,7 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
             text.matches(Regex(".*(hide controls|close controls).*")) -> XrPlayerAction.HideControls
             text.matches(Regex("^(back|go back|exit)$")) -> XrPlayerAction.GoBack
+            extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
             text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
             }
@@ -138,6 +180,27 @@ class SpatialCommandCoordinator(private val appContext: Context) {
                 text.contains(token)
             }
         return mentionsSubtitles && mentionsDisableIntent
+    }
+
+    private fun isSubtitleEnableCommand(text: String): Boolean {
+        val mentionsSubtitles =
+            listOf("subtitle", "subtitles", "subs", "captions").any { token -> text.contains(token) }
+        val mentionsEnableIntent =
+            listOf("on", "enable", "show", "turn on", "restore", "back on").any { token ->
+                text.contains(token)
+            }
+        return mentionsSubtitles && mentionsEnableIntent
+    }
+
+    private fun isGenericAudioSwitchCommand(text: String): Boolean {
+        return listOf(
+            "switch audio",
+            "change audio",
+            "other audio",
+            "next audio",
+            "switch dub",
+            "change dub",
+        ).any(text::contains)
     }
 
     private fun extractSearchQuery(text: String): String? {
@@ -170,6 +233,17 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         return null
     }
 
+    private fun extractSeekToPosition(text: String): Long? {
+        if (!text.contains("seek to") && !text.contains("go to") && !text.contains("jump to")) {
+            return null
+        }
+        val hours = Regex("(\\d+)\\s*(hours?|hrs?|h\\b)").find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        val minutes = Regex("(\\d+)\\s*(minutes?|mins?|m\\b)").find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        val seconds = Regex("(\\d+)\\s*(seconds?|secs?|s\\b)").find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        val total = hours * 3600 + minutes * 60 + seconds
+        return total.takeIf { it > 0L }
+    }
+
     private suspend fun nanoInfer(
         transcript: String,
         playerState: PlayerStateSnapshot,
@@ -193,8 +267,14 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         Current state:
         - Playing: ${state.isPlaying}
         - Position: ${state.positionSeconds}s / ${state.durationSeconds}s
+        - Controls visible: ${state.controlsVisible}
+        - Current item: ${state.currentItemTitle}
+        - Current segment: ${state.currentSegmentType ?: "none"}
+        - Current chapter: ${state.currentChapterName ?: "unknown"}
+        - Next episode: ${state.nextEpisodeTitle ?: "unknown"}
         - Audio tracks: ${state.audioTrackNames.joinToString(", ").ifBlank { "unknown" }}
         - Subtitle tracks: ${state.subtitleTrackNames.joinToString(", ").ifBlank { "unknown" }}
+        - Chapters: ${state.chapterNames.joinToString(", ").ifBlank { "unknown" }}
         - Current audio: ${state.currentAudioTrack ?: "unknown"}
         - Current subtitle: ${state.currentSubtitleTrack ?: "none"}
 
