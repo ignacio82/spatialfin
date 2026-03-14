@@ -1,5 +1,9 @@
 package dev.jdtech.jellyfin.player.xr
 
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import android.graphics.Bitmap
 import android.util.TypedValue
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -123,11 +127,19 @@ fun SpatialPlayerScreen(
     itemId: UUID,
     itemKind: String,
     startFromBeginning: Boolean,
+    libassRenderer: LibassRenderer?,
     onBackClick: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
+    val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+    
+    // --- Libass state ---
+    var useLibass by remember { mutableStateOf(false) }
+    var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var hasLibassContent by remember { mutableStateOf(false) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
 
     // Build caption style from user preferences so the selected colours / background
     // are honoured instead of the system default (which renders a black background box).
@@ -224,9 +236,38 @@ fun SpatialPlayerScreen(
             override fun onCues(cueGroup: CueGroup) {
                 currentCues = cueGroup.cues
             }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    libassRenderer?.clearCache()
+                }
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
+    }
+
+    // Initialize libass when track info becomes available
+    LaunchedEffect(viewModel.player.currentTracks) {
+        // We use empty list for genres as we just care about ASS track presence for now
+        useLibass = libassRenderer != null && LibassSubtitleHelper.shouldUseLibass(viewModel.player, emptyList(), libassUsagePref)
+    }
+
+    // Render libass subtitles in the playback polling loop
+    LaunchedEffect(useLibass) {
+        while (useLibass) {
+            val result = libassRenderer?.renderFrame(currentPosition)
+            if (result != null) {
+                hasLibassContent = result.hasContent
+                if (result.bitmap != null) {
+                    libassBitmap = result.bitmap
+                }
+            }
+            delay(33) // ~30fps for subtitle updates (smooth for \move, \fad)
+        }
     }
 
     // Navigate back when playback ends (movie finished or last episode of season)
@@ -367,6 +408,14 @@ fun SpatialPlayerScreen(
     // XR guide recommended spawn depth: 1.75 m (-1750 dp) from user.
     val uiAnchorZDp = -1750f
 
+    LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
+        val renderWidth = (subtitlePanelWidthDp * density.density).toInt().coerceIn(1280, 7680)
+        val renderHeight = (subtitlePanelHeightDp * density.density).toInt().coerceIn(720, 4320)
+        val videoWidth = player.videoSize.width
+        val videoHeight = player.videoSize.height
+        libassRenderer?.resize(renderWidth, renderHeight, videoWidth, videoHeight)
+    }
+
     // Controls at same depth as UI anchor.
     val controlsZDp = -1750f
 
@@ -378,62 +427,81 @@ fun SpatialPlayerScreen(
         // Spans the full projected video area so PGS cue positions map correctly.
         // In curved mode the panel sits at the front of the cylinder (uiAnchorZDp already
         // incorporates the depth; uiExtraZDp is 0).
-        SpatialPanel(
-            modifier = SubspaceModifier
-                .width(subtitlePanelWidthDp.dp)
-                .height(subtitlePanelHeightDp.dp)
-                .offset(x = 0.dp, y = 0.dp, z = uiAnchorZDp.dp),
-        ) {
-            AndroidView(
-                factory = { context ->
-                    SubtitleView(context).apply {
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        // 4 % bottom padding keeps text off the very edge of the panel,
-                        // matching the TV / cinema convention without pushing it to the middle.
-                        setBottomPaddingFraction(0.04f)
-                        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                        // Apply user-selected style — do NOT call setUserDefaultStyle() here:
-                        // that method overrides our fixed text size with a fractional one and
-                        // forces the OS system caption style (black background box).
-                        setStyle(captionStyle)
-                    }
-                },
-                update = { view ->
-                    // Re-apply style and size on every update to prevent the OS from
-                    // silently re-applying the system caption style (GEMINI.md guidance).
-                    view.setStyle(captionStyle)
-                    view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                    // Selective bottom-anchoring for the IMAX experience:
-                    //
-                    //  • Unpositioned cues (SRT/VTT, lineType == TYPE_UNSET):
-                    //    left as-is — SubtitleView places them at the bottom via
-                    //    setBottomPaddingFraction. ✓
-                    //
-                    //  • Top-positioned cues (line < 0.15, e.g. signs/credits at top):
-                    //    left as-is — respect intentional top placement. ✓
-                    //
-                    //  • Bottom-positioned cues (line > 0.85, e.g. PGS for movies):
-                    //    left as-is — already near the bottom, movies display correctly. ✓
-                    //
-                    //  • Middle-zone cues (0.15 ≤ line < 0.85, LINE_TYPE_FRACTION):
-                    //    Media3's ASS/SSA decoder can produce these for anime dialogue
-                    //    that should visually appear at the bottom.  Push them down.
-                    val processedCues = currentCues.map { cue ->
-                        val isMidZone = cue.lineType == Cue.LINE_TYPE_FRACTION &&
-                            cue.line >= 0.15f && cue.line < 0.85f
-                        if (isMidZone) {
-                            cue.buildUpon()
-                                .setLine(0.95f, Cue.LINE_TYPE_FRACTION)
-                                .setLineAnchor(Cue.ANCHOR_TYPE_END)
-                                .build()
-                        } else {
-                            cue
+        if (useLibass) {
+            val currentBitmap = libassBitmap
+            if (hasLibassContent && currentBitmap != null) {
+                SpatialPanel(
+                    modifier = SubspaceModifier
+                        .width(subtitlePanelWidthDp.dp)
+                        .height(subtitlePanelHeightDp.dp)
+                        .offset(x = 0.dp, y = 0.dp, z = (uiAnchorZDp + 50f).dp), // 5cm in front of video to avoid Z-fighting
+                ) {
+                    Image(
+                        painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+            }
+        } else {
+            SpatialPanel(
+                modifier = SubspaceModifier
+                    .width(subtitlePanelWidthDp.dp)
+                    .height(subtitlePanelHeightDp.dp)
+                    .offset(x = 0.dp, y = 0.dp, z = uiAnchorZDp.dp),
+            ) {
+                AndroidView(
+                    factory = { context ->
+                        SubtitleView(context).apply {
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            // 4 % bottom padding keeps text off the very edge of the panel,
+                            // matching the TV / cinema convention without pushing it to the middle.
+                            setBottomPaddingFraction(0.04f)
+                            setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                            // Apply user-selected style — do NOT call setUserDefaultStyle() here:
+                            // that method overrides our fixed text size with a fractional one and
+                            // forces the OS system caption style (black background box).
+                            setStyle(captionStyle)
                         }
-                    }
-                    view.setCues(processedCues)
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
+                    },
+                    update = { view ->
+                        // Re-apply style and size on every update to prevent the OS from
+                        // silently re-applying the system caption style (GEMINI.md guidance).
+                        view.setStyle(captionStyle)
+                        view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                        // Selective bottom-anchoring for the IMAX experience:
+                        //
+                        //  • Unpositioned cues (SRT/VTT, lineType == TYPE_UNSET):
+                        //    left as-is — SubtitleView places them at the bottom via
+                        //    setBottomPaddingFraction. ✓
+                        //
+                        //  • Top-positioned cues (line < 0.15, e.g. signs/credits at top):
+                        //    left as-is — respect intentional top placement. ✓
+                        //
+                        //  • Bottom-positioned cues (line > 0.85, e.g. PGS for movies):
+                        //    left as-is — already near the bottom, movies display correctly. ✓
+                        //
+                        //  • Middle-zone cues (0.15 ≤ line < 0.85, LINE_TYPE_FRACTION):
+                        //    Media3's ASS/SSA decoder can produce these for anime dialogue
+                        //    that should visually appear at the bottom.  Push them down.
+                        val processedCues = currentCues.map { cue ->
+                            val isMidZone = cue.lineType == Cue.LINE_TYPE_FRACTION &&
+                                cue.line >= 0.15f && cue.line < 0.85f
+                            if (isMidZone) {
+                                cue.buildUpon()
+                                    .setLine(0.95f, Cue.LINE_TYPE_FRACTION)
+                                    .setLineAnchor(Cue.ANCHOR_TYPE_END)
+                                    .build()
+                            } else {
+                                cue
+                            }
+                        }
+                        view.setCues(processedCues)
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         // ── Control Panel ────────────────────────────────────────────────────────────

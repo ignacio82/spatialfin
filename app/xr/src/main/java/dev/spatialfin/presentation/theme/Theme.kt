@@ -12,6 +12,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import dev.jdtech.jellyfin.core.presentation.theme.Spacings
 
+@OptIn(androidx.xr.compose.material3.ExperimentalMaterial3XrApi::class)
 @Composable
 fun SpatialFinTheme(
     darkTheme: Boolean? = isSystemInDarkTheme(),

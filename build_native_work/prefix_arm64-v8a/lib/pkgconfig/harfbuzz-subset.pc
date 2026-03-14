@@ -1,0 +1,10 @@
+prefix=/home/ignacio/SpatialFin/build_native_work/prefix_arm64-v8a
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: harfbuzz-subset
+Description: HarfBuzz font subsetter
+Version: 10.0.1
+Requires: harfbuzz =  10.0.1
+Libs: -L${libdir} -lharfbuzz-subset -lm
+Cflags: -I${includedir}/harfbuzz

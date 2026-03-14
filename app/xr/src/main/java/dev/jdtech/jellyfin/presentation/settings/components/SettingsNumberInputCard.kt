@@ -48,14 +48,16 @@ fun SettingsIntInputCard(
     )
 
     if (showDialog) {
-        SettingsIntInputDialog(
-            preference = preference,
-            onUpdate = { value ->
-                showDialog = false
-                onUpdate(value)
-            },
-            onDismissRequest = { showDialog = false },
-        )
+        androidx.xr.compose.spatial.SpatialDialog(onDismissRequest = { showDialog = false }) {
+            SettingsIntInputDialog(
+                preference = preference,
+                onUpdate = { value ->
+                    showDialog = false
+                    onUpdate(value)
+                },
+                onDismissRequest = { showDialog = false },
+            )
+        }
     }
 }
 
@@ -79,14 +81,16 @@ fun SettingsLongInputCard(
     )
 
     if (showDialog) {
-        SettingsLongInputDialog(
-            preference = preference,
-            onUpdate = { value ->
-                showDialog = false
-                onUpdate(value)
-            },
-            onDismissRequest = { showDialog = false },
-        )
+        androidx.xr.compose.spatial.SpatialDialog(onDismissRequest = { showDialog = false }) {
+            SettingsLongInputDialog(
+                preference = preference,
+                onUpdate = { value ->
+                    showDialog = false
+                    onUpdate(value)
+                },
+                onDismissRequest = { showDialog = false },
+            )
+        }
     }
 }
 

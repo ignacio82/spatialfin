@@ -251,6 +251,14 @@ class SettingsViewModel @Inject constructor(private val appPreferences: AppPrefe
                                                     descriptionStringRes = R.string.xr_subtitle_size_summary,
                                                     backendPreference = appPreferences.xrSubtitleSize,
                                                     supportedDeviceTypes = listOf(DeviceType.XR),
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.libass_subtitle_usage,
+                                                    descriptionStringRes = R.string.libass_subtitle_usage_summary,
+                                                    backendPreference = appPreferences.libassSubtitleUsage,
+                                                    options = R.array.libass_subtitle_usage_options,
+                                                    optionValues = R.array.libass_subtitle_usage_values,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
                                                 )
                                             )
                                     ),

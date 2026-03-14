@@ -15,6 +15,7 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Stereoscopic 3D** — Automatic detection and rendering of SBS, top-bottom, and other 3D formats.
 - **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
+- **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Offline Playback** — Download media for offline viewing.
 

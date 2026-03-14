@@ -65,7 +65,7 @@ fun SettingsScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.PHONE) }
+    LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
@@ -124,7 +124,7 @@ fun SettingsScreen(
                 is SettingsAction.OnBackClick -> navigateBack()
                 is SettingsAction.OnUpdate -> {
                     viewModel.onAction(action)
-                    viewModel.loadPreferences(indexes, DeviceType.PHONE)
+                    viewModel.loadPreferences(indexes, DeviceType.XR)
                 }
             }
         },

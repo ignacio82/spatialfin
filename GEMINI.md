@@ -57,7 +57,26 @@ To ensure low-latency movement of complex UIs (e.g., a video player with control
 
 ### Subtitle Handling
 - **Text-Based (SRT/VTT):** Render in a separate `SpatialPanel` at a comfortable depth for readability.
+- **Advanced Rendering (ASS/SSA):** Use the integrated `libass` JNI renderer for pixel-perfect anime subtitles. This renderer handles complex typesetting, drawings, and animations that standard Media3 `SubtitleView` cannot.
+- **Raycast Passthrough (Crucial):** Always conditionally compose the subtitle `SpatialPanel`. If no subtitles are visible (`hasContent == false`), remove the panel from the `Subspace` entirely to allow users to interact with the video or controls behind it.
 - **Accessibility:** Bridge app-level subtitle preferences to `CaptionStyleCompat` when using Media3's `SubtitleView` to ensure user styling is respected over system defaults. Proactively re-apply styles in the `update` block of `AndroidView` to prevent OS-level overrides when system captions are disabled.
+
+## Stability & Performance Mandates
+
+### JNI & Native Safety
+- **Guarded Initialization:** Native methods MUST NOT be called before `System.loadLibrary` is confirmed. Implement an `isAvailable()` check and invoke it within the class `init()` to prevent `UnsatisfiedLinkError` during early activity lifecycles.
+- **Thread Affinity:** libass is not thread-safe. All native calls (init, render, destroy) MUST be dispatched to a dedicated `HandlerThread` to prevent race conditions and UI stutters.
+
+### High-Fidelity Subtitle Rendering
+- **8K Target Resolution:** XR displays have extremely high angular density. Render subtitle bitmaps at up to 2.0x density (e.g., `coerceIn(1280, 7680)`) to prevent "mushed" text and scaling artifacts.
+- **Aspect Ratio Alignment:** Always call `ass_set_storage_size` in the native renderer using the original video dimensions (`player.videoSize`). This is critical for aligning complex anime typesetting (signs, overlays) with the video frame.
+- **Complex Shaping:** Force `ASS_SHAPING_COMPLEX` (HarfBuzz) and `ASS_HINTING_LIGHT` in the native renderer to ensure sub-pixel kerning and legible character spacing.
+- **Compose Filtering:** Use `BitmapPainter(filterQuality = FilterQuality.High)` when rendering the native bitmap in a `SpatialPanel` to ensure smooth edges in 3D perspective.
+
+### Spatial Dialogs & UI
+- **No Nested Dialogs:** Do not place 2D `AlertDialog` or `Popup` components inside a `SpatialDialog`. This causes z-fighting and input capture failure. Use a high-fidelity `Surface` with `RoundedCornerShape(32.dp)` as the root content for any `SpatialDialog`.
+- **Constraint Management:** `LazyColumn` or other scrollable lists inside a `SpatialDialog` will crash with "infinite height" errors unless the dialog container has a `Modifier.heightIn(max = ...)` constraint.
+- **Experimental Overrides:** Avoid global `EnableXrComponentOverrides` if using `NavigationRail` or standard Material 3 items, as it can cause `NoSuchFieldError` due to binary incompatibilities. Prefer surgical application to specific containers.
 
 ### Mode Transitions
 - **FSM (Full Space Mode) Priority:** SpatialFin is designed as an immersive XR experience. The app should proactively request Full Space Mode (`xrSession.scene.requestFullSpaceMode()`) upon launch to occupy the full 3D volume.

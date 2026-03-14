@@ -83,6 +83,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 24)
     val subtitleTextColor = Preference("pref_subtitle_text_color", android.graphics.Color.WHITE)
     val subtitleBackgroundColor = Preference("pref_subtitle_background_color", android.graphics.Color.TRANSPARENT)
+    val libassSubtitleUsage = Preference("pref_libass_subtitle_usage", "auto")
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)

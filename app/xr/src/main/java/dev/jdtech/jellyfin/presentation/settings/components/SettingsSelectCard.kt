@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.presentation.settings.components
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -38,7 +39,7 @@ fun SettingsSelectCard(
     val notSetString = stringResource(CoreR.string.not_set)
 
     val options =
-        remember(preference.nameStringResource) {
+        remember(optionValues, optionNames, preference.optionsIncludeNull) {
             val options = mutableListOf<Pair<String?, String>>()
 
             if (preference.optionsIncludeNull) {
@@ -59,7 +60,7 @@ fun SettingsSelectCard(
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.fillMaxWidth().padding(MaterialTheme.spacings.medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -84,15 +85,17 @@ fun SettingsSelectCard(
     }
 
     if (showDialog) {
-        SettingsSelectDialog(
-            preference = preference,
-            options = options,
-            onUpdate = { value ->
-                showDialog = false
-                onUpdate(value)
-            },
-            onDismissRequest = { showDialog = false },
-        )
+        androidx.xr.compose.spatial.SpatialDialog(onDismissRequest = { showDialog = false }) {
+            SettingsSelectDialog(
+                preference = preference,
+                options = options,
+                onUpdate = { value ->
+                    showDialog = false
+                    onUpdate(value)
+                },
+                onDismissRequest = { showDialog = false },
+            )
+        }
     }
 }
 

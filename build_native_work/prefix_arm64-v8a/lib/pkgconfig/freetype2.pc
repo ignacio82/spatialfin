@@ -1,0 +1,10 @@
+prefix=/home/ignacio/SpatialFin/build_native_work/prefix_arm64-v8a
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: FreeType 2
+Description: A free, high-quality, and portable font engine.
+URL: https://freetype.org
+Version: 26.2.20
+Libs: -L${libdir} -lfreetype
+Cflags: -I${includedir}/freetype2

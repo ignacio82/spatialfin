@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.player.xr
 
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.Looper
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -15,6 +16,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.text.TextOutput
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateSuccess
@@ -33,7 +41,9 @@ class XrPlayerActivity : AppCompatActivity() {
     private var xrSession: Session? = null
     private var mediaSession: MediaSession? = null
     private var currentStereoMode: String = "mono"
+    private var libassRenderer: LibassRenderer? = null
 
+    @OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -49,6 +59,47 @@ class XrPlayerActivity : AppCompatActivity() {
         val itemKind = intent.extras!!.getString("itemKind") ?: ""
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
         currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
+
+        val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+
+        // Initialize LibassRenderer (will resize properly later) if not disabled
+        if (libassUsagePref != "never") {
+            libassRenderer = LibassRenderer(1920, 1080).apply { init() }
+        }
+
+        // Replace PlayerViewModel's ExoPlayer with one that uses LibassTextRenderer
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildTextRenderers(
+                context: android.content.Context,
+                output: TextOutput,
+                outputLooper: Looper,
+                extensionRendererMode: Int,
+                out: java.util.ArrayList<Renderer>
+            ) {
+                libassRenderer?.let {
+                    out.add(LibassTextRenderer(it, onTrackInitialized = {}))
+                }
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+            }
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+         .setEnableDecoderFallback(true)
+
+        val trackSelector = DefaultTrackSelector(this)
+        val audioAttributes = AudioAttributes.Builder()
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .setUsage(C.USAGE_MEDIA)
+            .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
+            .build()
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
+            .setAudioAttributes(audioAttributes, true)
+            .setTrackSelector(trackSelector)
+            .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
+            .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
+            .setPauseAtEndOfMediaItems(true)
+            .build()
+        
+        viewModel.replacePlayer(player)
 
         // Initialize XR Session
         try {
@@ -81,6 +132,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         itemId = itemId,
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
+                        libassRenderer = libassRenderer,
                         onBackClick = { finish() }
                     )
                 } else {
@@ -131,5 +183,6 @@ class XrPlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         xrSession = null
+        libassRenderer?.destroy()
     }
 }
