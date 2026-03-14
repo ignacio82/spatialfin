@@ -2,14 +2,13 @@
 set -e
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <NDK_PATH> [ABIs...]"
-    echo "Example: $0 /path/to/android-ndk-r26b arm64-v8a armeabi-v7a x86_64"
+    echo "Usage: $0 <NDK_PATH>"
+    echo "Example: $0 /path/to/android-ndk-r26b"
     exit 1
 fi
 
 NDK_PATH=$1
-shift
-ABIS=${@:-"arm64-v8a armeabi-v7a x86_64"}
+ABIS="arm64-v8a"
 MIN_SDK=26 # Typical minSdk for modern apps
 
 HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -33,23 +32,9 @@ LIBASS_VER="0.17.3"
 for ABI in $ABIS; do
     echo "Building for $ABI..."
     
-    case $ABI in
-        arm64-v8a)
-            TARGET="aarch64-linux-android"
-            CPU_FAMILY="aarch64"
-            CPU="armv8-a"
-            ;;
-        armeabi-v7a)
-            TARGET="armv7a-linux-androideabi"
-            CPU_FAMILY="arm"
-            CPU="armv7-a"
-            ;;
-        x86_64)
-            TARGET="x86_64-linux-android"
-            CPU_FAMILY="x86_64"
-            CPU="x86_64"
-            ;;
-    esac
+    TARGET="aarch64-linux-android"
+    CPU_FAMILY="aarch64"
+    CPU="armv8-a"
 
     PREFIX="$BUILD_DIR/prefix_$ABI"
     mkdir -p "$PREFIX"
@@ -104,6 +89,7 @@ EOF
         -lass -lharfbuzz -lfribidi -lfreetype \
         -landroid -llog -lm -lz \
         -o "$OUT_DIR/$ABI/libass_jni.so"
+    "$TOOLCHAIN/bin/llvm-strip" "$OUT_DIR/$ABI/libass_jni.so"
 done
 
 echo "Done."

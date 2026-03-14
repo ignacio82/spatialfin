@@ -36,6 +36,8 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
+    private var logFileTree: LogFileTree? = null
+
     override fun onCreate() {
         super.onCreate()
 
@@ -43,6 +45,10 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
 
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
+        }
+
+        if (appPreferences.getValue(appPreferences.loggingEnabled)) {
+            installLogFileTree()
         }
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
@@ -55,6 +61,26 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
                 }
             AppCompatDelegate.setDefaultNightMode(mode)
         }
+    }
+
+    private fun installLogFileTree() {
+        try {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+            val file = File(dir, "spatialfin-log-$timestamp.txt")
+            val tree = LogFileTree(file)
+            Timber.plant(tree)
+            logFileTree = tree
+            Timber.i("LogFileTree: writing to %s", file.absolutePath)
+        } catch (e: Exception) {
+            Timber.e(e, "LogFileTree: failed to open log file")
+        }
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        logFileTree?.close()
     }
 
     private fun installCrashLogger() {

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import java.nio.ByteBuffer
+import timber.log.Timber
 
 /**
  * Result of a single subtitle render call.
@@ -55,7 +56,9 @@ class LibassRenderer(
     private val thread = HandlerThread("libass-renderer").also { it.start() }
     private val handler = Handler(thread.looper)
 
-    // Reusable bitmap to avoid GC pressure (subtitle frames update ~4-10 fps)
+    // Reusable bitmap for the current frame. Never recycle eagerly: Compose may still
+    // be drawing a previously published bitmap on the UI thread when resize/destroy
+    // happens, and recycling it here will crash with "trying to use a recycled bitmap".
     private var cachedBitmap: Bitmap? = null
 
     // Track whether the last render had content — used by callers to decide
@@ -65,8 +68,10 @@ class LibassRenderer(
 
     fun init() {
         if (!isAvailable()) return
+        Timber.i("init: %dx%d", width, height)
         handler.post {
             nativeCtx = nativeInit(width, height)
+            Timber.i("init: nativeCtx=%d", nativeCtx)
         }
     }
 
@@ -116,11 +121,11 @@ class LibassRenderer(
      * @param storageH pixel height of the original video.
      */
     fun resize(newWidth: Int, newHeight: Int, storageW: Int = 0, storageH: Int = 0) {
+        Timber.i("resize: %dx%d → %dx%d  storage=%dx%d", width, height, newWidth, newHeight, storageW, storageH)
         width = newWidth
         height = newHeight
         handler.post {
             if (nativeCtx != 0L) nativeResize(nativeCtx, newWidth, newHeight, storageW, storageH)
-            cachedBitmap?.recycle()
             cachedBitmap = null
         }
     }
@@ -130,9 +135,13 @@ class LibassRenderer(
      * Returns a RenderResult indicating whether content is visible.
      */
     fun renderFrame(timeMs: Long): RenderResult {
-        var result = RenderResult(hasContent = false)
+        // Default to the last known content state so that when the native layer returns null
+        // ("no change — reuse cached frame"), we preserve visibility instead of hiding the panel.
+        var result = RenderResult(hasContent = hasActiveSubtitles)
         val latch = java.util.concurrent.CountDownLatch(1)
-        handler.post {
+        // Subtitle tracks with many ASS events can enqueue thousands of chunk updates at start.
+        // Rendering must preempt that backlog or the panel will freeze on the first visible line.
+        handler.postAtFrontOfQueue {
             if (nativeCtx != 0L) {
                 val nativeResult = nativeRenderFrame(nativeCtx, timeMs)
                 if (nativeResult != null) {
@@ -142,20 +151,32 @@ class LibassRenderer(
                         val buffer = nativeGetBuffer(nativeCtx)
                         if (buffer != null) {
                             buffer.rewind()
-                            val bitmap = cachedBitmap ?: Bitmap.createBitmap(
+                            val bitmap = cachedBitmap?.let {
+                                if (it.width == width && it.height == height) it
+                                else {
+                                    Timber.w("renderFrame: bitmap size mismatch %dx%d vs %dx%d — replacing without recycle",
+                                        it.width, it.height, width, height)
+                                    null
+                                }
+                            } ?: Bitmap.createBitmap(
                                 width, height, Bitmap.Config.ARGB_8888
-                            ).also { 
+                            ).also {
                                 it.setHasAlpha(true)
-                                cachedBitmap = it 
+                                cachedBitmap = it
+                                Timber.d("renderFrame: created bitmap %dx%d", width, height)
                             }
                             bitmap.copyPixelsFromBuffer(buffer)
+                            val dirtyW = nativeResult[3]
+                            val dirtyH = nativeResult[4]
+                            Timber.d("renderFrame: dirty=(%d,%d) %dx%d",
+                                nativeResult[1], nativeResult[2], dirtyW, dirtyH)
                             result = RenderResult(
                                 hasContent = true,
                                 bitmap = bitmap,
                                 dirtyX = nativeResult[1],
                                 dirtyY = nativeResult[2],
-                                dirtyW = nativeResult[3],
-                                dirtyH = nativeResult[4],
+                                dirtyW = dirtyW,
+                                dirtyH = dirtyH,
                             )
                         }
                     } else {
@@ -177,7 +198,6 @@ class LibassRenderer(
             }
             thread.quitSafely()
         }
-        cachedBitmap?.recycle()
         cachedBitmap = null
     }
 

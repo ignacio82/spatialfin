@@ -42,8 +42,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -139,6 +141,7 @@ fun SpatialPlayerScreen(
     var useLibass by remember { mutableStateOf(false) }
     var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var hasLibassContent by remember { mutableStateOf(false) }
+    var libassFrameVersion by remember { mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
 
     // Build caption style from user preferences so the selected colours / background
@@ -235,6 +238,13 @@ fun SpatialPlayerScreen(
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
                 currentCues = cueGroup.cues
+                if (cueGroup.cues.isNotEmpty()) {
+                    // Log cue summary only — individual cue spam floods logcat when the
+                    // fallback renderer receives raw ASS drawing commands or karaoke chars.
+                    // If useLibass is working, this callback should produce no visible subtitles.
+                    val first = cueGroup.cues[0].text?.take(60)
+                    Timber.d("subtitle: fallback onCues count=%d first='%s'", cueGroup.cues.size, first)
+                }
             }
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
@@ -251,19 +261,32 @@ fun SpatialPlayerScreen(
     }
 
     // Initialize libass when track info becomes available
-    LaunchedEffect(viewModel.player.currentTracks) {
-        // We use empty list for genres as we just care about ASS track presence for now
-        useLibass = libassRenderer != null && LibassSubtitleHelper.shouldUseLibass(viewModel.player, emptyList(), libassUsagePref)
+    LaunchedEffect(viewModel.player.currentTracks, currentStereoMode) {
+        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
+        useLibass = !stereoPlayback &&
+            libassRenderer != null &&
+            LibassSubtitleHelper.shouldUseLibass(viewModel.player, emptyList(), libassUsagePref)
+        Timber.i(
+            "subtitle: useLibass=%b (renderer=%b pref=%s stereoMode=%s)",
+            useLibass,
+            libassRenderer != null,
+            libassUsagePref,
+            currentStereoMode,
+        )
     }
 
     // Render libass subtitles in the playback polling loop
     LaunchedEffect(useLibass) {
         while (useLibass) {
-            val result = libassRenderer?.renderFrame(currentPosition)
+            // Use player.currentPosition directly instead of the 500ms-polled state
+            // to ensure smooth animations and correct timing at 30fps.
+            val pos = player.currentPosition
+            val result = libassRenderer?.renderFrame(pos)
             if (result != null) {
                 hasLibassContent = result.hasContent
                 if (result.bitmap != null) {
                     libassBitmap = result.bitmap
+                    libassFrameVersion++
                 }
             }
             delay(33) // ~30fps for subtitle updates (smooth for \move, \fad)
@@ -394,26 +417,32 @@ fun SpatialPlayerScreen(
 
     // --- Layout calculations ---
     val videoDepth = 5.0f
-    // XR guide: spawn panel center 1.75 m from user's line of sight (max depth: 5 m).
-    val subtitleDepth = 1.75f
-    val subtitleScaleFactor = subtitleDepth / videoDepth
+    val uiDepth = 1.75f
+    val uiScaleFactor = uiDepth / videoDepth
+    val subtitleScaleFactor = uiDepth / videoDepth
     val scaledVideoWidthDp = videoWidth * subtitleScaleFactor * 1000f
     val scaledVideoHeightDp = videoHeight * subtitleScaleFactor * 1000f
-    val subtitlePanelWidthDp = scaledVideoWidthDp.coerceAtMost(2500f)
-    val subtitlePanelHeightDp = scaledVideoHeightDp.coerceAtMost(2500f)
+    val subtitlePanelWidthDp = scaledVideoWidthDp
+    val subtitlePanelHeightDp = scaledVideoHeightDp
     val finalSubtitleSize = xrSubtitleSize * (subtitlePanelHeightDp / 600f).coerceAtLeast(1f)
+    val controlsReferenceHeightDp = videoHeight * uiScaleFactor * 1000f
     // Controls sit further below the video surface to prevent overlap
-    val controlsPanelY = -(scaledVideoHeightDp / 2f + 1400f)
+    val controlsPanelY = -(controlsReferenceHeightDp / 2f + 1400f)
 
+    val subtitlePanelZDp = -uiDepth * 1000f
     // XR guide recommended spawn depth: 1.75 m (-1750 dp) from user.
-    val uiAnchorZDp = -1750f
+    val uiAnchorZDp = -uiDepth * 1000f
 
     LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
         val renderWidth = (subtitlePanelWidthDp * density.density).toInt().coerceIn(1280, 7680)
         val renderHeight = (subtitlePanelHeightDp * density.density).toInt().coerceIn(720, 4320)
-        val videoWidth = player.videoSize.width
-        val videoHeight = player.videoSize.height
-        libassRenderer?.resize(renderWidth, renderHeight, videoWidth, videoHeight)
+        val videoW = player.videoSize.width
+        val videoH = player.videoSize.height
+        // Only resize when we have valid video dimensions so storage size is set correctly.
+        // Without storage size, libass misscales fonts authored at a different resolution.
+        if (videoW > 0 && videoH > 0) {
+            libassRenderer?.resize(renderWidth, renderHeight, videoW, videoH)
+        }
     }
 
     // Controls at same depth as UI anchor.
@@ -434,14 +463,16 @@ fun SpatialPlayerScreen(
                     modifier = SubspaceModifier
                         .width(subtitlePanelWidthDp.dp)
                         .height(subtitlePanelHeightDp.dp)
-                        .offset(x = 0.dp, y = 0.dp, z = (uiAnchorZDp + 50f).dp), // 5cm in front of video to avoid Z-fighting
+                        .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
                 ) {
-                    Image(
-                        painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                    )
+                    key(libassFrameVersion) {
+                        Image(
+                            painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
                 }
             }
         } else {
@@ -449,7 +480,7 @@ fun SpatialPlayerScreen(
                 modifier = SubspaceModifier
                     .width(subtitlePanelWidthDp.dp)
                     .height(subtitlePanelHeightDp.dp)
-                    .offset(x = 0.dp, y = 0.dp, z = uiAnchorZDp.dp),
+                    .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
             ) {
                 AndroidView(
                     factory = { context ->

@@ -21,6 +21,7 @@ import androidx.media3.common.C
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
@@ -59,12 +60,20 @@ class XrPlayerActivity : AppCompatActivity() {
         val itemKind = intent.extras!!.getString("itemKind") ?: ""
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
         currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
+        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
 
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+        Timber.i(
+            "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
+            libassUsagePref,
+            LibassRenderer.isAvailable(),
+            currentStereoMode,
+        )
 
-        // Initialize LibassRenderer (will resize properly later) if not disabled
-        if (libassUsagePref != "never") {
+        if (!stereoPlayback) {
             libassRenderer = LibassRenderer(1920, 1080).apply { init() }
+        } else {
+            Timber.i("subtitle: stereo playback detected — skipping libass renderer registration")
         }
 
         // Replace PlayerViewModel's ExoPlayer with one that uses LibassTextRenderer
@@ -76,13 +85,26 @@ class XrPlayerActivity : AppCompatActivity() {
                 extensionRendererMode: Int,
                 out: java.util.ArrayList<Renderer>
             ) {
-                libassRenderer?.let {
-                    out.add(LibassTextRenderer(it, onTrackInitialized = {}))
+                val renderer = libassRenderer
+                if (renderer != null) {
+                    out.add(LibassTextRenderer(renderer, onTrackInitialized = {}, usagePref = libassUsagePref))
+                    Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
                 }
+                // Keep default TextRenderer as fallback for SRT/VTT/PGS tracks
                 super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
          .setEnableDecoderFallback(true)
+
+        // Libass needs raw ASS/SSA packets, but ExoPlayer's fallback subtitle pipeline
+        // needs extraction/parsing enabled so ASS can be converted into displayable cues.
+        val mediaSourceFactory = DefaultMediaSourceFactory(this)
+            .experimentalParseSubtitlesDuringExtraction(stereoPlayback)
+        if (stereoPlayback) {
+            Timber.i("subtitle: stereo playback — using Media3 subtitle parsing/transcoding for fallback renderer")
+        } else {
+            Timber.i("subtitle: subtitle transcoding disabled — raw ASS bytes will flow to LibassTextRenderer")
+        }
 
         val trackSelector = DefaultTrackSelector(this)
         val audioAttributes = AudioAttributes.Builder()
@@ -92,6 +114,7 @@ class XrPlayerActivity : AppCompatActivity() {
             .build()
 
         val player = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(audioAttributes, true)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
