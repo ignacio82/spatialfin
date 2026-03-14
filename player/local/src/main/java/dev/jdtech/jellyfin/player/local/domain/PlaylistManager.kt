@@ -211,10 +211,10 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         val mediaSources = repository.getMediaSources(id, true)
         val mediaSource =
             if (mediaSourceIndex == null) {
-                mediaSources.firstOrNull { it.type == SpatialFinSourceType.LOCAL } ?: mediaSources[0]
+                mediaSources.firstOrNull { it.type == SpatialFinSourceType.LOCAL } ?: mediaSources.firstOrNull()
             } else {
-                mediaSources[mediaSourceIndex]
-            }
+                mediaSources.getOrNull(mediaSourceIndex)
+            } ?: throw Exception("No media sources available")
         val externalSubtitles =
             mediaSource.mediaStreams
                 .filter { mediaStream ->

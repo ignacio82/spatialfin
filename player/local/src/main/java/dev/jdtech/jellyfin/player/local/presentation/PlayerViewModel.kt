@@ -249,13 +249,11 @@ constructor(
         return mediaItem
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
     private fun releasePlayer() {
         val mediaId = player.currentMediaItem?.mediaId
         val position = player.currentPosition
         val duration = player.duration
-        GlobalScope.launch {
-            delay(200L)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 if (mediaId != null && duration != C.TIME_UNSET) {
                     Timber.d("Sending playback stop")

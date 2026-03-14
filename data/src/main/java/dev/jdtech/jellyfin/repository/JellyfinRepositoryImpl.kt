@@ -24,6 +24,7 @@ import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.models.toSpatialFinPerson
 import dev.jdtech.jellyfin.models.toSpatialFinSeason
 import dev.jdtech.jellyfin.models.toSpatialFinSegment
+import dev.jdtech.jellyfin.models.toSpatialFinSegmentsDto
 import dev.jdtech.jellyfin.models.toSpatialFinShow
 import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -380,6 +381,8 @@ class JellyfinRepositoryImpl(
                     jellyfinApi.mediaSegmentsApi.getItemSegments(itemId).content.items.map {
                         it.toSpatialFinSegment()
                     }
+
+                apiSegments.forEach { database.insertSegment(it.toSpatialFinSegmentsDto(itemId)) }
 
                 return@withContext apiSegments
             } catch (e: Exception) {

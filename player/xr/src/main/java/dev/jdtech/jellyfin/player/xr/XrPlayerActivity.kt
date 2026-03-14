@@ -99,6 +99,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        mediaSession?.release()
         mediaSession = MediaSession.Builder(this, viewModel.player).build()
     }
 

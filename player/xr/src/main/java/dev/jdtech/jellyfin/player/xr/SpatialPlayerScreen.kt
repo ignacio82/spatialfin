@@ -251,36 +251,35 @@ fun SpatialPlayerScreen(
             }
             root.addChild(entity)
             videoEntity.value = entity
-            
-            // Initial surface attachment
-            player.setVideoSurface(entity.getSurface())
+            } catch (_: Exception) {}
 
-            // Initialize the player now that the surface is guaranteed to be ready.
-            viewModel.initializePlayer(
-                itemId = itemId,
-                itemKind = itemKind,
-                startFromBeginning = startFromBeginning,
-            )
-        } catch (_: Exception) {}
-
-        onDispose {
+            onDispose {
             videoEntity.value?.dispose()
             videoEntity.value = null
             rootEntity.value?.dispose()
             rootEntity.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
-        }
-    }
+            }
+            }
 
-    // Safety net: re-attach the surface whenever the player instance changes (e.g. if the
-    // player is replaced for reasons outside the onPlayerReplaced callback path). Does not
-    // run for dimension changes — videoWidth/videoHeight are not keys here.
-    LaunchedEffect(player, videoEntity.value) {
-        videoEntity.value?.let { entity ->
+            var playerInitialized by remember { mutableStateOf(false) }
+
+            // Safety net: re-attach the surface whenever the player instance changes (e.g. if the
+            // player is replaced for reasons outside the onPlayerReplaced callback path). Does not
+            // run for dimension changes — videoWidth/videoHeight are not keys here.
+            LaunchedEffect(player, videoEntity.value) {
+            videoEntity.value?.let { entity ->
             player.setVideoSurface(entity.getSurface())
-        }
-    }
-
+            if (!playerInitialized) {
+                viewModel.initializePlayer(
+                    itemId = itemId,
+                    itemKind = itemKind,
+                    startFromBeginning = startFromBeginning,
+                )
+                playerInitialized = true
+            }
+            }
+            }
     // Update SurfaceEntity shape when video dimensions or stereo mode changes.
     // Both are consolidated here to avoid races between separate LaunchedEffects.
     LaunchedEffect(player.videoSize, currentStereoMode) {
@@ -751,7 +750,7 @@ private fun ControlPanelUI(
 
             if (!isLocked) {
                 ProgressSection(
-                    viewModel = viewModel,
+                    uiState = uiState,
                     player = player,
                     currentPosition = currentPosition,
                     duration = duration,
@@ -1337,13 +1336,12 @@ private fun NextEpisodePanelContent(
 // ── Progress / Trickplay ──────────────────────────────────────────────────────────
 @Composable
 private fun ProgressSection(
-    viewModel: PlayerViewModel,
+    uiState: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.UiState,
     player: Player,
     currentPosition: Long,
     duration: Long,
     resetAutoHide: () -> Unit,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
     val chapters = uiState.currentChapters
     var sliderValue by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
