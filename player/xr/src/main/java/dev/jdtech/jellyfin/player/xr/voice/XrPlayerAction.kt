@@ -33,6 +33,12 @@ sealed interface XrPlayerAction {
 
     data class Search(val query: String) : XrPlayerAction
 
+    data class AdjustVolume(val percentage: Float? = null, val delta: Float? = null) : XrPlayerAction
+
+    data object GoHome : XrPlayerAction
+
+    data object CloseApp : XrPlayerAction
+
     data object GoBack : XrPlayerAction
 
     data object ShowControls : XrPlayerAction

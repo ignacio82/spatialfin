@@ -153,7 +153,10 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             }
             text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
             text.matches(Regex(".*(hide controls|close controls).*")) -> XrPlayerAction.HideControls
+            text.matches(Regex(".*(go home|home screen|library|back to home).*")) -> XrPlayerAction.GoHome
+            text.matches(Regex(".*(close app|exit app|quit|shut down).*")) -> XrPlayerAction.CloseApp
             text.matches(Regex("^(back|go back|exit)$")) -> XrPlayerAction.GoBack
+            extractVolumeAdjustment(text) != null -> extractVolumeAdjustment(text)
             extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
             text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
@@ -201,6 +204,23 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             "switch dub",
             "change dub",
         ).any(text::contains)
+    }
+
+    private fun extractVolumeAdjustment(text: String): XrPlayerAction? {
+        if (text.contains("volume")) {
+            val percentageMatch = Regex("(\\d+)\\s*(?:percent|%)").find(text)
+            if (percentageMatch != null) {
+                val value = percentageMatch.groupValues[1].toFloatOrNull()
+                if (value != null) return XrPlayerAction.AdjustVolume(percentage = value / 100f)
+            }
+            if (text.contains("up") || text.contains("increase") || text.contains("louder")) {
+                return XrPlayerAction.AdjustVolume(delta = 0.1f)
+            }
+            if (text.contains("down") || text.contains("decrease") || text.contains("quieter")) {
+                return XrPlayerAction.AdjustVolume(delta = -0.1f)
+            }
+        }
+        return null
     }
 
     private fun extractSearchQuery(text: String): String? {
@@ -294,6 +314,9 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         {"action":"SELECT_SUBTITLE","language":"Japanese","index":null}
         {"action":"DISABLE_SUBTITLES"}
         {"action":"SEARCH","query":"Cowboy Bebop"}
+        {"action":"ADJUST_VOLUME","percentage":0.5,"delta":null}
+        {"action":"GO_HOME"}
+        {"action":"CLOSE_APP"}
         {"action":"GO_BACK"}
         {"action":"SHOW_CONTROLS"}
         {"action":"HIDE_CONTROLS"}
@@ -327,6 +350,13 @@ class SpatialCommandCoordinator(private val appContext: Context) {
                 )
             "DISABLE_SUBTITLES" -> XrPlayerAction.DisableSubtitles
             "SEARCH" -> json.optString("query").takeIf { it.isNotBlank() }?.let(XrPlayerAction::Search)
+            "ADJUST_VOLUME" ->
+                XrPlayerAction.AdjustVolume(
+                    percentage = if (json.has("percentage") && !json.isNull("percentage")) json.optDouble("percentage").toFloat() else null,
+                    delta = if (json.has("delta") && !json.isNull("delta")) json.optDouble("delta").toFloat() else null,
+                )
+            "GO_HOME" -> XrPlayerAction.GoHome
+            "CLOSE_APP" -> XrPlayerAction.CloseApp
             "GO_BACK" -> XrPlayerAction.GoBack
             "SHOW_CONTROLS" -> XrPlayerAction.ShowControls
             "HIDE_CONTROLS" -> XrPlayerAction.HideControls

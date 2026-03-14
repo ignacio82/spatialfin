@@ -11,6 +11,8 @@ class VoiceCommandDispatcher(
     private val onControlsVisibilityChange: (Boolean) -> Unit,
     private val onNavigateBack: () -> Unit,
     private val onSearch: (String) -> Unit,
+    private val onGoHome: () -> Unit,
+    private val onCloseApp: () -> Unit,
 ) {
     fun dispatch(action: XrPlayerAction): String {
         Timber.d("VOICE: Dispatching %s", action)
@@ -99,6 +101,25 @@ class VoiceCommandDispatcher(
             is XrPlayerAction.Search -> {
                 onSearch(action.query)
                 "Searching: ${action.query}"
+            }
+            is XrPlayerAction.AdjustVolume -> {
+                if (action.percentage != null) {
+                    player.volume = action.percentage.coerceIn(0f, 1f)
+                    "Volume: ${(player.volume * 100).toInt()}%"
+                } else if (action.delta != null) {
+                    player.volume = (player.volume + action.delta).coerceIn(0f, 1f)
+                    "Volume: ${(player.volume * 100).toInt()}%"
+                } else {
+                    "Volume unchanged"
+                }
+            }
+            is XrPlayerAction.GoHome -> {
+                onGoHome()
+                "Returning to home"
+            }
+            is XrPlayerAction.CloseApp -> {
+                onCloseApp()
+                "Closing SpatialFin"
             }
             is XrPlayerAction.GoBack -> {
                 onNavigateBack()

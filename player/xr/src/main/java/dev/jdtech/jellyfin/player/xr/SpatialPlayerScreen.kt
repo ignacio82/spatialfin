@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.player.xr
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -313,6 +314,15 @@ fun SpatialPlayerScreen(
                 onControlsVisibilityChange = { controlsVisible = it },
                 onNavigateBack = onBackClick,
                 onSearch = ::openVoiceSearch,
+                onGoHome = {
+                    val launchIntent =
+                        Intent().setClassName(context, "dev.spatialfin.MainActivity")
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    runCatching { context.startActivity(launchIntent) }
+                        .onSuccess { activity?.finish() }
+                        .onFailure { voiceFeedback = "Home unavailable" }
+                },
+                onCloseApp = { activity?.finishAffinity() },
             )
         }
 
