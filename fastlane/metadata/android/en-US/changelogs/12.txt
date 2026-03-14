@@ -1,0 +1,9 @@
+Improvements:
+
+Fixes:
+- Fix play icon color in settings
+- Fix crash when using swiping gesture if video is not loaded yet
+- Fix player crashing when no PlayerItems are passed
+- Fix only showing 1 discovered server
+
+Translations: Korean, Polish, Spanish
