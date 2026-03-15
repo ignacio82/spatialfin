@@ -1,6 +1,6 @@
 # GEMINI.md - SpatialFin Technical Reference
 
-This document provides technical context and architectural guidelines for developing the spatialized interface for Findroid on Android XR devices (e.g., Samsung Galaxy XR). Use this as a system prompt to ensure consistency with Jetpack XR SDK patterns.
+This document provides technical context and architectural guidelines for developing SpatialFin for Android XR devices (e.g., Samsung Galaxy XR). Use this as a system prompt to ensure consistency with Jetpack XR SDK patterns.
 
 ## Official Documentation Links
 - **Jetpack XR SDK Hub:** https://developer.android.com/develop/xr/jetpack-xr-sdk
