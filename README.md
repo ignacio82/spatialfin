@@ -8,10 +8,9 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 
 ## Features
 
-- **IMAX Scale Experience** — Native Full Space Mode (FSM) with massive, spatial panels that fill your field of view for a cinematic theater feel.
+- **Immersive Experience** — Native Full Space Mode (FSM) with massive, spatial panels that fill your field of view for a cinematic theater feel.
 - **Glassmorphic UI** — Modern "liquid glass" interface with translucent panels that blend naturally into your environment.
 - **Interactive Agency** — Grab and move the entire application or video player window anywhere in your 3D space.
-- **Immersive Playback** — Full-space XR mode with an IMAX-style cinema environment.
 - **Stereoscopic 3D** — Automatic detection and rendering of SBS, top-bottom, and other 3D formats.
 - **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
