@@ -23,6 +23,8 @@ sealed interface XrPlayerAction {
 
     data class SetSpeed(val speed: Float) : XrPlayerAction
 
+    data class SetQuality(val maxBitrate: Long) : XrPlayerAction
+
     data class SelectAudioTrack(val language: String? = null, val index: Int? = null) :
         XrPlayerAction
 

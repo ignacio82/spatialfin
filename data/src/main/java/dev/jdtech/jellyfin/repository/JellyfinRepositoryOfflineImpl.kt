@@ -203,7 +203,11 @@ class JellyfinRepositoryOfflineImpl(
             items
         }
 
-    override suspend fun getMediaSources(itemId: UUID, includePath: Boolean): List<SpatialFinSource> =
+    override suspend fun getMediaSources(
+        itemId: UUID,
+        includePath: Boolean,
+        maxBitrate: Long?
+    ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
             database.getSources(itemId).map { it.toSpatialFinSource(database) }
         }

@@ -193,7 +193,7 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
                     ItemButtonsBar(
                         item = show,
-                        onPlayClick = { startFromBeginning ->
+                        onPlayClick = { startFromBeginning, _, _ ->
                             onAction(ShowAction.Play(startFromBeginning = startFromBeginning))
                         },
                         onMarkAsPlayedClick = {

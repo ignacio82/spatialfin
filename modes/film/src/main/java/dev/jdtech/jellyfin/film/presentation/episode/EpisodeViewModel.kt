@@ -22,7 +22,7 @@ class EpisodeViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
-    private val appPreferences: AppPreferences,
+    val appPreferences: AppPreferences,
     private val videoMetadataParser: VideoMetadataParser,
 ) : ViewModel() {
     private val _state = MutableStateFlow(EpisodeState())

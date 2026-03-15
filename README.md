@@ -16,7 +16,10 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
 - **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
-- **Hands-Free Voice Control** — Pinch-to-talk on the secondary hand or use the mic orbiter button to control playback, audio, subtitles, and search with on-device speech recognition plus Gemini Nano intent parsing.
+- **Version Selection (Media Source)** — Choose between different versions of the same movie or episode (e.g., 3D vs. 2D, 4K vs. 1080p) before playing or during playback.
+- **Dynamic Quality Selection** — Control streaming bitrate on the fly. Use the sparkle icon in the player or the media info screen to switch between bitrates (from 480 Kbps up to 120 Mbps) or stay on "Auto" for direct play.
+- **Hands-Free Voice Control** — Pinch-to-talk on the secondary hand or use the mic orbiter button to control playback, audio, subtitles, quality, and search with on-device speech recognition plus Gemini Nano intent parsing.
+- **Global Bitrate Settings** — Set a default maximum streaming bitrate in the app settings to optimize for your network conditions across all media.
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
@@ -46,7 +49,7 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Pinch your secondary hand to start listening and release to stop.
 - Use the mic button in the player orbiter as a fallback.
 - Speech recognition runs on-device and prefers offline recognition.
-- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, controls visibility, next/previous episode, and search.
+- Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, quality/bitrate adjustments, controls visibility, next/previous episode, and search.
 - Search results are shown in a spatial in-player overlay with a clear path back to the current video.
 - Voice parsing uses both deterministic command handling and richer multimodal player context for compatible on-device AI devices.
 - On first app launch, SpatialFin requests the microphone, hand-tracking, and local video permissions needed for voice input and the on-device library.

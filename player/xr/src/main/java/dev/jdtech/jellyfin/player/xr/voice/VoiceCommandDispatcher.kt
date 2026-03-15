@@ -76,6 +76,38 @@ class VoiceCommandDispatcher(
                 viewModel.selectSpeed(action.speed)
                 "${action.speed}x speed"
             }
+            is XrPlayerAction.SetQuality -> {
+                val itemIdString = viewModel.uiState.value.currentItemId
+                val itemKind = viewModel.uiState.value.currentItemKind
+                if (itemIdString != null && itemKind != null) {
+                    val label = when (action.maxBitrate) {
+                        0L -> "Auto"
+                        120_000_000L -> "120 Mbps"
+                        80_000_000L -> "80 Mbps"
+                        60_000_000L -> "60 Mbps"
+                        40_000_000L -> "40 Mbps"
+                        30_000_000L -> "30 Mbps"
+                        20_000_000L -> "20 Mbps"
+                        15_000_000L -> "15 Mbps"
+                        10_000_000L -> "10 Mbps"
+                        8_000_000L -> "8 Mbps"
+                        6_000_000L -> "6 Mbps"
+                        5_000_000L -> "5 Mbps"
+                        4_000_000L -> "4 Mbps"
+                        3_000_000L -> "3 Mbps"
+                        2_000_000L -> "2 Mbps"
+                        1_500_000L -> "1.5 Mbps"
+                        1_000_000L -> "1 Mbps"
+                        720_000L -> "720 Kbps"
+                        480_000L -> "480 Kbps"
+                        else -> "${action.maxBitrate / 1_000_000} Mbps"
+                    }
+                    viewModel.changeQuality(java.util.UUID.fromString(itemIdString as String), itemKind as String, action.maxBitrate)
+                    "Quality set to $label"
+                } else {
+                    "Cannot change quality right now"
+                }
+            }
             is XrPlayerAction.SelectAudioTrack -> {
                 dispatchTrackSelection(
                     trackType = C.TRACK_TYPE_AUDIO,

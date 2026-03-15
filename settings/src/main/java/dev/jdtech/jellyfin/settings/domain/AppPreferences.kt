@@ -56,6 +56,9 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // Player - trickplay
     val playerTrickplay = Preference("pref_player_trickplay", true)
 
+    // Player - Bitrate
+    val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
+
     // Downloads
     val downloadOverMobileData = Preference("pref_downloads_mobile_data", false)
     val downloadWhenRoaming = Preference("pref_downloads_roaming", false)

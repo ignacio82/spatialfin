@@ -306,8 +306,15 @@ class JellyfinRepositoryImpl(
             }
         }
 
-    override suspend fun getMediaSources(itemId: UUID, includePath: Boolean): List<SpatialFinSource> =
+    override suspend fun getMediaSources(
+        itemId: UUID,
+        includePath: Boolean,
+        maxBitrate: Long?
+    ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
+            val bitrate = (maxBitrate ?: appPreferences.getValue(appPreferences.playerMaxBitrate)).let {
+                if (it <= 0L) 1_000_000_000L else it
+            }
             val sources = mutableListOf<SpatialFinSource>()
             sources.addAll(
                 jellyfinApi.mediaInfoApi
@@ -318,8 +325,8 @@ class JellyfinRepositoryImpl(
                             deviceProfile =
                                 DeviceProfile(
                                     name = "Direct play all",
-                                    maxStaticBitrate = 1_000_000_000,
-                                    maxStreamingBitrate = 1_000_000_000,
+                                    maxStaticBitrate = bitrate.toInt(),
+                                    maxStreamingBitrate = bitrate.toInt(),
                                     codecProfiles = emptyList(),
                                     containerProfiles = emptyList(),
                                     // A single catch-all VIDEO profile tells Jellyfin this device
@@ -343,7 +350,7 @@ class JellyfinRepositoryImpl(
                                             SubtitleProfile("ass", SubtitleDeliveryMethod.EXTERNAL),
                                         ),
                                 ),
-                            maxStreamingBitrate = 1_000_000_000,
+                            maxStreamingBitrate = bitrate.toInt(),
                         ),
                     )
                     .content

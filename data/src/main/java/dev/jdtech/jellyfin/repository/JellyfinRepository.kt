@@ -86,7 +86,11 @@ interface JellyfinRepository {
         offline: Boolean = false,
     ): List<SpatialFinEpisode>
 
-    suspend fun getMediaSources(itemId: UUID, includePath: Boolean = false): List<SpatialFinSource>
+    suspend fun getMediaSources(
+        itemId: UUID,
+        includePath: Boolean = false,
+        maxBitrate: Long? = null
+    ): List<SpatialFinSource>
 
     suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String
 

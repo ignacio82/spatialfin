@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -156,6 +158,8 @@ fun SpatialPlayerScreen(
     localMediaId: Long?,
     itemKind: String,
     startFromBeginning: Boolean,
+    mediaSourceIndex: Int? = null,
+    maxBitrate: Long? = null,
     libassRenderer: LibassRenderer?,
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
     onLaunchSearchResult: (SpatialFinItem) -> Unit,
@@ -590,6 +594,8 @@ fun SpatialPlayerScreen(
                             itemId = itemId,
                             itemKind = itemKind,
                             startFromBeginning = startFromBeginning,
+                            mediaSourceIndex = mediaSourceIndex,
+                            maxBitrate = maxBitrate,
                         )
                     }
                 }
@@ -763,6 +769,7 @@ fun SpatialPlayerScreen(
                         onAudioClick = { activeDialog = "audio"; resetAutoHide() },
                         onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
                         onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
+                        onQualityClick = { activeDialog = "quality"; resetAutoHide() },
                         onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
                         onVoiceClick = {
                             requestVoiceCommand()
@@ -882,6 +889,19 @@ fun SpatialPlayerScreen(
                     SpeedDialogContent(
                         currentSpeed = viewModel.playbackSpeed,
                         onSpeedSelected = { speed -> viewModel.selectSpeed(speed) },
+                        onDismiss = { activeDialog = null },
+                    )
+                }
+            }
+            if (activeDialog == "quality") {
+                SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                    QualityDialogContent(
+                        currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                        onQualitySelected = { bitrate ->
+                            if (itemId != null) {
+                                viewModel.changeQuality(itemId, itemKind, bitrate)
+                            }
+                        },
                         onDismiss = { activeDialog = null },
                     )
                 }
@@ -1011,6 +1031,7 @@ private fun SecondaryControlsOrbiter(
     onAudioClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     onSpeedClick: () -> Unit,
+    onQualityClick: () -> Unit,
     onCastCrewClick: () -> Unit,
     onVoiceClick: () -> Unit,
     voiceControlEnabled: Boolean,
@@ -1047,6 +1068,14 @@ private fun SecondaryControlsOrbiter(
                 Icon(
                     painterResource(CoreR.drawable.ic_gauge),
                     contentDescription = "Playback speed",
+                    tint = Color.White,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+            IconButton(onClick = onQualityClick, modifier = Modifier.size(80.dp)) {
+                Icon(
+                    painterResource(CoreR.drawable.ic_sparkles),
+                    contentDescription = "Playback quality",
                     tint = Color.White,
                     modifier = Modifier.size(48.dp),
                 )
@@ -1460,7 +1489,9 @@ private fun TrackSelectionDialogContent(
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 
     Surface(
-        modifier = Modifier.width(600.dp),
+        modifier = Modifier
+            .width(600.dp)
+            .heightIn(max = 560.dp),
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 12.dp,
@@ -1528,7 +1559,7 @@ private fun SpeedDialogContent(
 ) {
     val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
     Surface(
-        modifier = Modifier.width(400.dp),
+        modifier = Modifier.width(400.dp).heightIn(max = 560.dp),
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 12.dp,
@@ -1556,6 +1587,77 @@ private fun SpeedDialogContent(
                         )
                         Spacer(Modifier.width(16.dp))
                         Text("${speed}x", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QualityDialogContent(
+    currentMaxBitrate: Long,
+    onQualitySelected: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val bitrates = listOf(
+        0L to "Auto",
+        120_000_000L to "120 Mbps",
+        80_000_000L to "80 Mbps",
+        60_000_000L to "60 Mbps",
+        40_000_000L to "40 Mbps",
+        30_000_000L to "30 Mbps",
+        20_000_000L to "20 Mbps",
+        15_000_000L to "15 Mbps",
+        10_000_000L to "10 Mbps",
+        8_000_000L to "8 Mbps",
+        6_000_000L to "6 Mbps",
+        5_000_000L to "5 Mbps",
+        4_000_000L to "4 Mbps",
+        3_000_000L to "3 Mbps",
+        2_000_000L to "2 Mbps",
+        1_500_000L to "1.5 Mbps",
+        1_000_000L to "1 Mbps",
+        720_000L to "720 Kbps",
+        480_000L to "480 Kbps",
+    )
+    Surface(
+        modifier = Modifier.width(400.dp).heightIn(max = 560.dp),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 12.dp,
+    ) {
+        Column(modifier = Modifier.padding(32.dp)) {
+            Text(
+                "Select Playback Quality",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(24.dp))
+            Column(
+                modifier = Modifier
+                    .height(400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                bitrates.forEach { (bitrate, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onQualitySelected(bitrate); onDismiss() }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = currentMaxBitrate == bitrate,
+                            onClick = { onQualitySelected(bitrate); onDismiss() },
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(label, style = MaterialTheme.typography.titleLarge)
                     }
                 }
             }
@@ -1790,7 +1892,9 @@ private fun CastCrewDialogContent(
     val crew      = people.filter { it.type !in listOf("Director", "Writer", "Actor") }
 
     Surface(
-        modifier = Modifier.width(800.dp),
+        modifier = Modifier
+            .width(800.dp)
+            .heightIn(max = 700.dp),
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 12.dp,

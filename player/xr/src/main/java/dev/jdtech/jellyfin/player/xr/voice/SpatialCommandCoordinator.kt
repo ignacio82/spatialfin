@@ -157,6 +157,7 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex(".*(close app|exit app|quit|shut down).*")) -> XrPlayerAction.CloseApp
             text.matches(Regex("^(back|go back|exit)$")) -> XrPlayerAction.GoBack
             extractVolumeAdjustment(text) != null -> extractVolumeAdjustment(text)
+            extractQualityAdjustment(text) != null -> extractQualityAdjustment(text)
             extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
             text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
@@ -220,6 +221,41 @@ class SpatialCommandCoordinator(private val appContext: Context) {
                 return XrPlayerAction.AdjustVolume(delta = -0.1f)
             }
         }
+        return null
+    }
+
+    private val bitrates = listOf(
+        0L, 120_000_000L, 80_000_000L, 60_000_000L, 40_000_000L, 30_000_000L, 20_000_000L,
+        15_000_000L, 10_000_000L, 8_000_000L, 6_000_000L, 5_000_000L, 4_000_000L, 3_000_000L,
+        2_000_000L, 1_500_000L, 1_000_000L, 720_000L, 480_000L
+    )
+
+    private fun extractQualityAdjustment(text: String): XrPlayerAction? {
+        if (!text.contains("quality") && !text.contains("bitrate")) return null
+
+        if (text.contains("increase") || text.contains("higher") || text.contains("better") || text.contains("up")) {
+            return XrPlayerAction.SetQuality(0L) // Set to Auto for best quality
+        }
+        if (text.contains("decrease") || text.contains("lower") || text.contains("worse") || text.contains("down")) {
+            return XrPlayerAction.SetQuality(10_000_000L) // 10 Mbps as a safe lower default
+        }
+
+        if (text.contains("auto")) return XrPlayerAction.SetQuality(0L)
+
+        val numberMatch = Regex("(\\d+)\\s*(mbps|kbps|m|k)?").find(text)
+        if (numberMatch != null) {
+            val value = numberMatch.groupValues[1].toLongOrNull() ?: return null
+            val unit = numberMatch.groupValues[2]
+            val bitrate = when (unit) {
+                "mbps", "m" -> value * 1_000_000L
+                "kbps", "k" -> value * 1_000L
+                else -> if (value < 500) value * 1_000_000L else value // Assume Mbps if small number
+            }
+            // Find closest matching bitrate from our list
+            val closest = bitrates.minByOrNull { Math.abs(it - bitrate) } ?: bitrate
+            return XrPlayerAction.SetQuality(closest)
+        }
+
         return null
     }
 
@@ -310,6 +346,7 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         {"action":"NEXT_EPISODE"}
         {"action":"PREVIOUS_EPISODE"}
         {"action":"SET_SPEED","speed":1.0}
+        {"action":"SET_QUALITY","max_bitrate":0}
         {"action":"SELECT_AUDIO","language":"English","index":null}
         {"action":"SELECT_SUBTITLE","language":"Japanese","index":null}
         {"action":"DISABLE_SUBTITLES"}
@@ -338,6 +375,7 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             "NEXT_EPISODE" -> XrPlayerAction.NextEpisode
             "PREVIOUS_EPISODE" -> XrPlayerAction.PreviousEpisode
             "SET_SPEED" -> XrPlayerAction.SetSpeed(json.optDouble("speed", 1.0).toFloat())
+            "SET_QUALITY" -> XrPlayerAction.SetQuality(json.optLong("max_bitrate", 0L))
             "SELECT_AUDIO" ->
                 XrPlayerAction.SelectAudioTrack(
                     language = json.optString("language").takeIf { it.isNotBlank() },

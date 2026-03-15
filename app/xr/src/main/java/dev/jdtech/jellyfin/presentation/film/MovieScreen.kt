@@ -98,9 +98,13 @@ fun MovieScreen(
         }
     }
 
+    val appPreferences = viewModel.appPreferences
+    val initialMaxBitrate = androidx.compose.runtime.remember { appPreferences.getValue(appPreferences.playerMaxBitrate) }
+
     MovieScreenLayout(
         state = state,
         downloaderState = downloaderState,
+        initialMaxBitrate = initialMaxBitrate,
         onAction = { action ->
             when (action) {
                 is MovieAction.Play -> {
@@ -120,6 +124,8 @@ fun MovieScreen(
                     intent.putExtra("itemId", movieId.toString())
                     intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
                     intent.putExtra("startFromBeginning", action.startFromBeginning)
+                    action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
+                    action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
                     if (true) {
                         val stereoModeStr = when (stereoMode) {
                             StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
@@ -152,6 +158,7 @@ fun MovieScreen(
 private fun MovieScreenLayout(
     state: MovieState,
     downloaderState: DownloaderState,
+    initialMaxBitrate: Long,
     onAction: (MovieAction) -> Unit,
     onDownloaderAction: (DownloaderAction) -> Unit,
 ) {
@@ -246,10 +253,18 @@ private fun MovieScreenLayout(
                     ItemButtonsBar(
                         item = movie,
                         downloaderState = downloaderState,
+                        initialMaxBitrate = initialMaxBitrate,
                         isForce3dMode = force3d,
                         onForce3dClick = if (isXrDevice) { { force3d = !force3d } } else null,
-                        onPlayClick = { startFromBeginning ->
-                            onAction(MovieAction.Play(startFromBeginning = startFromBeginning, force3dMode = if (force3d) "sbs" else null))
+                        onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate ->
+                            onAction(
+                                MovieAction.Play(
+                                    startFromBeginning = startFromBeginning,
+                                    force3dMode = if (force3d) "sbs" else null,
+                                    mediaSourceIndex = mediaSourceIndex,
+                                    maxBitrate = maxBitrate
+                                )
+                            )
                         },
                         onMarkAsPlayedClick = {
                             when (movie.played) {
@@ -318,6 +333,7 @@ private fun EpisodeScreenLayoutPreview() {
         MovieScreenLayout(
             state = MovieState(movie = dummyMovie, videoMetadata = dummyVideoMetadata),
             downloaderState = DownloaderState(),
+            initialMaxBitrate = 0L,
             onAction = {},
             onDownloaderAction = {},
         )

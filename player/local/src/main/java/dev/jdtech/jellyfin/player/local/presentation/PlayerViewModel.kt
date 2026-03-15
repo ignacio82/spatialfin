@@ -71,6 +71,8 @@ constructor(
         MutableStateFlow(
             UiState(
                 currentItemTitle = "",
+                currentItemId = null,
+                currentItemKind = null,
                 currentSegment = null,
                 currentSkipButtonStringRes = R.string.player_controls_skip_intro,
                 currentTrickplay = null,
@@ -88,8 +90,9 @@ constructor(
 
     data class UiState(
         val currentItemTitle: String,
-        val currentSegment: SpatialFinSegment?,
-        val currentSkipButtonStringRes: Int,
+        val currentItemId: String? = null,
+        val currentItemKind: String? = null,
+        val currentSegment: SpatialFinSegment?,        val currentSkipButtonStringRes: Int,
         val currentTrickplay: Trickplay?,
         val currentChapters: List<PlayerChapter>,
         val currentPeople: List<PlayerPerson>,
@@ -174,12 +177,21 @@ constructor(
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
     }
 
+    private var currentItemKind: String? = null
+
     fun replacePlayer(newPlayer: Player) {
         player.release()
         player = newPlayer
     }
 
-    fun initializePlayer(itemId: UUID, itemKind: String, startFromBeginning: Boolean) {
+    fun initializePlayer(
+        itemId: UUID,
+        itemKind: String,
+        startFromBeginning: Boolean,
+        mediaSourceIndex: Int? = null,
+        maxBitrate: Long? = null,
+    ) {
+        currentItemKind = itemKind
         player.addListener(this)
 
         viewModelScope.launch {
@@ -188,7 +200,8 @@ constructor(
                     playlistManager.getInitialItem(
                         itemId = itemId,
                         itemKind = BaseItemKind.fromName(itemKind),
-                        mediaSourceIndex = null,
+                        mediaSourceIndex = mediaSourceIndex,
+                        maxBitrate = maxBitrate,
                         startFromBeginning = startFromBeginning,
                     )
                 } catch (e: Exception) {
@@ -225,6 +238,29 @@ constructor(
             player.prepare()
             player.play()
         }
+    }
+
+    fun changeQuality(itemId: UUID, itemKind: String, newMaxBitrate: Long) {
+        val currentPosition = player.currentPosition
+        playbackPosition = currentPosition
+        appPreferences.setValue(appPreferences.playerMaxBitrate, newMaxBitrate)
+        initializePlayer(
+            itemId = itemId,
+            itemKind = itemKind,
+            startFromBeginning = false,
+            maxBitrate = newMaxBitrate
+        )
+    }
+
+    fun changeSource(itemId: UUID, itemKind: String, newSourceIndex: Int) {
+        val currentPosition = player.currentPosition
+        playbackPosition = currentPosition
+        initializePlayer(
+            itemId = itemId,
+            itemKind = itemKind,
+            startFromBeginning = false,
+            mediaSourceIndex = newSourceIndex
+        )
     }
 
     fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
@@ -444,6 +480,8 @@ constructor(
                         _uiState.update {
                             it.copy(
                                 currentItemTitle = itemTitle,
+                                currentItemId = item.itemId.toString(),
+                                currentItemKind = currentItemKind,
                                 currentSegment = null,
                                 currentChapters = item.chapters,
                                 currentPeople = item.people,

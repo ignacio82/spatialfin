@@ -113,6 +113,53 @@
         <item>never</item>
     </string-array>
 
+    <string name="player_max_bitrate">Maximum Streaming Bitrate</string>
+    <string name="player_max_bitrate_summary">Limit streaming quality to save bandwidth or reduce server load</string>
+
+    <string-array name="player_max_bitrate_options">
+        <item>Auto</item>
+        <item>120 Mbps</item>
+        <item>80 Mbps</item>
+        <item>60 Mbps</item>
+        <item>40 Mbps</item>
+        <item>30 Mbps</item>
+        <item>20 Mbps</item>
+        <item>15 Mbps</item>
+        <item>10 Mbps</item>
+        <item>8 Mbps</item>
+        <item>6 Mbps</item>
+        <item>5 Mbps</item>
+        <item>4 Mbps</item>
+        <item>3 Mbps</item>
+        <item>2 Mbps</item>
+        <item>1.5 Mbps</item>
+        <item>1 Mbps</item>
+        <item>720 Kbps</item>
+        <item>480 Kbps</item>
+    </string-array>
+
+    <string-array name="player_max_bitrate_values">
+        <item>0</item>
+        <item>120000000</item>
+        <item>80000000</item>
+        <item>60000000</item>
+        <item>40000000</item>
+        <item>30000000</item>
+        <item>20000000</item>
+        <item>15000000</item>
+        <item>10000000</item>
+        <item>8000000</item>
+        <item>6000000</item>
+        <item>5000000</item>
+        <item>4000000</item>
+        <item>3000000</item>
+        <item>2000000</item>
+        <item>1500000</item>
+        <item>1000000</item>
+        <item>720000</item>
+        <item>480000</item>
+    </string-array>
+
     <string name="logging_enabled">Enable Logging</string>
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
     <string name="voice_controls">Voice controls</string>

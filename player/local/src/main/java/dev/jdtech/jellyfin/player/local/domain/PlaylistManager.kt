@@ -32,6 +32,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         itemId: UUID,
         itemKind: BaseItemKind,
         mediaSourceIndex: Int? = null,
+        maxBitrate: Long? = null,
         startFromBeginning: Boolean = false,
     ): PlayerItem? {
         Timber.d("Retrieving initial player item")
@@ -124,7 +125,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
         val playbackPosition =
             if (!startFromBeginning) initialItem.playbackPositionTicks.div(10000) else 0
-        val playerItem = initialItem.toPlayerItem(mediaSourceIndex, playbackPosition)
+        val playerItem = initialItem.toPlayerItem(mediaSourceIndex, maxBitrate, playbackPosition)
         playerItems.add(playerItem)
 
         return playerItem
@@ -144,7 +145,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                         val item = items[itemIndex]
                         if (playerItems.firstOrNull { it.itemId == item.id } == null) {
                             try {
-                                item.toPlayerItem(null, 0L)
+                                item.toPlayerItem(null, null, 0L)
                             } catch (e: Exception) {
                                 Timber.e("Failed to retrieve previous player item: $e")
                                 null
@@ -178,7 +179,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                         val item = items[itemIndex]
                         if (playerItems.firstOrNull { it.itemId == item.id } == null) {
                             try {
-                                item.toPlayerItem(null, 0L)
+                                item.toPlayerItem(null, null, 0L)
                             } catch (e: Exception) {
                                 Timber.e("Failed to retrieve next player item: $e")
                                 null
@@ -204,11 +205,12 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
     private suspend fun SpatialFinItem.toPlayerItem(
         mediaSourceIndex: Int?,
+        maxBitrate: Long?,
         playbackPosition: Long,
     ): PlayerItem {
         Timber.d("Converting SpatialFinItem ${this.id} to PlayerItem")
 
-        val mediaSources = repository.getMediaSources(id, true)
+        val mediaSources = repository.getMediaSources(id, true, maxBitrate)
         val mediaSource =
             if (mediaSourceIndex == null) {
                 mediaSources.firstOrNull { it.type == SpatialFinSourceType.LOCAL } ?: mediaSources.firstOrNull()

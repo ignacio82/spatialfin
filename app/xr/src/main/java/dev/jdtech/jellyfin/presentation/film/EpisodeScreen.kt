@@ -101,9 +101,13 @@ fun EpisodeScreen(
         }
     }
 
+    val appPreferences = viewModel.appPreferences
+    val initialMaxBitrate = androidx.compose.runtime.remember { appPreferences.getValue(appPreferences.playerMaxBitrate) }
+
     EpisodeScreenLayout(
         state = state,
         downloaderState = downloaderState,
+        initialMaxBitrate = initialMaxBitrate,
         onAction = { action ->
             when (action) {
                 is EpisodeAction.Play -> {
@@ -112,8 +116,10 @@ fun EpisodeScreen(
                     intent.putExtra("itemId", episodeId.toString())
                     intent.putExtra("itemKind", BaseItemKind.EPISODE.serialName)
                     intent.putExtra("startFromBeginning", action.startFromBeginning)
+                    action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
+                    action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
                     if (true) {
-                        intent.putExtra("stereoMode", "mono")
+                        intent.putExtra("stereoMode", action.force3dMode ?: "mono")
                     }
                     context.startActivity(intent)
                 }
@@ -133,6 +139,7 @@ fun EpisodeScreen(
 private fun EpisodeScreenLayout(
     state: EpisodeState,
     downloaderState: DownloaderState,
+    initialMaxBitrate: Long,
     onAction: (EpisodeAction) -> Unit,
     onDownloaderAction: (DownloaderAction) -> Unit,
 ) {
@@ -227,8 +234,15 @@ private fun EpisodeScreenLayout(
                     ItemButtonsBar(
                         item = episode,
                         downloaderState = downloaderState,
-                        onPlayClick = { startFromBeginning ->
-                            onAction(EpisodeAction.Play(startFromBeginning = startFromBeginning))
+                        initialMaxBitrate = initialMaxBitrate,
+                        onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate ->
+                            onAction(
+                                EpisodeAction.Play(
+                                    startFromBeginning = startFromBeginning,
+                                    mediaSourceIndex = mediaSourceIndex,
+                                    maxBitrate = maxBitrate
+                                )
+                            )
                         },
                         onMarkAsPlayedClick = {
                             when (episode.played) {
@@ -314,6 +328,7 @@ private fun EpisodeScreenLayoutPreview() {
         EpisodeScreenLayout(
             state = EpisodeState(episode = dummyEpisode, videoMetadata = dummyVideoMetadata),
             downloaderState = DownloaderState(),
+            initialMaxBitrate = 0L,
             onAction = {},
             onDownloaderAction = {},
         )

@@ -13,6 +13,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.settings.R
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.enums.DeviceType
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceAppLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
@@ -270,6 +271,14 @@ class SettingsViewModel @Inject constructor(
                                                     options = R.array.libass_subtitle_usage_options,
                                                     optionValues = R.array.libass_subtitle_usage_values,
                                                     supportedDeviceTypes = listOf(DeviceType.XR),
+                                                ),
+                                                @Suppress("UNCHECKED_CAST")
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.player_max_bitrate,
+                                                    descriptionStringRes = R.string.player_max_bitrate_summary,
+                                                    backendPreference = appPreferences.playerMaxBitrate as Preference<String?>,
+                                                    options = R.array.player_max_bitrate_options,
+                                                    optionValues = R.array.player_max_bitrate_values,
                                                 ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.voice_controls,
@@ -669,7 +678,7 @@ class SettingsViewModel @Inject constructor(
                                                     value =
                                                         appPreferences.getValue(
                                                             preference.backendPreference
-                                                        ),
+                                                        ).toString(),
                                                 )
                                             }
                                             is PreferenceMultiSelect -> {
@@ -737,11 +746,20 @@ class SettingsViewModel @Inject constructor(
                             action.preference.backendPreference,
                             action.preference.value,
                         )
-                    is PreferenceSelect ->
-                        appPreferences.setValue(
-                            action.preference.backendPreference,
-                            action.preference.value,
-                        )
+                    is PreferenceSelect -> {
+                        @Suppress("UNCHECKED_CAST")
+                        if (action.preference.backendPreference.defaultValue?.let { it::class } == Long::class) {
+                            appPreferences.setValue(
+                                action.preference.backendPreference as Preference<Long>,
+                                action.preference.value?.toLongOrNull() ?: 0L
+                            )
+                        } else {
+                            appPreferences.setValue(
+                                action.preference.backendPreference,
+                                action.preference.value,
+                            )
+                        }
+                    }
                     is PreferenceMultiSelect ->
                         appPreferences.setValue(
                             action.preference.backendPreference,
@@ -825,7 +843,7 @@ class SettingsViewModel @Inject constructor(
                         PreferenceInfo(
                             title = "Example commands",
                             description =
-                                "pause\nrewind 30 seconds\nturn off subtitles\nswitch to Japanese audio\nsearch for Cowboy Bebop",
+                                "pause\nrewind 30 seconds\nturn off subtitles\nswitch to Japanese audio\nset quality to 10 Mbps\nincrease bitrate\nsearch for Cowboy Bebop",
                             iconDrawableId = R.drawable.ic_info,
                         ),
                     )
