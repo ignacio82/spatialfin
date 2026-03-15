@@ -103,8 +103,8 @@ object StereoModeDetector {
      */
     fun isXrDevice(context: android.content.Context): Boolean {
         return try {
-            context.packageManager.hasSystemFeature("android.software.xr.api.spatial") ||
             context.packageManager.hasSystemFeature("android.software.xr.immersive") ||
+            context.packageManager.hasSystemFeature("android.software.xr.api.spatial") ||
             context.packageManager.hasSystemFeature("android.hardware.xr.immersive") ||
             android.os.Build.MODEL.contains("XR", ignoreCase = true) ||
             android.os.Build.MANUFACTURER.contains("Samsung", ignoreCase = true) && android.os.Build.DEVICE.contains("xr", ignoreCase = true)
