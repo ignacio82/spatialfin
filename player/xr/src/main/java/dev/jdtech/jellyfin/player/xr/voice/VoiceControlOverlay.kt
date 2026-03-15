@@ -5,7 +5,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -33,10 +32,9 @@ import dev.jdtech.jellyfin.core.R as CoreR
 fun VoiceControlOverlay(
     state: VoiceState,
     partialTranscript: String,
-    feedback: String?,
     modifier: Modifier = Modifier,
 ) {
-    val isVisible = state != VoiceState.IDLE || feedback != null
+    val isVisible = state == VoiceState.LISTENING
     
     if (isVisible) {
         Orbiter(
@@ -46,17 +44,12 @@ fun VoiceControlOverlay(
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.widthIn(max = 400.dp)
+                modifier = modifier.widthIn(max = 400.dp)
             ) {
                 // Microphone icon
                 Surface(
                     shape = CircleShape,
-                    color = when (state) {
-                        VoiceState.LISTENING -> Color(0xFF4FC3F7)
-                        VoiceState.PROCESSING -> Color(0xFFFFA726)
-                        VoiceState.ERROR -> Color(0xFFEF5350)
-                        else -> Color.Black.copy(alpha = 0.8f)
-                    },
+                    color = Color(0xFF4FC3F7),
                     tonalElevation = 8.dp,
                     modifier = Modifier.size(80.dp)
                 ) {
@@ -72,10 +65,8 @@ fun VoiceControlOverlay(
 
                 // Transcription or Feedback
                 val textToShow = when {
-                    feedback != null -> feedback
                     state == VoiceState.LISTENING && partialTranscript.isNotEmpty() -> partialTranscript
                     state == VoiceState.LISTENING -> "Listening..."
-                    state == VoiceState.PROCESSING -> "Processing..."
                     else -> null
                 }
 

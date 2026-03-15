@@ -318,7 +318,6 @@ class MainActivity : AppCompatActivity() {
                                                 VoiceControlOverlay(
                                                     state = voiceState,
                                                     partialTranscript = partialTranscript,
-                                                    feedback = voiceFeedback,
                                                 )
                                             }
                                         }

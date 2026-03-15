@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +36,7 @@ fun ItemCard(
     item: SpatialFinItem,
     direction: Direction,
     onClick: (SpatialFinItem) -> Unit,
+    onDeleteClick: ((SpatialFinItem) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val width =
@@ -59,6 +62,19 @@ fun ItemCard(
                     if (item.isDownloaded()) DownloadedBadge()
                     if (item.played) PlayedBadge()
                     item.unplayedItemCount?.takeIf { it > 0 }?.let { ItemCountBadge(it) }
+                }
+                onDeleteClick?.let { delete ->
+                    FilledTonalIconButton(
+                        onClick = { delete(item) },
+                        modifier =
+                            Modifier.align(Alignment.TopStart)
+                                .padding(MaterialTheme.spacings.small),
+                    ) {
+                        Icon(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.ic_trash),
+                            contentDescription = null,
+                        )
+                    }
                 }
                 if (direction == Direction.HORIZONTAL) {
                     ProgressBar(

@@ -95,6 +95,8 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM movies WHERE id = :id") fun getMovie(id: UUID): SpatialFinMovieDto
 
+    @Query("SELECT * FROM movies WHERE id = :id") fun getMovieOrNull(id: UUID): SpatialFinMovieDto?
+
     @Query(
         "SELECT * FROM movies JOIN sources ON movies.id = sources.itemId ORDER BY movies.name ASC"
     )
@@ -175,6 +177,8 @@ interface ServerDatabaseDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertEpisode(episode: SpatialFinEpisodeDto)
 
     @Query("SELECT * FROM episodes WHERE id = :id") fun getEpisode(id: UUID): SpatialFinEpisodeDto
+
+    @Query("SELECT * FROM episodes WHERE id = :id") fun getEpisodeOrNull(id: UUID): SpatialFinEpisodeDto?
 
     @Query(
         "SELECT * FROM episodes WHERE seriesId = :seriesId ORDER BY parentIndexNumber ASC, indexNumber ASC"

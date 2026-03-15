@@ -279,8 +279,8 @@ private fun MovieScreenLayout(
                             }
                         },
                         onTrailerClick = { uri -> onAction(MovieAction.PlayTrailer(uri)) },
-                        onDownloadClick = { storageIndex ->
-                            onDownloaderAction(DownloaderAction.Download(movie, storageIndex))
+                        onDownloadClick = { request ->
+                            onDownloaderAction(DownloaderAction.Download(movie, request))
                         },
                         onDownloadCancelClick = {
                             onDownloaderAction(DownloaderAction.CancelDownload(movie))

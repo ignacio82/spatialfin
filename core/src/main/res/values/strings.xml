@@ -116,4 +116,14 @@
     <string name="download_paused">Paused</string>
     <string name="download_downloading">Downloading…</string>
     <string name="download_failed">Failed to download</string>
+    <string name="download_options_title">Download options</string>
+    <string name="download_options_location_hint">Downloads are stored in Downloads/SpatialFin and are automatically removed from the app if the files disappear from that folder.</string>
+    <string name="download_mode_title">Download mode</string>
+    <string name="download_mode_original">Original file</string>
+    <string name="download_mode_original_hint">Keeps the server file as-is for the best quality.</string>
+    <string name="download_mode_transcoded">Smaller file</string>
+    <string name="download_mode_transcoded_hint">Transcodes on the server so you can pick a lower bitrate, audio track, and subtitle track.</string>
+    <string name="download_quality_title">Compressed quality</string>
+    <string name="select_audio_track">Select audio track</string>
+    <string name="select_subtitle_track">Select subtitle track</string>
 </resources>

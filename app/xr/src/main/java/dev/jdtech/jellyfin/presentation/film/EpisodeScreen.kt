@@ -257,8 +257,8 @@ private fun EpisodeScreenLayout(
                             }
                         },
                         onTrailerClick = {},
-                        onDownloadClick = { storageIndex ->
-                            onDownloaderAction(DownloaderAction.Download(episode, storageIndex))
+                        onDownloadClick = { request ->
+                            onDownloaderAction(DownloaderAction.Download(episode, request))
                         },
                         onDownloadCancelClick = {
                             onDownloaderAction(DownloaderAction.CancelDownload(episode))

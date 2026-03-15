@@ -526,7 +526,7 @@ fun SpatialPlayerScreen(
         val root = rootEntity.value ?: return@LaunchedEffect
         if (controlsVisible) {
             if (movableComponent.value == null) {
-                val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session)
+                val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session, false)
                 root.addComponent(movable)
                 movableComponent.value = movable
             }
@@ -750,6 +750,22 @@ fun SpatialPlayerScreen(
             }
         }
 
+        if (voiceState == VoiceState.LISTENING) {
+            SpatialPanel(
+                modifier = SubspaceModifier
+                    .width(subtitlePanelWidthDp.dp)
+                    .height(subtitlePanelHeightDp.dp)
+                    .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    VoiceControlOverlay(
+                        state = voiceState,
+                        partialTranscript = partialTranscript,
+                    )
+                }
+            }
+        }
+
         // ── Control Panel ────────────────────────────────────────────────────────────
         // Floats below the video.  Secondary controls are in an Orbiter on the right
         // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
@@ -837,11 +853,6 @@ fun SpatialPlayerScreen(
                     )
                 }
 
-                VoiceControlOverlay(
-                    state = voiceState,
-                    partialTranscript = partialTranscript,
-                    feedback = voiceFeedback,
-                )
             }
 
             // ── SpatialDialogs ────────────────────────────────────────────────────

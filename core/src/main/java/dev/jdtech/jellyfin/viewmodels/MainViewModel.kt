@@ -6,16 +6,22 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 @HiltViewModel
 class MainViewModel
 @Inject
-constructor(private val appPreferences: AppPreferences, private val database: ServerDatabaseDao) :
+constructor(
+    private val appPreferences: AppPreferences,
+    private val database: ServerDatabaseDao,
+    private val connectionMonitor: ServerConnectionMonitor,
+) :
     ViewModel() {
     private val _state = MutableStateFlow(MainState())
     val state = _state.asStateFlow()
@@ -31,6 +37,7 @@ constructor(private val appPreferences: AppPreferences, private val database: Se
 
     init {
         check()
+        observeOfflineState()
     }
 
     private fun check() {
@@ -43,9 +50,19 @@ constructor(private val appPreferences: AppPreferences, private val database: Se
                     hasServers = checkHasServers(),
                     hasCurrentServer = checkHasCurrentServer(),
                     hasCurrentUser = checkHasCurrentUser(),
-                    isOfflineMode = checkIsOfflineMode(),
+                    isOfflineMode = connectionMonitor.state.value.effectiveOfflineMode,
                 )
             _state.emit(mainState)
+        }
+    }
+
+    private fun observeOfflineState() {
+        viewModelScope.launch {
+            connectionMonitor.state.collect { connectionState ->
+                _state.update {
+                    it.copy(isOfflineMode = connectionState.effectiveOfflineMode)
+                }
+            }
         }
     }
 
@@ -81,9 +98,6 @@ constructor(private val appPreferences: AppPreferences, private val database: Se
         return appPreferences.getValue(appPreferences.dynamicColors)
     }
 
-    private fun checkIsOfflineMode(): Boolean {
-        return appPreferences.getValue(appPreferences.offlineMode)
-    }
 }
 
 data class MainState(

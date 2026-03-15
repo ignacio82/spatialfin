@@ -39,7 +39,7 @@ import dev.jdtech.jellyfin.models.User
             SpatialFinSegmentDto::class,
             LocalMediaPlaybackStateDto::class,
         ],
-    version = 9,
+    version = 10,
     autoMigrations =
         [
             AutoMigration(from = 2, to = 3),
@@ -48,6 +48,7 @@ import dev.jdtech.jellyfin.models.User
             AutoMigration(from = 5, to = 6, spec = ServerDatabase.IntrosMigration::class),
             AutoMigration(from = 7, to = 8),
             AutoMigration(from = 8, to = 9),
+            AutoMigration(from = 9, to = 10),
         ],
 )
 @TypeConverters(Converters::class)

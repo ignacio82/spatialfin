@@ -30,6 +30,7 @@ val dummyEpisode =
                     mediaStreams =
                         listOf(
                             SpatialFinMediaStream(
+                                index = 0,
                                 title = "",
                                 displayTitle = "",
                                 language = "en",

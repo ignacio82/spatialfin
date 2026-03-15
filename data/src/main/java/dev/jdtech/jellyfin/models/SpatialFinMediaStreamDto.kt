@@ -9,6 +9,7 @@ import org.jellyfin.sdk.model.api.MediaStreamType
 data class SpatialFinMediaStreamDto(
     @PrimaryKey val id: UUID,
     val sourceId: String,
+    val index: Int?,
     val title: String,
     val displayTitle: String?,
     val language: String,
@@ -32,6 +33,7 @@ fun SpatialFinMediaStream.toSpatialFinMediaStreamDto(
     return SpatialFinMediaStreamDto(
         id = id,
         sourceId = sourceId,
+        index = index,
         title = title,
         displayTitle = displayTitle,
         language = language,

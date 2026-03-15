@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.film.presentation.collection.CollectionAction
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 
@@ -23,6 +24,7 @@ fun CollectionGrid(
     sections: List<CollectionSection>,
     innerPadding: PaddingValues,
     onAction: (CollectionAction) -> Unit,
+    onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
 ) {
     LazyVerticalGrid(
         columns = GridCellsAdaptiveWithMinColumns(minSize = 160.dp, minColumns = 2),
@@ -52,6 +54,7 @@ fun CollectionGrid(
                     direction =
                         if (item is SpatialFinEpisode) Direction.HORIZONTAL else Direction.VERTICAL,
                     onClick = { onAction(CollectionAction.OnItemClick(item)) },
+                    onDeleteClick = onDeleteItem,
                     modifier = Modifier.animateItem(),
                 )
             }

@@ -6,6 +6,7 @@ import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.VideoRangeType
 
 data class SpatialFinMediaStream(
+    val index: Int?,
     val title: String,
     val displayTitle: String?,
     val language: String,
@@ -22,6 +23,7 @@ data class SpatialFinMediaStream(
 
 fun MediaStream.toSpatialFinMediaStream(jellyfinRepository: JellyfinRepository): SpatialFinMediaStream {
     return SpatialFinMediaStream(
+        index = index,
         title = title.orEmpty(),
         displayTitle = displayTitle,
         language = language.orEmpty(),
@@ -39,6 +41,7 @@ fun MediaStream.toSpatialFinMediaStream(jellyfinRepository: JellyfinRepository):
 
 fun SpatialFinMediaStreamDto.toSpatialFinMediaStream(): SpatialFinMediaStream {
     return SpatialFinMediaStream(
+        index = index,
         title = title,
         displayTitle = displayTitle,
         language = language,

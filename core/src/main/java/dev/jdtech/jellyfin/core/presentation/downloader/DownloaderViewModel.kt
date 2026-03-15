@@ -42,15 +42,10 @@ class DownloaderViewModel @Inject constructor(private val downloader: Downloader
         }
     }
 
-    private fun download(item: SpatialFinItem, storageIndex: Int = 0) {
+    private fun download(item: SpatialFinItem, request: dev.jdtech.jellyfin.models.DownloadRequest) {
         viewModelScope.launch {
             _state.emit(DownloaderState(status = DownloadManager.STATUS_PENDING))
-            val (downloadId, uiText) =
-                downloader.downloadItem(
-                    item = item,
-                    sourceId = item.sources.first().id,
-                    storageIndex = storageIndex,
-                )
+            val (downloadId, uiText) = downloader.downloadItem(item = item, request = request)
             if (downloadId != -1L) {
                 this@DownloaderViewModel.downloadId = downloadId
                 pollDownloadProgress(downloadId)
@@ -114,7 +109,7 @@ class DownloaderViewModel @Inject constructor(private val downloader: Downloader
 
     fun onAction(action: DownloaderAction) {
         when (action) {
-            is DownloaderAction.Download -> download(action.item, action.storageIndex)
+            is DownloaderAction.Download -> download(action.item, action.request)
             is DownloaderAction.DeleteDownload -> deleteDownload(action.item)
             is DownloaderAction.CancelDownload -> cancelDownload(action.item)
         }

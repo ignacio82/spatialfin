@@ -3,18 +3,21 @@ package dev.jdtech.jellyfin.utils
 import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
-import android.os.StatFs
 import android.text.format.Formatter
 import androidx.core.net.toUri
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.downloads.DownloadStorageManager
+import dev.jdtech.jellyfin.models.DownloadMode
+import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSources
 import dev.jdtech.jellyfin.models.SpatialFinTrickplayInfo
@@ -33,18 +36,23 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.ImagesDownloaderWorker
 import java.io.File
+import java.net.URLConnection
 import java.util.UUID
 import kotlin.Exception
 import kotlin.math.ceil
 import kotlinx.coroutines.coroutineScope
+import org.jellyfin.sdk.model.api.EncodingContext
+import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import timber.log.Timber
 
 class DownloaderImpl(
     private val context: Context,
     private val database: ServerDatabaseDao,
+    private val jellyfinApi: JellyfinApi,
     private val jellyfinRepository: JellyfinRepository,
     private val appPreferences: AppPreferences,
     private val workManager: WorkManager,
+    private val downloadStorageManager: DownloadStorageManager,
 ) : Downloader {
     private val downloadManager = context.getSystemService(DownloadManager::class.java)
 
@@ -53,33 +61,28 @@ class DownloaderImpl(
     //  the current screen
     override suspend fun downloadItem(
         item: SpatialFinItem,
-        sourceId: String,
-        storageIndex: Int,
+        request: DownloadRequest,
     ): Pair<Long, UiText?> = coroutineScope {
         try {
             val source =
-                jellyfinRepository.getMediaSources(item.id, true).first { it.id == sourceId }
+                jellyfinRepository.getMediaSources(item.id, true).first { it.id == request.sourceId }
             val segments = jellyfinRepository.getSegments(item.id)
             val trickplayInfo =
                 if (item is SpatialFinSources) {
-                    item.trickplayInfo?.get(sourceId)
+                    item.trickplayInfo?.get(request.sourceId)
                 } else {
                     null
                 }
-            val storageLocation = context.getExternalFilesDirs(null)[storageIndex]
-            if (
-                storageLocation == null ||
-                    Environment.getExternalStorageState(storageLocation) !=
-                        Environment.MEDIA_MOUNTED
-            ) {
+            val downloadsRoot = downloadStorageManager.ensureDownloadsRoot()
+            if (!downloadsRoot.exists() && !downloadsRoot.mkdirs()) {
                 return@coroutineScope Pair(
                     -1,
                     UiText.StringResource(CoreR.string.storage_unavailable),
                 )
             }
-            val path =
-                Uri.fromFile(File(storageLocation, "downloads/${item.id}.${source.id}.download"))
-            val stats = StatFs(storageLocation.path)
+            val targetFile = buildTargetFile(item, source, request)
+            val path = Uri.fromFile(targetFile)
+            val stats = android.os.StatFs(downloadsRoot.path)
             if (stats.availableBytes < source.size) {
                 return@coroutineScope Pair(
                     -1,
@@ -90,8 +93,9 @@ class DownloaderImpl(
                     ),
                 )
             }
-            val request =
-                DownloadManager.Request(source.path.toUri())
+            val requestUrl = buildDownloadUrl(item, source, request)
+            val downloadManagerRequest =
+                DownloadManager.Request(requestUrl.toUri())
                     .setTitle(item.name)
                     .setAllowedOverMetered(
                         appPreferences.getValue(appPreferences.downloadOverMobileData)
@@ -103,7 +107,7 @@ class DownloaderImpl(
                         DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                     )
                     .setDestinationUri(path)
-            val downloadId = downloadManager.enqueue(request)
+            val downloadId = downloadManager.enqueue(downloadManagerRequest)
 
             when (item) {
                 is SpatialFinMovie -> {
@@ -138,19 +142,22 @@ class DownloaderImpl(
             database.insertSource(sourceDto.copy(downloadId = downloadId))
             database.insertUserData(item.toSpatialFinUserDataDto(jellyfinRepository.getUserId()))
 
-            downloadExternalMediaStreams(item, source, storageIndex)
+            if (request.mode == DownloadMode.ORIGINAL) {
+                downloadExternalMediaStreams(item, source)
+            }
 
             segments.forEach { database.insertSegment(it.toSpatialFinSegmentsDto(item.id)) }
 
             if (trickplayInfo != null) {
-                downloadTrickplayData(item.id, sourceId, trickplayInfo)
+                downloadTrickplayData(item.id, request.sourceId, trickplayInfo)
             }
 
             startImagesDownloader(item)
             return@coroutineScope Pair(downloadId, null)
         } catch (e: Exception) {
             try {
-                val source = jellyfinRepository.getMediaSources(item.id).first { it.id == sourceId }
+                val source =
+                    jellyfinRepository.getMediaSources(item.id).first { it.id == request.sourceId }
                 deleteItem(item, source)
             } catch (_: Exception) {}
             Timber.e(e)
@@ -172,42 +179,52 @@ class DownloaderImpl(
     }
 
     override suspend fun deleteItem(item: SpatialFinItem, source: SpatialFinSource) {
-        when (item) {
-            is SpatialFinMovie -> {
-                database.deleteMovie(item.id)
+        source.downloadId?.let { downloadManager.remove(it) }
+        database.getMediaStreamsBySourceId(source.id)
+            .mapNotNull { it.downloadId }
+            .forEach { downloadManager.remove(it) }
+        downloadStorageManager.deleteItem(item, source, deletePhysicalFile = true)
+    }
+
+    private fun buildTargetFile(
+        item: SpatialFinItem,
+        source: SpatialFinSource,
+        request: DownloadRequest,
+    ): File {
+        return when (request.mode) {
+            DownloadMode.ORIGINAL -> {
+                val extension = inferExtension(source.path, fallback = "mkv")
+                downloadStorageManager.buildTargetFile(item, source, "original", extension)
             }
-            is SpatialFinEpisode -> {
-                database.deleteEpisode(item.id)
-                val remainingEpisodes = database.getEpisodesBySeasonId(item.seasonId)
-                if (remainingEpisodes.isEmpty()) {
-                    database.deleteSeason(item.seasonId)
-                    database.deleteUserData(item.seasonId)
-                    File(context.filesDir, "trickplay/${item.seasonId}").deleteRecursively()
-                    File(context.filesDir, "images/${item.seasonId}").deleteRecursively()
-                    val remainingSeasons = database.getSeasonsByShowId(item.seriesId)
-                    if (remainingSeasons.isEmpty()) {
-                        database.deleteShow(item.seriesId)
-                        database.deleteUserData(item.seriesId)
-                        File(context.filesDir, "trickplay/${item.seriesId}").deleteRecursively()
-                        File(context.filesDir, "images/${item.seriesId}").deleteRecursively()
-                    }
-                }
-            }
+            DownloadMode.TRANSCODED ->
+                downloadStorageManager.buildTargetFile(item, source, "transcoded", "mp4")
         }
+    }
 
-        database.deleteSource(source.id)
-        File(source.path).delete()
-
-        val mediaStreams = database.getMediaStreamsBySourceId(source.id)
-        for (mediaStream in mediaStreams) {
-            File(mediaStream.path).delete()
+    private fun buildDownloadUrl(
+        item: SpatialFinItem,
+        source: SpatialFinSource,
+        request: DownloadRequest,
+    ): String {
+        if (request.mode == DownloadMode.ORIGINAL) {
+            return source.path
         }
-        database.deleteMediaStreamsBySourceId(source.id)
-
-        database.deleteUserData(item.id)
-
-        File(context.filesDir, "trickplay/${item.id}").deleteRecursively()
-        File(context.filesDir, "images/${item.id}").deleteRecursively()
+        return jellyfinApi.videosApi
+            .getVideoStreamUrl(
+                itemId = item.id,
+                container = "mp4",
+                static = true,
+                mediaSourceId = source.id,
+                audioCodec = "aac",
+                allowVideoStreamCopy = false,
+                allowAudioStreamCopy = false,
+                videoBitRate = request.videoBitrate,
+                subtitleStreamIndex = request.subtitleStreamIndex,
+                subtitleMethod = request.subtitleDeliveryMethod ?: SubtitleDeliveryMethod.DROP,
+                audioStreamIndex = request.audioStreamIndex,
+                context = EncodingContext.STREAMING,
+                enableAudioVbrEncoding = true,
+            )
     }
 
     override suspend fun getProgress(downloadId: Long?): Pair<Int, Int> {
@@ -250,15 +267,17 @@ class DownloaderImpl(
     private fun downloadExternalMediaStreams(
         item: SpatialFinItem,
         source: SpatialFinSource,
-        storageIndex: Int = 0,
     ) {
-        val storageLocation = context.getExternalFilesDirs(null)[storageIndex]
-        for (mediaStream in source.mediaStreams.filter { it.isExternal }) {
+        for (mediaStream in source.mediaStreams.filter { it.isExternal && it.path != null }) {
             val id = UUID.randomUUID()
-            val streamPath =
-                Uri.fromFile(
-                    File(storageLocation, "downloads/${item.id}.${source.id}.$id.download")
+            val streamFile =
+                downloadStorageManager.buildTargetFile(
+                    item = item,
+                    source = source,
+                    modeSuffix = "subtitle_${id}",
+                    extension = inferMediaStreamExtension(mediaStream),
                 )
+            val streamPath = Uri.fromFile(streamFile)
             database.insertMediaStream(
                 mediaStream.toSpatialFinMediaStreamDto(id, source.id, streamPath.path.orEmpty())
             )
@@ -276,6 +295,29 @@ class DownloaderImpl(
             val downloadId = downloadManager.enqueue(request)
             database.setMediaStreamDownloadId(id, downloadId)
         }
+    }
+
+    private fun inferMediaStreamExtension(mediaStream: SpatialFinMediaStream): String {
+        val codec = mediaStream.codec.lowercase()
+        return when {
+            codec.isBlank() -> inferExtension(mediaStream.path.orEmpty(), fallback = "srt")
+            codec == "subrip" -> "srt"
+            codec == "mov_text" -> "srt"
+            else -> codec
+        }
+    }
+
+    private fun inferExtension(urlOrPath: String, fallback: String): String {
+        val extensionFromPath =
+            URLConnection.guessContentTypeFromName(urlOrPath)
+                ?.substringAfterLast('/')
+                ?.lowercase()
+                ?.takeIf { it.isNotBlank() }
+        return extensionFromPath
+            ?: urlOrPath.substringBefore('?').substringAfterLast('.', "")
+                .lowercase()
+                .takeIf { it.isNotBlank() }
+            ?: fallback.lowercase()
     }
 
     private suspend fun downloadTrickplayData(

@@ -24,7 +24,60 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
-- **Offline Playback** — Download media for offline viewing.
+- **Automatic Offline Mode** — SpatialFin monitors server reachability and automatically switches into offline mode when the selected Jellyfin server is unavailable, then switches back online when the server becomes reachable again.
+- **Offline Playback** — Download media for offline viewing and continue watching local or downloaded media without server access.
+- **Smart Download Reconciliation** — If files disappear from the download folder outside the app, SpatialFin removes the stale entries from its catalog automatically.
+- **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
+- **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
+
+## Offline And Downloads
+
+SpatialFin now treats offline support as a first-class mode instead of a manual fallback.
+
+- The app continuously checks whether the active Jellyfin server is reachable.
+- If the server or network becomes unavailable, SpatialFin automatically falls back to offline mode.
+- When connectivity returns, SpatialFin switches back to online mode and resumes normal Jellyfin-backed behavior.
+- Downloaded items remain available from the Downloads tab while offline.
+- Local headset videos remain available from the Local tab regardless of server state.
+
+### Download Storage
+
+All app-managed downloads are stored in the public Android downloads area under:
+
+```text
+Downloads/SpatialFin
+```
+
+This makes the files easier to inspect, copy, back up, or manage from outside the app.
+
+### Download Types
+
+SpatialFin supports two download strategies:
+
+1. **Original file**
+Keeps the media exactly as stored on the Jellyfin server for maximum fidelity.
+
+2. **Smaller transcoded file**
+Requests a server-side transcode so you can save space by choosing:
+- a lower target bitrate
+- a specific audio track
+- a specific subtitle track
+
+### Deleting Downloads
+
+You can remove downloads in two ways:
+
+1. From the media detail screen using the trash/delete action.
+2. From the Downloads tab using the inline delete action on each downloaded item.
+
+If you delete the file manually from `Downloads/SpatialFin`, SpatialFin detects that the file is gone and removes the stale entry from the app automatically.
+
+### Behavior Summary
+
+- Online browsing uses the Jellyfin server when available.
+- Offline browsing uses cached/downloaded media when the server is unavailable.
+- Playback progress and media state continue to work for local and downloaded content.
+- Reconnection triggers a sync pass so offline state can be pushed back when the server is available again.
 
 ## Requirements
 
@@ -75,6 +128,12 @@ SpatialFin is a multi-module Android project:
 
 ```bash
 ./gradlew :app:xr:assembleLibreDebug
+```
+
+The debug APK is generated at:
+
+```text
+app/xr/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
 ```
 
 ## License

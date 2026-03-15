@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.paging.PagingData
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -38,6 +39,7 @@ class JellyfinRepositoryOfflineImpl(
     private val jellyfinApi: JellyfinApi,
     private val database: ServerDatabaseDao,
     private val appPreferences: AppPreferences,
+    private val downloadStorageManager: DownloadStorageManager,
 ) : JellyfinRepository {
 
     override suspend fun getPublicSystemInfo(): PublicSystemInfo {
@@ -50,6 +52,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getMovie(itemId: UUID): SpatialFinMovie =
         withContext(Dispatchers.IO) {
+            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
             database.getMovie(itemId).toSpatialFinMovie(database, jellyfinApi.userId!!)
         }
 
@@ -65,6 +68,7 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getEpisode(itemId: UUID): SpatialFinEpisode =
         withContext(Dispatchers.IO) {
+            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
             database.getEpisode(itemId).toSpatialFinEpisode(database, jellyfinApi.userId!!)
         }
 
@@ -209,6 +213,7 @@ class JellyfinRepositoryOfflineImpl(
         maxBitrate: Long?
     ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
+            downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
             database.getSources(itemId).map { it.toSpatialFinSource(database) }
         }
 
@@ -313,6 +318,10 @@ class JellyfinRepositoryOfflineImpl(
 
     override suspend fun getDownloads(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
+            downloadStorageManager.reconcileCurrentServerDownloads(
+                appPreferences.getValue(appPreferences.currentServer),
+                jellyfinApi.userId,
+            )
             val items = mutableListOf<SpatialFinItem>()
             items.addAll(
                 database
