@@ -6,36 +6,31 @@ import android.os.Build
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.recalculateWindowInsets
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
+import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.plus
@@ -135,48 +130,56 @@ fun SettingsScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreenLayout(
     @StringRes title: Int,
     state: SettingsState,
     onAction: (SettingsAction) -> Unit,
 ) {
-    val contentPadding = PaddingValues(all = MaterialTheme.spacings.default)
+    val safePadding = rememberSafePadding()
+    val contentPadding =
+        PaddingValues(
+            start = safePadding.start + MaterialTheme.spacings.default,
+            top = MaterialTheme.spacings.large,
+            end = safePadding.end + MaterialTheme.spacings.default,
+            bottom = safePadding.bottom + MaterialTheme.spacings.large,
+        )
 
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-
-    Scaffold(
+    Column(
         modifier =
-            Modifier.fillMaxSize()
-                .recalculateWindowInsets()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(title)) },
-                navigationIcon = {
-                    IconButton(onClick = { onAction(SettingsAction.OnBackClick) }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_arrow_left),
-                            contentDescription = null,
-                        )
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-            )
-        },
-    ) { innerPadding ->
+            Modifier.fillMaxSize().padding(top = safePadding.top + MaterialTheme.spacings.default),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+    ) {
+        XrBrowseHeader(
+            title = stringResource(title),
+            onBackClick = { onAction(SettingsAction.OnBackClick) },
+            modifier =
+                Modifier.padding(
+                    start = safePadding.start + MaterialTheme.spacings.default,
+                    end = safePadding.end + MaterialTheme.spacings.default,
+                ),
+        )
+        Text(
+            text = "Large controls and grouped settings tuned for hand-first XR interaction.",
+            modifier =
+                Modifier.padding(
+                    start = safePadding.start + MaterialTheme.spacings.default,
+                    end = safePadding.end + MaterialTheme.spacings.default,
+                ),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = contentPadding + innerPadding,
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
+            contentPadding = contentPadding,
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             items(state.preferenceGroups) { group ->
                 SettingsGroupCard(
                     group = group,
                     onAction = onAction,
-                    modifier = Modifier.widthIn(max = 640.dp),
+                    modifier = Modifier.widthIn(max = 860.dp),
                 )
             }
         }

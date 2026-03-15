@@ -14,11 +14,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +38,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServer
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyServerAddress
 import dev.jdtech.jellyfin.models.ServerWithAddresses
+import dev.jdtech.jellyfin.presentation.components.XrConfirmDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.components.ServerBottomSheet
 import dev.jdtech.jellyfin.presentation.setup.components.ServerItem
@@ -103,7 +103,7 @@ private fun ServersScreenLayout(
         Column(
             modifier =
                 Modifier.padding(horizontal = 24.dp)
-                    .widthIn(max = 480.dp)
+                    .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .align(Alignment.Center)
         ) {
@@ -111,23 +111,23 @@ private fun ServersScreenLayout(
             Image(
                 painter = painterResource(id = CoreR.drawable.ic_banner),
                 contentDescription = null,
-                modifier = Modifier.width(250.dp).align(Alignment.CenterHorizontally),
+                modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
             Text(
                 text = stringResource(SetupR.string.servers),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.displaySmall,
             )
             Spacer(modifier = Modifier.height(32.dp))
             if (state.servers.isEmpty()) {
                 Text(
                     text = stringResource(SetupR.string.servers_no_servers),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.weight(1f))
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 ) {
                     items(state.servers) { server ->
@@ -148,7 +148,7 @@ private fun ServersScreenLayout(
             }
         }
         if (showBack) {
-            IconButton(
+            FilledTonalButton(
                 onClick = { onAction(ServersAction.OnBackClick) },
                 modifier = Modifier.padding(start = 8.dp),
             ) {
@@ -156,50 +156,44 @@ private fun ServersScreenLayout(
                     painter = painterResource(CoreR.drawable.ic_arrow_left),
                     contentDescription = null,
                 )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Back", style = MaterialTheme.typography.titleMedium)
             }
         }
         ExtendedFloatingActionButton(
             onClick = { onAction(ServersAction.OnAddClick) },
             icon = { Icon(painterResource(CoreR.drawable.ic_plus), contentDescription = null) },
-            text = { Text(text = stringResource(SetupR.string.servers_btn_add_server)) },
+            text = {
+                Text(
+                    text = stringResource(SetupR.string.servers_btn_add_server),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            },
             modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp),
         )
     }
 
     if (openDeleteDialog && selectedServer != null) {
-        AlertDialog(
-            title = { Text(text = stringResource(SetupR.string.remove_server_dialog)) },
-            text = {
-                Text(
-                    text =
-                        stringResource(
-                            SetupR.string.remove_server_dialog_text,
-                            selectedServer!!.server.name,
-                        )
-                )
-            },
-            onDismissRequest = { openDeleteDialog = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        openDeleteDialog = false
-                        scope
-                            .launch { sheetState.hide() }
-                            .invokeOnCompletion {
-                                if (!sheetState.isVisible) {
-                                    showBottomSheet = false
-                                }
-                            }
-                        onAction(ServersAction.DeleteServer(selectedServer!!.server.id))
+        XrConfirmDialog(
+            title = stringResource(SetupR.string.remove_server_dialog),
+            message =
+                stringResource(
+                    SetupR.string.remove_server_dialog_text,
+                    selectedServer!!.server.name,
+                ),
+            confirmLabel = stringResource(SetupR.string.confirm),
+            dismissLabel = stringResource(SetupR.string.cancel),
+            onDismiss = { openDeleteDialog = false },
+            onConfirm = {
+                openDeleteDialog = false
+                scope
+                    .launch { sheetState.hide() }
+                    .invokeOnCompletion {
+                        if (!sheetState.isVisible) {
+                            showBottomSheet = false
+                        }
                     }
-                ) {
-                    Text(text = stringResource(SetupR.string.confirm))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { openDeleteDialog = false }) {
-                    Text(text = stringResource(SetupR.string.cancel))
-                }
+                onAction(ServersAction.DeleteServer(selectedServer!!.server.id))
             },
         )
     }

@@ -26,6 +26,7 @@ import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinImages
 import dev.jdtech.jellyfin.models.HomeItem
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -35,6 +36,7 @@ fun HomeView(
     onAction: (HomeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val visibleItems = view.view.items.deduplicateMovieVersions()
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(42.dp).padding(itemsPadding)) {
             Text(
@@ -68,7 +70,7 @@ fun HomeView(
             contentPadding = itemsPadding,
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
         ) {
-            items(view.view.items, key = { it.id }) { item ->
+            items(visibleItems, key = { it.id }) { item ->
                 ItemCard(
                     item = item,
                     direction = Direction.VERTICAL,

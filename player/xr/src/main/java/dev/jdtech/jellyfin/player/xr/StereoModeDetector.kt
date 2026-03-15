@@ -45,7 +45,10 @@ object StereoModeDetector {
         Regex("""\bfull[\s.-]?tab\b"""),
         // Generic Over-Under / Top-Bottom
         Regex("""\b[ot]ab\b"""),
+        Regex("""\bou\b"""),
+        Regex("""\btb\b"""),
         Regex("""\bover[\s.-]under\b"""),
+        Regex("""\btop[\s.-]bottom\b"""),
         Regex("""\btop[\s.-]and[\s.-]bottom\b"""),
         // Combined 3D+TB tag
         Regex("""\b3d[\s.-]?h?tab\b"""),

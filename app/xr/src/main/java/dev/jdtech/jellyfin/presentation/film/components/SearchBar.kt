@@ -37,6 +37,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.film.R as FilmR
 import dev.jdtech.jellyfin.film.presentation.search.SearchAction
 import dev.jdtech.jellyfin.film.presentation.search.SearchState
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -164,20 +165,21 @@ fun FilmSearchBar(
         onExpandedChange = { onExpand(it) },
         modifier = modifier.padding(start = searchBarPaddingStart, end = searchBarPaddingEnd),
     ) {
+        val visibleItems = state.items.deduplicateMovieVersions()
         LazyVerticalGrid(
-            columns = GridCellsAdaptiveWithMinColumns(minSize = 160.dp, minColumns = 2),
+            columns = GridCellsAdaptiveWithMinColumns(minSize = 220.dp, minColumns = 2),
             modifier = Modifier.fillMaxSize(),
             contentPadding =
                 PaddingValues(
-                    start = safePadding.start + MaterialTheme.spacings.default,
-                    top = MaterialTheme.spacings.default,
-                    end = safePadding.end + MaterialTheme.spacings.default,
-                    bottom = safePadding.bottom + MaterialTheme.spacings.default,
+                    start = safePadding.start + MaterialTheme.spacings.large,
+                    top = MaterialTheme.spacings.large,
+                    end = safePadding.end + MaterialTheme.spacings.large,
+                    bottom = safePadding.bottom + MaterialTheme.spacings.large,
                 ),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
         ) {
-            items(items = state.items, key = { it.id }) { item ->
+            items(items = visibleItems, key = { it.id }) { item ->
                 ItemCard(
                     item = item,
                     direction = Direction.VERTICAL,

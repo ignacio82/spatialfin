@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -50,38 +51,47 @@ private fun WelcomeScreenLayout(onAction: (WelcomeAction) -> Unit) {
     RootLayout(padding = PaddingValues(horizontal = 24.dp)) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.align(Alignment.Center).verticalScroll(rememberScrollState()),
+            modifier =
+                Modifier.align(Alignment.Center)
+                    .widthIn(max = 720.dp)
+                    .verticalScroll(rememberScrollState()),
         ) {
             Image(
                 painter = painterResource(id = CoreR.drawable.ic_banner),
                 contentDescription = null,
-                modifier = Modifier.width(250.dp),
+                modifier = Modifier.width(320.dp),
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
             Text(
                 text = stringResource(SetupR.string.welcome),
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.displaySmall,
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             Text(
                 text = stringResource(SetupR.string.welcome_text),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.height(32.dp))
-            Column(modifier = Modifier.widthIn(max = 480.dp)) {
+            Spacer(modifier = Modifier.height(40.dp))
+            Column(modifier = Modifier.widthIn(max = 560.dp)) {
                 OutlinedButton(
                     onClick = { onAction(WelcomeAction.OnLearnMoreClick) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp),
                 ) {
-                    Text(text = stringResource(SetupR.string.welcome_btn_learn_more))
+                    Text(
+                        text = stringResource(SetupR.string.welcome_btn_learn_more),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = { onAction(WelcomeAction.OnContinueClick) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp),
                 ) {
-                    Text(text = stringResource(SetupR.string.welcome_btn_continue))
+                    Text(
+                        text = stringResource(SetupR.string.welcome_btn_continue),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
         }

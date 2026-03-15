@@ -44,6 +44,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -95,6 +96,8 @@ import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
+import androidx.xr.scenecore.GltfModel
+import androidx.xr.scenecore.GltfModelEntity
 import androidx.xr.scenecore.SpatialCapability
 import androidx.xr.scenecore.SpatialEnvironment
 import androidx.xr.scenecore.SurfaceEntity
@@ -105,13 +108,13 @@ import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
+import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
-import dev.jdtech.jellyfin.player.xr.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
-import dev.jdtech.jellyfin.player.xr.voice.VoiceCommandDispatcher
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -120,6 +123,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
+import java.nio.file.Paths
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -129,13 +133,23 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
+import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.local.R as LocalR
 
 // ── Next-episode panel threshold ───────────────────────────────────────────────────
 private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2 minutes
 private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
+private const val PAUSED_MASCOT_DELAY_MS = 1_000L
+private const val MIN_VOICE_LISTEN_MS_AFTER_GESTURE = 900L
+
+private val PausedMascotPose =
+    Pose(
+        Vector3(-2.15f, -0.98f, 0.95f),
+        Quaternion(0f, 0.9914f, 0f, 0.1305f),
+    )
 
 /**
  * SpatialPlayerScreen — IMAX-style immersive XR playback experience.
@@ -161,6 +175,7 @@ fun SpatialPlayerScreen(
     startFromBeginning: Boolean,
     mediaSourceIndex: Int? = null,
     maxBitrate: Long? = null,
+    openSyncPlayDialogOnStart: Boolean = false,
     libassRenderer: LibassRenderer?,
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
     onLaunchSearchResult: (SpatialFinItem) -> Unit,
@@ -171,16 +186,22 @@ fun SpatialPlayerScreen(
     val activity = context as? Activity
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
+    val syncPlayState by viewModel.syncPlayState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
     val voiceControlEnabled = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceControlEnabled)
+    val voiceGestureHand = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceGestureHand) ?: "left"
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
+    var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
+    var voiceGestureHint by remember { mutableStateOf<String?>(null) }
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
+    var gestureVoiceSessionActive by remember { mutableStateOf(false) }
+    var voiceCaptureStartedAtMs by remember { mutableLongStateOf(0L) }
     var hasAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -194,7 +215,9 @@ fun SpatialPlayerScreen(
         )
     }
     val pinchDetector =
-        remember(session, activity) { activity?.let { SecondaryHandPinchDetector(session, it) } }
+        remember(session, activity, voiceGestureHand) {
+            activity?.let { SecondaryHandPinchDetector(session, it, voiceGestureHand) }
+        }
 
     val audioPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -250,18 +273,22 @@ fun SpatialPlayerScreen(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
+    var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
     var videoWidth by remember { mutableFloatStateOf(10.0f) }
     var videoHeight by remember { mutableFloatStateOf(5.625f) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
 
-    var showCastCrewPanel by remember { mutableStateOf(false) }
-    LaunchedEffect(isPlaying) {
-        if (!isPlaying) {
-            delay(1500)
-            showCastCrewPanel = true
+    var showPausedMascot by remember { mutableStateOf(false) }
+    val isActuallyPaused = playbackState == Player.STATE_READY && !isPlaying
+    LaunchedEffect(isActuallyPaused) {
+        if (isActuallyPaused) {
+            delay(PAUSED_MASCOT_DELAY_MS)
+            showPausedMascot = true
+            Timber.i("Paused mascot requested after pause delay")
         } else {
-            showCastCrewPanel = false
+            showPausedMascot = false
+            Timber.d("Paused mascot hidden because playback resumed")
         }
     }
 
@@ -288,52 +315,68 @@ fun SpatialPlayerScreen(
     var voiceSearchResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
     var voiceSearchLoading by remember { mutableStateOf(false) }
     var voiceSearchError by remember { mutableStateOf<String?>(null) }
+    val latestSyncPlayGroups = androidx.compose.runtime.rememberUpdatedState(syncPlayState.availableGroups)
 
     fun resetAutoHide() {
         hideTimestamp = System.currentTimeMillis()
     }
 
-    fun openVoiceSearch(query: String) {
-        voiceSearchQuery = query
-        voiceSearchLoading = true
-        voiceSearchError = null
-        activeDialog = "voice_search"
-        coroutineScope.launch {
-            runCatching { onSearchQuery(query) }
-                .onSuccess { results ->
-                    voiceSearchResults = results
-                    voiceSearchLoading = false
-                    voiceSearchError = null
-                }
-                .onFailure {
-                    voiceSearchResults = emptyList()
-                    voiceSearchLoading = false
-                    voiceSearchError = "Search failed"
-                }
+    LaunchedEffect(openSyncPlayDialogOnStart) {
+        if (openSyncPlayDialogOnStart) {
+            activeDialog = "syncplay"
+            viewModel.refreshSyncPlayGroups()
         }
     }
 
-    val voiceDispatcher =
+    fun openVoiceSearch(
+        query: String,
+        results: List<SpatialFinItem> = emptyList(),
+        error: String? = null,
+        loading: Boolean = false,
+    ) {
+        voiceSearchQuery = query
+        voiceSearchLoading = loading
+        voiceSearchError = error
+        voiceSearchResults = results
+        activeDialog = "voice_search"
+    }
+
+    val sessionController =
         remember(player, viewModel, activity) {
-            VoiceCommandDispatcher(
+            PlayerSessionController(
                 viewModel = viewModel,
                 player = player,
                 onControlsVisibilityChange = { controlsVisible = it },
                 onNavigateBack = onBackClick,
-                onSearch = ::openVoiceSearch,
+                onShowVoiceSearch = ::openVoiceSearch,
+                onShowSyncPlayDialog = {
+                    activeDialog = "syncplay"
+                    viewModel.refreshSyncPlayGroups()
+                },
                 onGoHome = {
                     val launchIntent =
                         Intent().setClassName(context, "dev.spatialfin.MainActivity")
                             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    runCatching { context.startActivity(launchIntent) }
-                        .onSuccess { activity?.finish() }
-                        .onFailure { voiceFeedback = "Home unavailable" }
+                    runCatching {
+                        context.startActivity(launchIntent)
+                        activity?.finish()
+                        true
+                    }.getOrElse { false }
                 },
                 onCloseApp = { activity?.finishAffinity() },
+                onLaunchSearchResult = {
+                    onLaunchSearchResult(it)
+                    activeDialog = null
+                },
+                onSearchQuery = onSearchQuery,
+                getAvailableSyncPlayGroups = { latestSyncPlayGroups.value },
             )
         }
 
     fun requestVoiceCommand() {
+        if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
+            return
+        }
         if (!voiceControlEnabled) {
             voiceFeedback = "Voice control disabled"
             return
@@ -348,6 +391,9 @@ fun SpatialPlayerScreen(
             return
         }
         shouldStartVoiceCapture = false
+        controlsVisible = true
+        resetAutoHide()
+        voiceCaptureStartedAtMs = System.currentTimeMillis()
         startVoiceCapture(
             voiceService = voiceService,
             commandCoordinator = commandCoordinator,
@@ -355,7 +401,7 @@ fun SpatialPlayerScreen(
             viewModel = viewModel,
             uiState = uiState,
             controlsVisible = controlsVisible,
-            dispatcher = voiceDispatcher,
+            controller = sessionController,
             telemetryStore = telemetryStore,
             onResult = { voiceFeedback = it },
             scope = coroutineScope,
@@ -367,6 +413,13 @@ fun SpatialPlayerScreen(
         if (controlsVisible && isPlaying && !isLocked) {
             delay(10_000L)
             controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(isActuallyPaused) {
+        if (isActuallyPaused) {
+            controlsVisible = true
+            resetAutoHide()
         }
     }
 
@@ -410,10 +463,41 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(pinchDetector, voiceControlEnabled, hasHandTrackingPermission) {
         if (!voiceControlEnabled || !hasHandTrackingPermission) return@LaunchedEffect
-        pinchDetector?.pinchEvents?.collect { event ->
+        pinchDetector?.gestureStates?.collect { event ->
             when (event) {
-                SecondaryHandPinchDetector.PinchEvent.STARTED -> requestVoiceCommand()
-                SecondaryHandPinchDetector.PinchEvent.ENDED -> voiceService.stopListening()
+                is SecondaryHandPinchDetector.GestureState.Arming -> {
+                    voiceGestureArmingProgress = event.progress
+                    voiceGestureHint = "Hold to talk"
+                }
+                SecondaryHandPinchDetector.GestureState.Started -> {
+                    voiceGestureArmingProgress = 1f
+                    voiceGestureHint = null
+                    if (!gestureVoiceSessionActive && voiceState == VoiceState.IDLE) {
+                        gestureVoiceSessionActive = true
+                        requestVoiceCommand()
+                    }
+                }
+                SecondaryHandPinchDetector.GestureState.Ended -> {
+                    voiceGestureArmingProgress = 0f
+                    voiceGestureHint = null
+                    gestureVoiceSessionActive = false
+                    val listeningDurationMs = System.currentTimeMillis() - voiceCaptureStartedAtMs
+                    if (
+                        voiceState == VoiceState.LISTENING &&
+                        listeningDurationMs >= MIN_VOICE_LISTEN_MS_AFTER_GESTURE
+                    ) {
+                        voiceService.stopListening()
+                    } else {
+                        Timber.d("VOICE: Ignoring early gesture release durationMs=%d state=%s", listeningDurationMs, voiceState)
+                    }
+                }
+                SecondaryHandPinchDetector.GestureState.Idle -> {
+                    voiceGestureArmingProgress = 0f
+                    gestureVoiceSessionActive = false
+                    if (voiceState != VoiceState.LISTENING) {
+                        voiceGestureHint = null
+                    }
+                }
             }
         }
     }
@@ -421,6 +505,7 @@ fun SpatialPlayerScreen(
     LaunchedEffect(voiceState) {
         if (voiceState == VoiceState.LISTENING) {
             player.volume = 0.2f
+            voiceGestureHint = null
         } else {
             player.volume = 1.0f
         }
@@ -509,6 +594,7 @@ fun SpatialPlayerScreen(
             currentPosition = player.currentPosition
             duration = player.duration.coerceAtLeast(0L)
             isPlaying = player.isPlaying
+            playbackState = player.playbackState
             viewModel.updateCurrentSegment()
             delay(500)
         }
@@ -517,6 +603,8 @@ fun SpatialPlayerScreen(
     // --- SceneCore video entity ---
     val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
+    val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
+    val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
     // Separate entity for the cast panel — deliberately has NO MovableComponent so
     // scroll gestures inside the panel are never intercepted by the video's grab handle.
     val castPanelEntity = remember { mutableStateOf<GroupEntity?>(null) }
@@ -524,7 +612,7 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(controlsVisible, rootEntity.value) {
         val root = rootEntity.value ?: return@LaunchedEffect
-        if (controlsVisible) {
+        if (!controlsVisible) {
             if (movableComponent.value == null) {
                 val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session, false)
                 root.addComponent(movable)
@@ -539,10 +627,11 @@ fun SpatialPlayerScreen(
     }
 
     DisposableEffect(session) {
+        val savedPose = loadSavedPlayerRootPose(viewModel)
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(10.0f, 5.625f))
         try {
             // Place root at the origin. UIs will be offset manually relative to the root.
-            val root = GroupEntity.create(session, "PlayerRoot", Pose(Vector3(0f, 0f, 0f), Quaternion.Identity))
+            val root = GroupEntity.create(session, "PlayerRoot", savedPose)
             rootEntity.value = root
 
             // Place the video at -5.0f relative to the root.
@@ -563,15 +652,58 @@ fun SpatialPlayerScreen(
         } catch (_: Exception) {}
 
         onDispose {
+            rootEntity.value?.let { root ->
+                safeGetEntityPose(root)?.let { savePlayerRootPose(viewModel, it) }
+            }
             voiceService.destroy()
             commandCoordinator.destroy()
             videoEntity.value?.dispose()
             videoEntity.value = null
+            mascotEntity.value?.dispose()
             rootEntity.value?.dispose()
             rootEntity.value = null
+            mascotEntity.value = null
+            mascotModel.value?.close()
+            mascotModel.value = null
             castPanelEntity.value?.dispose()
             castPanelEntity.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(session, rootEntity.value) {
+        rootEntity.value ?: return@LaunchedEffect
+        if (mascotEntity.value != null) return@LaunchedEffect
+        if (!session.scene.spatialCapabilities.contains(SpatialCapability.SPATIAL_3D_CONTENT)) {
+            Timber.i("Skipping paused mascot: SPATIAL_3D_CONTENT not available")
+            return@LaunchedEffect
+        }
+        runCatching {
+            val gltfModel = GltfModel.create(session, Paths.get("models", "spatialfin.glb"))
+            mascotModel.value = gltfModel
+            GltfModelEntity.create(session, gltfModel).also { entity ->
+                entity.parent = session.scene.activitySpace
+                entity.setPose(PausedMascotPose)
+                entity.setScale(1.35f)
+                entity.setEnabled(false)
+                mascotEntity.value = entity
+                Timber.i("Paused mascot loaded and attached to activity space")
+            }
+        }.onFailure {
+            Timber.w(it, "Unable to load paused mascot model")
+        }
+    }
+
+    LaunchedEffect(showPausedMascot, mascotEntity.value) {
+        val mascot = mascotEntity.value ?: return@LaunchedEffect
+        safelyToggleMascotEntity(mascot, showPausedMascot)
+    }
+
+    LaunchedEffect(rootEntity.value) {
+        val root = rootEntity.value ?: return@LaunchedEffect
+        while (true) {
+            safeGetEntityPose(root)?.let { savePlayerRootPose(viewModel, it) }
+            delay(1_000L)
         }
     }
 
@@ -750,7 +882,7 @@ fun SpatialPlayerScreen(
             }
         }
 
-        if (voiceState == VoiceState.LISTENING) {
+        if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
             SpatialPanel(
                 modifier = SubspaceModifier
                     .width(subtitlePanelWidthDp.dp)
@@ -761,6 +893,8 @@ fun SpatialPlayerScreen(
                     VoiceControlOverlay(
                         state = voiceState,
                         partialTranscript = partialTranscript,
+                        gestureArmingProgress = voiceGestureArmingProgress,
+                        gestureHint = voiceGestureHint,
                     )
                 }
             }
@@ -777,7 +911,7 @@ fun SpatialPlayerScreen(
             resizePolicy = ResizePolicy(),
         ) {
             // ── Orbiter: secondary controls (right edge, hidden when locked/controls hidden) ──
-            if (controlsVisible && !isLocked) {
+            if ((controlsVisible || isActuallyPaused) && !isLocked) {
                 Orbiter(
                     position = ContentEdge.End,
                     alignment = Alignment.CenterVertically,
@@ -788,6 +922,11 @@ fun SpatialPlayerScreen(
                         onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
                         onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
                         onQualityClick = { activeDialog = "quality"; resetAutoHide() },
+                        onSyncPlayClick = {
+                            activeDialog = "syncplay"
+                            viewModel.refreshSyncPlayGroups()
+                            resetAutoHide()
+                        },
                         onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
                         onVoiceClick = {
                             requestVoiceCommand()
@@ -796,6 +935,7 @@ fun SpatialPlayerScreen(
                         voiceControlEnabled = voiceControlEnabled,
                         voiceAvailable = voiceService.isAvailable(),
                         voiceState = voiceState,
+                        syncPlayActive = syncPlayState.activeGroup != null,
                     )
                 }
             }
@@ -805,7 +945,7 @@ fun SpatialPlayerScreen(
             // background makes the tap target discoverable without cluttering the view.
             Box(modifier = Modifier.fillMaxSize()) {
                 AnimatedVisibility(
-                    visible = controlsVisible,
+                    visible = controlsVisible || isActuallyPaused,
                     enter = fadeIn(),
                     exit = fadeOut(),
                 ) {
@@ -816,18 +956,20 @@ fun SpatialPlayerScreen(
                         isPlaying = isPlaying,
                         currentPosition = currentPosition,
                         duration = duration,
-                        currentStereoMode = currentStereoMode,
                         isLocked = isLocked,
                         spatialAudioAvailable = spatialAudioAvailable,
-                        onStereoModeChange = { currentStereoMode = it },
                         onLockToggle = { isLocked = !isLocked },
+                        onChaptersClick = {
+                            activeDialog = "chapters"
+                            resetAutoHide()
+                        },
                         onHideClick = { controlsVisible = false },
                         onBackClick = onBackClick,
                         resetAutoHide = { resetAutoHide() },
                     )
                 }
 
-                if (!controlsVisible) {
+                if (!controlsVisible && !isActuallyPaused) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -890,6 +1032,28 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
+            if (activeDialog == "chapters") {
+                SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                    ChaptersDialogContent(
+                        chapters = uiState.currentChapters,
+                        currentPosition = currentPosition,
+                        onPreviousChapter = {
+                            viewModel.seekToPreviousChapter()
+                            resetAutoHide()
+                        },
+                        onNextChapter = {
+                            viewModel.seekToNextChapter()
+                            resetAutoHide()
+                        },
+                        onSelectChapter = { index ->
+                            viewModel.seekToChapterIndex(index)
+                            resetAutoHide()
+                            activeDialog = null
+                        },
+                        onDismiss = { activeDialog = null },
+                    )
+                }
+            }
             if (activeDialog == "quality") {
                 SpatialDialog(onDismissRequest = { activeDialog = null }) {
                     QualityDialogContent(
@@ -913,6 +1077,18 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
+            if (activeDialog == "syncplay") {
+                SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                    SyncPlayDialogContent(
+                        state = syncPlayState,
+                        onRefresh = { viewModel.refreshSyncPlayGroups() },
+                        onCreateGroup = { viewModel.createSyncPlayGroup() },
+                        onJoinGroup = { viewModel.joinSyncPlayGroup(it) },
+                        onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
+                        onDismiss = { activeDialog = null },
+                    )
+                }
+            }
             if (activeDialog == "voice_search") {
                 SpatialDialog(onDismissRequest = { activeDialog = null }) {
                     VoiceSearchDialogContent(
@@ -922,6 +1098,7 @@ fun SpatialPlayerScreen(
                         results = voiceSearchResults,
                         currentItemTitle = uiState.currentItemTitle,
                         onPlayResult = {
+                            sessionController.clearPendingSelection()
                             onLaunchSearchResult(it)
                             activeDialog = null
                         },
@@ -980,7 +1157,7 @@ fun SpatialPlayerScreen(
                 NextEpisodePanelContent(
                     nextEpisode = uiState.nextEpisode!!,
                     onPlayNext = {
-                        player.seekToNextMediaItem()
+                        viewModel.skipToNextItem()
                         nextEpisodePanelDismissed = true
                     },
                     onDismiss = { nextEpisodePanelDismissed = true },
@@ -998,8 +1175,7 @@ fun SpatialPlayerScreen(
         // an invisible (empty) SpatialPanel still intercepts raycasts and would block the
         // user from grabbing and moving the video entity.
         val castRoot = castPanelEntity.value
-        val shouldShowCastPanel = showCastCrewPanel &&
-            (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())
+        val shouldShowCastPanel = false
         if (castRoot != null && shouldShowCastPanel) {
             SceneCoreEntity(factory = { castRoot }, modifier = SubspaceModifier) {
                 SpatialPanel(
@@ -1029,11 +1205,13 @@ private fun SecondaryControlsOrbiter(
     onSubtitleClick: () -> Unit,
     onSpeedClick: () -> Unit,
     onQualityClick: () -> Unit,
+    onSyncPlayClick: () -> Unit,
     onCastCrewClick: () -> Unit,
     onVoiceClick: () -> Unit,
     voiceControlEnabled: Boolean,
     voiceAvailable: Boolean,
     voiceState: VoiceState,
+    syncPlayActive: Boolean,
 ) {
     Surface(
         shape = RoundedCornerShape(40.dp),
@@ -1077,6 +1255,14 @@ private fun SecondaryControlsOrbiter(
                     modifier = Modifier.size(48.dp),
                 )
             }
+            IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(80.dp)) {
+                Icon(
+                    painterResource(CoreR.drawable.ic_tv),
+                    contentDescription = "SyncPlay",
+                    tint = if (syncPlayActive) Color(0xFF4FC3F7) else Color.White,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
             IconButton(onClick = onCastCrewClick, modifier = Modifier.size(80.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_user),
@@ -1109,6 +1295,126 @@ private fun SecondaryControlsOrbiter(
     }
 }
 
+@Composable
+private fun SyncPlayDialogContent(
+    state: PlayerViewModel.SyncPlayUiState,
+    onRefresh: () -> Unit,
+    onCreateGroup: () -> Unit,
+    onJoinGroup: (UUID) -> Unit,
+    onLeaveGroup: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(32.dp),
+        color = Color(0xFF101114),
+        tonalElevation = 8.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp).width(540.dp).heightIn(max = 720.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                text = "SyncPlay",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+            )
+            state.activeGroup?.let { group ->
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Active group: ${group.name}", color = Color.White)
+                        Text(
+                            "State: ${group.state}",
+                            color = Color.White.copy(alpha = 0.8f),
+                        )
+                        Text(
+                            "Participants: ${group.participants.joinToString().ifBlank { "Just you" }}",
+                            color = Color.White.copy(alpha = 0.8f),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onLeaveGroup) {
+                                Text("Leave Group")
+                            }
+                            TextButton(onClick = onRefresh) {
+                                Text("Refresh")
+                            }
+                        }
+                    }
+                }
+            } ?: Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onCreateGroup, enabled = !state.isLoading) {
+                    Text("Create Group")
+                }
+                TextButton(onClick = onRefresh, enabled = !state.isLoading) {
+                    Text("Refresh")
+                }
+            }
+
+            state.statusMessage?.let { message ->
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            if (state.isLoading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                state.availableGroups.forEach { group ->
+                    Surface(
+                        onClick = { onJoinGroup(group.id) },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.White.copy(alpha = 0.06f),
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(group.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${group.participants.size} participant(s) • ${group.state}",
+                                color = Color.White.copy(alpha = 0.75f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                }
+                if (state.availableGroups.isEmpty() && !state.isLoading) {
+                    Text(
+                        "No active SyncPlay groups on this server.",
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+        }
+    }
+}
+
 private fun startVoiceCapture(
     voiceService: SpatialVoiceService,
     commandCoordinator: SpatialCommandCoordinator,
@@ -1116,7 +1422,7 @@ private fun startVoiceCapture(
     viewModel: PlayerViewModel,
     uiState: PlayerViewModel.UiState,
     controlsVisible: Boolean,
-    dispatcher: VoiceCommandDispatcher? = null,
+    controller: PlayerSessionController,
     telemetryStore: VoiceTelemetryStore,
     onResult: (String) -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
@@ -1141,14 +1447,14 @@ private fun startVoiceCapture(
                     currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
                 )
             val parseResult = commandCoordinator.parse(transcript, snapshot)
-            val feedback = dispatchVoiceParseResult(dispatcher, parseResult)
+            val feedback = dispatchVoiceParseResult(controller, parseResult)
             telemetryStore.record(
                 VoiceTelemetryEntry(
                     transcript = transcript,
                     action = parseResult.action::class.simpleName ?: "Unknown",
                     strategy = parseResult.strategy.name,
                     latencyMs = System.currentTimeMillis() - startedAtMs,
-                    success = parseResult.action !is dev.jdtech.jellyfin.player.xr.voice.XrPlayerAction.Unrecognized,
+                    success = parseResult.action !is XrPlayerAction.Unrecognized,
                 )
             )
             onResult(feedback)
@@ -1156,12 +1462,10 @@ private fun startVoiceCapture(
     }
 }
 
-private fun dispatchVoiceParseResult(
-    dispatcher: VoiceCommandDispatcher?,
+private suspend fun dispatchVoiceParseResult(
+    controller: PlayerSessionController,
     parseResult: VoiceParseResult,
-): String {
-    return dispatcher?.dispatch(parseResult.action) ?: "Voice action unavailable"
-}
+): String = controller.dispatch(parseResult.action)
 
 private fun currentChapterName(
     uiState: PlayerViewModel.UiState,
@@ -1302,11 +1606,10 @@ private fun ControlPanelUI(
     isPlaying: Boolean,
     currentPosition: Long,
     duration: Long,
-    currentStereoMode: String,
     isLocked: Boolean,
     spatialAudioAvailable: Boolean,
-    onStereoModeChange: (String) -> Unit,
     onLockToggle: () -> Unit,
+    onChaptersClick: () -> Unit,
     onHideClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
@@ -1401,7 +1704,7 @@ private fun ControlPanelUI(
                 if (!isLocked) {
                     IconButton(
                         onClick = { player.seekBack(); resetAutoHide() },
-                        modifier = Modifier.size(96.dp),
+                        modifier = Modifier.size(112.dp),
                     ) {
                         Icon(
                             painterResource(CoreR.drawable.ic_rewind),
@@ -1431,9 +1734,20 @@ private fun ControlPanelUI(
 
                 if (!isLocked) {
                     Spacer(Modifier.width(48.dp))
+                    TextButton(
+                        onClick = { onChaptersClick() },
+                        modifier = Modifier.height(88.dp),
+                    ) {
+                        Text(
+                            "Chapters",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White,
+                        )
+                    }
+                    Spacer(Modifier.width(24.dp))
                     IconButton(
                         onClick = { player.seekForward(); resetAutoHide() },
-                        modifier = Modifier.size(96.dp),
+                        modifier = Modifier.size(112.dp),
                     ) {
                         Icon(
                             painterResource(CoreR.drawable.ic_fast_forward),
@@ -1442,30 +1756,98 @@ private fun ControlPanelUI(
                             modifier = Modifier.size(64.dp),
                         )
                     }
-                    Spacer(Modifier.width(80.dp))
-                    // 2D / 3D stereo mode toggle
-                    TextButton(
-                        onClick = {
-                            val modes = listOf("mono", "sbs", "top_bottom")
-                            val next = modes[(modes.indexOf(currentStereoMode) + 1) % modes.size]
-                            onStereoModeChange(next)
-                            resetAutoHide()
-                        },
-                        modifier = Modifier.height(80.dp),
-                    ) {
-                        Icon(
-                            painterResource(CoreR.drawable.ic_3d),
-                            contentDescription = null,
-                            tint = if (currentStereoMode != "mono") Color(0xFF4FC3F7) else Color.White,
-                            modifier = Modifier.size(48.dp),
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text(
-                            stereoModeDisplayName(currentStereoMode),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = if (currentStereoMode != "mono") Color(0xFF4FC3F7) else Color.White,
-                        )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChaptersDialogContent(
+    chapters: List<PlayerChapter>,
+    currentPosition: Long,
+    onPreviousChapter: () -> Unit,
+    onNextChapter: () -> Unit,
+    onSelectChapter: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val currentChapterIndex = chapters.indexOfLast { it.startPosition <= currentPosition }.coerceAtLeast(0)
+
+    Surface(
+        modifier = Modifier.width(760.dp).heightIn(max = 880.dp),
+        shape = RoundedCornerShape(36.dp),
+        color = Color(0xFF101114),
+        tonalElevation = 12.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Text("Chapters", style = MaterialTheme.typography.displaySmall, color = Color.White)
+            if (chapters.isEmpty()) {
+                Text(
+                    "No chapter markers for this item.",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White.copy(alpha = 0.75f),
+                )
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = onPreviousChapter, modifier = Modifier.height(64.dp)) {
+                        Text("Previous Chapter", style = MaterialTheme.typography.titleMedium)
                     }
+                    Button(onClick = onNextChapter, modifier = Modifier.height(64.dp)) {
+                        Text("Next Chapter", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+                Column(
+                    modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    chapters.forEachIndexed { index, chapter ->
+                        Surface(
+                            onClick = { onSelectChapter(index) },
+                            shape = RoundedCornerShape(24.dp),
+                            color =
+                                if (index == currentChapterIndex) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                } else {
+                                    Color.White.copy(alpha = 0.06f)
+                                },
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        chapter.name ?: "Chapter ${index + 1}",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = Color.White,
+                                    )
+                                    Text(
+                                        formatTime(chapter.startPosition),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                    )
+                                }
+                                if (index == currentChapterIndex) {
+                                    Text(
+                                        "Current",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF4FC3F7),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
                 }
             }
         }
@@ -2167,12 +2549,6 @@ private fun mapStereoMode(mode: String): SurfaceEntity.StereoMode? = when (mode)
     else -> null
 }
 
-private fun stereoModeDisplayName(mode: String): String = when (mode) {
-    "sbs" -> "3D SBS"
-    "top_bottom" -> "3D T/B"
-    else -> "2D"
-}
-
 private fun formatTime(ms: Long): String {
     val totalSeconds = ms / 1000
     val hours = totalSeconds / 3600
@@ -2180,4 +2556,57 @@ private fun formatTime(ms: Long): String {
     val seconds = totalSeconds % 60
     return if (hours > 0) String.format("%d:%02d:%02d", hours, minutes, seconds)
     else String.format("%d:%02d", minutes, seconds)
+}
+
+private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
+    val prefs = viewModel.appPreferences
+    return Pose(
+        Vector3(
+            prefs.getValue(prefs.xrPlayerPanelX),
+            prefs.getValue(prefs.xrPlayerPanelY),
+            prefs.getValue(prefs.xrPlayerPanelZ),
+        ),
+        Quaternion(
+            prefs.getValue(prefs.xrPlayerPanelRotX),
+            prefs.getValue(prefs.xrPlayerPanelRotY),
+            prefs.getValue(prefs.xrPlayerPanelRotZ),
+            prefs.getValue(prefs.xrPlayerPanelRotW),
+        ),
+    )
+}
+
+private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
+    val prefs = viewModel.appPreferences
+    val translation = pose.translation
+    val rotation = pose.rotation
+    prefs.setValue(prefs.xrPlayerPanelX, translation.x)
+    prefs.setValue(prefs.xrPlayerPanelY, translation.y)
+    prefs.setValue(prefs.xrPlayerPanelZ, translation.z)
+    prefs.setValue(prefs.xrPlayerPanelRotX, rotation.x)
+    prefs.setValue(prefs.xrPlayerPanelRotY, rotation.y)
+    prefs.setValue(prefs.xrPlayerPanelRotZ, rotation.z)
+    prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
+}
+
+private fun safeGetEntityPose(entity: GroupEntity): Pose? {
+    return runCatching { entity.getPose() }
+        .onFailure { Timber.d("Skipping disposed XR player entity pose save") }
+        .getOrNull()
+}
+
+private fun safelyToggleMascotEntity(
+    mascot: GltfModelEntity,
+    shouldShow: Boolean,
+) {
+    runCatching {
+        if (shouldShow) {
+            mascot.setEnabled(true)
+            Timber.i("Paused mascot enabled")
+        } else {
+            mascot.setEnabled(false)
+            Timber.d("Paused mascot disabled")
+        }
+    }.onFailure {
+        Timber.d(it, "Skipping paused mascot visibility update for disposed entity")
+    }
 }

@@ -10,19 +10,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -40,9 +32,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.models.LocalVideoItem
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.presentation.film.components.Direction
+import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
 import dev.jdtech.jellyfin.presentation.film.components.ErrorCard
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 import dev.jdtech.jellyfin.presentation.utils.plus
 import dev.spatialfin.presentation.theme.spacings
 
@@ -88,7 +84,6 @@ fun LocalMediaScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LocalMediaScreenLayout(
     hasPermission: Boolean,
@@ -100,30 +95,8 @@ private fun LocalMediaScreenLayout(
     onSettingsClick: () -> Unit,
     onRetry: () -> Unit,
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(CoreR.string.title_local)) },
-                colors = TopAppBarDefaults.topAppBarColors(),
-                actions = {
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_settings),
-                            contentDescription = null,
-                        )
-                    }
-                    if (!hasServers) {
-                        IconButton(onClick = onManageServersClick) {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_server),
-                                contentDescription = null,
-                            )
-                        }
-                    }
-                },
-            )
-        }
-    ) { innerPadding ->
+    val contentPadding = PaddingValues(24.dp)
+    Box(modifier = Modifier.fillMaxSize()) {
         when {
             !hasPermission -> {
                 EmptyState(
@@ -131,12 +104,12 @@ private fun LocalMediaScreenLayout(
                     body = stringResource(CoreR.string.local_permission_body),
                     action = stringResource(CoreR.string.local_permission_action),
                     onAction = onGrantPermission,
-                    modifier = Modifier.padding(innerPadding),
+                    modifier = Modifier.padding(top = 108.dp),
                 )
             }
             state.isLoading -> {
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    modifier = Modifier.fillMaxSize().padding(top = 108.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator()
@@ -146,7 +119,7 @@ private fun LocalMediaScreenLayout(
                 ErrorCard(
                     onShowStacktrace = {},
                     onRetryClick = onRetry,
-                    modifier = Modifier.fillMaxWidth().padding(24.dp).padding(innerPadding),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp).padding(top = 108.dp),
                 )
             }
             state.items.isEmpty() -> {
@@ -155,18 +128,21 @@ private fun LocalMediaScreenLayout(
                     body = stringResource(CoreR.string.local_empty_body),
                     action = if (hasServers) null else stringResource(CoreR.string.manage_servers),
                     onAction = onManageServersClick,
-                    modifier = Modifier.padding(innerPadding),
+                    modifier = Modifier.padding(top = 108.dp),
                 )
             }
             else -> {
+                val visibleItems = remember(state.items) {
+                    state.items.deduplicateMovieVersions().filterIsInstance<LocalVideoItem>()
+                }
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(180.dp),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(24.dp) + innerPadding,
-                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+                    columns = GridCellsAdaptiveWithMinColumns(minSize = 220.dp, minColumns = 2),
+                    modifier = Modifier.fillMaxSize().padding(top = 108.dp),
+                    contentPadding = contentPadding,
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
                 ) {
-                    items(state.items, key = { it.mediaStoreId }) { item ->
+                    items(visibleItems, key = { it.mediaStoreId }) { item ->
                         ItemCard(
                             item = item,
                             direction = Direction.VERTICAL,
@@ -177,6 +153,26 @@ private fun LocalMediaScreenLayout(
                 }
             }
         }
+        XrBrowseHeader(
+            title = stringResource(CoreR.string.title_local),
+            primaryAction =
+                BrowseHeaderAction(
+                    label = "Settings",
+                    icon = CoreR.drawable.ic_settings,
+                    onClick = onSettingsClick,
+                ),
+            secondaryAction =
+                if (!hasServers) {
+                    BrowseHeaderAction(
+                        label = "Servers",
+                        icon = CoreR.drawable.ic_server,
+                        onClick = onManageServersClick,
+                    )
+                } else {
+                    null
+                },
+            modifier = Modifier.padding(contentPadding),
+        )
     }
 }
 

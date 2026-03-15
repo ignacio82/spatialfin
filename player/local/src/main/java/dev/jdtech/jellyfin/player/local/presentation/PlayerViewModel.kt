@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.local.presentation
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -18,8 +19,15 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinSegmentType
+import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.SyncPlayGroup
+import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
@@ -41,11 +49,24 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GroupStateType
+import org.jellyfin.sdk.model.api.PlaystateCommand
+import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
+import org.jellyfin.sdk.model.api.SyncPlayGroupDoesNotExistUpdate
+import org.jellyfin.sdk.model.api.SyncPlayGroupJoinedUpdate
+import org.jellyfin.sdk.model.api.SyncPlayGroupLeftUpdate
+import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
+import org.jellyfin.sdk.model.api.SyncPlayNotInGroupUpdate
+import org.jellyfin.sdk.model.api.SyncPlayPlayQueueUpdate
+import org.jellyfin.sdk.model.api.SyncPlayQueueItem
+import org.jellyfin.sdk.model.api.SyncPlayStateUpdate
 import timber.log.Timber
 
 @HiltViewModel
@@ -84,6 +105,16 @@ constructor(
             )
         )
     val uiState = _uiState.asStateFlow()
+
+    data class SyncPlayUiState(
+        val isLoading: Boolean = false,
+        val activeGroup: SyncPlayGroup? = null,
+        val availableGroups: List<SyncPlayGroup> = emptyList(),
+        val statusMessage: String? = null,
+    )
+
+    private val _syncPlayState = MutableStateFlow(SyncPlayUiState())
+    val syncPlayState = _syncPlayState.asStateFlow()
 
     private val eventsChannel = Channel<PlayerEvents>()
     val eventsChannelFlow = eventsChannel.receiveAsFlow()
@@ -128,6 +159,11 @@ constructor(
             .setUsage(C.USAGE_MEDIA)
             .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
             .build()
+
+    private var activeSyncPlayGroupId: UUID? = null
+    private var currentSyncPlaylistItemId: UUID? = null
+    private var suppressSyncUntilMs: Long = 0L
+    private var isSocketConnected = false
 
     init {
         segmentsSkipButton = appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)
@@ -175,6 +211,23 @@ constructor(
         
         // Add comprehensive logging for network, buffering, and dropped frames for ExoPlayer
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
+
+        viewModelScope.launch {
+            repository.observePlayStateMessages().collect { message ->
+                message.data?.let { request ->
+                    handlePlayStateMessage(request.command, request.seekPositionTicks)
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeSyncPlayCommandMessages().collect(::handleSyncPlayCommandMessage)
+        }
+        viewModelScope.launch {
+            repository.observeSyncPlayGroupUpdates().collect(::handleSyncPlayGroupUpdate)
+        }
+        viewModelScope.launch {
+            repository.observeSocketState().collectLatest(::handleSocketState)
+        }
     }
 
     private var currentItemKind: String? = null
@@ -184,14 +237,138 @@ constructor(
         player = newPlayer
     }
 
+    fun refreshSyncPlayGroups() {
+        viewModelScope.launch {
+            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
+            runCatching { repository.getSyncPlayGroups() }
+                .onSuccess { groups ->
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            availableGroups = groups,
+                            activeGroup = groups.firstOrNull { group -> group.id == activeSyncPlayGroupId } ?: it.activeGroup,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    Timber.w(error, "Failed to refresh SyncPlay groups")
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            statusMessage = error.localizedMessage ?: "Unable to load SyncPlay groups",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun createSyncPlayGroup() {
+        val currentItem = currentPlayerItem()
+        if (currentItem?.contentSource != PlayerContentSource.JELLYFIN) {
+            _syncPlayState.update {
+                it.copy(statusMessage = "SyncPlay is only available for Jellyfin playback")
+            }
+            return
+        }
+
+        val groupName = uiState.value.currentItemTitle.ifBlank { currentItem.name }.take(60)
+        viewModelScope.launch {
+            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
+            runCatching {
+                    val group = repository.createSyncPlayGroup(groupName)
+                    repository.setSyncPlayQueue(
+                        itemIds = listOf(currentItem.itemId),
+                        playingItemIndex = 0,
+                        startPositionTicks = player.currentPosition.coerceAtLeast(0L) * 10_000L,
+                    )
+                    group
+                }
+                .onSuccess { group ->
+                    activeSyncPlayGroupId = group.id
+                    currentSyncPlaylistItemId = null
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            activeGroup = group,
+                            statusMessage = "Created SyncPlay group: ${group.name}",
+                        )
+                    }
+                    refreshSyncPlayGroups()
+                }
+                .onFailure { error ->
+                    Timber.w(error, "Failed to create SyncPlay group")
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            statusMessage = error.localizedMessage ?: "Unable to create SyncPlay group",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun joinSyncPlayGroup(groupId: UUID) {
+        val currentItem = currentPlayerItem()
+        if (currentItem?.contentSource != PlayerContentSource.JELLYFIN) {
+            _syncPlayState.update {
+                it.copy(statusMessage = "SyncPlay is only available for Jellyfin playback")
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
+            runCatching {
+                    repository.joinSyncPlayGroup(groupId)
+                    repository.getSyncPlayGroups().firstOrNull { it.id == groupId }
+                }
+                .onSuccess { group ->
+                    activeSyncPlayGroupId = groupId
+                    currentSyncPlaylistItemId = null
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            activeGroup = group ?: it.activeGroup,
+                            statusMessage = "Joined SyncPlay group",
+                        )
+                    }
+                    refreshSyncPlayGroups()
+                }
+                .onFailure { error ->
+                    Timber.w(error, "Failed to join SyncPlay group")
+                    _syncPlayState.update {
+                        it.copy(
+                            isLoading = false,
+                            statusMessage = error.localizedMessage ?: "Unable to join SyncPlay group",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun leaveSyncPlayGroup() {
+        viewModelScope.launch {
+            runCatching { repository.leaveSyncPlayGroup() }
+                .onFailure { Timber.w(it, "Failed to leave SyncPlay group") }
+            activeSyncPlayGroupId = null
+            currentSyncPlaylistItemId = null
+            _syncPlayState.update {
+                it.copy(activeGroup = null, statusMessage = "Left SyncPlay group")
+            }
+            refreshSyncPlayGroups()
+        }
+    }
+
     fun initializePlayer(
         itemId: UUID,
         itemKind: String,
         startFromBeginning: Boolean,
         mediaSourceIndex: Int? = null,
         maxBitrate: Long? = null,
+        autoPlay: Boolean = true,
     ) {
         currentItemKind = itemKind
+        player.removeListener(this)
         player.addListener(this)
 
         viewModelScope.launch {
@@ -236,7 +413,11 @@ constructor(
 
             player.setMediaItems(mediaItems, 0, startPosition)
             player.prepare()
-            player.play()
+            if (autoPlay) {
+                player.play()
+            } else {
+                player.pause()
+            }
         }
     }
 
@@ -264,6 +445,7 @@ constructor(
     }
 
     fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
+        player.removeListener(this)
         player.addListener(this)
 
         viewModelScope.launch {
@@ -508,7 +690,12 @@ constructor(
                             playlistManager.setCurrentMediaItemIndex(item.itemId)
                         }
 
-                        if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                        if (isSyncPlayActive()) {
+                            currentSyncPlaylistItemId = item.playlistItemId
+                            _uiState.update {
+                                it.copy(nextEpisode = items.getOrNull(player.currentMediaItemIndex + 1))
+                            }
+                        } else if (item.contentSource == PlayerContentSource.JELLYFIN) {
                             val previousItem = playlistManager.getPreviousPlayerItem()
                             if (previousItem != null) {
                                 items.add(player.currentMediaItemIndex, previousItem)
@@ -542,7 +729,7 @@ constructor(
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
         // Report playback stopped for current item and transition to the next one
-        if (
+                        if (
             !playWhenReady &&
                 reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
                 player.playbackState == ExoPlayer.STATE_READY
@@ -574,11 +761,39 @@ constructor(
                 } catch (e: Exception) {
                     Timber.e(e)
                 }
-                if (player.hasNextMediaItem()) {
+                if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
+                    val playlistItemId = currentSyncPlaylistItemId
+                    if (playlistItemId != null && player.hasNextMediaItem()) {
+                        runCatching { repository.nextSyncPlayItem(playlistItemId) }
+                            .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
+                    } else {
+                        runCatching { repository.stopSyncPlay() }
+                            .onFailure { Timber.w(it, "Failed to stop SyncPlay at queue end") }
+                    }
+                } else if (player.hasNextMediaItem()) {
                     player.seekToNextMediaItem()
                     player.play()
                 }
             }
+        }
+    }
+
+    override fun onPositionDiscontinuity(
+        oldPosition: Player.PositionInfo,
+        newPosition: Player.PositionInfo,
+        reason: Int,
+    ) {
+        if (
+            !isSyncPlayActive() ||
+                shouldSuppressSyncEvents() ||
+                reason != Player.DISCONTINUITY_REASON_SEEK
+        ) {
+            return
+        }
+
+        viewModelScope.launch {
+            runCatching { repository.seekSyncPlay(player.currentPosition.coerceAtLeast(0L) * 10_000L) }
+                .onFailure { Timber.w(it, "Failed to push SyncPlay seek") }
         }
     }
 
@@ -606,6 +821,9 @@ constructor(
     override fun onCleared() {
         super.onCleared()
         Timber.d("Clearing Player ViewModel")
+        if (isSyncPlayActive()) {
+            viewModelScope.launch { runCatching { repository.leaveSyncPlayGroup() } }
+        }
         releasePlayer()
     }
 
@@ -639,6 +857,262 @@ constructor(
                     .build()
         }
     }
+
+    private fun isSyncPlayActive(): Boolean = activeSyncPlayGroupId != null
+
+    private fun shouldSuppressSyncEvents(): Boolean = SystemClock.elapsedRealtime() < suppressSyncUntilMs
+
+    private inline fun applyRemoteSync(action: () -> Unit) {
+        suppressSyncUntilMs = SystemClock.elapsedRealtime() + 1_500L
+        action()
+    }
+
+    private suspend fun handleSyncPlayCommandMessage(message: SyncPlayCommandMessage) {
+        val command = message.data ?: return
+        if (command.groupId != activeSyncPlayGroupId) return
+
+        when (command.command) {
+            org.jellyfin.sdk.model.api.SendCommandType.PAUSE -> {
+                applyRemoteSync { player.pause() }
+            }
+            org.jellyfin.sdk.model.api.SendCommandType.UNPAUSE -> {
+                applyRemoteSync { player.play() }
+            }
+            org.jellyfin.sdk.model.api.SendCommandType.SEEK -> {
+                command.positionTicks?.let { seekToRemotePosition(it) }
+            }
+            org.jellyfin.sdk.model.api.SendCommandType.STOP -> {
+                applyRemoteSync {
+                    player.pause()
+                    player.seekTo(0)
+                }
+            }
+        }
+    }
+
+    private suspend fun handleSyncPlayGroupUpdate(message: SyncPlayGroupUpdateMessage) {
+        val update = message.data
+        when (update) {
+            is SyncPlayGroupJoinedUpdate -> {
+                if (activeSyncPlayGroupId == update.groupId) {
+                    _syncPlayState.update { it.copy(activeGroup = update.data.toSyncPlayGroup()) }
+                }
+            }
+            is SyncPlayPlayQueueUpdate -> {
+                if (activeSyncPlayGroupId != update.groupId) return
+                applySyncPlayQueueUpdate(
+                    queue = update.data.playlist,
+                    playingItemIndex = update.data.playingItemIndex,
+                    startPositionTicks = update.data.startPositionTicks,
+                    shouldPlay = update.data.isPlaying,
+                )
+            }
+            is SyncPlayStateUpdate -> {
+                if (activeSyncPlayGroupId != update.groupId) return
+                when (update.data.state) {
+                    GroupStateType.PLAYING -> applyRemoteSync { player.play() }
+                    GroupStateType.PAUSED,
+                    GroupStateType.WAITING -> applyRemoteSync { player.pause() }
+                    GroupStateType.IDLE -> Unit
+                }
+            }
+            is SyncPlayGroupLeftUpdate,
+            is SyncPlayNotInGroupUpdate,
+            is SyncPlayGroupDoesNotExistUpdate -> {
+                if (activeSyncPlayGroupId == update.groupId) {
+                    activeSyncPlayGroupId = null
+                    currentSyncPlaylistItemId = null
+                    _syncPlayState.update {
+                        it.copy(activeGroup = null, statusMessage = "SyncPlay group ended")
+                    }
+                    refreshSyncPlayGroups()
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun handlePlayStateMessage(command: PlaystateCommand, seekPositionTicks: Long?) {
+        when (command) {
+            PlaystateCommand.PAUSE -> applyRemoteSync { player.pause() }
+            PlaystateCommand.UNPAUSE,
+            PlaystateCommand.PLAY_PAUSE -> {
+                applyRemoteSync {
+                    if (player.isPlaying) player.pause() else player.play()
+                }
+            }
+            PlaystateCommand.SEEK -> {
+                seekPositionTicks?.let { ticks ->
+                    viewModelScope.launch { seekToRemotePosition(ticks) }
+                }
+            }
+            PlaystateCommand.STOP -> {
+                applyRemoteSync {
+                    player.pause()
+                    player.seekTo(0)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private suspend fun seekToRemotePosition(positionTicks: Long) {
+        val targetMs = positionTicks / 10_000L
+        applyRemoteSync { player.seekTo(targetMs.coerceAtLeast(0L)) }
+    }
+
+    private suspend fun handleSocketState(state: SocketApiState) {
+        when (state) {
+            is SocketApiState.Connected -> {
+                val reconnected = !isSocketConnected
+                isSocketConnected = true
+                if (reconnected && isSyncPlayActive()) {
+                    _syncPlayState.update { it.copy(statusMessage = "SyncPlay reconnected") }
+                    refreshSyncPlayGroups()
+                }
+            }
+            is SocketApiState.Connecting -> {
+                if (isSyncPlayActive()) {
+                    _syncPlayState.update { it.copy(statusMessage = "Reconnecting SyncPlay...") }
+                }
+            }
+            is SocketApiState.Disconnected -> {
+                isSocketConnected = false
+                if (isSyncPlayActive()) {
+                    _syncPlayState.update { it.copy(statusMessage = "SyncPlay connection lost") }
+                }
+            }
+        }
+    }
+
+    private suspend fun switchToSyncPlayItem(
+        itemId: UUID,
+        positionTicks: Long,
+        shouldPlay: Boolean,
+    ) {
+        val item = runCatching { repository.getItem(itemId) }
+            .onFailure { Timber.w(it, "Failed to resolve SyncPlay item %s", itemId) }
+            .getOrNull()
+
+        val itemKind = item?.toPlayerItemKind()
+        if (itemKind == null) {
+            _syncPlayState.update {
+                it.copy(statusMessage = "SyncPlay tried to start an unsupported item")
+            }
+            return
+        }
+
+        playbackPosition = positionTicks / 10_000L
+        applyRemoteSync {
+            initializePlayer(
+                itemId = itemId,
+                itemKind = itemKind,
+                startFromBeginning = false,
+                autoPlay = shouldPlay,
+            )
+        }
+        _syncPlayState.update {
+            it.copy(statusMessage = "Synced to ${item.name}")
+        }
+    }
+
+    private suspend fun applySyncPlayQueueUpdate(
+        queue: List<SyncPlayQueueItem>,
+        playingItemIndex: Int,
+        startPositionTicks: Long,
+        shouldPlay: Boolean,
+    ) {
+        val targetQueueItem = queue.getOrNull(playingItemIndex) ?: return
+        val resolvedItems =
+            queue.mapNotNull { queueItem ->
+                playlistManager.getPlayerItem(
+                    itemId = queueItem.itemId,
+                    playbackPosition = 0L,
+                    playlistItemId = queueItem.playlistItemId,
+                )
+            }
+
+        if (resolvedItems.isEmpty()) return
+
+        val targetIndex =
+            resolvedItems.indexOfFirst { it.playlistItemId == targetQueueItem.playlistItemId }
+                .takeIf { it >= 0 } ?: return
+
+        items = resolvedItems.toMutableList()
+        currentSyncPlaylistItemId = targetQueueItem.playlistItemId
+        _uiState.update { it.copy(nextEpisode = items.getOrNull(targetIndex + 1)) }
+
+        val targetPositionMs = startPositionTicks / 10_000L
+        val queueMatches =
+            player.mediaItemCount == resolvedItems.size &&
+                resolvedItems.indices.all { index ->
+                    player.getMediaItemAt(index).mediaId == resolvedItems[index].itemId.toString()
+                }
+
+        if (!queueMatches) {
+            applyRemoteSync {
+                player.setMediaItems(
+                    resolvedItems.map { it.toMediaItem() },
+                    targetIndex,
+                    targetPositionMs,
+                )
+                player.prepare()
+                if (shouldPlay) player.play() else player.pause()
+            }
+            return
+        }
+
+        applyRemoteSync {
+            if (player.currentMediaItemIndex != targetIndex) {
+                player.seekTo(targetIndex, targetPositionMs)
+            } else if (kotlin.math.abs(player.currentPosition - targetPositionMs) > 1_500L) {
+                player.seekTo(targetPositionMs)
+            }
+
+            if (shouldPlay) {
+                player.play()
+            } else {
+                player.pause()
+            }
+        }
+    }
+
+    fun skipToNextItem() {
+        viewModelScope.launch {
+            if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
+                currentSyncPlaylistItemId?.let { playlistItemId ->
+                    runCatching { repository.nextSyncPlayItem(playlistItemId) }
+                        .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
+                }
+            } else if (player.hasNextMediaItem()) {
+                player.seekToNextMediaItem()
+                player.play()
+            }
+        }
+    }
+
+    fun skipToPreviousItem() {
+        viewModelScope.launch {
+            if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
+                currentSyncPlaylistItemId?.let { playlistItemId ->
+                    runCatching { repository.previousSyncPlayItem(playlistItemId) }
+                        .onFailure { Timber.w(it, "Failed to request previous SyncPlay item") }
+                }
+            } else if (player.hasPreviousMediaItem()) {
+                player.seekToPreviousMediaItem()
+                player.play()
+            }
+        }
+    }
+
+    private fun SpatialFinItem.toPlayerItemKind(): String? =
+        when (this) {
+            is SpatialFinMovie -> BaseItemKind.MOVIE.serialName
+            is SpatialFinEpisode -> BaseItemKind.EPISODE.serialName
+            is SpatialFinSeason -> BaseItemKind.SEASON.serialName
+            is SpatialFinShow -> BaseItemKind.SERIES.serialName
+            else -> null
+        }
 
     fun selectSpeed(speed: Float) {
         player.setPlaybackSpeed(speed)
@@ -830,8 +1304,24 @@ constructor(
         return getPreviousChapterIndex()?.let { seekToChapter(it) }
     }
 
+    fun seekToChapterIndex(chapterIndex: Int): PlayerChapter? {
+        return seekToChapter(chapterIndex)
+    }
+
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         super.onIsPlayingChanged(isPlaying)
+        if (isSyncPlayActive() && !shouldSuppressSyncEvents() && player.playbackState == Player.STATE_READY) {
+            viewModelScope.launch {
+                runCatching {
+                        if (isPlaying) {
+                            repository.unpauseSyncPlay()
+                        } else {
+                            repository.pauseSyncPlay()
+                        }
+                    }
+                    .onFailure { Timber.w(it, "Failed to push SyncPlay play state") }
+            }
+        }
         eventsChannel.trySend(PlayerEvents.IsPlayingChanged(isPlaying))
     }
 }

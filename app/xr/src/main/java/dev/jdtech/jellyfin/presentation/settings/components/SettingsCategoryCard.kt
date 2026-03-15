@@ -34,7 +34,7 @@ fun SettingsCategoryCard(
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -50,13 +50,13 @@ fun SettingsCategoryCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(preference.nameStringResource),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 preference.descriptionStringRes?.let {
                     Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
                     Text(
                         text = stringResource(id = it),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                     )
                 }
             }

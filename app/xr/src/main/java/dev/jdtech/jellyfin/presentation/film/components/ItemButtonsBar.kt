@@ -5,23 +5,26 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -35,7 +38,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.window.core.layout.WindowSizeClass
 import androidx.xr.compose.spatial.SpatialDialog
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
@@ -55,6 +57,7 @@ import dev.spatialfin.presentation.theme.spacings
 fun ItemButtonsBar(
     item: SpatialFinItem,
     onPlayClick: (startFromBeginning: Boolean, mediaSourceIndex: Int?, maxBitrate: Long?) -> Unit,
+    onSyncPlayClick: (() -> Unit)?,
     onMarkAsPlayedClick: () -> Unit,
     onMarkAsFavoriteClick: () -> Unit,
     onDownloadClick: (request: DownloadRequest) -> Unit,
@@ -64,12 +67,9 @@ fun ItemButtonsBar(
     modifier: Modifier = Modifier,
     downloaderState: DownloaderState? = null,
     canPlay: Boolean = true,
-    isForce3dMode: Boolean = false,
-    onForce3dClick: (() -> Unit)? = null,
     initialMaxBitrate: Long = 0L,
 ) {
     val context = LocalContext.current
-    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
 
     val trailerUri =
         when (item) {
@@ -103,126 +103,70 @@ fun ItemButtonsBar(
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         Column(
             modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
         ) {
-            if (
-                !windowSizeClass.isWidthAtLeastBreakpoint(
-                    WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
-                )
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small)) {
-                    PlayButton(
-                        item = item,
-                        onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate) },
-                        modifier = Modifier.weight(weight = 1f, fill = true),
-                        enabled = item.canPlay && canPlay,
+                PlayButton(
+                    item = item,
+                    onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate) },
+                    enabled = item.canPlay && canPlay,
+                )
+                if (item.playbackPositionTicks.div(600000000) > 0) {
+                    XrActionButton(
+                        label = "Restart",
+                        icon = CoreR.drawable.ic_rotate_ccw,
+                        onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate) },
                     )
-                    if (item.playbackPositionTicks.div(600000000) > 0) {
-                        FilledTonalIconButton(onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate) }) {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_rotate_ccw),
-                                contentDescription = null,
-                            )
-                        }
-                    }
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small)) {
-                if (
-                    windowSizeClass.isWidthAtLeastBreakpoint(
-                        WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND
-                    )
-                ) {
-                    PlayButton(
-                        item = item,
-                        onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate) },
-                        enabled = item.canPlay && canPlay,
-                    )
-                    if (item.playbackPositionTicks.div(600000000) > 0) {
-                        FilledTonalIconButton(onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate) }) {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_rotate_ccw),
-                                contentDescription = null,
-                            )
-                        }
-                    }
+                onSyncPlayClick?.let { syncClick ->
+                    XrActionButton(label = "SyncPlay", icon = CoreR.drawable.ic_tv, onClick = syncClick)
                 }
                 trailerUri?.let { uri ->
-                    FilledTonalIconButton(onClick = { onTrailerClick(uri) }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_film),
-                            contentDescription = null,
-                        )
-                    }
+                    XrActionButton(label = "Trailer", icon = CoreR.drawable.ic_film, onClick = { onTrailerClick(uri) })
                 }
                 if (item.sources.size > 1) {
-                    FilledTonalIconButton(onClick = { mediaSourceSelectionDialogOpen = true }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_database),
-                            contentDescription = "Select Media Source",
-                        )
-                    }
-                }
-                FilledTonalIconButton(onClick = { qualitySelectionDialogOpen = true }) {
-                    Icon(
-                        painter = painterResource(CoreR.drawable.ic_sparkles),
-                        contentDescription = "Select Quality",
+                    XrActionButton(
+                        label = "Version",
+                        icon = CoreR.drawable.ic_database,
+                        onClick = { mediaSourceSelectionDialogOpen = true },
                     )
                 }
-                if (onForce3dClick != null) {
-                    FilledTonalIconButton(
-                        onClick = onForce3dClick,
-                        colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(containerColor = if (isForce3dMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer)
-                    ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_3d),
-                            contentDescription = "Force 3D Mode",
-                        )
-                    }
-                }
-                FilledTonalIconButton(onClick = onMarkAsPlayedClick) {
-                    Icon(
-                        painter = painterResource(CoreR.drawable.ic_check),
-                        contentDescription = null,
-                        tint = if (item.played) Color.Red else LocalContentColor.current,
-                    )
-                }
-                FilledTonalIconButton(onClick = onMarkAsFavoriteClick) {
-                    when (item.favorite) {
-                        true -> {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_heart_filled),
-                                contentDescription = null,
-                                tint = Color.Red,
-                            )
-                        }
-                        false -> {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_heart),
-                                contentDescription = null,
-                            )
-                        }
-                    }
-                }
+                XrActionButton(
+                    label = "Quality",
+                    icon = CoreR.drawable.ic_sparkles,
+                    onClick = { qualitySelectionDialogOpen = true },
+                )
+                XrActionButton(
+                    label = if (item.played) "Watched" else "Mark Watched",
+                    icon = CoreR.drawable.ic_check,
+                    onClick = onMarkAsPlayedClick,
+                    emphasized = item.played,
+                    iconTint = if (item.played) Color.Red else LocalContentColor.current,
+                )
+                XrActionButton(
+                    label = if (item.favorite) "Favorite" else "Add Favorite",
+                    icon = if (item.favorite) CoreR.drawable.ic_heart_filled else CoreR.drawable.ic_heart,
+                    onClick = onMarkAsFavoriteClick,
+                    emphasized = item.favorite,
+                    iconTint = if (item.favorite) Color.Red else LocalContentColor.current,
+                )
                 if (downloaderState != null && !downloaderState.isDownloading) {
                     if (item.isDownloaded()) {
-                        FilledTonalIconButton(onClick = { deleteDownloadDialogOpen = true }) {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_trash),
-                                contentDescription = null,
-                            )
-                        }
+                        XrActionButton(
+                            label = "Delete Download",
+                            icon = CoreR.drawable.ic_trash,
+                            onClick = { deleteDownloadDialogOpen = true },
+                        )
                     } else if (item.canDownload) {
-                        FilledTonalIconButton(
-                            onClick = {
-                                downloadOptionsDialogOpen = true
-                            }
-                        ) {
-                            Icon(
-                                painter = painterResource(CoreR.drawable.ic_download),
-                                contentDescription = null,
-                            )
-                        }
+                        XrActionButton(
+                            label = "Download",
+                            icon = CoreR.drawable.ic_download,
+                            onClick = { downloadOptionsDialogOpen = true },
+                        )
                     }
                 }
             }
@@ -302,6 +246,35 @@ fun ItemButtonsBar(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun XrActionButton(
+    label: String,
+    icon: Int,
+    onClick: () -> Unit,
+    emphasized: Boolean = false,
+    iconTint: Color = LocalContentColor.current,
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.height(64.dp),
+        colors =
+            ButtonDefaults.filledTonalButtonColors(
+                containerColor =
+                    if (emphasized) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.secondaryContainer,
+            ),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = iconTint,
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -410,6 +383,7 @@ private fun ItemButtonsBarPreview() {
         ItemButtonsBar(
             item = dummyEpisode,
             onPlayClick = { _, _, _ -> },
+            onSyncPlayClick = null,
             onMarkAsPlayedClick = {},
             onMarkAsFavoriteClick = {},
             onDownloadClick = {},
@@ -429,6 +403,7 @@ private fun ItemButtonsBarDownloadingPreview() {
             downloaderState =
                 DownloaderState(status = DownloadManager.STATUS_RUNNING, progress = 0.3f),
             onPlayClick = { _, _, _ -> },
+            onSyncPlayClick = null,
             onMarkAsPlayedClick = {},
             onMarkAsFavoriteClick = {},
             onDownloadClick = {},

@@ -39,7 +39,7 @@ fun OverviewText(text: String, maxCollapsedLines: Int = Int.MAX_VALUE) {
                     showChevron = textLayoutResult.hasVisualOverflow
                 }
             },
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.titleMedium,
         )
     }
 }

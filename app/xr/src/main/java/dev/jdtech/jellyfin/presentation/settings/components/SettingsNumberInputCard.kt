@@ -103,7 +103,7 @@ fun SettingsNumberInputCard(
 ) {
     SettingsBaseCard(preference = preference, onClick = onClick, modifier = modifier) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -116,10 +116,10 @@ fun SettingsNumberInputCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(preference.nameStringResource),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
-                Text(text = text, style = MaterialTheme.typography.bodyMedium)
+                Text(text = text, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

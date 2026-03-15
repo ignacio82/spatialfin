@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.presentation.film
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,11 +21,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowSizeClass
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyCollections
 import dev.jdtech.jellyfin.film.presentation.media.MediaAction
 import dev.jdtech.jellyfin.film.presentation.media.MediaState
@@ -39,6 +42,8 @@ import dev.jdtech.jellyfin.presentation.film.components.ErrorCard
 import dev.jdtech.jellyfin.presentation.film.components.FavoritesCard
 import dev.jdtech.jellyfin.presentation.film.components.FilmSearchBar
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
+import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -105,9 +110,9 @@ private fun MediaScreenLayout(
         animateDpAsState(
             targetValue =
                 if (state.error != null) {
-                    safePadding.top + 144.dp
+                    safePadding.top + 236.dp
                 } else {
-                    safePadding.top + 88.dp
+                    safePadding.top + 180.dp
                 },
             label = "content_padding",
         )
@@ -126,17 +131,35 @@ private fun MediaScreenLayout(
         }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        FilmSearchBar(
-            state = searchState,
-            expanded = searchExpanded,
-            initialQuery = initialSearchQuery,
-            onExpand = onSearchExpand,
-            onInitialQueryConsumed = onInitialSearchConsumed,
-            onAction = onSearchAction,
-            modifier = Modifier.fillMaxWidth(),
-            paddingStart = paddingStart,
-            paddingEnd = paddingEnd,
-        )
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .padding(
+                        start = paddingStart,
+                        top = safePadding.top + MaterialTheme.spacings.default,
+                        end = paddingEnd,
+                    ),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+        ) {
+            XrBrowseHeader(
+                title = stringResource(CoreR.string.title_media),
+                primaryAction =
+                    BrowseHeaderAction(
+                        label = "Search",
+                        icon = CoreR.drawable.ic_search,
+                        onClick = { onSearchExpand(true) },
+                    ),
+            )
+            FilmSearchBar(
+                state = searchState,
+                expanded = searchExpanded,
+                initialQuery = initialSearchQuery,
+                onExpand = onSearchExpand,
+                onInitialQueryConsumed = onInitialSearchConsumed,
+                onAction = onSearchAction,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = minColumnSize),
             modifier = Modifier.fillMaxSize(),
@@ -147,8 +170,8 @@ private fun MediaScreenLayout(
                     end = paddingEnd,
                     bottom = paddingBottom,
                 ),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 FavoritesCard(onClick = { onAction(MediaAction.OnFavoritesClick) })

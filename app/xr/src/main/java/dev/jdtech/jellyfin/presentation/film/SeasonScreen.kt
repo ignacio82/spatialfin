@@ -151,6 +151,7 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
                         onPlayClick = { startFromBeginning, _, _ ->
                             onAction(SeasonAction.Play(startFromBeginning = startFromBeginning))
                         },
+                        onSyncPlayClick = null,
                         onMarkAsPlayedClick = {
                             when (season.played) {
                                 true -> onAction(SeasonAction.UnmarkAsPlayed)

@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +42,7 @@ fun UserItem(
         verticalAlignment = Alignment.CenterVertically,
         modifier =
             modifier
+                .defaultMinSize(minHeight = 92.dp)
                 .clip(CardDefaults.outlinedShape)
                 .combinedClickable(
                     onClick = onClick,
@@ -47,12 +50,13 @@ fun UserItem(
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongClick()
                     },
-                ),
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceTint,
             shape = MaterialTheme.shapes.small,
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(64.dp),
         ) {
             Box {
                 Icon(
@@ -62,7 +66,7 @@ fun UserItem(
                 )
             }
         }
-        Text(text = name, style = MaterialTheme.typography.bodyLarge)
+        Text(text = name, style = MaterialTheme.typography.titleLarge)
     }
 }
 

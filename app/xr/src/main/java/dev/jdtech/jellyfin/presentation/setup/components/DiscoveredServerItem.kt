@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.presentation.setup.components
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,8 +26,11 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 
 @Composable
 fun DiscoveredServerItem(name: String, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
-    Column(modifier = modifier.width(64.dp)) {
-        Card(onClick = onClick, modifier = Modifier.size(64.dp)) {
+    Column(modifier = modifier.width(110.dp)) {
+        Card(
+            onClick = onClick,
+            modifier = Modifier.size(88.dp).defaultMinSize(minHeight = 88.dp),
+        ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Icon(
                     painter = painterResource(CoreR.drawable.ic_server),
@@ -35,12 +39,12 @@ fun DiscoveredServerItem(name: String, modifier: Modifier = Modifier, onClick: (
                 )
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = name,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.titleSmall,
             overflow = TextOverflow.Ellipsis,
-            maxLines = 1,
+            maxLines = 2,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )

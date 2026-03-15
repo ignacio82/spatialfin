@@ -144,6 +144,7 @@ private fun EpisodeScreenLayout(
     onDownloaderAction: (DownloaderAction) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val paddingStart = safePadding.start + MaterialTheme.spacings.default
     val paddingEnd = safePadding.end + MaterialTheme.spacings.default
@@ -179,13 +180,13 @@ private fun EpisodeScreenLayout(
                                             episode.indexNumber,
                                         ),
                                 maxLines = 1,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.titleLarge,
                             )
                             Text(
                                 text = episode.name,
                                 overflow = TextOverflow.Ellipsis,
                                 maxLines = 3,
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.displaySmall,
                             )
                         }
                     },
@@ -200,7 +201,7 @@ private fun EpisodeScreenLayout(
                         episode.premiereDate?.let { premiereDate ->
                             Text(
                                 text = premiereDate.format(),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.titleMedium,
                             )
                         }
                         Text(
@@ -209,7 +210,7 @@ private fun EpisodeScreenLayout(
                                     CoreR.string.runtime_minutes,
                                     episode.runtimeTicks.div(600000000),
                                 ),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.titleMedium,
                         )
                         episode.communityRating?.let { communityRating ->
                             Row(verticalAlignment = Alignment.Bottom) {
@@ -221,7 +222,7 @@ private fun EpisodeScreenLayout(
                                 Spacer(Modifier.width(MaterialTheme.spacings.extraSmall))
                                 Text(
                                     text = "%.1f".format(communityRating),
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.titleMedium,
                                 )
                             }
                         }
@@ -235,6 +236,17 @@ private fun EpisodeScreenLayout(
                         item = episode,
                         downloaderState = downloaderState,
                         initialMaxBitrate = initialMaxBitrate,
+                        onSyncPlayClick = {
+                            val intent = XrPlayerActivity.createIntent(
+                                context = context,
+                                itemId = episode.id,
+                                itemKind = BaseItemKind.EPISODE.serialName,
+                                startFromBeginning = false,
+                                stereoMode = "mono",
+                                openSyncPlayDialogOnStart = true,
+                            )
+                            context.startActivity(intent)
+                        },
                         onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate ->
                             onAction(
                                 EpisodeAction.Play(

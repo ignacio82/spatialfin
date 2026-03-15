@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
@@ -17,10 +18,14 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
+import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
+import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
+import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
 
 @Singleton
@@ -246,6 +251,69 @@ constructor(
             online = { onlineRepository.getTrickplayData(itemId, width, index) },
             offline = { offlineRepository.getTrickplayData(itemId, width, index) },
         )
+
+    override suspend fun getSyncPlayGroups(): List<SyncPlayGroup> =
+        runOnlineOnly { onlineRepository.getSyncPlayGroups() }
+
+    override suspend fun createSyncPlayGroup(name: String): SyncPlayGroup =
+        runOnlineOnly { onlineRepository.createSyncPlayGroup(name) }
+
+    override suspend fun joinSyncPlayGroup(groupId: UUID) {
+        runOnlineOnly { onlineRepository.joinSyncPlayGroup(groupId) }
+    }
+
+    override suspend fun leaveSyncPlayGroup() {
+        runWrite(
+            online = { onlineRepository.leaveSyncPlayGroup() },
+            offline = { offlineRepository.leaveSyncPlayGroup() },
+        )
+    }
+
+    override suspend fun setSyncPlayQueue(
+        itemIds: List<UUID>,
+        playingItemIndex: Int,
+        startPositionTicks: Long,
+    ) {
+        runOnlineOnly {
+            onlineRepository.setSyncPlayQueue(itemIds, playingItemIndex, startPositionTicks)
+        }
+    }
+
+    override suspend fun pauseSyncPlay() {
+        runOnlineOnly { onlineRepository.pauseSyncPlay() }
+    }
+
+    override suspend fun unpauseSyncPlay() {
+        runOnlineOnly { onlineRepository.unpauseSyncPlay() }
+    }
+
+    override suspend fun seekSyncPlay(positionTicks: Long) {
+        runOnlineOnly { onlineRepository.seekSyncPlay(positionTicks) }
+    }
+
+    override suspend fun stopSyncPlay() {
+        runOnlineOnly { onlineRepository.stopSyncPlay() }
+    }
+
+    override suspend fun nextSyncPlayItem(playlistItemId: UUID) {
+        runOnlineOnly { onlineRepository.nextSyncPlayItem(playlistItemId) }
+    }
+
+    override suspend fun previousSyncPlayItem(playlistItemId: UUID) {
+        runOnlineOnly { onlineRepository.previousSyncPlayItem(playlistItemId) }
+    }
+
+    override fun observePlayStateMessages(): Flow<PlaystateMessage> =
+        onlineRepository.observePlayStateMessages()
+
+    override fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage> =
+        onlineRepository.observeSyncPlayCommandMessages()
+
+    override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> =
+        onlineRepository.observeSyncPlayGroupUpdates()
+
+    override fun observeSocketState(): Flow<SocketApiState> =
+        onlineRepository.observeSocketState()
 
     override suspend fun postCapabilities() {
         runWrite(

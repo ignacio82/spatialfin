@@ -6,27 +6,13 @@ import com.google.ai.edge.aicore.DownloadConfig
 import com.google.ai.edge.aicore.GenerativeAIException
 import com.google.ai.edge.aicore.GenerativeModel
 import com.google.ai.edge.aicore.generationConfig
+import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import timber.log.Timber
-
-data class PlayerStateSnapshot(
-    val isPlaying: Boolean = false,
-    val positionSeconds: Long = 0,
-    val durationSeconds: Long = 0,
-    val controlsVisible: Boolean = false,
-    val currentItemTitle: String = "",
-    val currentSegmentType: String? = null,
-    val currentChapterName: String? = null,
-    val nextEpisodeTitle: String? = null,
-    val audioTrackNames: List<String> = emptyList(),
-    val subtitleTrackNames: List<String> = emptyList(),
-    val chapterNames: List<String> = emptyList(),
-    val currentAudioTrack: String? = null,
-    val currentSubtitleTrack: String? = null,
-)
 
 enum class VoiceParseStrategy {
     KEYWORD,
@@ -121,6 +107,12 @@ class SpatialCommandCoordinator(private val appContext: Context) {
     }
 
     private fun keywordMatch(text: String, playerState: PlayerStateSnapshot): XrPlayerAction? {
+        extractSyncPlayAction(text)?.let { return it }
+        extractSelectionAction(text)?.let { return it }
+
+        val playSearchQuery = extractPlaySearchQuery(text)
+        if (playSearchQuery != null) return XrPlayerAction.Search(playSearchQuery, autoPlay = true)
+
         val searchQuery = extractSearchQuery(text)
         if (searchQuery != null) return XrPlayerAction.Search(searchQuery)
 
@@ -154,8 +146,13 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
             text.matches(Regex(".*(hide controls|close controls).*")) -> XrPlayerAction.HideControls
             text.matches(Regex(".*(go home|home screen|library|back to home).*")) -> XrPlayerAction.GoHome
-            text.matches(Regex(".*(close app|exit app|quit|shut down).*")) -> XrPlayerAction.CloseApp
-            text.matches(Regex("^(back|go back|exit)$")) -> XrPlayerAction.GoBack
+            text.matches(
+                Regex(
+                    ".*(close app|exit app|quit app|shut down|close spatial ?fin|exit spatial ?fin|close (the )?application|exit (the )?application).*"
+                )
+            ) -> XrPlayerAction.CloseApp
+            text.matches(Regex("^(exit|quit)$")) -> XrPlayerAction.CloseApp
+            text.matches(Regex("^(back|go back)$")) -> XrPlayerAction.GoBack
             extractVolumeAdjustment(text) != null -> extractVolumeAdjustment(text)
             extractQualityAdjustment(text) != null -> extractQualityAdjustment(text)
             extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
@@ -174,6 +171,59 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex(".*(half speed|0\\.5x).*")) -> XrPlayerAction.SetSpeed(0.5f)
             else -> null
         }
+    }
+
+    private fun extractSyncPlayAction(text: String): XrPlayerAction? {
+        val selectionIndex = extractOrdinalIndex(text)
+        if (
+            selectionIndex != null &&
+                (text.contains("syncplay") || text.contains("watch party") || text.contains("group")) &&
+                text.contains("join")
+        ) {
+            return XrPlayerAction.JoinSyncPlayGroup(selectionIndex = selectionIndex)
+        }
+
+        return when {
+            Regex(".*(create|start|make).*(syncplay|watch party|watch group).*").matches(text) ->
+                XrPlayerAction.CreateSyncPlayGroup
+            Regex(".*(leave|exit|quit).*(syncplay|watch party|watch group).*").matches(text) ->
+                XrPlayerAction.LeaveSyncPlayGroup
+            Regex(".*(refresh|reload|update).*(syncplay|watch party|watch group|groups).*").matches(text) ->
+                XrPlayerAction.RefreshSyncPlay
+            Regex(".*(open|show).*(syncplay|watch party|watch group|groups).*").matches(text) ->
+                XrPlayerAction.OpenSyncPlay
+            Regex("^join\\s+(syncplay|watch party|watch group|group)$").matches(text) ->
+                XrPlayerAction.JoinSyncPlayGroup()
+            Regex("^join\\s+(.+)$").matchEntire(text)?.groupValues?.getOrNull(1)
+                ?.takeIf {
+                    !it.contains("episode") &&
+                        !it.contains("movie") &&
+                        !it.contains("result") &&
+                        !it.contains("one")
+                } != null -> {
+                val target = Regex("^join\\s+(.+)$").matchEntire(text)?.groupValues?.get(1).orEmpty()
+                    .replace(Regex("^(the\\s+)?(syncplay|watch party|watch group|group)\\s+"), "")
+                    .trim()
+                if (target.isBlank()) XrPlayerAction.JoinSyncPlayGroup() else XrPlayerAction.JoinSyncPlayGroup(groupName = target)
+            }
+            text.contains("syncplay") || text.contains("watch party") || text.contains("watch group") ->
+                XrPlayerAction.OpenSyncPlay
+            else -> null
+        }
+    }
+
+    private fun extractSelectionAction(text: String): XrPlayerAction? {
+        val selectionIndex = extractOrdinalIndex(text) ?: return null
+        if (Regex(".*(play|watch|open).*(one|result|item|option).*").matches(text)) {
+            return XrPlayerAction.SelectOption(selectionIndex)
+        }
+        if (Regex(".*(join).*(one|result|item|option|group|party).*").matches(text)) {
+            return XrPlayerAction.JoinSyncPlayGroup(selectionIndex = selectionIndex)
+        }
+        if (Regex("^(the\\s+)?(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|seventh|7th|eighth|8th|ninth|9th)(\\s+(one|result|item|option|group|party))?$").matches(text)) {
+            return XrPlayerAction.SelectOption(selectionIndex)
+        }
+        return null
     }
 
     private fun isSubtitleDisableCommand(text: String): Boolean {
@@ -265,6 +315,15 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         return if (query != text && query.isNotBlank()) query else null
     }
 
+    private fun extractPlaySearchQuery(text: String): String? {
+        val match = Regex("^(play|watch|open|start)\\s+(.+)$").matchEntire(text) ?: return null
+        val query = match.groupValues[2].trim()
+        return query.takeIf {
+            it.isNotBlank() &&
+                it !in setOf("resume", "pause", "next", "previous", "back", "intro", "outro", "controls")
+        }
+    }
+
     private fun extractLanguageTarget(text: String, target: String): String? {
         val match =
             Regex(
@@ -298,6 +357,30 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         val seconds = Regex("(\\d+)\\s*(seconds?|secs?|s\\b)").find(text)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val total = hours * 3600 + minutes * 60 + seconds
         return total.takeIf { it > 0L }
+    }
+
+    private fun extractOrdinalIndex(text: String): Int? {
+        val wordMatch =
+            Regex("\\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|seventh|7th|eighth|8th|ninth|9th)\\b")
+                .find(text)
+                ?.value
+                ?.lowercase()
+        if (wordMatch != null) {
+            return when (wordMatch) {
+                "first", "1st" -> 0
+                "second", "2nd" -> 1
+                "third", "3rd" -> 2
+                "fourth", "4th" -> 3
+                "fifth", "5th" -> 4
+                "sixth", "6th" -> 5
+                "seventh", "7th" -> 6
+                "eighth", "8th" -> 7
+                "ninth", "9th" -> 8
+                else -> null
+            }
+        }
+
+        return Regex("\\b([1-9])\\b").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.minus(1)
     }
 
     private suspend fun nanoInfer(
@@ -351,6 +434,12 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         {"action":"SELECT_SUBTITLE","language":"Japanese","index":null}
         {"action":"DISABLE_SUBTITLES"}
         {"action":"SEARCH","query":"Cowboy Bebop"}
+        {"action":"SELECT_OPTION","index":0}
+        {"action":"OPEN_SYNCPLAY"}
+        {"action":"CREATE_SYNCPLAY_GROUP"}
+        {"action":"JOIN_SYNCPLAY_GROUP","group_name":"Friday Night","index":null}
+        {"action":"LEAVE_SYNCPLAY_GROUP"}
+        {"action":"REFRESH_SYNCPLAY"}
         {"action":"ADJUST_VOLUME","percentage":0.5,"delta":null}
         {"action":"GO_HOME"}
         {"action":"CLOSE_APP"}
@@ -387,7 +476,23 @@ class SpatialCommandCoordinator(private val appContext: Context) {
                     index = if (json.has("index") && !json.isNull("index")) json.optInt("index") else null,
                 )
             "DISABLE_SUBTITLES" -> XrPlayerAction.DisableSubtitles
-            "SEARCH" -> json.optString("query").takeIf { it.isNotBlank() }?.let(XrPlayerAction::Search)
+            "SEARCH" ->
+                json.optString("query").takeIf { it.isNotBlank() }?.let {
+                    XrPlayerAction.Search(
+                        query = it,
+                        autoPlay = json.optBoolean("auto_play", false),
+                    )
+                }
+            "SELECT_OPTION" -> XrPlayerAction.SelectOption(json.optInt("index", 0).coerceAtLeast(0))
+            "OPEN_SYNCPLAY" -> XrPlayerAction.OpenSyncPlay
+            "CREATE_SYNCPLAY_GROUP" -> XrPlayerAction.CreateSyncPlayGroup
+            "JOIN_SYNCPLAY_GROUP" ->
+                XrPlayerAction.JoinSyncPlayGroup(
+                    groupName = json.optString("group_name").takeIf { it.isNotBlank() },
+                    selectionIndex = if (json.has("index") && !json.isNull("index")) json.optInt("index") else null,
+                )
+            "LEAVE_SYNCPLAY_GROUP" -> XrPlayerAction.LeaveSyncPlayGroup
+            "REFRESH_SYNCPLAY" -> XrPlayerAction.RefreshSyncPlay
             "ADJUST_VOLUME" ->
                 XrPlayerAction.AdjustVolume(
                     percentage = if (json.has("percentage") && !json.isNull("percentage")) json.optDouble("percentage").toFloat() else null,

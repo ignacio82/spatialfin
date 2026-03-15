@@ -14,6 +14,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.models.toSpatialFinEpisode
@@ -27,11 +28,16 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
+import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
+import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
+import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
 
 class JellyfinRepositoryOfflineImpl(
@@ -235,6 +241,46 @@ class JellyfinRepositoryOfflineImpl(
                 null
             }
         }
+
+    override suspend fun getSyncPlayGroups(): List<SyncPlayGroup> = emptyList()
+
+    override suspend fun createSyncPlayGroup(name: String): SyncPlayGroup {
+        throw UnsupportedOperationException("SyncPlay is not available in offline mode")
+    }
+
+    override suspend fun joinSyncPlayGroup(groupId: UUID) {
+        throw UnsupportedOperationException("SyncPlay is not available in offline mode")
+    }
+
+    override suspend fun leaveSyncPlayGroup() = Unit
+
+    override suspend fun setSyncPlayQueue(
+        itemIds: List<UUID>,
+        playingItemIndex: Int,
+        startPositionTicks: Long,
+    ) {
+        throw UnsupportedOperationException("SyncPlay is not available in offline mode")
+    }
+
+    override suspend fun pauseSyncPlay() = Unit
+
+    override suspend fun unpauseSyncPlay() = Unit
+
+    override suspend fun seekSyncPlay(positionTicks: Long) = Unit
+
+    override suspend fun stopSyncPlay() = Unit
+
+    override suspend fun nextSyncPlayItem(playlistItemId: UUID) = Unit
+
+    override suspend fun previousSyncPlayItem(playlistItemId: UUID) = Unit
+
+    override fun observePlayStateMessages(): Flow<PlaystateMessage> = emptyFlow()
+
+    override fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage> = emptyFlow()
+
+    override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> = emptyFlow()
+
+    override fun observeSocketState(): Flow<SocketApiState> = emptyFlow()
 
     override suspend fun postCapabilities() {}
 

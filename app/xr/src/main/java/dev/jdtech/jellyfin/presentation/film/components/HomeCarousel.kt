@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyMovies
 import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import kotlinx.coroutines.delay
@@ -39,7 +40,8 @@ fun HomeCarousel(
     itemsPadding: PaddingValues,
     onAction: (HomeAction) -> Unit,
 ) {
-    val pagerState = rememberPagerState(pageCount = { items.size })
+    val visibleItems = items.deduplicateMovieVersions()
+    val pagerState = rememberPagerState(pageCount = { visibleItems.size })
     val pagerIsDragged by pagerState.interactionSource.collectIsDraggedAsState()
 
     val autoScrollDelay = 5000L
@@ -65,7 +67,7 @@ fun HomeCarousel(
         pageSize = dynamicPageSize,
         pageSpacing = MaterialTheme.spacings.medium,
     ) { page ->
-        val item = items[page]
+        val item = visibleItems[page]
         HomeCarouselItem(item = item, onAction = onAction)
     }
 }

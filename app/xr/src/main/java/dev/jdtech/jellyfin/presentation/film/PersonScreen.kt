@@ -42,6 +42,7 @@ import dev.jdtech.jellyfin.film.presentation.person.PersonState
 import dev.jdtech.jellyfin.film.presentation.person.PersonViewModel
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinPerson
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
@@ -150,7 +151,7 @@ private fun PersonScreenLayout(state: PersonState, onAction: (PersonAction) -> U
                                 horizontalArrangement =
                                     Arrangement.spacedBy(MaterialTheme.spacings.default),
                             ) {
-                                items(state.starredInMovies, key = { it.id }) { item ->
+                                items(state.starredInMovies.deduplicateMovieVersions(), key = { it.id }) { item ->
                                     ItemCard(
                                         item = item,
                                         direction = Direction.VERTICAL,

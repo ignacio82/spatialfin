@@ -35,7 +35,11 @@ import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.film.presentation.home.HomeState
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
 import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.View
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
+import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.presentation.components.ErrorDialog
 import dev.jdtech.jellyfin.presentation.film.components.HomeCarousel
 import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
@@ -49,6 +53,7 @@ import kotlinx.coroutines.launch
 
 import androidx.compose.ui.platform.LocalContext
 import android.app.Activity
+import timber.log.Timber
 
 @Composable
 fun HomeScreen(
@@ -93,6 +98,7 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
     val paddingBottom = safePadding.bottom + MaterialTheme.spacings.default
 
     val itemsPadding = PaddingValues(start = paddingStart, end = paddingEnd)
+    val visibleHomeSections = remember(state) { state.filteredForUniqueHomeItems() }
 
     val contentPaddingTop = safePadding.top + 88.dp
 
@@ -107,7 +113,7 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
                 contentPadding = PaddingValues(top = contentPaddingTop, bottom = paddingBottom),
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
             ) {
-                state.suggestionsSection?.let { section ->
+                visibleHomeSections.suggestionsSection?.let { section ->
                     item(key = section.id) {
                         HomeCarousel(
                             items = section.items,
@@ -116,7 +122,7 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
                         )
                     }
                 }
-                state.resumeSection?.let { section ->
+                visibleHomeSections.resumeSection?.let { section ->
                     item(key = section.id) {
                         HomeSection(
                             section = section.homeSection,
@@ -126,7 +132,7 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
                         )
                     }
                 }
-                state.nextUpSection?.let { section ->
+                visibleHomeSections.nextUpSection?.let { section ->
                     item(key = section.id) {
                         HomeSection(
                             section = section.homeSection,
@@ -136,7 +142,7 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
                         )
                     }
                 }
-                items(state.views, key = { it.id }) { view ->
+                items(visibleHomeSections.views, key = { it.id }) { view ->
                     HomeView(
                         view = view,
                         itemsPadding = itemsPadding,
@@ -204,4 +210,69 @@ private fun HomeScreenLayoutPreview() {
             onAction = {},
         )
     }
+}
+
+private data class FilteredHomeSections(
+    val suggestionsSection: HomeItem.Suggestions?,
+    val resumeSection: HomeItem.Section?,
+    val nextUpSection: HomeItem.Section?,
+    val views: List<HomeItem.ViewItem>,
+)
+
+private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
+    val seenKeys = mutableSetOf<String>()
+
+    fun List<SpatialFinItem>.filterUniqueForSection(sectionLabel: String): List<SpatialFinItem> {
+        val deduplicated = deduplicateMovieVersions()
+        return deduplicated.filter { item ->
+            val uniqueKey = item.movieVersionGroupKey() ?: item.id.toString()
+            val isNew = seenKeys.add(uniqueKey)
+            if (!isNew) {
+                Timber.d("Filtering duplicate home item section=%s title=%s key=%s", sectionLabel, item.name, uniqueKey)
+            }
+            isNew
+        }
+    }
+
+    val filteredSuggestions =
+        suggestionsSection
+            ?.let { section ->
+                section.items
+                    .filterUniqueForSection("suggestions")
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { items -> section.copy(items = items) }
+            }
+
+    val filteredResume =
+        resumeSection
+            ?.let { section ->
+                section.homeSection.items
+                    .filterUniqueForSection("resume")
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
+            }
+
+    val filteredNextUp =
+        nextUpSection
+            ?.let { section ->
+                section.homeSection.items
+                    .filterUniqueForSection("next_up")
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
+            }
+
+    val filteredViews =
+        views.mapNotNull { viewItem ->
+            viewItem.view.items
+                .filterUniqueForSection("view:${viewItem.view.name}")
+                .takeIf { it.isNotEmpty() }
+                ?.let { items -> viewItem.copy(view = viewItem.view.copy(items = items)) }
+        }
+
+    return FilteredHomeSections(
+        suggestionsSection = filteredSuggestions,
+        resumeSection = filteredResume,
+        nextUpSection = filteredNextUp,
+        views = filteredViews,
+    )
 }

@@ -60,7 +60,7 @@ fun SettingsSelectCard(
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.fillMaxWidth().padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -73,12 +73,12 @@ fun SettingsSelectCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(preference.nameStringResource),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
                 Text(
                     text = optionsMap.getOrDefault(preference.value, notSetString),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         }

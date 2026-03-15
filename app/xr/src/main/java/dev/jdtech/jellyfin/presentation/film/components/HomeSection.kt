@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.models.HomeSection
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -40,7 +41,7 @@ fun HomeSection(
             contentPadding = itemsPadding,
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
         ) {
-            items(section.items, key = { it.id }) { item ->
+            items(section.items.deduplicateMovieVersions(), key = { it.id }) { item ->
                 ItemCard(
                     item = item,
                     direction = Direction.HORIZONTAL,

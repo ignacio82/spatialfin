@@ -6,6 +6,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.film.domain.VideoMetadataParser
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.movieVersionGroupKey
+import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
@@ -36,6 +38,8 @@ constructor(
             try {
                 val movie = repository.getMovie(movieId)
                 val videoMetadata = videoMetadataParser.parse(movie.sources.first())
+                val availableVersions =
+                    loadAvailableVersions(movie)
                 val actors = getActors(movie)
                 val director = getDirector(movie)
                 val writers = getWriters(movie)
@@ -43,6 +47,7 @@ constructor(
                 _state.emit(
                     _state.value.copy(
                         movie = movie,
+                        availableVersions = availableVersions,
                         videoMetadata = videoMetadata,
                         actors = actors,
                         director = director,
@@ -54,6 +59,23 @@ constructor(
                 _state.emit(_state.value.copy(error = e))
             }
         }
+    }
+
+    private suspend fun loadAvailableVersions(movie: SpatialFinMovie): List<SpatialFinMovie> {
+        val targetGroupKey = movie.movieVersionGroupKey()
+        val hydratedCandidates =
+            repository
+                .getSearchItems(movie.name)
+                .filterIsInstance<SpatialFinMovie>()
+                .filter { candidate ->
+                    targetGroupKey != null && candidate.movieVersionGroupKey() == targetGroupKey
+                }
+                .mapNotNull { candidate ->
+                    runCatching { repository.getMovie(candidate.id) }
+                        .getOrElse { candidate }
+                }
+
+        return movie.versionOptionsFrom(hydratedCandidates)
     }
 
     private suspend fun getActors(item: SpatialFinMovie): List<SpatialFinItemPerson> {

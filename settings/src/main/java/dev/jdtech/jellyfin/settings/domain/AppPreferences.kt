@@ -84,10 +84,25 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
 
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 24)
+    val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)
+    val xrPlayerPanelY = Preference("pref_xr_player_panel_y", 0f)
+    val xrPlayerPanelZ = Preference("pref_xr_player_panel_z", 0f)
+    val xrPlayerPanelRotX = Preference("pref_xr_player_panel_rot_x", 0f)
+    val xrPlayerPanelRotY = Preference("pref_xr_player_panel_rot_y", 0f)
+    val xrPlayerPanelRotZ = Preference("pref_xr_player_panel_rot_z", 0f)
+    val xrPlayerPanelRotW = Preference("pref_xr_player_panel_rot_w", 1f)
+    val xrAppPanelX = Preference("pref_xr_app_panel_x", 0f)
+    val xrAppPanelY = Preference("pref_xr_app_panel_y", 0f)
+    val xrAppPanelZ = Preference("pref_xr_app_panel_z", -3f)
+    val xrAppPanelRotX = Preference("pref_xr_app_panel_rot_x", 0f)
+    val xrAppPanelRotY = Preference("pref_xr_app_panel_rot_y", 0f)
+    val xrAppPanelRotZ = Preference("pref_xr_app_panel_rot_z", 0f)
+    val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
     val subtitleTextColor = Preference("pref_subtitle_text_color", android.graphics.Color.WHITE)
     val subtitleBackgroundColor = Preference("pref_subtitle_background_color", android.graphics.Color.TRANSPARENT)
     val libassSubtitleUsage = Preference("pref_libass_subtitle_usage", "auto")
     val voiceControlEnabled = Preference("pref_voice_control_enabled", true)
+    val voiceGestureHand = Preference<String?>("pref_voice_gesture_hand", "left")
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)

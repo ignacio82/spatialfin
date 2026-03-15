@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.models.toSpatialFinCollection
@@ -28,14 +29,19 @@ import dev.jdtech.jellyfin.models.toSpatialFinSegment
 import dev.jdtech.jellyfin.models.toSpatialFinSegmentsDto
 import dev.jdtech.jellyfin.models.toSpatialFinShow
 import dev.jdtech.jellyfin.models.toSpatialFinSource
+import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import org.jellyfin.sdk.api.sockets.subscribePlayStateCommands
+import org.jellyfin.sdk.api.sockets.subscribeSyncPlayCommands
+import org.jellyfin.sdk.api.sockets.SocketApiState
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GroupInfoDto
 import org.jellyfin.sdk.model.api.DeviceOptionsDto
 import org.jellyfin.sdk.model.api.DeviceProfile
 import org.jellyfin.sdk.model.api.GeneralCommandType
@@ -44,16 +50,27 @@ import org.jellyfin.sdk.model.api.ItemFilter
 import org.jellyfin.sdk.model.api.ItemSortBy
 import org.jellyfin.sdk.model.api.MediaType
 import org.jellyfin.sdk.model.api.PlayMethod
+import org.jellyfin.sdk.model.api.PlayRequestDto
 import org.jellyfin.sdk.model.api.PlaybackInfoDto
 import org.jellyfin.sdk.model.api.PlaybackOrder
 import org.jellyfin.sdk.model.api.PlaybackProgressInfo
 import org.jellyfin.sdk.model.api.PlaybackStartInfo
 import org.jellyfin.sdk.model.api.PlaybackStopInfo
+import org.jellyfin.sdk.model.api.PlaystateCommand
+import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
 import org.jellyfin.sdk.model.api.RepeatMode
+import org.jellyfin.sdk.model.api.SeekRequestDto
+import org.jellyfin.sdk.model.api.SendCommandType
+import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
+import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.SortOrder as ItemSortOrder
 import org.jellyfin.sdk.model.api.DirectPlayProfile
 import org.jellyfin.sdk.model.api.DlnaProfileType
+import org.jellyfin.sdk.model.api.JoinGroupRequestDto
+import org.jellyfin.sdk.model.api.NewGroupRequestDto
+import org.jellyfin.sdk.model.api.NextItemRequestDto
+import org.jellyfin.sdk.model.api.PreviousItemRequestDto
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import org.jellyfin.sdk.model.api.SubtitleProfile
 import org.jellyfin.sdk.model.api.UserConfiguration
@@ -420,6 +437,106 @@ class JellyfinRepositoryImpl(
                 return@withContext null
             }
         }
+
+    override suspend fun getSyncPlayGroups(): List<SyncPlayGroup> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayGetGroups().content.map(GroupInfoDto::toSyncPlayGroup)
+        }
+
+    override suspend fun createSyncPlayGroup(name: String): SyncPlayGroup =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayCreateGroup(NewGroupRequestDto(name)).content.toSyncPlayGroup()
+        }
+
+    override suspend fun joinSyncPlayGroup(groupId: UUID) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayJoinGroup(JoinGroupRequestDto(groupId))
+        }
+    }
+
+    override suspend fun leaveSyncPlayGroup() {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayLeaveGroup()
+        }
+    }
+
+    override suspend fun setSyncPlayQueue(
+        itemIds: List<UUID>,
+        playingItemIndex: Int,
+        startPositionTicks: Long,
+    ) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlaySetNewQueue(
+                PlayRequestDto(
+                    playingQueue = itemIds,
+                    playingItemPosition = playingItemIndex,
+                    startPositionTicks = startPositionTicks,
+                )
+            )
+        }
+    }
+
+    override suspend fun pauseSyncPlay() {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayPause()
+        }
+    }
+
+    override suspend fun unpauseSyncPlay() {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayUnpause()
+        }
+    }
+
+    override suspend fun seekSyncPlay(positionTicks: Long) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlaySeek(SeekRequestDto(positionTicks))
+        }
+    }
+
+    override suspend fun stopSyncPlay() {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayStop()
+        }
+    }
+
+    override suspend fun nextSyncPlayItem(playlistItemId: UUID) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayNextItem(NextItemRequestDto(playlistItemId))
+        }
+    }
+
+    override suspend fun previousSyncPlayItem(playlistItemId: UUID) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.syncPlayApi.syncPlayPreviousItem(PreviousItemRequestDto(playlistItemId))
+        }
+    }
+
+    override fun observePlayStateMessages(): Flow<PlaystateMessage> =
+        jellyfinApi.api.webSocket.subscribePlayStateCommands(
+            setOf(
+                PlaystateCommand.PAUSE,
+                PlaystateCommand.UNPAUSE,
+                PlaystateCommand.PLAY_PAUSE,
+                PlaystateCommand.SEEK,
+                PlaystateCommand.STOP,
+            )
+        )
+
+    override fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage> =
+        jellyfinApi.api.webSocket.subscribeSyncPlayCommands(
+            setOf(
+                SendCommandType.PAUSE,
+                SendCommandType.UNPAUSE,
+                SendCommandType.SEEK,
+                SendCommandType.STOP,
+            )
+        )
+
+    override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> =
+        jellyfinApi.api.webSocket.subscribe(SyncPlayGroupUpdateMessage::class)
+
+    override fun observeSocketState(): Flow<SocketApiState> = jellyfinApi.api.webSocket.state
 
     override suspend fun postCapabilities() {
         Timber.d("Sending capabilities")

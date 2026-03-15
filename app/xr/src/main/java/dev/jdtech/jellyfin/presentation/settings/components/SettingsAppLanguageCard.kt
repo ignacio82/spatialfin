@@ -46,7 +46,7 @@ fun SettingsAppLanguageCard(preference: Preference, modifier: Modifier = Modifie
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -59,10 +59,10 @@ fun SettingsAppLanguageCard(preference: Preference, modifier: Modifier = Modifie
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(preference.nameStringResource),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
-                Text(text = currentValue, style = MaterialTheme.typography.bodyMedium)
+                Text(text = currentValue, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

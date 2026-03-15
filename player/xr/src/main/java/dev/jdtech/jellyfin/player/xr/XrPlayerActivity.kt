@@ -64,12 +64,14 @@ class XrPlayerActivity : AppCompatActivity() {
             stereoMode: String = "mono",
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
+            openSyncPlayDialogOnStart: Boolean = false,
         ): android.content.Intent {
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("itemId", itemId.toString())
                 putExtra("itemKind", itemKind)
                 putExtra("startFromBeginning", startFromBeginning)
                 putExtra("stereoMode", stereoMode)
+                putExtra("openSyncPlayDialogOnStart", openSyncPlayDialogOnStart)
                 mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
                 maxBitrate?.let { putExtra("maxBitrate", it) }
             }
@@ -129,6 +131,7 @@ class XrPlayerActivity : AppCompatActivity() {
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
+        val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
         currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
 
@@ -228,6 +231,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
+                        openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         libassRenderer = libassRenderer,
                         onSearchQuery = { query -> repository.getSearchItems(query) },
                         onLaunchSearchResult = { item ->

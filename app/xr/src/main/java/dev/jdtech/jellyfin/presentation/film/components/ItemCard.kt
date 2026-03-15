@@ -41,8 +41,8 @@ fun ItemCard(
 ) {
     val width =
         when (direction) {
-            Direction.HORIZONTAL -> 300
-            Direction.VERTICAL -> 180
+            Direction.HORIZONTAL -> 360
+            Direction.VERTICAL -> 220
         }
     Column(
         modifier =
@@ -90,7 +90,7 @@ fun ItemCard(
         Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
         Text(
             text = if (item is SpatialFinEpisode) item.seriesName else item.name,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.titleMedium,
             maxLines = if (item is SpatialFinEpisode) 1 else 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -103,13 +103,13 @@ fun ItemCard(
                         item.indexNumber,
                         item.name,
                     ),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(6.dp))
     }
 }
 

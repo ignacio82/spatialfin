@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.presentation.setup.components
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
@@ -28,7 +29,13 @@ fun LoadingButton(
                 modifier = Modifier.size(24.dp).align(Alignment.CenterStart).offset(x = 8.dp),
             )
         }
-        Button(onClick = onClick, enabled = !isLoading, modifier = modifier) { Text(text = text) }
+        Button(
+            onClick = onClick,
+            enabled = !isLoading,
+            modifier = modifier.defaultMinSize(minHeight = 64.dp),
+        ) {
+            Text(text = text, style = MaterialTheme.typography.titleMedium)
+        }
     }
 }
 

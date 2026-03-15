@@ -20,7 +20,7 @@ import dev.spatialfin.presentation.theme.spacings
 fun SettingsInfoCard(preference: PreferenceInfo, modifier: Modifier = Modifier) {
     SettingsBaseCard(preference = preference, onClick = {}, modifier = modifier) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             preference.iconDrawableId?.let {
@@ -28,9 +28,9 @@ fun SettingsInfoCard(preference: PreferenceInfo, modifier: Modifier = Modifier) 
                 Spacer(modifier = Modifier.width(MaterialTheme.spacings.default))
             }
             Column {
-                Text(text = preference.title, style = MaterialTheme.typography.titleMedium)
+                Text(text = preference.title, style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
-                Text(text = preference.description, style = MaterialTheme.typography.bodyMedium)
+                Text(text = preference.description, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

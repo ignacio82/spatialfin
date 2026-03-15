@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.presentation.film.components
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyEpisode
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyMovie
@@ -33,8 +35,12 @@ fun PlayButton(
             mutableLongStateOf((item.runtimeTicks - item.playbackPositionTicks) / 600000000)
         }
 
-    Button(onClick = onClick, modifier = modifier, enabled = enabled) {
-        Icon(painter = painterResource(CoreR.drawable.ic_play), contentDescription = null)
+    Button(onClick = onClick, modifier = modifier.height(68.dp), enabled = enabled) {
+        Icon(
+            painter = painterResource(CoreR.drawable.ic_play),
+            contentDescription = null,
+            modifier = Modifier,
+        )
         Spacer(modifier = Modifier.width(MaterialTheme.spacings.small))
         Text(
             text =
@@ -42,7 +48,8 @@ fun PlayButton(
                     stringResource(CoreR.string.runtime_minutes_left, runtimeMinutesLeft)
                 } else {
                     stringResource(CoreR.string.play)
-                }
+                },
+            style = MaterialTheme.typography.titleMedium,
         )
     }
 }

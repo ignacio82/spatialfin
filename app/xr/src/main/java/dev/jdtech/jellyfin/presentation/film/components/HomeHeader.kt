@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,13 +51,13 @@ fun HomeHeader(
     val isOfflineMode = LocalOfflineMode.current
 
     Row(
-        modifier = modifier.fillMaxWidth().height(56.dp),
+        modifier = modifier.fillMaxWidth().height(72.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Surface(
             onClick = onServerClick,
             modifier = Modifier.fillMaxHeight().weight(1f, fill = false),
-            shape = CircleShape,
+            shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             Row(
@@ -74,7 +75,7 @@ fun HomeHeader(
                     text = serverName,
                     overflow = TextOverflow.Ellipsis,
                     maxLines = 1,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.animateContentSize(),
                 )
             }
@@ -86,17 +87,21 @@ fun HomeHeader(
             AnimatedVisibility(visible = isError, enter = fadeIn(), exit = fadeOut()) {
                 Surface(
                     onClick = onErrorClick,
-                    modifier = Modifier.fillMaxHeight().aspectRatio(1f),
-                    shape = CircleShape,
+                    modifier = Modifier.fillMaxHeight(),
+                    shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.errorContainer,
                 ) {
-                    Box {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_alert_circle),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.align(Alignment.Center),
                         )
+                        Text("Error", color = MaterialTheme.colorScheme.onErrorContainer)
                     }
                 }
             }
@@ -104,24 +109,29 @@ fun HomeHeader(
             AnimatedVisibility(visible = isLoading || isError, enter = fadeIn(), exit = fadeOut()) {
                 Surface(
                     onClick = onRetryClick,
-                    modifier = Modifier.fillMaxHeight().aspectRatio(1f),
+                    modifier = Modifier.fillMaxHeight(),
                     enabled = !isLoading,
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
-                    Box {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         when {
                             isError -> {
                                 Icon(
                                     painter = painterResource(CoreR.drawable.ic_rotate_ccw),
                                     contentDescription = null,
-                                    modifier = Modifier.align(Alignment.Center),
                                 )
+                                Text("Retry")
                             }
                             isLoading -> {
-                                Box(modifier = Modifier.size(32.dp).align(Alignment.Center)) {
+                                Box(modifier = Modifier.size(32.dp)) {
                                     CircularProgressIndicator()
                                 }
+                                Text("Loading")
                             }
                         }
                     }
@@ -131,56 +141,59 @@ fun HomeHeader(
             if (!isOfflineMode) {
                 Surface(
                     onClick = onSearchClick,
-                    modifier = Modifier.fillMaxHeight().aspectRatio(1f),
-                    shape = CircleShape,
+                    modifier = Modifier.fillMaxHeight(),
+                    shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_search),
                             contentDescription = null,
                         )
+                        Text("Search")
                     }
                 }
             }
 
             Surface(
                 onClick = onUserClick,
-                modifier = Modifier.fillMaxHeight().aspectRatio(1f),
-                shape = CircleShape,
+                modifier = Modifier.fillMaxHeight(),
+                shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         painter = painterResource(CoreR.drawable.ic_user),
                         contentDescription = null,
                     )
+                    Text("Settings")
                 }
             }
 
             Surface(
                 onClick = onCloseClick,
-                modifier = Modifier.fillMaxHeight().aspectRatio(1f),
-                shape = CircleShape,
+                modifier = Modifier.fillMaxHeight(),
+                shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
                         painter = painterResource(CoreR.drawable.ic_x),
                         contentDescription = "Close app",
                     )
+                    Text("Close")
                 }
             }
         }

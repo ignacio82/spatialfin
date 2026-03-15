@@ -196,6 +196,7 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                         onPlayClick = { startFromBeginning, _, _ ->
                             onAction(ShowAction.Play(startFromBeginning = startFromBeginning))
                         },
+                        onSyncPlayClick = null,
                         onMarkAsPlayedClick = {
                             when (show.played) {
                                 true -> onAction(ShowAction.UnmarkAsPlayed)

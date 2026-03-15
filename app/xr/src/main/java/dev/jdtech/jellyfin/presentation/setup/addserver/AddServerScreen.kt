@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -100,23 +102,23 @@ private fun AddServerScreenLayout(state: AddServerState, onAction: (AddServerAct
             modifier =
                 Modifier.fillMaxHeight()
                     .padding(horizontal = 24.dp)
-                    .widthIn(max = 480.dp)
+                    .widthIn(max = 640.dp)
                     .align(Alignment.Center)
                     .verticalScroll(scrollState),
         ) {
             Image(
                 painter = painterResource(id = CoreR.drawable.ic_banner),
                 contentDescription = null,
-                modifier = Modifier.width(250.dp).align(Alignment.CenterHorizontally),
+                modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
             Text(
                 text = stringResource(SetupR.string.add_server),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.displaySmall,
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             AnimatedVisibility(state.discoveredServers.isNotEmpty()) {
-                LazyRow {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     items(state.discoveredServers) { discoveredServer ->
                         DiscoveredServerItem(
                             name = discoveredServer.name,
@@ -129,7 +131,7 @@ private fun AddServerScreenLayout(state: AddServerState, onAction: (AddServerAct
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             OutlinedTextField(
                 value = serverAddress,
                 leadingIcon = {
@@ -157,11 +159,16 @@ private fun AddServerScreenLayout(state: AddServerState, onAction: (AddServerAct
                         Text(
                             text = state.error!!.joinToString { it.asString(context.resources) },
                             color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyLarge,
                         )
                     }
                 },
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .defaultMinSize(minHeight = 72.dp)
+                        .focusRequester(focusRequester),
             )
+            Spacer(modifier = Modifier.height(12.dp))
             LoadingButton(
                 text = stringResource(SetupR.string.add_server_btn_connect),
                 onClick = { doConnect() },
@@ -169,11 +176,13 @@ private fun AddServerScreenLayout(state: AddServerState, onAction: (AddServerAct
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        IconButton(
+        FilledTonalButton(
             onClick = { onAction(AddServerAction.OnBackClick) },
             modifier = Modifier.padding(start = 8.dp),
         ) {
             Icon(painter = painterResource(CoreR.drawable.ic_arrow_left), contentDescription = null)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("Back", style = MaterialTheme.typography.titleMedium)
         }
     }
 }

@@ -53,9 +53,9 @@ fun BaseDialog(
 ) {
     Surface(
         modifier = Modifier
-            .widthIn(min = 400.dp, max = 600.dp)
-            .heightIn(max = 560.dp)
-            .padding(16.dp),
+            .widthIn(min = 520.dp, max = 760.dp)
+            .heightIn(max = 720.dp)
+            .padding(20.dp),
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 12.dp,
@@ -63,12 +63,12 @@ fun BaseDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(MaterialTheme.spacings.medium)
+                .padding(MaterialTheme.spacings.large)
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(bottom = MaterialTheme.spacings.medium)
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(bottom = MaterialTheme.spacings.large)
             )
             
             Box(modifier = Modifier.weight(1f, fill = false)) {

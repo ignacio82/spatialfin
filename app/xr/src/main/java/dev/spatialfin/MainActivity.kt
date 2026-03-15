@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -17,12 +18,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.navigation.compose.rememberNavController
 import androidx.core.content.ContextCompat
 import androidx.work.Constraints
@@ -52,20 +58,23 @@ import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.presentation.local.localVideoPermission
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.delay
 import timber.log.Timber
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableFloatStateOf
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
-import dev.jdtech.jellyfin.player.xr.voice.XrPlayerAction
+import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import androidx.xr.runtime.HandTrackingMode
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import javax.inject.Inject
 
 @OptIn(ExperimentalMaterial3XrApi::class)
 @AndroidEntryPoint
@@ -78,6 +87,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val viewModel: MainViewModel by viewModels()
+    @Inject lateinit var appPreferences: AppPreferences
     private var xrSession: Session? = null
     private val startupPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -120,6 +130,7 @@ class MainActivity : AppCompatActivity() {
 
             SpatialFinTheme(dynamicColor = state.isDynamicColors) {
                 val navController = rememberNavController()
+                val lifecycleOwner = LocalLifecycleOwner.current
                 if (!state.isLoading) {
                     CompositionLocalProvider(LocalOfflineMode provides state.isOfflineMode) {
                         val session = xrSession
@@ -130,9 +141,14 @@ class MainActivity : AppCompatActivity() {
                             val voiceState by voiceService.state.collectAsState()
                             val partialTranscript by voiceService.partialTranscript.collectAsState()
                             var voiceFeedback by remember { mutableStateOf<String?>(null) }
+                            var voiceGestureHint by remember { mutableStateOf<String?>(null) }
+                            var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
                             var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
-                            
-                            val pinchDetector = remember(session) { SecondaryHandPinchDetector(session, this@MainActivity) }
+                            val voiceGestureHand = appPreferences.getValue(appPreferences.voiceGestureHand) ?: "left"
+
+                            val pinchDetector = remember(session, voiceGestureHand) {
+                                SecondaryHandPinchDetector(session, this@MainActivity, voiceGestureHand)
+                            }
                             var hasAudioPermission by remember {
                                 mutableStateOf(
                                     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -172,7 +188,7 @@ class MainActivity : AppCompatActivity() {
                                         "Going back"
                                     }
                                     is XrPlayerAction.GoHome -> {
-                                        navController.navigate("HomeRoute") {
+                                        navController.navigate(HomeRoute) {
                                             popUpTo(navController.graph.startDestinationId)
                                             launchSingleTop = true
                                         }
@@ -214,12 +230,34 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
 
-                            LaunchedEffect(pinchDetector, hasHandTrackingPermission) {
+                            LaunchedEffect(pinchDetector, hasHandTrackingPermission, lifecycleOwner) {
                                 if (!hasHandTrackingPermission) return@LaunchedEffect
-                                pinchDetector.pinchEvents.collect { event ->
-                                    when (event) {
-                                        SecondaryHandPinchDetector.PinchEvent.STARTED -> requestVoiceCommand()
-                                        SecondaryHandPinchDetector.PinchEvent.ENDED -> voiceService.stopListening()
+                                lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                                    pinchDetector.gestureStates.collect { event ->
+                                        when (event) {
+                                            is SecondaryHandPinchDetector.GestureState.Arming -> {
+                                                voiceGestureArmingProgress = event.progress
+                                                voiceGestureHint = "Hold to talk"
+                                            }
+                                            SecondaryHandPinchDetector.GestureState.Started -> {
+                                                voiceGestureArmingProgress = 1f
+                                                voiceGestureHint = null
+                                                if (voiceState == VoiceState.IDLE) {
+                                                    requestVoiceCommand()
+                                                }
+                                            }
+                                            SecondaryHandPinchDetector.GestureState.Ended -> {
+                                                voiceGestureArmingProgress = 0f
+                                                voiceGestureHint = null
+                                                voiceService.stopListening()
+                                            }
+                                            SecondaryHandPinchDetector.GestureState.Idle -> {
+                                                voiceGestureArmingProgress = 0f
+                                                if (voiceState != VoiceState.LISTENING) {
+                                                    voiceGestureHint = null
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -237,6 +275,8 @@ class MainActivity : AppCompatActivity() {
                             val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
                             var controlsVisible by remember { mutableStateOf(true) }
                             var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
+                            val defaultRootPose = remember { Pose(Vector3(0f, 0f, -3f), Quaternion.Identity) }
+                            val latestRootEntity = rememberUpdatedState(rootEntity.value)
 
                             LaunchedEffect(controlsVisible, rootEntity.value) {
                                 val root = rootEntity.value ?: return@LaunchedEffect
@@ -262,18 +302,29 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
 
+                            LaunchedEffect(rootEntity.value) {
+                                val root = rootEntity.value ?: return@LaunchedEffect
+                                while (true) {
+                                    safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                                    delay(1_000L)
+                                }
+                            }
+
                             DisposableEffect(session) {
                                 try {
                                     val root = GroupEntity.create(
                                         session,
                                         "MainScreenRoot",
-                                        Pose(Vector3(0f, 0f, -3f), Quaternion.Identity),
+                                        loadAppRootPose(),
                                     )
                                     rootEntity.value = root
                                 } catch (e: Exception) {
                                     Timber.w(e, "Failed to create movable root for main screen")
                                 }
                                 onDispose {
+                                    latestRootEntity.value?.let { root ->
+                                        safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                                    }
                                     voiceService.destroy()
                                     commandCoordinator.destroy()
                                     rootEntity.value?.dispose()
@@ -318,6 +369,8 @@ class MainActivity : AppCompatActivity() {
                                                 VoiceControlOverlay(
                                                     state = voiceState,
                                                     partialTranscript = partialTranscript,
+                                                    gestureArmingProgress = voiceGestureArmingProgress,
+                                                    gestureHint = voiceGestureHint,
                                                 )
                                             }
                                         }
@@ -374,5 +427,37 @@ class MainActivity : AppCompatActivity() {
         workManager
             .beginUniqueWork("syncUserData", ExistingWorkPolicy.KEEP, syncWorkRequest)
             .enqueue()
+    }
+
+    private fun loadAppRootPose(): Pose {
+        return Pose(
+            Vector3(
+                appPreferences.getValue(appPreferences.xrAppPanelX),
+                appPreferences.getValue(appPreferences.xrAppPanelY),
+                appPreferences.getValue(appPreferences.xrAppPanelZ),
+            ),
+            Quaternion(
+                appPreferences.getValue(appPreferences.xrAppPanelRotX),
+                appPreferences.getValue(appPreferences.xrAppPanelRotY),
+                appPreferences.getValue(appPreferences.xrAppPanelRotZ),
+                appPreferences.getValue(appPreferences.xrAppPanelRotW),
+            ),
+        )
+    }
+
+    private fun saveAppRootPose(pose: Pose) {
+        val translation = pose.translation
+        val rotation = pose.rotation
+        appPreferences.setValue(appPreferences.xrAppPanelX, translation.x)
+        appPreferences.setValue(appPreferences.xrAppPanelY, translation.y)
+        appPreferences.setValue(appPreferences.xrAppPanelZ, translation.z)
+        appPreferences.setValue(appPreferences.xrAppPanelRotX, rotation.x)
+        appPreferences.setValue(appPreferences.xrAppPanelRotY, rotation.y)
+        appPreferences.setValue(appPreferences.xrAppPanelRotZ, rotation.z)
+        appPreferences.setValue(appPreferences.xrAppPanelRotW, rotation.w)
+    }
+
+    private fun safeGetAppRootPose(entity: GroupEntity): Pose? {
+        return runCatching { entity.getPose() }.getOrNull()
     }
 }

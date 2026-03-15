@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinSources
+import dev.jdtech.jellyfin.models.toSpatialFinItem
 import dev.jdtech.jellyfin.player.core.domain.models.ExternalSubtitle
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
@@ -201,6 +202,19 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
 
     fun setCurrentMediaItemIndex(itemId: UUID) {
         currentItemIndex = items.indexOfFirst { it.id == itemId }
+    }
+
+    suspend fun getPlayerItem(
+        itemId: UUID,
+        playbackPosition: Long = 0L,
+        playlistItemId: UUID? = null,
+        mediaSourceIndex: Int? = null,
+        maxBitrate: Long? = null,
+    ): PlayerItem? {
+        val item = repository.getItem(itemId) ?: return null
+        return item.toPlayerItem(mediaSourceIndex, maxBitrate, playbackPosition).copy(
+            playlistItemId = playlistItemId
+        )
     }
 
     private suspend fun SpatialFinItem.toPlayerItem(

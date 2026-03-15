@@ -1,25 +1,17 @@
 package dev.jdtech.jellyfin.presentation.film
 
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.recalculateWindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
@@ -31,7 +23,10 @@ import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.presentation.film.components.CollectionGrid
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.spatialfin.presentation.theme.spacings
 import java.util.UUID
 
 @Composable
@@ -58,38 +53,39 @@ fun CollectionScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollectionScreenLayout(
     collectionName: String,
     state: CollectionState,
     onAction: (CollectionAction) -> Unit,
 ) {
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val safePadding = rememberSafePadding()
 
-    Scaffold(
-        modifier =
-            Modifier.fillMaxSize()
-                .recalculateWindowInsets()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(collectionName) },
-                navigationIcon = {
-                    IconButton(onClick = { onAction(CollectionAction.OnBackClick) }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_arrow_left),
-                            contentDescription = null,
-                        )
-                    }
-                },
-                windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-                scrollBehavior = scrollBehavior,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .padding(
+                        start = safePadding.start + androidx.compose.material3.MaterialTheme.spacings.default,
+                        top = safePadding.top + androidx.compose.material3.MaterialTheme.spacings.default,
+                        end = safePadding.end + androidx.compose.material3.MaterialTheme.spacings.default,
+                    ),
+        ) {
+            XrBrowseHeader(
+                title = collectionName,
+                onBackClick = { onAction(CollectionAction.OnBackClick) },
             )
-        },
-        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-    ) { innerPadding ->
-        CollectionGrid(sections = state.sections, innerPadding = innerPadding, onAction = onAction)
+        }
+
+        CollectionGrid(
+            sections = state.sections,
+            innerPadding =
+                PaddingValues(
+                    top = safePadding.top + 96.dp,
+                    bottom = safePadding.bottom,
+                ),
+            onAction = onAction,
+        )
     }
 }
 

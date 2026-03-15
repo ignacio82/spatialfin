@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +41,7 @@ fun ServerItem(
     OutlinedCard(
         modifier =
             modifier
+                .defaultMinSize(minHeight = 96.dp)
                 .clip(CardDefaults.outlinedShape)
                 .combinedClickable(
                     onClick = onClick,
@@ -49,7 +51,7 @@ fun ServerItem(
                     },
                 )
     ) {
-        Row(modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 16.dp, bottom = 16.dp)) {
+        Row(modifier = Modifier.padding(start = 28.dp, top = 20.dp, end = 20.dp, bottom = 20.dp)) {
             Icon(
                 painter = painterResource(CoreR.drawable.ic_server),
                 contentDescription = null,
@@ -57,11 +59,11 @@ fun ServerItem(
             )
             Spacer(modifier = Modifier.width(24.dp))
             Column {
-                Text(text = name, style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = name, style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = address,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     overflow = TextOverflow.Ellipsis,
                 )
             }

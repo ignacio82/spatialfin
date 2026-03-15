@@ -32,9 +32,11 @@ import dev.jdtech.jellyfin.core.R as CoreR
 fun VoiceControlOverlay(
     state: VoiceState,
     partialTranscript: String,
+    gestureArmingProgress: Float = 0f,
+    gestureHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
-    val isVisible = state == VoiceState.LISTENING
+    val isVisible = state == VoiceState.LISTENING || gestureHint != null
     
     if (isVisible) {
         Orbiter(
@@ -49,7 +51,7 @@ fun VoiceControlOverlay(
                 // Microphone icon
                 Surface(
                     shape = CircleShape,
-                    color = Color(0xFF4FC3F7),
+                    color = if (state == VoiceState.LISTENING) Color(0xFF4FC3F7) else Color(0xFF5E7486),
                     tonalElevation = 8.dp,
                     modifier = Modifier.size(80.dp)
                 ) {
@@ -67,6 +69,9 @@ fun VoiceControlOverlay(
                 val textToShow = when {
                     state == VoiceState.LISTENING && partialTranscript.isNotEmpty() -> partialTranscript
                     state == VoiceState.LISTENING -> "Listening..."
+                    gestureHint != null && gestureArmingProgress > 0f ->
+                        "$gestureHint ${(gestureArmingProgress * 100).toInt()}%"
+                    gestureHint != null -> gestureHint
                     else -> null
                 }
 

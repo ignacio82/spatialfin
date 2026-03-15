@@ -2,42 +2,28 @@ package dev.jdtech.jellyfin.presentation.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -48,88 +34,75 @@ import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.R
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.settings.R as SettingsR
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
 fun AboutScreen(navigateBack: () -> Unit) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-    val density = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
-
-    val safePaddingStart =
-        with(density) { WindowInsets.safeDrawing.getLeft(this, layoutDirection).toDp() }
-    val safePaddingEnd =
-        with(density) { WindowInsets.safeDrawing.getRight(this, layoutDirection).toDp() }
-
-    val paddingStart = safePaddingStart
-    val paddingEnd = safePaddingEnd
-
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val safePadding = rememberSafePadding()
 
     val libraries by produceLibraries(R.raw.aboutlibraries)
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(text = stringResource(SettingsR.string.about)) },
-                navigationIcon = {
-                    IconButton(onClick = navigateBack) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_arrow_left),
-                            contentDescription = null,
-                        )
-                    }
-                },
-                windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-                scrollBehavior = scrollBehavior,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .padding(
+                        start = safePadding.start + MaterialTheme.spacings.default,
+                        top = safePadding.top + MaterialTheme.spacings.default,
+                        end = safePadding.end + MaterialTheme.spacings.default,
+                    ),
+        ) {
+            XrBrowseHeader(
+                title = stringResource(SettingsR.string.about),
+                onBackClick = navigateBack,
             )
-        },
-    ) { innerPadding ->
+        }
         LibrariesContainer(
             libraries = libraries,
             modifier = Modifier.fillMaxSize(),
             contentPadding =
                 PaddingValues(
-                    start = paddingStart + innerPadding.calculateStartPadding(layoutDirection),
-                    top = innerPadding.calculateTopPadding(),
-                    end = paddingEnd + innerPadding.calculateEndPadding(layoutDirection),
-                    bottom = innerPadding.calculateBottomPadding(),
+                    start = safePadding.start + MaterialTheme.spacings.default,
+                    top = safePadding.top + 96.dp,
+                    end = safePadding.end + MaterialTheme.spacings.default,
+                    bottom = safePadding.bottom + MaterialTheme.spacings.large,
                 ),
             header = {
                 item {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Column(
                             modifier =
-                                Modifier.padding(horizontal = MaterialTheme.spacings.default),
+                                Modifier.padding(horizontal = MaterialTheme.spacings.large),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Spacer(Modifier.height(MaterialTheme.spacings.small))
+                            Spacer(Modifier.height(MaterialTheme.spacings.medium))
                             Image(
                                 painter = painterResource(CoreR.drawable.ic_banner),
                                 contentDescription = null,
-                                modifier = Modifier.width(240.dp),
+                                modifier = Modifier.width(320.dp),
                             )
-                            Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                            Spacer(Modifier.height(MaterialTheme.spacings.large))
                             Text(
                                 text = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.titleLarge,
                             )
                             Spacer(Modifier.height(MaterialTheme.spacings.small))
                             Text(
                                 text = stringResource(CoreR.string.app_description),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodyLarge,
                             )
-                            Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                            Spacer(Modifier.height(MaterialTheme.spacings.large))
                             HorizontalDivider()
-                            Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                            Spacer(Modifier.height(MaterialTheme.spacings.large))
                             Row(
                                 horizontalArrangement =
-                                    Arrangement.spacedBy(MaterialTheme.spacings.small)
+                                    Arrangement.spacedBy(MaterialTheme.spacings.medium)
                             ) {
                                 FilledTonalIconButton(
                                     onClick = {
@@ -174,7 +147,7 @@ fun AboutScreen(navigateBack: () -> Unit) {
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(MaterialTheme.spacings.small))
+                            Spacer(Modifier.height(MaterialTheme.spacings.medium))
                         }
                     }
                 }
@@ -183,8 +156,8 @@ fun AboutScreen(navigateBack: () -> Unit) {
     }
 }
 
-@Composable
 @PreviewScreenSizes
+@Composable
 private fun AboutScreenPreview() {
     SpatialFinTheme { AboutScreen(navigateBack = {}) }
 }

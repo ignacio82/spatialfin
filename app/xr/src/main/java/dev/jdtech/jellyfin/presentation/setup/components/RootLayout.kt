@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.presentation.utils.plus
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 
@@ -16,10 +17,10 @@ fun RootLayout(padding: PaddingValues = PaddingValues(), content: @Composable Bo
 
     val safePaddingValues =
         PaddingValues(
-            start = safePadding.start,
-            top = safePadding.top,
-            end = safePadding.end,
-            bottom = safePadding.bottom,
+            start = safePadding.start + 24.dp,
+            top = safePadding.top + 16.dp,
+            end = safePadding.end + 24.dp,
+            bottom = safePadding.bottom + 16.dp,
         )
 
     Box(modifier = Modifier.fillMaxSize().padding(safePaddingValues + padding), content = content)

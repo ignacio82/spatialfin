@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.film.presentation.collection.CollectionAction
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 
@@ -27,11 +28,11 @@ fun CollectionGrid(
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
 ) {
     LazyVerticalGrid(
-        columns = GridCellsAdaptiveWithMinColumns(minSize = 160.dp, minColumns = 2),
+        columns = GridCellsAdaptiveWithMinColumns(minSize = 220.dp, minColumns = 2),
         modifier = Modifier.padding(innerPadding).fillMaxSize(),
-        contentPadding = PaddingValues(all = MaterialTheme.spacings.default),
-        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+        contentPadding = PaddingValues(all = MaterialTheme.spacings.large),
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
     ) {
         sections.forEach { section ->
             stickyHeader {
@@ -40,15 +41,16 @@ fun CollectionGrid(
                         text = section.name.asString(),
                         modifier =
                             Modifier.padding(
-                                horizontal = MaterialTheme.spacings.medium,
+                                horizontal = MaterialTheme.spacings.large,
                                 vertical = MaterialTheme.spacings.medium,
                             ),
                         color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                     )
                 }
             }
-            items(items = section.items, key = { it.id }) { item ->
+            val visibleItems = section.items.deduplicateMovieVersions()
+            items(items = visibleItems, key = { it.id }) { item ->
                 ItemCard(
                     item = item,
                     direction =

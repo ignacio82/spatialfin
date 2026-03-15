@@ -806,6 +806,16 @@ class SettingsViewModel @Inject constructor(
                             iconDrawableId = R.drawable.ic_microphone,
                             backendPreference = appPreferences.voiceControlEnabled,
                         ),
+                        PreferenceSelect(
+                            nameStringResource = R.string.voice_gesture_hand,
+                            descriptionStringRes = R.string.voice_gesture_hand_summary,
+                            iconDrawableId = R.drawable.ic_microphone,
+                            backendPreference = appPreferences.voiceGestureHand,
+                            options = R.array.voice_gesture_hand_options,
+                            optionValues = R.array.voice_gesture_hand_values,
+                            value = appPreferences.getValue(appPreferences.voiceGestureHand),
+                            dependencies = listOf(appPreferences.voiceControlEnabled),
+                        ),
                         PreferenceCategory(
                             nameStringResource = R.string.voice_permissions,
                             descriptionStringRes = R.string.voice_permissions_summary,

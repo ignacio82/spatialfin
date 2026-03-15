@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -27,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,24 +114,24 @@ private fun LoginScreenLayout(
             modifier =
                 Modifier.fillMaxHeight()
                     .padding(horizontal = 24.dp)
-                    .widthIn(max = 480.dp)
+                    .widthIn(max = 640.dp)
                     .align(Alignment.Center)
                     .verticalScroll(scrollState),
         ) {
             Image(
                 painter = painterResource(id = CoreR.drawable.ic_banner),
                 contentDescription = null,
-                modifier = Modifier.width(250.dp).align(Alignment.CenterHorizontally),
+                modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
             Text(
                 text = stringResource(SetupR.string.login),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.displaySmall,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = stringResource(SetupR.string.server_subtitle, state.serverName ?: ""),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
             )
             Spacer(modifier = Modifier.height(24.dp))
             OutlinedTextField(
@@ -147,9 +149,9 @@ private fun LoginScreenLayout(
                     KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
                 isError = state.error != null,
                 enabled = !state.isLoading,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 72.dp),
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
                 value = password,
                 leadingIcon = {
@@ -188,11 +190,13 @@ private fun LoginScreenLayout(
                         Text(
                             text = state.error!!.asString(),
                             color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyLarge,
                         )
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 72.dp),
             )
+            Spacer(modifier = Modifier.height(12.dp))
             LoadingButton(
                 text = stringResource(SetupR.string.login_btn_login),
                 onClick = { doLogin() },
@@ -215,7 +219,7 @@ private fun LoginScreenLayout(
                             modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Box {
                         if (state.quickConnectCode != null) {
                             CircularProgressIndicator(
@@ -228,12 +232,13 @@ private fun LoginScreenLayout(
                         }
                         OutlinedButton(
                             onClick = { onAction(LoginAction.OnQuickConnectClick) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp),
                         ) {
                             Text(
                                 text =
                                     if (state.quickConnectCode != null) state.quickConnectCode!!
-                                    else stringResource(SetupR.string.login_btn_quick_connect)
+                                    else stringResource(SetupR.string.login_btn_quick_connect),
+                                style = MaterialTheme.typography.titleMedium,
                             )
                         }
                     }
@@ -241,20 +246,24 @@ private fun LoginScreenLayout(
             }
             if (state.disclaimer != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(text = state.disclaimer!!)
+                Text(text = state.disclaimer!!, style = MaterialTheme.typography.bodyLarge)
             }
         }
-        IconButton(
+        FilledTonalButton(
             onClick = { onAction(LoginAction.OnBackClick) },
             modifier = Modifier.padding(start = 8.dp),
         ) {
             Icon(painter = painterResource(CoreR.drawable.ic_arrow_left), contentDescription = null)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("Back", style = MaterialTheme.typography.titleMedium)
         }
-        IconButton(
+        FilledTonalButton(
             onClick = { onAction(LoginAction.OnChangeServerClick) },
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 8.dp),
         ) {
             Icon(painter = painterResource(CoreR.drawable.ic_server), contentDescription = null)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("Server", style = MaterialTheme.typography.titleMedium)
         }
     }
 }

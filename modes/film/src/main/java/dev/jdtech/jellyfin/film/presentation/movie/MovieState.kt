@@ -6,6 +6,7 @@ import dev.jdtech.jellyfin.models.VideoMetadata
 
 data class MovieState(
     val movie: SpatialFinMovie? = null,
+    val availableVersions: List<SpatialFinMovie> = emptyList(),
     val videoMetadata: VideoMetadata? = null,
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val director: SpatialFinItemPerson? = null,

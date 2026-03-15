@@ -114,6 +114,7 @@ dependencies {
     implementation(project(":modes:film"))
     implementation(project(":player:core"))
     implementation(project(":player:local"))
+    implementation(project(":player:session"))
     implementation(project(":player:xr"))
 
     implementation(libs.androidx.core)

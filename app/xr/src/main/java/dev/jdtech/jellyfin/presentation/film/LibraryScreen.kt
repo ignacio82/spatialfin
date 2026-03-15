@@ -1,25 +1,14 @@
 package dev.jdtech.jellyfin.presentation.film
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.recalculateWindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,7 +27,6 @@ import androidx.paging.CombinedLoadStates
 import androidx.paging.LoadState
 import androidx.paging.PagingData
 import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.paging.compose.itemKey
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyMovies
 import dev.jdtech.jellyfin.film.presentation.library.LibraryAction
@@ -46,11 +34,14 @@ import dev.jdtech.jellyfin.film.presentation.library.LibraryState
 import dev.jdtech.jellyfin.film.presentation.library.LibraryViewModel
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.presentation.components.ErrorDialog
 import dev.jdtech.jellyfin.presentation.film.components.Direction
+import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
 import dev.jdtech.jellyfin.presentation.film.components.ErrorCard
 import dev.jdtech.jellyfin.presentation.film.components.ItemCard
 import dev.jdtech.jellyfin.presentation.film.components.SortByDialog
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
@@ -94,7 +85,6 @@ fun LibraryScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryScreenLayout(
     libraryName: String,
@@ -104,66 +94,45 @@ private fun LibraryScreenLayout(
     val contentPadding = PaddingValues(all = MaterialTheme.spacings.default)
 
     val items = state.items.collectAsLazyPagingItems()
-
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val visibleItems = remember(items.itemSnapshotList.items) {
+        items.itemSnapshotList.items.filterNotNull().deduplicateMovieVersions()
+    }
 
     var showSortByDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
-        modifier =
-            Modifier.fillMaxSize()
-                .recalculateWindowInsets()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(libraryName) },
-                navigationIcon = {
-                    IconButton(onClick = { onAction(LibraryAction.OnBackClick) }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_arrow_left),
-                            contentDescription = null,
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSortByDialog = true }) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_arrow_down_up),
-                            contentDescription = null,
-                        )
-                    }
-                },
-                windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-                scrollBehavior = scrollBehavior,
-            )
-        },
-    ) { innerPadding ->
-        Column {
-            ErrorGroup(
-                loadStates = items.loadState,
-                onRefresh = { items.refresh() },
-                modifier = Modifier.fillMaxWidth().padding(contentPadding + innerPadding),
-            )
-            LazyVerticalGrid(
-                columns = GridCellsAdaptiveWithMinColumns(minSize = 160.dp, minColumns = 2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = contentPadding + innerPadding,
-                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-            ) {
-                items(count = items.itemCount, key = items.itemKey { it.id }) {
-                    val item = items[it]
-                    item?.let { item ->
-                        ItemCard(
-                            item = item,
-                            direction = Direction.VERTICAL,
-                            onClick = { onAction(LibraryAction.OnItemClick(item)) },
-                            modifier = Modifier.animateItem(),
-                        )
-                    }
-                }
+    Box(modifier = Modifier.fillMaxSize()) {
+        ErrorGroup(
+            loadStates = items.loadState,
+            onRefresh = { items.refresh() },
+            modifier = Modifier.fillMaxWidth().padding(contentPadding),
+        )
+        LazyVerticalGrid(
+            columns = GridCellsAdaptiveWithMinColumns(minSize = 220.dp, minColumns = 2),
+            modifier = Modifier.fillMaxSize().padding(top = 108.dp),
+            contentPadding = contentPadding,
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+        ) {
+            items(items = visibleItems, key = { it.id }) { item ->
+                ItemCard(
+                    item = item,
+                    direction = Direction.VERTICAL,
+                    onClick = { onAction(LibraryAction.OnItemClick(item)) },
+                    modifier = Modifier.animateItem(),
+                )
             }
         }
+        XrBrowseHeader(
+            title = libraryName,
+            onBackClick = { onAction(LibraryAction.OnBackClick) },
+            primaryAction =
+                BrowseHeaderAction(
+                    label = "Sort",
+                    icon = CoreR.drawable.ic_arrow_down_up,
+                    onClick = { showSortByDialog = true },
+                ),
+            modifier = Modifier.padding(contentPadding),
+        )
     }
 
     if (showSortByDialog) {

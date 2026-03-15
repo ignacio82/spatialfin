@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import java.util.UUID
@@ -17,8 +18,12 @@ import kotlinx.coroutines.flow.Flow
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
+import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
+import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
+import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
+import org.jellyfin.sdk.api.sockets.SocketApiState
 
 interface JellyfinRepository {
     suspend fun getPublicSystemInfo(): PublicSystemInfo
@@ -97,6 +102,36 @@ interface JellyfinRepository {
     suspend fun getSegments(itemId: UUID): List<SpatialFinSegment>
 
     suspend fun getTrickplayData(itemId: UUID, width: Int, index: Int): ByteArray?
+
+    suspend fun getSyncPlayGroups(): List<SyncPlayGroup>
+
+    suspend fun createSyncPlayGroup(name: String): SyncPlayGroup
+
+    suspend fun joinSyncPlayGroup(groupId: UUID)
+
+    suspend fun leaveSyncPlayGroup()
+
+    suspend fun setSyncPlayQueue(itemIds: List<UUID>, playingItemIndex: Int, startPositionTicks: Long)
+
+    suspend fun pauseSyncPlay()
+
+    suspend fun unpauseSyncPlay()
+
+    suspend fun seekSyncPlay(positionTicks: Long)
+
+    suspend fun stopSyncPlay()
+
+    suspend fun nextSyncPlayItem(playlistItemId: UUID)
+
+    suspend fun previousSyncPlayItem(playlistItemId: UUID)
+
+    fun observePlayStateMessages(): Flow<PlaystateMessage>
+
+    fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage>
+
+    fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage>
+
+    fun observeSocketState(): Flow<SocketApiState>
 
     suspend fun postCapabilities()
 

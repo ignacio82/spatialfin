@@ -13,9 +13,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,6 +63,7 @@ import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.jdtech.jellyfin.models.versionChipLabel
 import java.util.UUID
 import org.jellyfin.sdk.model.api.BaseItemKind
 
@@ -110,18 +114,14 @@ fun MovieScreen(
                 is MovieAction.Play -> {
                     val movie = state.movie
                     val sourceNames = movie?.sources?.flatMap { listOf(it.name, it.path) } ?: emptyList()
-                    val stereoMode = if (action.force3dMode != null) {
-                        if (action.force3dMode == "sbs") StereoModeDetector.StereoMode.SIDE_BY_SIDE
-                        else if (action.force3dMode == "top_bottom") StereoModeDetector.StereoMode.TOP_BOTTOM
-                        else StereoModeDetector.StereoMode.MONO
-                    } else if (movie != null) {
+                    val stereoMode = if (movie != null) {
                         StereoModeDetector.detect(movie.name, movie.video3DFormat, sourceNames)
                     } else {
                         StereoModeDetector.StereoMode.MONO
                     }
                     val targetActivity = XrPlayerActivity::class.java
                     val intent = Intent(context, targetActivity)
-                    intent.putExtra("itemId", movieId.toString())
+                    intent.putExtra("itemId", (movie?.id ?: movieId).toString())
                     intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
                     intent.putExtra("startFromBeginning", action.startFromBeginning)
                     action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
@@ -146,6 +146,7 @@ fun MovieScreen(
                 is MovieAction.OnBackClick -> navigateBack()
                 is MovieAction.OnHomeClick -> navigateHome()
                 is MovieAction.NavigateToPerson -> navigateToPerson(action.personId)
+                is MovieAction.SelectVersion -> viewModel.loadMovie(action.movieId)
                 else -> Unit
             }
             viewModel.onAction(action)
@@ -170,8 +171,6 @@ private fun MovieScreenLayout(
 
     val scrollState = rememberScrollState()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val isXrDevice = androidx.compose.runtime.remember { StereoModeDetector.isXrDevice(context) }
-    var force3d by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         state.movie?.let { movie ->
@@ -189,7 +188,7 @@ private fun MovieScreenLayout(
                                 text = movie.name,
                                 overflow = TextOverflow.Ellipsis,
                                 maxLines = 3,
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.displaySmall,
                             )
                             movie.originalTitle?.let { originalTitle ->
                                 if (originalTitle != movie.name) {
@@ -197,7 +196,7 @@ private fun MovieScreenLayout(
                                         text = originalTitle,
                                         overflow = TextOverflow.Ellipsis,
                                         maxLines = 1,
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.titleLarge,
                                     )
                                 }
                             }
@@ -214,7 +213,7 @@ private fun MovieScreenLayout(
                         movie.premiereDate?.let { premiereDate ->
                             Text(
                                 text = premiereDate.year.toString(),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.titleMedium,
                             )
                         }
                         Text(
@@ -223,10 +222,10 @@ private fun MovieScreenLayout(
                                     CoreR.string.runtime_minutes,
                                     movie.runtimeTicks.div(600000000),
                                 ),
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.titleMedium,
                         )
                         movie.officialRating?.let { officialRating ->
-                            Text(text = officialRating, style = MaterialTheme.typography.bodyMedium)
+                            Text(text = officialRating, style = MaterialTheme.typography.titleMedium)
                         }
                         movie.communityRating?.let { communityRating ->
                             Row(verticalAlignment = Alignment.Bottom) {
@@ -238,7 +237,7 @@ private fun MovieScreenLayout(
                                 Spacer(Modifier.width(MaterialTheme.spacings.extraSmall))
                                 Text(
                                     text = "%.1f".format(communityRating),
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.titleMedium,
                                 )
                             }
                         }
@@ -248,19 +247,58 @@ private fun MovieScreenLayout(
                         VideoMetadataBar(videoMetadata)
                         Spacer(Modifier.height(MaterialTheme.spacings.small))
                     }
-                    
-                    
+
+                    if (state.availableVersions.size > 1) {
+                        Text(
+                            text = "Version",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.extraSmall))
+                        LazyRow(
+                            horizontalArrangement =
+                                Arrangement.spacedBy(MaterialTheme.spacings.small),
+                        ) {
+                            items(state.availableVersions, key = { it.id }) { version ->
+                                FilterChip(
+                                    selected = version.id == movie.id,
+                                    onClick = {
+                                        if (version.id != movie.id) {
+                                            onAction(MovieAction.SelectVersion(version.id))
+                                        }
+                                    },
+                                    label = { Text(version.versionChipLabel()) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
+
                     ItemButtonsBar(
                         item = movie,
                         downloaderState = downloaderState,
                         initialMaxBitrate = initialMaxBitrate,
-                        isForce3dMode = force3d,
-                        onForce3dClick = if (isXrDevice) { { force3d = !force3d } } else null,
+                        onSyncPlayClick = {
+                            val sourceNames = movie.sources.flatMap { listOf(it.name, it.path) }
+                            val stereoMode = StereoModeDetector.detect(movie.name, movie.video3DFormat, sourceNames)
+                            val intent = XrPlayerActivity.createIntent(
+                                context = context,
+                                itemId = movie.id,
+                                itemKind = BaseItemKind.MOVIE.serialName,
+                                startFromBeginning = false,
+                                stereoMode =
+                                    when (stereoMode) {
+                                        StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                                        StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                                        else -> "mono"
+                                    },
+                                openSyncPlayDialogOnStart = true,
+                            )
+                            context.startActivity(intent)
+                        },
                         onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate ->
                             onAction(
                                 MovieAction.Play(
                                     startFromBeginning = startFromBeginning,
-                                    force3dMode = if (force3d) "sbs" else null,
                                     mediaSourceIndex = mediaSourceIndex,
                                     maxBitrate = maxBitrate
                                 )
@@ -295,7 +333,7 @@ private fun MovieScreenLayout(
                         ExtraInfoText(videoMetadata = state.videoMetadata!!)
                         Spacer(Modifier.height(MaterialTheme.spacings.medium))
                     }
-                    OverviewText(text = movie.overview, maxCollapsedLines = 3)
+                    OverviewText(text = movie.overview, maxCollapsedLines = 5)
                     Spacer(Modifier.height(MaterialTheme.spacings.medium))
                     InfoText(
                         genres = movie.genres,

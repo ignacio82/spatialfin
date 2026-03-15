@@ -26,7 +26,11 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
         when (protocol) {
             MediaProtocol.FILE -> {
                 try {
-                    if (includePath) jellyfinRepository.getStreamUrl(itemId, id.orEmpty()) else ""
+                    if (includePath) {
+                        jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                    } else {
+                        File(this.path.orEmpty()).name
+                    }
                 } catch (e: Exception) {
                     ""
                 }

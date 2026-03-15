@@ -20,6 +20,11 @@ enum class VoiceState {
 }
 
 class SpatialVoiceService(private val context: Context) {
+    companion object {
+        private const val ERROR_CLIENT = 5
+        private const val ERROR_NO_MATCH = 7
+    }
+
     private val audioManager = context.getSystemService(AudioManager::class.java)
 
     private val _state = MutableStateFlow(VoiceState.IDLE)
@@ -93,8 +98,13 @@ class SpatialVoiceService(private val context: Context) {
 
                         override fun onError(error: Int) {
                             unmuteSystemBeep()
-                            Timber.w("VOICE: speech recognition error=%s", error)
-                            _state.value = VoiceState.ERROR
+                            if (error == ERROR_CLIENT || error == ERROR_NO_MATCH) {
+                                Timber.d("VOICE: speech recognition soft error=%s", error)
+                                _state.value = VoiceState.IDLE
+                            } else {
+                                Timber.w("VOICE: speech recognition error=%s", error)
+                                _state.value = VoiceState.ERROR
+                            }
                         }
 
                         override fun onReadyForSpeech(params: Bundle?) = Unit

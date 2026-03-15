@@ -11,13 +11,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.presentation.components.XrConfirmDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.presentation.setup.components.UserItem
 import dev.spatialfin.presentation.theme.SpatialFinTheme
@@ -95,7 +94,7 @@ private fun UsersScreenLayout(
         Column(
             modifier =
                 Modifier.padding(horizontal = 24.dp)
-                    .widthIn(max = 480.dp)
+                    .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .align(Alignment.Center)
         ) {
@@ -103,27 +102,27 @@ private fun UsersScreenLayout(
             Image(
                 painter = painterResource(id = CoreR.drawable.ic_banner),
                 contentDescription = null,
-                modifier = Modifier.width(250.dp).align(Alignment.CenterHorizontally),
+                modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(40.dp))
             Text(
                 text = stringResource(SetupR.string.users),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.displaySmall,
             )
             Text(
                 text = stringResource(SetupR.string.server_subtitle, state.serverName ?: ""),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
             )
             Spacer(modifier = Modifier.height(24.dp))
             if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
                 Text(
                     text = stringResource(SetupR.string.users_no_users),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.weight(1f))
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 ) {
                     items(state.users) { user ->
@@ -151,7 +150,7 @@ private fun UsersScreenLayout(
             }
         }
         if (showBack) {
-            IconButton(
+            FilledTonalButton(
                 onClick = { onAction(UsersAction.OnBackClick) },
                 modifier = Modifier.padding(start = 8.dp),
             ) {
@@ -159,48 +158,44 @@ private fun UsersScreenLayout(
                     painter = painterResource(CoreR.drawable.ic_arrow_left),
                     contentDescription = null,
                 )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Back", style = MaterialTheme.typography.titleMedium)
             }
         }
-        IconButton(
+        FilledTonalButton(
             onClick = { onAction(UsersAction.OnChangeServerClick) },
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 8.dp),
         ) {
             Icon(painter = painterResource(CoreR.drawable.ic_server), contentDescription = null)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text("Server", style = MaterialTheme.typography.titleMedium)
         }
         ExtendedFloatingActionButton(
             onClick = { onAction(UsersAction.OnAddClick) },
             icon = { Icon(painterResource(CoreR.drawable.ic_plus), contentDescription = null) },
-            text = { Text(text = stringResource(SetupR.string.users_btn_add_user)) },
+            text = {
+                Text(
+                    text = stringResource(SetupR.string.users_btn_add_user),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            },
             modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp),
         )
 
         if (openDeleteDialog && selectedUser != null) {
-            AlertDialog(
-                title = { Text(text = stringResource(SetupR.string.remove_user_dialog)) },
-                text = {
-                    Text(
-                        text =
-                            stringResource(
-                                SetupR.string.remove_user_dialog_text,
-                                selectedUser!!.name,
-                            )
-                    )
-                },
-                onDismissRequest = { openDeleteDialog = false },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            openDeleteDialog = false
-                            onAction(UsersAction.OnDeleteUser(selectedUser!!.id))
-                        }
-                    ) {
-                        Text(text = stringResource(SetupR.string.confirm))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { openDeleteDialog = false }) {
-                        Text(text = stringResource(SetupR.string.cancel))
-                    }
+            XrConfirmDialog(
+                title = stringResource(SetupR.string.remove_user_dialog),
+                message =
+                    stringResource(
+                        SetupR.string.remove_user_dialog_text,
+                        selectedUser!!.name,
+                    ),
+                confirmLabel = stringResource(SetupR.string.confirm),
+                dismissLabel = stringResource(SetupR.string.cancel),
+                onDismiss = { openDeleteDialog = false },
+                onConfirm = {
+                    openDeleteDialog = false
+                    onAction(UsersAction.OnDeleteUser(selectedUser!!.id))
                 },
             )
         }

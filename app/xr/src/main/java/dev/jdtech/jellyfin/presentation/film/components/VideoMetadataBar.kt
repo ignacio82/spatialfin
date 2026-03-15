@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.presentation.film.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -24,7 +25,10 @@ import dev.spatialfin.presentation.theme.spacings
 
 @Composable
 fun VideoMetadataBar(videoMetadata: VideoMetadata) {
-    Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+    ) {
         videoMetadata.resolution.firstOrNull()?.apply { VideoMetadataBarItem(text = this.raw) }
         videoMetadata.videoCodecs.firstOrNull()?.apply { VideoMetadataBarItem(text = this.raw) }
         videoMetadata.displayProfiles.firstOrNull()?.apply {

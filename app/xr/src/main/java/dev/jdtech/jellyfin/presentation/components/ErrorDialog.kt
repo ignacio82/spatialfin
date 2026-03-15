@@ -25,42 +25,42 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
+import androidx.xr.compose.spatial.SpatialDialog
 
 @Composable
 fun ErrorDialog(exception: Throwable, onDismissRequest: () -> Unit) {
     val context = LocalContext.current
 
-    Dialog(onDismissRequest = { onDismissRequest() }) {
+    SpatialDialog(onDismissRequest = { onDismissRequest() }) {
         Card(
-            modifier = Modifier.fillMaxWidth().heightIn(200.dp, max = 540.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(240.dp, max = 720.dp),
             shape = RoundedCornerShape(28.dp),
         ) {
             Column {
-                Spacer(modifier = Modifier.height(MaterialTheme.spacings.default))
+                Spacer(modifier = Modifier.height(MaterialTheme.spacings.large))
                 Text(
                     text = exception.message ?: stringResource(CoreR.string.unknown_error),
                     modifier =
                         Modifier.fillMaxWidth()
-                            .padding(horizontal = MaterialTheme.spacings.default),
-                    style = MaterialTheme.typography.headlineSmall,
+                            .padding(horizontal = MaterialTheme.spacings.large),
+                    style = MaterialTheme.typography.headlineMedium,
                 )
-                Spacer(modifier = Modifier.height(MaterialTheme.spacings.medium))
+                Spacer(modifier = Modifier.height(MaterialTheme.spacings.large))
                 HorizontalDivider()
                 Column(
                     modifier =
                         Modifier.weight(1f)
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .verticalScroll(rememberScrollState())
+                            .padding(MaterialTheme.spacings.medium)
                 ) {
-                    Spacer(modifier = Modifier.height(MaterialTheme.spacings.small))
                     Text(
                         text = exception.stackTraceToString(),
                         fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
                 HorizontalDivider()
@@ -91,10 +91,10 @@ fun ErrorDialog(exception: Throwable, onDismissRequest: () -> Unit) {
                             context.startActivity(shareIntent)
                         }
                     ) {
-                        Text(stringResource(CoreR.string.share))
+                        Text(stringResource(CoreR.string.share), style = MaterialTheme.typography.titleMedium)
                     }
                     TextButton(onClick = { onDismissRequest() }) {
-                        Text(stringResource(CoreR.string.close))
+                        Text(stringResource(CoreR.string.close), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }

@@ -49,7 +49,7 @@ fun SettingsMultiSelectCard(
         modifier = modifier,
     ) {
         Row(
-            modifier = Modifier.padding(MaterialTheme.spacings.medium),
+            modifier = Modifier.padding(MaterialTheme.spacings.large),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (preference.iconDrawableId != null) {
@@ -62,7 +62,7 @@ fun SettingsMultiSelectCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(preference.nameStringResource),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
                 Text(
@@ -70,7 +70,7 @@ fun SettingsMultiSelectCard(
                         preference.value
                             .joinToString(", ") { key -> optionsMap[key].toString() }
                             .ifEmpty { noneString },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         }

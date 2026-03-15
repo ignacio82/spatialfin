@@ -1,18 +1,13 @@
 package dev.jdtech.jellyfin.presentation.film
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.recalculateWindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,9 +16,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
@@ -36,7 +31,10 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.presentation.film.components.CollectionGrid
 import dev.jdtech.jellyfin.presentation.film.components.DeleteDownloadDialog
+import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.spatialfin.presentation.theme.spacings
 
 @Composable
 fun DownloadsScreen(
@@ -70,45 +68,47 @@ fun DownloadsScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DownloadsScreenLayout(
     state: CollectionState,
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
     onAction: (CollectionAction) -> Unit,
 ) {
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val safePadding = rememberSafePadding()
 
-    Scaffold(
-        modifier =
-            Modifier.fillMaxSize()
-                .recalculateWindowInsets()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(text = stringResource(CoreR.string.title_download)) },
-                windowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-                scrollBehavior = scrollBehavior,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .padding(
+                        start = safePadding.start + MaterialTheme.spacings.default,
+                        top = safePadding.top + MaterialTheme.spacings.default,
+                        end = safePadding.end + MaterialTheme.spacings.default,
+                    ),
+        ) {
+            XrBrowseHeader(
+                title = stringResource(CoreR.string.title_download),
             )
-        },
-        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-    ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (state.sections.isEmpty()) {
-                Text(
-                    text = stringResource(CoreR.string.no_downloads),
-                    modifier = Modifier.align(Alignment.Center),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
         }
 
-        CollectionGrid(
-            sections = state.sections,
-            innerPadding = innerPadding,
-            onAction = onAction,
-            onDeleteItem = onDeleteItem,
-        )
+        if (state.sections.isEmpty()) {
+            Text(
+                text = stringResource(CoreR.string.no_downloads),
+                modifier = Modifier.align(Alignment.Center),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+        } else {
+            CollectionGrid(
+                sections = state.sections,
+                innerPadding =
+                    PaddingValues(
+                        top = safePadding.top + 96.dp,
+                        bottom = safePadding.bottom,
+                    ),
+                onAction = onAction,
+                onDeleteItem = onDeleteItem,
+            )
+        }
     }
 }
 

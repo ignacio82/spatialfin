@@ -42,14 +42,16 @@ fun SettingsGroupCard(
             Text(
                 text = stringResource(it),
                 modifier = Modifier.padding(start = MaterialTheme.spacings.medium),
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.headlineSmall,
             )
             Spacer(modifier.height(MaterialTheme.spacings.small))
         }
         Card(
             modifier = modifier,
             colors =
-                CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
         ) {
             group.preferences.fastForEachIndexed { index, preference ->
                 when (preference) {

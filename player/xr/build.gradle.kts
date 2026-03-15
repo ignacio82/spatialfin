@@ -37,6 +37,7 @@ dependencies {
     implementation(projects.core)
     implementation(projects.player.core)
     implementation(projects.player.local)
+    implementation(projects.player.session)
     implementation(projects.data)
     implementation(projects.settings)
 
