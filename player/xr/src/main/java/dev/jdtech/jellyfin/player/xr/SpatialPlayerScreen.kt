@@ -105,6 +105,7 @@ import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
@@ -177,6 +178,7 @@ fun SpatialPlayerScreen(
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
     val voiceState by voiceService.state.collectAsState()
+    val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
     var hasAudioPermission by remember {
@@ -835,27 +837,11 @@ fun SpatialPlayerScreen(
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = voiceFeedback != null,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.align(Alignment.TopCenter),
-                ) {
-                    voiceFeedback?.let { text ->
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            color = Color.Black.copy(alpha = 0.85f),
-                            modifier = Modifier.padding(16.dp),
-                        ) {
-                            Text(
-                                text = text,
-                                color = Color.White,
-                                style = MaterialTheme.typography.headlineSmall,
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                            )
-                        }
-                    }
-                }
+                VoiceControlOverlay(
+                    state = voiceState,
+                    partialTranscript = partialTranscript,
+                    feedback = voiceFeedback,
+                )
             }
 
             // ── SpatialDialogs ────────────────────────────────────────────────────

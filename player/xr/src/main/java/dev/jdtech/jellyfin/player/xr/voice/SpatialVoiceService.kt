@@ -25,13 +25,41 @@ class SpatialVoiceService(private val context: Context) {
     private val _state = MutableStateFlow(VoiceState.IDLE)
     val state: StateFlow<VoiceState> = _state.asStateFlow()
 
+    private val _partialTranscript = MutableStateFlow("")
+    val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
+
     private var recognizer: SpeechRecognizer? = null
     private var onResult: ((String) -> Unit)? = null
+    private var originalNotificationVolume: Int = -1
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
     fun canStartListening(): Boolean {
         return audioManager?.mode != AudioManager.MODE_IN_COMMUNICATION
+    }
+
+    private fun muteSystemBeep() {
+        audioManager?.let { am ->
+            try {
+                originalNotificationVolume = am.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+                am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
+            } catch (e: Exception) {
+                Timber.w(e, "VOICE: Failed to mute system beep")
+            }
+        }
+    }
+
+    private fun unmuteSystemBeep() {
+        if (originalNotificationVolume != -1) {
+            audioManager?.let { am ->
+                try {
+                    am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, originalNotificationVolume, 0)
+                } catch (e: Exception) {
+                    Timber.w(e, "VOICE: Failed to unmute system beep")
+                }
+            }
+            originalNotificationVolume = -1
+        }
     }
 
     fun startListening(onTranscript: (String) -> Unit) {
@@ -43,6 +71,9 @@ class SpatialVoiceService(private val context: Context) {
 
         onResult = onTranscript
         _state.value = VoiceState.LISTENING
+        _partialTranscript.value = ""
+
+        muteSystemBeep()
 
         recognizer?.destroy()
         recognizer =
@@ -50,15 +81,18 @@ class SpatialVoiceService(private val context: Context) {
                 setRecognitionListener(
                     object : RecognitionListener {
                         override fun onResults(results: Bundle?) {
+                            unmuteSystemBeep()
                             val transcript =
                                 results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                     ?.firstOrNull()
                                     .orEmpty()
                             _state.value = VoiceState.PROCESSING
+                            _partialTranscript.value = transcript
                             onResult?.invoke(transcript)
                         }
 
                         override fun onError(error: Int) {
+                            unmuteSystemBeep()
                             Timber.w("VOICE: speech recognition error=%s", error)
                             _state.value = VoiceState.ERROR
                         }
@@ -73,7 +107,15 @@ class SpatialVoiceService(private val context: Context) {
 
                         override fun onEndOfSpeech() = Unit
 
-                        override fun onPartialResults(partialResults: Bundle?) = Unit
+                        override fun onPartialResults(partialResults: Bundle?) {
+                            val partial =
+                                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                    ?.firstOrNull()
+                                    .orEmpty()
+                            if (partial.isNotEmpty()) {
+                                _partialTranscript.value = partial
+                            }
+                        }
 
                         override fun onEvent(eventType: Int, params: Bundle?) = Unit
                     }
@@ -88,7 +130,7 @@ class SpatialVoiceService(private val context: Context) {
                 )
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             }
         recognizer?.startListening(intent)
     }

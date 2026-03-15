@@ -55,6 +55,18 @@ import dev.jdtech.jellyfin.work.SyncWorker
 import kotlinx.coroutines.delay
 import timber.log.Timber
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.collectAsState
+import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
+import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
+import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
+import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
+import dev.jdtech.jellyfin.player.xr.voice.VoiceState
+import dev.jdtech.jellyfin.player.xr.voice.XrPlayerAction
+import androidx.xr.runtime.HandTrackingMode
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+
 @OptIn(ExperimentalMaterial3XrApi::class)
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -99,10 +111,12 @@ class MainActivity : AppCompatActivity() {
             Timber.w(e, "XR session not available")
         }
 
-        val initialSearchQuery = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
+        val initialSearchQueryExtra = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
 
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
+            val coroutineScope = rememberCoroutineScope()
+            val context = androidx.compose.ui.platform.LocalContext.current
 
             SpatialFinTheme(dynamicColor = state.isDynamicColors) {
                 val navController = rememberNavController()
@@ -110,6 +124,114 @@ class MainActivity : AppCompatActivity() {
                     CompositionLocalProvider(LocalOfflineMode provides state.isOfflineMode) {
                         val session = xrSession
                         if (session != null) {
+                            // --- Voice and Gesture state ---
+                            val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
+                            val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
+                            val voiceState by voiceService.state.collectAsState()
+                            val partialTranscript by voiceService.partialTranscript.collectAsState()
+                            var voiceFeedback by remember { mutableStateOf<String?>(null) }
+                            var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
+                            
+                            val pinchDetector = remember(session) { SecondaryHandPinchDetector(session, this@MainActivity) }
+                            var hasAudioPermission by remember {
+                                mutableStateOf(
+                                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                        PackageManager.PERMISSION_GRANTED
+                                )
+                            }
+                            var hasHandTrackingPermission by remember {
+                                mutableStateOf(
+                                    ContextCompat.checkSelfPermission(context, HAND_TRACKING_PERMISSION) ==
+                                        PackageManager.PERMISSION_GRANTED
+                                )
+                            }
+
+                            val audioPermissionLauncher =
+                                rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                                    hasAudioPermission = granted
+                                }
+                            val handTrackingPermissionLauncher =
+                                rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                                    hasHandTrackingPermission = granted
+                                }
+
+                            fun handleVoiceAction(action: XrPlayerAction): String {
+                                return when (action) {
+                                    is XrPlayerAction.Search -> {
+                                        voiceSearchQuery = action.query
+                                        "Searching for ${action.query}"
+                                    }
+                                    is XrPlayerAction.CloseApp -> {
+                                        finishAffinity()
+                                        "Closing SpatialFin"
+                                    }
+                                    is XrPlayerAction.GoBack -> {
+                                        if (!navController.popBackStack()) {
+                                            finish()
+                                        }
+                                        "Going back"
+                                    }
+                                    is XrPlayerAction.GoHome -> {
+                                        navController.navigate("HomeRoute") {
+                                            popUpTo(navController.graph.startDestinationId)
+                                            launchSingleTop = true
+                                        }
+                                        "Returning home"
+                                    }
+                                    is XrPlayerAction.Unrecognized -> "I didn't catch that: ${action.transcript}"
+                                    else -> "Command not available on home screen"
+                                }
+                            }
+
+                            fun requestVoiceCommand() {
+                                if (!voiceService.isAvailable()) {
+                                    voiceFeedback = "Speech recognition unavailable"
+                                    return
+                                }
+                                if (!hasAudioPermission) {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    return
+                                }
+                                
+                                val startedAtMs = System.currentTimeMillis()
+                                voiceService.startListening { transcript ->
+                                    coroutineScope.launch {
+                                        val parseResult = commandCoordinator.parse(transcript)
+                                        voiceFeedback = handleVoiceAction(parseResult.action)
+                                    }
+                                }
+                            }
+
+                            LaunchedEffect(Unit) {
+                                commandCoordinator.initialize()
+                            }
+
+                            LaunchedEffect(session, hasHandTrackingPermission) {
+                                if (hasHandTrackingPermission) {
+                                    runCatching {
+                                        session.configure(session.config.copy(handTracking = HandTrackingMode.BOTH))
+                                    }.onFailure { Timber.w(it, "VOICE: Hand tracking not available") }
+                                }
+                            }
+
+                            LaunchedEffect(pinchDetector, hasHandTrackingPermission) {
+                                if (!hasHandTrackingPermission) return@LaunchedEffect
+                                pinchDetector.pinchEvents.collect { event ->
+                                    when (event) {
+                                        SecondaryHandPinchDetector.PinchEvent.STARTED -> requestVoiceCommand()
+                                        SecondaryHandPinchDetector.PinchEvent.ENDED -> voiceService.stopListening()
+                                    }
+                                }
+                            }
+
+                            LaunchedEffect(voiceFeedback) {
+                                if (voiceFeedback != null) {
+                                    delay(2000L)
+                                    voiceFeedback = null
+                                    voiceService.resetState()
+                                }
+                            }
+
                             // Create a movable GroupEntity so the user can reposition the main screen
                             val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
                             val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
@@ -152,6 +274,8 @@ class MainActivity : AppCompatActivity() {
                                     Timber.w(e, "Failed to create movable root for main screen")
                                 }
                                 onDispose {
+                                    voiceService.destroy()
+                                    commandCoordinator.destroy()
                                     rootEntity.value?.dispose()
                                     rootEntity.value = null
                                 }
@@ -188,7 +312,13 @@ class MainActivity : AppCompatActivity() {
                                                     hasServers = state.hasServers,
                                                     hasCurrentServer = state.hasCurrentServer,
                                                     hasCurrentUser = state.hasCurrentUser,
-                                                    initialSearchQuery = initialSearchQuery,
+                                                    initialSearchQuery = voiceSearchQuery,
+                                                )
+
+                                                VoiceControlOverlay(
+                                                    state = voiceState,
+                                                    partialTranscript = partialTranscript,
+                                                    feedback = voiceFeedback,
                                                 )
                                             }
                                         }
@@ -201,7 +331,7 @@ class MainActivity : AppCompatActivity() {
                                 hasServers = state.hasServers,
                                 hasCurrentServer = state.hasCurrentServer,
                                 hasCurrentUser = state.hasCurrentUser,
-                                initialSearchQuery = initialSearchQuery,
+                                initialSearchQuery = initialSearchQueryExtra,
                             )
                         }
                     }
@@ -211,6 +341,7 @@ class MainActivity : AppCompatActivity() {
 
         scheduleUserDataSync()
     }
+
 
     private fun requestStartupPermissionsIfNeeded() {
         val prefs = getSharedPreferences(PERMISSIONS_PREFS, MODE_PRIVATE)
