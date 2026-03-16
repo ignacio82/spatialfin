@@ -1,0 +1,5 @@
+Fixes:
+- Add error handling to trickplay images
+- Fix crashes when navigating fragments
+
+Plus a few translation updates

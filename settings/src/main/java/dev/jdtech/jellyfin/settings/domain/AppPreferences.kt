@@ -1,0 +1,156 @@
+package dev.jdtech.jellyfin.settings.domain
+
+import android.content.SharedPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference
+import javax.inject.Inject
+import timber.log.Timber
+
+class AppPreferences @Inject constructor(val sharedPreferences: SharedPreferences) {
+    // Server
+    val currentServer = Preference<String?>("pref_current_server", null)
+
+    // Language
+    val preferredAudioLanguage = Preference<String?>("pref_audio_language", null)
+    val preferredSubtitleLanguage = Preference<String?>("pref_subtitle_language", null)
+
+    // Interface
+    val theme = Preference("pref_theme", "system")
+    val dynamicColors = Preference("pref_dynamic_colors", true)
+    val homeSuggestions = Preference<Boolean>("home_suggestions", true)
+    val homeContinueWatching = Preference<Boolean>("home_continue_watching", true)
+    val homeNextUp = Preference<Boolean>("home_next_up", true)
+    val homeLatest = Preference<Boolean>("home_latest", true)
+    val displayExtraInfo = Preference("pref_display_extra_info", false)
+
+    // Player - seeking
+    val playerSeekBackInc = Preference("pref_player_seek_back_inc", 5_000L)
+    val playerSeekForwardInc = Preference("pref_player_seek_forward_inc", 15_000L)
+    val playerChapterMarkers = Preference("pref_player_chapter_markers", true)
+
+    // Player - Media Segments
+    val playerMediaSegmentsSkipButton
+        get() = Preference("pref_player_media_segments_skip_button", true)
+
+    val playerMediaSegmentsSkipButtonType
+        get() = Preference("pref_player_media_segments_skip_button_type", setOf("INTRO", "OUTRO"))
+
+    val playerMediaSegmentsSkipButtonDuration
+        get() = Preference("pref_player_media_segments_skip_button_duration", 5L)
+
+    val playerMediaSegmentsAutoSkip
+        get() = Preference("pref_player_media_segments_auto_skip", false)
+
+    val playerMediaSegmentsAutoSkipMode
+        get() =
+            Preference(
+                "pref_player_media_segments_auto_skip_mode",
+                Constants.PlayerMediaSegmentsAutoSkip.ALWAYS,
+            )
+
+    val playerMediaSegmentsAutoSkipType
+        get() = Preference("pref_player_media_segments_auto_skip_type", setOf("INTRO", "OUTRO"))
+
+    val playerMediaSegmentsNextEpisodeThreshold
+        get() = Preference("pref_player_media_segments_next_episode_threshold", 5_000L)
+
+    // Player - trickplay
+    val playerTrickplay = Preference("pref_player_trickplay", true)
+
+    // Player - Bitrate
+    val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
+
+    // Downloads
+    val downloadOverMobileData = Preference("pref_downloads_mobile_data", false)
+    val downloadWhenRoaming = Preference("pref_downloads_roaming", false)
+
+    // Network
+    val requestTimeout =
+        Preference("pref_network_request_timeout", Constants.NETWORK_DEFAULT_REQUEST_TIMEOUT)
+    val connectTimeout =
+        Preference("pref_network_connect_timeout", Constants.NETWORK_DEFAULT_CONNECT_TIMEOUT)
+    val socketTimeout =
+        Preference("pref_network_socket_timeout", Constants.NETWORK_DEFAULT_SOCKET_TIMEOUT)
+
+    // Cache
+    val imageCache = Preference("pref_image_cache", true)
+    val imageCacheSize = Preference("pref_image_cache_size", 20)
+
+    // Sorting
+    val sortBy = Preference("pref_sort_by", "SortName")
+    val sortOrder = Preference("pref_sort_order", "Ascending")
+
+    // Offline mode
+    val offlineMode = Preference("pref_offline_mode", false)
+
+    // XR Subtitles
+    val xrSubtitleSize = Preference("pref_xr_subtitle_size", 24)
+    val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)
+    val xrPlayerPanelY = Preference("pref_xr_player_panel_y", 0f)
+    val xrPlayerPanelZ = Preference("pref_xr_player_panel_z", 0f)
+    val xrPlayerPanelRotX = Preference("pref_xr_player_panel_rot_x", 0f)
+    val xrPlayerPanelRotY = Preference("pref_xr_player_panel_rot_y", 0f)
+    val xrPlayerPanelRotZ = Preference("pref_xr_player_panel_rot_z", 0f)
+    val xrPlayerPanelRotW = Preference("pref_xr_player_panel_rot_w", 1f)
+    val xrAppPanelX = Preference("pref_xr_app_panel_x", 0f)
+    val xrAppPanelY = Preference("pref_xr_app_panel_y", 0f)
+    val xrAppPanelZ = Preference("pref_xr_app_panel_z", -3f)
+    val xrAppPanelRotX = Preference("pref_xr_app_panel_rot_x", 0f)
+    val xrAppPanelRotY = Preference("pref_xr_app_panel_rot_y", 0f)
+    val xrAppPanelRotZ = Preference("pref_xr_app_panel_rot_z", 0f)
+    val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
+    val subtitleTextColor = Preference("pref_subtitle_text_color", android.graphics.Color.WHITE)
+    val subtitleBackgroundColor = Preference("pref_subtitle_background_color", android.graphics.Color.TRANSPARENT)
+    val libassSubtitleUsage = Preference("pref_libass_subtitle_usage", "auto")
+    val voiceControlEnabled = Preference("pref_voice_control_enabled", true)
+    val voiceGestureHand = Preference<String?>("pref_voice_gesture_hand", "left")
+
+    // Logging
+    val loggingEnabled = Preference("pref_logging_enabled", false)
+
+    inline fun <reified T> getValue(preference: Preference<T>): T {
+        return try {
+            @Suppress("UNCHECKED_CAST")
+            when (preference.defaultValue) {
+                is Boolean ->
+                    sharedPreferences.getBoolean(preference.backendName, preference.defaultValue)
+                        as T
+                is Int ->
+                    sharedPreferences.getInt(preference.backendName, preference.defaultValue) as T
+                is Long ->
+                    sharedPreferences.getLong(preference.backendName, preference.defaultValue) as T
+                is Float ->
+                    sharedPreferences.getFloat(preference.backendName, preference.defaultValue) as T
+                is String? ->
+                    sharedPreferences.getString(preference.backendName, preference.defaultValue)
+                        as T
+                is Set<*> ->
+                    sharedPreferences.getStringSet(
+                        preference.backendName,
+                        preference.defaultValue as Set<String>,
+                    ) as T
+                else -> preference.defaultValue
+            }
+        } catch (_: Exception) {
+            Timber.w(
+                "Failed to load ${preference.backendName} preference. Resetting to default value..."
+            )
+            setValue(preference, preference.defaultValue)
+            preference.defaultValue
+        }
+    }
+
+    inline fun <reified T> setValue(preference: Preference<T>, value: T) {
+        val editor = sharedPreferences.edit()
+        @Suppress("UNCHECKED_CAST")
+        when (preference.defaultValue) {
+            is Boolean -> editor.putBoolean(preference.backendName, value as Boolean)
+            is Int -> editor.putInt(preference.backendName, value as Int)
+            is Long -> editor.putLong(preference.backendName, value as Long)
+            is Float -> editor.putFloat(preference.backendName, value as Float)
+            is String? -> editor.putString(preference.backendName, value as String?)
+            is Set<*> -> editor.putStringSet(preference.backendName, value as Set<String>)
+            else -> throw Exception()
+        }
+        editor.apply()
+    }
+}

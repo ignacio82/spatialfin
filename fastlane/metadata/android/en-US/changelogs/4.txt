@@ -1,0 +1,10 @@
+New Features:
+  - Can be enabled in the settings
+  - With extra option to force software decoding
+
+Improvements:
+- Spanish translations
+- Video now extends into display cutout
+
+Fixes:
+- Fix crash when trailer button is pressed but no trailers are available

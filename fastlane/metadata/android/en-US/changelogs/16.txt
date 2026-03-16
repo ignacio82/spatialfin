@@ -1,0 +1,12 @@
+New features:
+- Support for collections
+
+Improvements:
+- Follow "Play next episode automatically" from user playback settings
+- ExoPlayer can now play HLS content
+
+Translations: Chinese, Italian, Korean, Portuguese
+
+Fixes:
+- Fix Quick Connect code not readable in light mode
+- Fix multiple download related issues

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpatialFin | XR-First Jellyfin For Android XR</title>
+    <meta name="description" content="SpatialFin is an XR-first Jellyfin client for Android XR with immersive playback, spatial audio, stereoscopic 3D, voice control, offline media, and SyncPlay.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="images/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-glow page-glow-left" aria-hidden="true"></div>
+    <div class="page-glow page-glow-right" aria-hidden="true"></div>
+
+    <header>
+        <div class="nav-container">
+            <a href="#home" class="logo-link">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="logo">
+                <span class="logo-text">SpatialFin</span>
+            </a>
+            <nav>
+                <a href="#features">Features</a>
+                <a href="#trailer">Trailer</a>
+                <a href="#early-access" class="nav-cta">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero" id="home">
+            <div class="hero-copy">
+                <p class="eyebrow">XR-first Jellyfin for Android XR</p>
+                <h1>Turn your headset into a real spatial cinema.</h1>
+                <p class="hero-lead">
+                    SpatialFin is built for immersive playback from the ground up: Full Space Mode, stereoscopic 3D,
+                    spatial audio, voice control, offline media, and Jellyfin SyncPlay in a UI designed for distance,
+                    depth, and hand-first interaction.
+                </p>
+                <div class="hero-buttons">
+                    <a href="#early-access" class="btn btn-primary">Get Early Access</a>
+                    <a href="#trailer" class="btn btn-secondary">Watch Trailer</a>
+                </div>
+                <div class="hero-highlights" aria-label="Key features">
+                    <span>Full Space Mode</span>
+                    <span>Voice + AI Search</span>
+                    <span>Offline + Local Media</span>
+                    <span>SyncPlay Watch Parties</span>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="hero-panel hero-panel-main">
+                    <img src="images/icon.png" alt="SpatialFin app icon">
+                </div>
+                <div class="hero-panel hero-panel-shot hero-panel-shot-top">
+                    <img src="images/Screenshot_20260315_093602_SpatialFin~2.jpg" alt="SpatialFin immersive spatial panels">
+                </div>
+                <div class="hero-panel hero-panel-shot hero-panel-shot-bottom">
+                    <img src="images/Screenshot_20260315_102004_SpatialFin~2.jpg" alt="SpatialFin translucent XR interface">
+                </div>
+                <div class="hero-float hero-float-top">
+                    <strong>XR-native controls</strong>
+                    <span>Larger targets, clearer actions, fewer phone-style compromises.</span>
+                </div>
+                <div class="hero-float hero-float-bottom">
+                    <strong>Playback that respects the format</strong>
+                    <span>3D, subtitles, bitrate selection, downloads, and local files.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="proof-strip" aria-label="SpatialFin strengths">
+            <div class="proof-card">
+                <span class="proof-label">Immersion</span>
+                <h2>Designed for headset-scale viewing</h2>
+                <p>Full Space Mode, spatial panel placement, and room-scale interactions make the player feel native to XR instead of adapted from a phone UI.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Playback</span>
+                <h2>Built for real media libraries</h2>
+                <p>Stereoscopic formats, spatial audio, <code>libass</code> subtitle rendering, bitrate control, version selection, downloads, and local playback are first-class.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Control</span>
+                <h2>Hands-free and social by default</h2>
+                <p>Voice commands, in-player AI search, and native Jellyfin SyncPlay keep playback comfortable whether you are solo, remote, online, or offline.</p>
+            </div>
+        </section>
+
+        <section class="trailer-section" id="trailer">
+            <div class="container section-shell">
+                <div class="section-heading">
+                    <p class="eyebrow">See it in motion</p>
+                    <h2>Watch the SpatialFin trailer</h2>
+                    <p>The current build running in Android XR, including the spatial presentation and player experience.</p>
+                </div>
+                <div class="video-container">
+                    <iframe src="https://www.youtube-nocookie.com/embed/PMHOc9WXA9s" title="SpatialFin Trailer" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                </div>
+            </div>
+        </section>
+
+        <section class="features-section" id="features">
+            <div class="container section-shell">
+                <div class="section-heading">
+                    <p class="eyebrow">Why SpatialFin</p>
+                    <h2>An XR media client that goes deeper than a skin.</h2>
+                    <p>Every major layer of the app, from layout and controls to playback and offline behavior, is tuned for how media actually feels inside a headset.</p>
+                </div>
+
+                <div class="feature-grid">
+                    <article class="feature-card feature-card-large">
+                        <div class="feature-card-media">
+                            <img src="images/Screenshot_20260315_093602_SpatialFin~2.jpg" alt="Immersive spatial panels in SpatialFin">
+                        </div>
+                        <div class="feature-card-copy">
+                            <span class="card-kicker">Immersive XR</span>
+                            <h3>Headset-scale layouts instead of phone UI stretched into 3D</h3>
+                            <p>Massive spatial panels, restored window placement, orbiting controls, and readable action surfaces built specifically for Android XR.</p>
+                        </div>
+                    </article>
+                    <article class="feature-card feature-card-large">
+                        <div class="feature-card-media">
+                            <img src="images/Screenshot_20260315_102004_SpatialFin~2.jpg" alt="Glassmorphic SpatialFin interface with voice control support">
+                        </div>
+                        <div class="feature-card-copy">
+                            <span class="card-kicker">Control Surface</span>
+                            <h3>Voice, search, and interaction that preserve immersion</h3>
+                            <p>Hold-to-talk voice control, spatial AI search overlays, larger playback targets, and hand-first interaction reduce friction while watching.</p>
+                        </div>
+                    </article>
+                </div>
+
+                <h2 class="section-title">Everything in the stack supports the experience</h2>
+                <div class="all-features-grid">
+                    <div class="feature-group">
+                        <h3>Immersive XR</h3>
+                        <ul>
+                            <li><strong>Interactive Agency:</strong> Grab and move the entire application or video player window anywhere in 3D space.</li>
+                            <li><strong>Native XR Controls:</strong> Material 3 for XR orbiters float secondary controls in space.</li>
+                            <li><strong>XR-First Layouts:</strong> Larger typography and labeled action buttons instead of dense icon-only controls.</li>
+                            <li><strong>Large-Target Playback UI:</strong> Larger controls and a dedicated chapter picker for easier hand-first interaction.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Advanced Playback &amp; Media</h3>
+                        <ul>
+                            <li><strong>Stereoscopic 3D:</strong> Automatic detection and rendering of SBS, top-bottom, and other 3D formats.</li>
+                            <li><strong>Spatial Audio:</strong> High-fidelity positional audio that pins sound to the screen's location.</li>
+                            <li><strong>Pixel-Perfect Anime Subtitles:</strong> Integrated <code>libass</code> JNI renderer for ASS/SSA rendering.</li>
+                            <li><strong>Version Selection:</strong> Choose between different versions, such as 3D vs. 2D or 4K vs. 1080p.</li>
+                            <li><strong>Dynamic Quality:</strong> Control streaming bitrate on the fly from 480 Kbps to 120 Mbps.</li>
+                            <li><strong>Global Bitrate Settings:</strong> Set a default maximum streaming bitrate globally.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Voice Control &amp; AI</h3>
+                        <ul>
+                            <li><strong>Unified Smart Assistant:</strong> Use the hold-to-talk pinch gesture to issue playback commands or ask natural language questions about the movie.</li>
+                            <li><strong>On-Device Metadata Chat:</strong> Powered by Android AICore (Gemini Nano) to answer queries using Jellyfin metadata privately and offline.</li>
+                            <li><strong>Contextual Subtitle Awareness:</strong> The assistant tracks recent dialogue so you can ask for clarifications on what characters just said.</li>
+                            <li><strong>Spatial TTS Feedback:</strong> The AI responds aloud with automatic volume ducking, keeping you immersed without reading text.</li>
+                            <li><strong>In-Player AI Search:</strong> Voice search opens as a spatial overlay to search and launch media seamlessly.</li>
+                            <li><strong>Voice Diagnostics:</strong> Dedicated settings showing enablement, permissions, and on-device availability.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>SyncPlay &amp; Ecosystem</h3>
+                        <ul>
+                            <li><strong>SyncPlay Watch Parties:</strong> Create, join, refresh, and mirror playback state with Jellyfin SyncPlay groups natively.</li>
+                            <li><strong>Jellyfin Integration:</strong> Full Jellyfin server connectivity for movies, shows, and collections.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Offline &amp; Local Library</h3>
+                        <ul>
+                            <li><strong>Automatic Offline Mode:</strong> Switches offline when the server is unreachable, then returns online when available.</li>
+                            <li><strong>Local Library:</strong> Browse and play videos stored directly on the XR device with metadata inference.</li>
+                            <li><strong>Configurable Downloads:</strong> Download original files or smaller transcoded versions with your preferred options.</li>
+                            <li><strong>Smart Download Reconciliation:</strong> Automatically cleans up stale entries if files are removed manually.</li>
+                            <li><strong>In-App Download Management:</strong> Delete downloads from the item screen or Downloads tab.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="early-access-section" id="early-access">
+            <div class="container section-shell">
+                <div class="section-heading">
+                    <p class="eyebrow">Beta access</p>
+                    <h2>Try SpatialFin before public release</h2>
+                    <p>Access is currently handled through the Google Group and Play beta flow. The steps are simple, but the order matters.</p>
+                </div>
+
+                <div class="steps-grid">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <h3>Join the Group</h3>
+                        <p>Join the Google Group first so your account can be approved for beta access.</p>
+                        <a href="https://groups.google.com/g/spatialfin" target="_blank" rel="noopener noreferrer" class="btn btn-outline">Join Group</a>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <h3>Claim a Promo Code</h3>
+                        <p>Use the shared spreadsheet to pick an available code so you do not need to pay during beta.</p>
+                        <a href="https://docs.google.com/spreadsheets/d/1ifdkeLKYuNoaAyxmvpzgjD_V-S6HTaLEjDvLMkc4yfE/edit?usp=sharing" target="_blank" rel="noopener noreferrer" class="btn btn-outline">Open Spreadsheet</a>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <h3>Redeem and Install</h3>
+                        <p>Redeem the code through Google Play, then install the current beta build of SpatialFin.</p>
+                        <div class="button-group">
+                            <a href="https://play.google.com/store/games?code" target="_blank" rel="noopener noreferrer" class="btn btn-outline btn-small">Redeem Code</a>
+                            <a href="https://play.google.com/store/apps/details?id=dev.spatialfin" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Download App</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-container">
+            <div class="footer-left">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="footer-logo">
+                <p>&copy; 2026 SpatialFin Contributors. Open source software for immersive Jellyfin playback on Android XR.</p>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/ignacio82/SpatialFin" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://github.com/ignacio82/SpatialFin/blob/main/PRIVACY" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
