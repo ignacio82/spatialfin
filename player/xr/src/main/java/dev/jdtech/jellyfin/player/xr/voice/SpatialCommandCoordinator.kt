@@ -390,8 +390,11 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         val model = generativeModel ?: return@withContext null
         return@withContext try {
             val raw = model.generateContent(buildPrompt(transcript, playerState)).text?.trim().orEmpty()
+            Timber.d("VOICE: Nano raw response: %s", raw)
             val clean = raw.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-            mapJsonToAction(JSONObject(clean))
+            val json = JSONObject(clean)
+            Timber.d("VOICE: Nano parsed JSON: %s", json.toString())
+            mapJsonToAction(json)
         } catch (e: Exception) {
             Timber.w(e, "VOICE: Nano inference failed for: %s", transcript)
             null
@@ -447,6 +450,8 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         {"action":"SHOW_CONTROLS"}
         {"action":"HIDE_CONTROLS"}
         {"action":"CHAT_QUERY","query":"Who is the director of this movie?"}
+        {"action":"CHAT_QUERY","query":"What just happened?"}
+        {"action":"CHAT_QUERY","query":"Summarize the story"}
         {"action":"UNRECOGNIZED"}
 
         Command: "$transcript"
