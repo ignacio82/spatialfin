@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinSources
 import dev.jdtech.jellyfin.models.toSpatialFinItem
@@ -300,6 +301,16 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                 else -> emptyList()
             },
             overview = overview,
+            genres = when (this) {
+                is SpatialFinMovie -> genres
+                is SpatialFinShow -> genres
+                else -> emptyList()
+            },
+            productionYear = when (this) {
+                is SpatialFinMovie -> productionYear
+                is SpatialFinShow -> productionYear
+                else -> null
+            },
             backdropImageUri = when (this) {
                 is SpatialFinEpisode -> (images.backdrop ?: images.primary)?.toString()
                 is SpatialFinMovie -> (images.backdrop ?: images.primary)?.toString()

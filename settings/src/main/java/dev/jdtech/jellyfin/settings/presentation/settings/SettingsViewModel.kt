@@ -816,6 +816,32 @@ class SettingsViewModel @Inject constructor(
                             value = appPreferences.getValue(appPreferences.voiceGestureHand),
                             dependencies = listOf(appPreferences.voiceControlEnabled),
                         ),
+                        PreferenceSelect(
+                            nameStringResource = R.string.voice_assistant_verbosity,
+                            descriptionStringRes = R.string.voice_assistant_verbosity_summary,
+                            iconDrawableId = R.drawable.ic_info,
+                            backendPreference = appPreferences.voiceAssistantVerbosity,
+                            options = R.array.voice_assistant_verbosity_options,
+                            optionValues = R.array.voice_assistant_verbosity_values,
+                            value = appPreferences.getValue(appPreferences.voiceAssistantVerbosity),
+                            dependencies = listOf(appPreferences.voiceControlEnabled),
+                        ),
+                        PreferenceSelect(
+                            nameStringResource = R.string.voice_assistant_spoiler_policy,
+                            descriptionStringRes = R.string.voice_assistant_spoiler_policy_summary,
+                            iconDrawableId = R.drawable.ic_info,
+                            backendPreference = appPreferences.voiceAssistantSpoilerPolicy,
+                            options = R.array.voice_assistant_spoiler_policy_options,
+                            optionValues = R.array.voice_assistant_spoiler_policy_values,
+                            value = appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy),
+                            dependencies = listOf(appPreferences.voiceControlEnabled),
+                        ),
+                        PreferenceSwitch(
+                            nameStringResource = R.string.voice_assistant_spoken_replies,
+                            descriptionStringRes = R.string.voice_assistant_spoken_replies_summary,
+                            iconDrawableId = R.drawable.ic_microphone,
+                            backendPreference = appPreferences.voiceAssistantSpokenReplies,
+                        ),
                         PreferenceCategory(
                             nameStringResource = R.string.voice_permissions,
                             descriptionStringRes = R.string.voice_permissions_summary,
@@ -853,7 +879,7 @@ class SettingsViewModel @Inject constructor(
                         PreferenceInfo(
                             title = "Example commands",
                             description =
-                                "pause\nrewind 30 seconds\nturn off subtitles\nswitch to Japanese audio\nset quality to 10 Mbps\nincrease bitrate\nsearch for Cowboy Bebop",
+                                "pause\nrewind 30 seconds\nwhat just happened?\nwho is that character?\nshow me cyberpunk anime\nrecommend something like Dune\nsearch for Cowboy Bebop",
                             iconDrawableId = R.drawable.ic_info,
                         ),
                     )

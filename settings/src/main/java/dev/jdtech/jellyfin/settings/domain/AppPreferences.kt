@@ -103,6 +103,9 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val libassSubtitleUsage = Preference("pref_libass_subtitle_usage", "auto")
     val voiceControlEnabled = Preference("pref_voice_control_enabled", true)
     val voiceGestureHand = Preference<String?>("pref_voice_gesture_hand", "left")
+    val voiceAssistantVerbosity = Preference("pref_voice_assistant_verbosity", "balanced")
+    val voiceAssistantSpoilerPolicy = Preference("pref_voice_assistant_spoiler_policy", "cautious")
+    val voiceAssistantSpokenReplies = Preference("pref_voice_assistant_spoken_replies", true)
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)

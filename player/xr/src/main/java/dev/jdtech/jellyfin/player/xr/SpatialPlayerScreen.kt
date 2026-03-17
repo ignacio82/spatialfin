@@ -111,6 +111,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
@@ -195,6 +196,9 @@ fun SpatialPlayerScreen(
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
     val voiceControlEnabled = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceControlEnabled)
     val voiceGestureHand = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceGestureHand) ?: "left"
+    val assistantVerbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity)
+    val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
+    val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
     val chatEngine = remember(context) { SmartChatEngine(context.applicationContext) }
@@ -411,8 +415,24 @@ fun SpatialPlayerScreen(
             viewModel = viewModel,
             uiState = uiState,
             controlsVisible = controlsVisible,
+            activeDialog = activeDialog,
+            voiceSearchQuery = voiceSearchQuery,
+            voiceSearchResultsCount = voiceSearchResults.size,
+            syncPlayGroupName = syncPlayState.activeGroup?.name,
+            syncPlayParticipants = syncPlayState.activeGroup?.participants.orEmpty(),
             controller = sessionController,
             telemetryStore = telemetryStore,
+            onSearchQuery = onSearchQuery,
+            assistantPreferences = AssistantPreferences(
+                verbosity = assistantVerbosity,
+                spoilerPolicy = assistantSpoilerPolicy,
+                spokenRepliesEnabled = assistantSpokenReplies,
+            ),
+            responseLanguageHint =
+                selectedTrackLanguage(player, C.TRACK_TYPE_TEXT)
+                    ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO)
+                    ?: selectedTrackName(player, C.TRACK_TYPE_TEXT)
+                    ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO),
             onResult = { voiceFeedback = it },
             scope = coroutineScope,
         )
@@ -1445,8 +1465,16 @@ private fun startVoiceCapture(
     viewModel: PlayerViewModel,
     uiState: PlayerViewModel.UiState,
     controlsVisible: Boolean,
+    activeDialog: String?,
+    voiceSearchQuery: String,
+    voiceSearchResultsCount: Int,
+    syncPlayGroupName: String?,
+    syncPlayParticipants: List<String>,
     controller: PlayerSessionController,
     telemetryStore: VoiceTelemetryStore,
+    onSearchQuery: suspend (String) -> List<SpatialFinItem>,
+    assistantPreferences: AssistantPreferences,
+    responseLanguageHint: String?,
     onResult: (String) -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
@@ -1460,14 +1488,28 @@ private fun startVoiceCapture(
                     durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
                     controlsVisible = controlsVisible,
                     currentItemTitle = uiState.currentItemTitle,
+                    currentOverview = uiState.currentOverview,
+                    currentSeriesName = uiState.currentSeriesName,
+                    currentSeasonNumber = uiState.currentSeasonNumber,
+                    currentEpisodeNumber = uiState.currentEpisodeNumber,
                     currentSegmentType = uiState.currentSegment?.type?.toString(),
                     currentChapterName = currentChapterName(uiState, player.currentPosition),
                     nextEpisodeTitle = uiState.nextEpisode?.name,
+                    currentGenres = uiState.currentGenres,
+                    castNames = uiState.currentPeople.map { "${it.name} (${it.role})" },
                     audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
                     subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
                     chapterNames = uiState.currentChapters.mapNotNull { it.name },
                     currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
                     currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
+                    currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
+                    currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
+                    inVoiceSearch = activeDialog == "voice_search",
+                    voiceSearchQuery = voiceSearchQuery.takeIf { it.isNotBlank() },
+                    voiceSearchResultsCount = voiceSearchResultsCount,
+                    syncPlayActive = syncPlayGroupName != null,
+                    syncPlayGroupName = syncPlayGroupName,
+                    syncPlayParticipantNames = syncPlayParticipants,
                 )
             val parseResult = commandCoordinator.parse(transcript, snapshot)
 
@@ -1481,14 +1523,20 @@ private fun startVoiceCapture(
                     onResult("Thinking...")
                     val response = chatEngine.query(
                         question = action.query,
-                        mediaTitle = mediaTitle,
-                        mediaDescription = mediaDescription,
+                        playerState = snapshot.copy(
+                            currentItemTitle = mediaTitle,
+                            currentOverview = mediaDescription,
+                        ),
                         storySoFarContext = storySoFar,
-                        recentSubtitles = recentSubtitlesText
+                        recentSubtitles = recentSubtitlesText,
+                        assistantPreferences = assistantPreferences,
+                        onSearchQuery = onSearchQuery,
                     )
                     if (response != null) {
                         onResult(response)
-                        tts.speak(response)
+                        if (assistantPreferences.spokenRepliesEnabled) {
+                            tts.speak(response, responseLanguageHint)
+                        }
                     } else {
                         onResult("Sorry, I couldn't process that.")
                     }
@@ -1544,6 +1592,14 @@ private fun selectedTrackName(player: Player, trackType: @C.TrackType Int): Stri
         ?.let { group ->
             group.getTrackFormat(0).label ?: group.getTrackFormat(0).language
         }
+}
+
+private fun selectedTrackLanguage(player: Player, trackType: @C.TrackType Int): String? {
+    return player.currentTracks.groups
+        .firstOrNull { it.type == trackType && it.isSupported && groupIsSelected(it) }
+        ?.getTrackFormat(0)
+        ?.language
+        ?.takeUnless { it.equals("und", ignoreCase = true) }
 }
 
 private fun groupIsSelected(group: androidx.media3.common.Tracks.Group): Boolean {

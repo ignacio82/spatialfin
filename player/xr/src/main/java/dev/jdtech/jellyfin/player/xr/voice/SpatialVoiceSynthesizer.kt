@@ -23,7 +23,7 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.let {
-                val result = it.setLanguage(Locale.US)
+                val result = it.setLanguage(Locale.getDefault())
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     Timber.w("TTS: Language not supported")
                 } else {
@@ -49,8 +49,11 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    fun speak(text: String) {
+    fun speak(text: String, languageHint: String? = null) {
         if (!isInitialized) return
+        resolveLocale(languageHint)?.let { locale ->
+            tts?.setLanguage(locale)
+        }
         val utteranceId = "spatialfin_chat_${System.currentTimeMillis()}"
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
@@ -65,5 +68,39 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         tts = null
+    }
+
+    private fun resolveLocale(languageHint: String?): Locale? {
+        val normalized = languageHint?.trim()?.lowercase().orEmpty()
+        if (normalized.isBlank()) return Locale.getDefault()
+
+        val direct =
+            Locale.forLanguageTag(normalized.replace('_', '-'))
+                .takeIf { it.language.isNotBlank() && it.language != "und" }
+        if (direct != null) return direct
+
+        val keywordMap =
+            mapOf(
+                "english" to Locale.ENGLISH,
+                "japanese" to Locale.JAPANESE,
+                "ja" to Locale.JAPANESE,
+                "spanish" to Locale("es"),
+                "es" to Locale("es"),
+                "french" to Locale.FRENCH,
+                "fr" to Locale.FRENCH,
+                "german" to Locale.GERMAN,
+                "de" to Locale.GERMAN,
+                "italian" to Locale.ITALIAN,
+                "it" to Locale.ITALIAN,
+                "korean" to Locale.KOREAN,
+                "ko" to Locale.KOREAN,
+                "chinese" to Locale.CHINESE,
+                "zh" to Locale.CHINESE,
+                "portuguese" to Locale("pt"),
+                "pt" to Locale("pt"),
+                "russian" to Locale("ru"),
+                "ru" to Locale("ru"),
+            )
+        return keywordMap.entries.firstOrNull { normalized.contains(it.key) }?.value ?: Locale.getDefault()
     }
 }

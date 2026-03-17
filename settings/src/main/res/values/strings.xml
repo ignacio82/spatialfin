@@ -166,6 +166,12 @@
     <string name="voice_controls_summary">Configure on-device XR voice commands, permissions, and diagnostics</string>
     <string name="voice_gesture_hand">Voice gesture hand</string>
     <string name="voice_gesture_hand_summary">Choose which hand must perform the hold-to-talk pinch gesture</string>
+    <string name="voice_assistant_verbosity">Assistant verbosity</string>
+    <string name="voice_assistant_verbosity_summary">Control how short or detailed AI replies should be</string>
+    <string name="voice_assistant_spoiler_policy">Spoiler policy</string>
+    <string name="voice_assistant_spoiler_policy_summary">Choose how cautious the assistant should be with spoilers</string>
+    <string name="voice_assistant_spoken_replies">Spoken AI replies</string>
+    <string name="voice_assistant_spoken_replies_summary">Read AI answers aloud with text-to-speech by default</string>
     <string name="voice_permissions">App permissions</string>
     <string name="voice_permissions_summary">Open app settings to review microphone and hand-tracking permissions</string>
     <string name="voice_status">Voice status</string>
@@ -178,5 +184,25 @@
     <string-array name="voice_gesture_hand_values">
         <item>left</item>
         <item>right</item>
+    </string-array>
+    <string-array name="voice_assistant_verbosity_options">
+        <item>Concise</item>
+        <item>Balanced</item>
+        <item>Detailed</item>
+    </string-array>
+    <string-array name="voice_assistant_verbosity_values">
+        <item>concise</item>
+        <item>balanced</item>
+        <item>detailed</item>
+    </string-array>
+    <string-array name="voice_assistant_spoiler_policy_options">
+        <item>Strict</item>
+        <item>Cautious</item>
+        <item>Open</item>
+    </string-array>
+    <string-array name="voice_assistant_spoiler_policy_values">
+        <item>strict</item>
+        <item>cautious</item>
+        <item>open</item>
     </string-array>
 </resources>

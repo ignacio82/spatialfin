@@ -20,6 +20,8 @@ data class PlayerItem(
     val trickplayInfo: TrickplayInfo? = null,
     val people: List<PlayerPerson> = emptyList(),
     val overview: String = "",
+    val genres: List<String> = emptyList(),
+    val productionYear: Int? = null,
     /** Episode/movie backdrop URI string for next-up cards (null for non-visual items). */
     val backdropImageUri: String? = null,
     /** Series name for episodes, used in next-up panel display. */
