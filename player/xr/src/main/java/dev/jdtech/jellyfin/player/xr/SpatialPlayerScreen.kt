@@ -1476,12 +1476,14 @@ private fun startVoiceCapture(
                 if (chatEngine.isModelAvailable) {
                     val mediaTitle = uiState.currentItemTitle
                     val mediaDescription = uiState.currentOverview
+                    val storySoFar = uiState.storySoFarContext
                     val recentSubtitlesText = recentSubtitles.joinToString(" ")
                     onResult("Thinking...")
                     val response = chatEngine.query(
                         question = action.query,
                         mediaTitle = mediaTitle,
                         mediaDescription = mediaDescription,
+                        storySoFarContext = storySoFar,
                         recentSubtitles = recentSubtitlesText
                     )
                     if (response != null) {

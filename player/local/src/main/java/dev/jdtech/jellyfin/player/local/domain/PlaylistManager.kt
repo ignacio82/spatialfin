@@ -132,8 +132,22 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         return playerItem
     }
 
+    fun getStorySoFarContext(): String? {
+        if (items.isEmpty() || currentItemIndex <= 0) return null
+
+        val contextItems = items.subList(maxOf(0, currentItemIndex - 3), currentItemIndex)
+        if (contextItems.isEmpty()) return null
+
+        val sb = StringBuilder()
+        contextItems.forEach { item ->
+            if (item is SpatialFinEpisode) {
+                sb.append("Ep ${item.indexNumber} '${item.name}': ${item.overview.take(200)}... ")
+            }
+        }
+        return sb.toString().trim().takeIf { it.isNotBlank() }
+    }
+
     suspend fun getPreviousPlayerItem(): PlayerItem? {
-        Timber.d("Retrieving previous player item")
 
         val itemIndex = currentItemIndex - 1
         val playerItem =

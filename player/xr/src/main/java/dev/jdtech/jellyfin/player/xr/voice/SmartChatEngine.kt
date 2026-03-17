@@ -53,11 +53,12 @@ class SmartChatEngine(private val appContext: Context) {
         question: String,
         mediaTitle: String,
         mediaDescription: String,
+        storySoFarContext: String? = null,
         recentSubtitles: String = ""
     ): String? = withContext(Dispatchers.IO) {
         val model = generativeModel ?: return@withContext null
 
-        val prompt = buildPrompt(question, mediaTitle, mediaDescription, recentSubtitles)
+        val prompt = buildPrompt(question, mediaTitle, mediaDescription, storySoFarContext, recentSubtitles)
         return@withContext try {
             val response = withTimeoutOrNull(8_000L) {
                 model.generateContent(prompt).text?.trim()
@@ -73,17 +74,20 @@ class SmartChatEngine(private val appContext: Context) {
         question: String,
         mediaTitle: String,
         mediaDescription: String,
+        storySoFarContext: String?,
         recentSubtitles: String
     ): String {
         return """
             You are a helpful AI assistant inside an immersive XR media player called SpatialFin. 
             Keep your answers to one or two punchy sentences. 
             Do not reveal major spoilers about the ending unless explicitly requested.
+            If the user asks for a recap or what happened last time, summarize 'The story so far' based on the previous episodes.
 
             Context about the current media:
             Title: $mediaTitle
             Description: $mediaDescription
 
+            ${if (storySoFarContext != null) "The story so far (previous episodes): $storySoFarContext" else ""}
             ${if (recentSubtitles.isNotBlank()) "Recent dialogue (last 60s): $recentSubtitles" else ""}
 
             User question: "$question"

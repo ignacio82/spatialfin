@@ -128,6 +128,7 @@ constructor(
         val currentChapters: List<PlayerChapter>,
         val currentPeople: List<PlayerPerson>,
         val currentOverview: String,
+        val storySoFarContext: String? = null,
         /** Next episode in the playlist, or null for movies / last episode of a season. */
         val nextEpisode: PlayerItem?,
         val fileLoaded: Boolean,
@@ -668,6 +669,7 @@ constructor(
                                 currentChapters = item.chapters,
                                 currentPeople = item.people,
                                 currentOverview = item.overview,
+                                storySoFarContext = playlistManager.getStorySoFarContext(),
                                 fileLoaded = false,
                             )
                         }

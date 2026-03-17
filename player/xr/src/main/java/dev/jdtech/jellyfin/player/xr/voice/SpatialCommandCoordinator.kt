@@ -452,6 +452,8 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         {"action":"CHAT_QUERY","query":"Who is the director of this movie?"}
         {"action":"CHAT_QUERY","query":"What just happened?"}
         {"action":"CHAT_QUERY","query":"Summarize the story"}
+        {"action":"CHAT_QUERY","query":"Recap the story so far"}
+        {"action":"CHAT_QUERY","query":"What happened in the last episode?"}
         {"action":"UNRECOGNIZED"}
 
         Command: "$transcript"
