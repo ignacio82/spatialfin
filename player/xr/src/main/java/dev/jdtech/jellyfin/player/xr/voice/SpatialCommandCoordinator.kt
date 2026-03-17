@@ -1,18 +1,8 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
 import android.content.Context
-import com.google.ai.edge.aicore.DownloadCallback
-import com.google.ai.edge.aicore.DownloadConfig
-import com.google.ai.edge.aicore.GenerativeAIException
-import com.google.ai.edge.aicore.GenerativeModel
-import com.google.ai.edge.aicore.generationConfig
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONObject
-import timber.log.Timber
 
 enum class VoiceParseStrategy {
     KEYWORD,
@@ -26,42 +16,8 @@ data class VoiceParseResult(
     val normalizedTranscript: String,
 )
 
-class SpatialCommandCoordinator(private val appContext: Context) {
-    private var generativeModel: GenerativeModel? = null
-    private var isModelAvailable = false
-
-    suspend fun initialize() = withContext(Dispatchers.IO) {
-        try {
-            val generationConfig =
-                generationConfig {
-                    this.context = appContext.applicationContext
-                    temperature = 0.1f
-                    maxOutputTokens = 128
-                    candidateCount = 1
-                }
-            val downloadConfig =
-                DownloadConfig(
-                    object : DownloadCallback {
-                        override fun onDownloadDidNotStart(e: GenerativeAIException) {
-                            Timber.w(e, "VOICE: Gemini Nano download did not start")
-                        }
-
-                        override fun onDownloadFailed(
-                            failureStatus: String,
-                            e: GenerativeAIException,
-                        ) {
-                            Timber.w(e, "VOICE: Gemini Nano download failed: %s", failureStatus)
-                        }
-                    }
-                )
-            generativeModel = GenerativeModel(generationConfig, downloadConfig)
-            isModelAvailable = true
-        } catch (e: Exception) {
-            Timber.w(e, "VOICE: Gemini Nano unavailable, using keyword parsing only")
-            generativeModel = null
-            isModelAvailable = false
-        }
-    }
+class SpatialCommandCoordinator(@Suppress("UNUSED_PARAMETER") private val appContext: Context) {
+    suspend fun initialize() {}
 
     suspend fun parse(
         transcript: String,
@@ -81,16 +37,8 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             )
         }
 
-        keywordMatch(normalized, playerState)?.let {
+        keywordMatch(normalized, playerState, transcript)?.let {
             return VoiceParseResult(it, VoiceParseStrategy.KEYWORD, normalized)
-        }
-
-        if (isModelAvailable) {
-            val nanoResult =
-                withTimeoutOrNull(3_000L) { nanoInfer(transcript = transcript, playerState = playerState) }
-            if (nanoResult != null) {
-                return VoiceParseResult(nanoResult, VoiceParseStrategy.MODEL, normalized)
-            }
         }
 
         return VoiceParseResult(
@@ -100,15 +48,32 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         )
     }
 
-    fun destroy() {
-        generativeModel?.close()
-        generativeModel = null
-        isModelAvailable = false
-    }
+    fun destroy() {}
 
-    private fun keywordMatch(text: String, playerState: PlayerStateSnapshot): XrPlayerAction? {
+    private fun keywordMatch(
+        text: String,
+        playerState: PlayerStateSnapshot,
+        transcript: String,
+    ): XrPlayerAction? {
         extractSyncPlayAction(text)?.let { return it }
         extractSelectionAction(text)?.let { return it }
+
+        // Prioritize Chat Queries to avoid greedy navigation matches (e.g. "previous episode about")
+        if (text.contains("what happened") || text.contains("what did they say") || text.contains("what's happened")) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
+        if (text.contains("who is") || text.contains("who stars") || text.contains("who are the actors")) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
+        if (text.contains("plot") || text.contains("summarize") || text.contains("story so far") || text.contains("recap") || text.contains("about")) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
+        if (text.contains("director") || text.contains("who directed")) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
+        if (text.contains("genre") || text.contains("what kind of") || text.contains("when did this come out")) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
 
         val playSearchQuery = extractPlaySearchQuery(text)
         if (playSearchQuery != null) return XrPlayerAction.Search(playSearchQuery, autoPlay = true)
@@ -139,8 +104,8 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             }
             text.matches(Regex(".*(skip intro|skip opening).*")) -> XrPlayerAction.SkipIntro
             text.matches(Regex(".*(skip outro|skip ending|skip credits).*")) -> XrPlayerAction.SkipOutro
-            text.matches(Regex(".*(next episode|play next|next one).*")) -> XrPlayerAction.NextEpisode
-            text.matches(Regex(".*(previous episode|last episode|go back one).*")) -> {
+            text.matches(Regex("^(play |go to |start )?(the )?(next episode|next one)$")) -> XrPlayerAction.NextEpisode
+            text.matches(Regex("^(play |go to |start )?(the )?(previous episode|last episode|go back one)$")) -> {
                 XrPlayerAction.PreviousEpisode
             }
             text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
@@ -148,7 +113,7 @@ class SpatialCommandCoordinator(private val appContext: Context) {
             text.matches(Regex(".*(go home|home screen|library|back to home).*")) -> XrPlayerAction.GoHome
             text.matches(
                 Regex(
-                    ".*(close app|exit app|quit app|shut down|close spatial ?fin|exit spatial ?fin|close (the )?application|exit (the )?application).*"
+                    ".*(close (the )?app|exit (the )?app|quit (the )?app|shut down|close spatial ?fin|exit spatial ?fin|close (the )?application|exit (the )?application).*"
                 )
             ) -> XrPlayerAction.CloseApp
             text.matches(Regex("^(exit|quit)$")) -> XrPlayerAction.CloseApp
@@ -383,135 +348,4 @@ class SpatialCommandCoordinator(private val appContext: Context) {
         return Regex("\\b([1-9])\\b").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.minus(1)
     }
 
-    private suspend fun nanoInfer(
-        transcript: String,
-        playerState: PlayerStateSnapshot,
-    ): XrPlayerAction? = withContext(Dispatchers.IO) {
-        val model = generativeModel ?: return@withContext null
-        return@withContext try {
-            val raw = model.generateContent(buildPrompt(transcript, playerState)).text?.trim().orEmpty()
-            Timber.d("VOICE: Nano raw response: %s", raw)
-            val clean = raw.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-            val json = JSONObject(clean)
-            Timber.d("VOICE: Nano parsed JSON: %s", json.toString())
-            mapJsonToAction(json)
-        } catch (e: Exception) {
-            Timber.w(e, "VOICE: Nano inference failed for: %s", transcript)
-            null
-        }
-    }
-
-    private fun buildPrompt(transcript: String, state: PlayerStateSnapshot): String =
-        """
-        You are a JSON-only intent parser for a media player app on an XR headset.
-        Output exactly one JSON object and nothing else.
-
-        Current state:
-        - Playing: ${state.isPlaying}
-        - Position: ${state.positionSeconds}s / ${state.durationSeconds}s
-        - Controls visible: ${state.controlsVisible}
-        - Current item: ${state.currentItemTitle}
-        - Current segment: ${state.currentSegmentType ?: "none"}
-        - Current chapter: ${state.currentChapterName ?: "unknown"}
-        - Next episode: ${state.nextEpisodeTitle ?: "unknown"}
-        - Audio tracks: ${state.audioTrackNames.joinToString(", ").ifBlank { "unknown" }}
-        - Subtitle tracks: ${state.subtitleTrackNames.joinToString(", ").ifBlank { "unknown" }}
-        - Chapters: ${state.chapterNames.joinToString(", ").ifBlank { "unknown" }}
-        - Current audio: ${state.currentAudioTrack ?: "unknown"}
-        - Current subtitle: ${state.currentSubtitleTrack ?: "none"}
-
-        JSON schema:
-        {"action":"PLAY"}
-        {"action":"PAUSE"}
-        {"action":"TOGGLE_PLAY_PAUSE"}
-        {"action":"SEEK_FORWARD","seconds":15}
-        {"action":"SEEK_BACKWARD","seconds":10}
-        {"action":"SEEK_TO","position_seconds":0}
-        {"action":"SKIP_INTRO"}
-        {"action":"SKIP_OUTRO"}
-        {"action":"NEXT_EPISODE"}
-        {"action":"PREVIOUS_EPISODE"}
-        {"action":"SET_SPEED","speed":1.0}
-        {"action":"SET_QUALITY","max_bitrate":0}
-        {"action":"SELECT_AUDIO","language":"English","index":null}
-        {"action":"SELECT_SUBTITLE","language":"Japanese","index":null}
-        {"action":"DISABLE_SUBTITLES"}
-        {"action":"SEARCH","query":"Cowboy Bebop"}
-        {"action":"SELECT_OPTION","index":0}
-        {"action":"OPEN_SYNCPLAY"}
-        {"action":"CREATE_SYNCPLAY_GROUP"}
-        {"action":"JOIN_SYNCPLAY_GROUP","group_name":"Friday Night","index":null}
-        {"action":"LEAVE_SYNCPLAY_GROUP"}
-        {"action":"REFRESH_SYNCPLAY"}
-        {"action":"ADJUST_VOLUME","percentage":0.5,"delta":null}
-        {"action":"GO_HOME"}
-        {"action":"CLOSE_APP"}
-        {"action":"GO_BACK"}
-        {"action":"SHOW_CONTROLS"}
-        {"action":"HIDE_CONTROLS"}
-        {"action":"CHAT_QUERY","query":"Who is the director of this movie?"}
-        {"action":"CHAT_QUERY","query":"What just happened?"}
-        {"action":"CHAT_QUERY","query":"Summarize the story"}
-        {"action":"CHAT_QUERY","query":"Recap the story so far"}
-        {"action":"CHAT_QUERY","query":"What happened in the last episode?"}
-        {"action":"UNRECOGNIZED"}
-
-        Command: "$transcript"
-        """.trimIndent()
-
-    private fun mapJsonToAction(json: JSONObject): XrPlayerAction? =
-        when (json.optString("action").uppercase()) {
-            "PLAY" -> XrPlayerAction.Play
-            "PAUSE" -> XrPlayerAction.Pause
-            "TOGGLE_PLAY_PAUSE" -> XrPlayerAction.TogglePlayPause
-            "SEEK_FORWARD" -> XrPlayerAction.SeekForward(json.optInt("seconds", 15))
-            "SEEK_BACKWARD" -> XrPlayerAction.SeekBackward(json.optInt("seconds", 10))
-            "SEEK_TO" -> XrPlayerAction.SeekTo(json.optLong("position_seconds", 0))
-            "SKIP_INTRO" -> XrPlayerAction.SkipIntro
-            "SKIP_OUTRO" -> XrPlayerAction.SkipOutro
-            "NEXT_EPISODE" -> XrPlayerAction.NextEpisode
-            "PREVIOUS_EPISODE" -> XrPlayerAction.PreviousEpisode
-            "SET_SPEED" -> XrPlayerAction.SetSpeed(json.optDouble("speed", 1.0).toFloat())
-            "SET_QUALITY" -> XrPlayerAction.SetQuality(json.optLong("max_bitrate", 0L))
-            "SELECT_AUDIO" ->
-                XrPlayerAction.SelectAudioTrack(
-                    language = json.optString("language").takeIf { it.isNotBlank() },
-                    index = if (json.has("index") && !json.isNull("index")) json.optInt("index") else null,
-                )
-            "SELECT_SUBTITLE" ->
-                XrPlayerAction.SelectSubtitleTrack(
-                    language = json.optString("language").takeIf { it.isNotBlank() },
-                    index = if (json.has("index") && !json.isNull("index")) json.optInt("index") else null,
-                )
-            "DISABLE_SUBTITLES" -> XrPlayerAction.DisableSubtitles
-            "SEARCH" ->
-                json.optString("query").takeIf { it.isNotBlank() }?.let {
-                    XrPlayerAction.Search(
-                        query = it,
-                        autoPlay = json.optBoolean("auto_play", false),
-                    )
-                }
-            "SELECT_OPTION" -> XrPlayerAction.SelectOption(json.optInt("index", 0).coerceAtLeast(0))
-            "OPEN_SYNCPLAY" -> XrPlayerAction.OpenSyncPlay
-            "CREATE_SYNCPLAY_GROUP" -> XrPlayerAction.CreateSyncPlayGroup
-            "JOIN_SYNCPLAY_GROUP" ->
-                XrPlayerAction.JoinSyncPlayGroup(
-                    groupName = json.optString("group_name").takeIf { it.isNotBlank() },
-                    selectionIndex = if (json.has("index") && !json.isNull("index")) json.optInt("index") else null,
-                )
-            "LEAVE_SYNCPLAY_GROUP" -> XrPlayerAction.LeaveSyncPlayGroup
-            "REFRESH_SYNCPLAY" -> XrPlayerAction.RefreshSyncPlay
-            "ADJUST_VOLUME" ->
-                XrPlayerAction.AdjustVolume(
-                    percentage = if (json.has("percentage") && !json.isNull("percentage")) json.optDouble("percentage").toFloat() else null,
-                    delta = if (json.has("delta") && !json.isNull("delta")) json.optDouble("delta").toFloat() else null,
-                )
-            "GO_HOME" -> XrPlayerAction.GoHome
-            "CLOSE_APP" -> XrPlayerAction.CloseApp
-            "GO_BACK" -> XrPlayerAction.GoBack
-            "SHOW_CONTROLS" -> XrPlayerAction.ShowControls
-            "HIDE_CONTROLS" -> XrPlayerAction.HideControls
-            "CHAT_QUERY" -> json.optString("query").takeIf { it.isNotBlank() }?.let { XrPlayerAction.ChatQuery(it) }
-            else -> null
-        }
 }

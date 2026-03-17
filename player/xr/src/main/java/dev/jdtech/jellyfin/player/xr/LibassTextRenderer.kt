@@ -25,12 +25,17 @@ class LibassTextRenderer(
     private val onTrackInitialized: () -> Unit,
     /** Preference value at the time ExoPlayer was built ("auto", "always", "never"). */
     private val usagePref: String = "auto",
+    /** Font size (pt) to use in the synthetic ASS header injected for SRT/VTT tracks. */
+    private val srtFontSize: Int = 52,
 ) : BaseRenderer(C.TRACK_TYPE_TEXT) {
 
     private var inputFormatReceived = false
     private var dialogueFormatLine: String? = null
     private val formatHolder = FormatHolder()
     private val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+    // Monotonically increasing ReadOrder for SRT events. libass deduplicates events that share
+    // the same ReadOrder value, so every SRT chunk must get a unique counter. Reset on seek.
+    private var srtReadOrder = 0
 
     override fun getName(): String = "LibassTextRenderer"
 
@@ -40,7 +45,8 @@ class LibassTextRenderer(
             Timber.i("subtitle: LibassTextRenderer skip mime=%s pref=never", mimeType)
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         }
-        return if (mimeType == MimeTypes.TEXT_SSA || mimeType == "text/x-ssa") {
+        return if (mimeType == MimeTypes.TEXT_SSA || mimeType == "text/x-ssa" ||
+            mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT) {
             Timber.i("subtitle: LibassTextRenderer CLAIMED mime=%s lang=%s", mimeType, format.language)
             RendererCapabilities.create(C.FORMAT_HANDLED)
         } else {
@@ -85,13 +91,22 @@ class LibassTextRenderer(
             inputFormatReceived = true
             onTrackInitialized()
         } else if (initData.isEmpty()) {
-            Timber.w("subtitle: stream has no initializationData — ASS header missing, libass may fail")
+            // SRT/VTT tracks have no ASS header. Synthesize a minimal one so libass
+            // creates a valid track and processChunk() calls are not silently dropped.
+            if (!inputFormatReceived) {
+                val syntheticHeader = buildSyntheticAssHeader()
+                Timber.i("subtitle: SRT/VTT track — injecting synthetic ASS header (%d bytes, fontSize=%d)", syntheticHeader.size, srtFontSize)
+                libassRenderer.setTrackData(syntheticHeader)
+                inputFormatReceived = true
+                onTrackInitialized()
+            }
         }
     }
 
-    override fun onPositionReset(positionUs: Long, joining: Boolean, renderNextFrameImmediately: Boolean) {
-        super.onPositionReset(positionUs, joining, renderNextFrameImmediately)
+    override fun onPositionReset(positionUs: Long, joining: Boolean) {
+        super.onPositionReset(positionUs, joining)
         libassRenderer.clearCache()
+        srtReadOrder = 0
     }
 
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
@@ -147,6 +162,29 @@ class LibassTextRenderer(
         }
     }
 
+    /**
+     * Minimal ASS script header for SRT/VTT tracks that have no codec private data.
+     * Required so ass_new_track produces a valid track; without this ctx->track stays NULL
+     * and every ass_process_chunk call is silently dropped.
+     *
+     * Alignment 2 = bottom-center (standard subtitle position).
+     * PlayRes matches common 1080p so font sizes scale correctly.
+     */
+    private fun buildSyntheticAssHeader(): ByteArray = """
+        [Script Info]
+        ScriptType: v4.00+
+        PlayResX: 1920
+        PlayResY: 1080
+        WrapStyle: 0
+
+        [V4+ Styles]
+        Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+        Style: Default,Arial,$srtFontSize,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,1.5,2,10,10,40,1
+
+        [Events]
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+    """.trimIndent().toByteArray(Charsets.UTF_8)
+
     private fun buildCodecPrivate(initializationData: List<ByteArray>): ByteArray {
         if (initializationData.size == 1) {
             return initializationData[0]
@@ -188,7 +226,7 @@ class LibassTextRenderer(
         val text = String(bytes, Charsets.UTF_8)
         parseDialogueDuration(text)?.let { return it }
 
-        val pattern = Regex("""(\d+):(\d{2}):(\d{2})[:.](\d{2,3})""")
+        val pattern = Regex("""(\d+):(\d{2}):(\d{2})[:.，,](\d{2,3})""")
         val matches = pattern.findAll(text).toList()
         if (matches.size >= 2) {
             val startMs = parseAssTimestamp(matches[0].groupValues[0]) ?: return null
@@ -210,7 +248,7 @@ class LibassTextRenderer(
     }
 
     private fun parseAssTimestamp(value: String): Long? {
-        val match = Regex("""^(\d+):(\d{2}):(\d{2})[:.](\d{2,3})$""").matchEntire(value)
+        val match = Regex("""^(\d+):(\d{2}):(\d{2})[:.，,](\d{2,3})$""").matchEntire(value)
             ?: return null
         val h = match.groupValues[1].toLong()
         val m = match.groupValues[2].toLong()
@@ -221,24 +259,69 @@ class LibassTextRenderer(
         return h * 3600_000 + m * 60_000 + s * 1000 + fractionalMs
     }
 
-    private fun normalizeAssChunkForLibass(bytes: ByteArray): ByteArray {
-        val text = bytes.toString(Charsets.UTF_8)
-        if (!text.startsWith("Dialogue:")) return bytes
-
-        val body = text.removePrefix("Dialogue:").trimStart()
-        val commaPositions = ArrayList<Int>(3)
-        body.forEachIndexed { index, c ->
-            if (c == ',') {
-                commaPositions += index
-                if (commaPositions.size == 3) return@forEachIndexed
-            }
+    /**
+     * Strips the SRT index number and timestamp arrow line from a raw SRT/VTT block,
+     * converts HTML inline tags to ASS override codes, and returns only the subtitle text.
+     *
+     * SRT block example:
+     *   "1\n00:00:01,000 --> 00:00:03,000\n* dramatic music *"
+     * VTT block example (no index, dot separator):
+     *   "00:00:01.000 --> 00:00:03.000\nHello world"
+     */
+    private fun parseSrtOrVttText(raw: String): String {
+        val lines = raw.trim().lines()
+        val textLines = lines.filter { line ->
+            val trimmed = line.trim()
+            // Drop pure-integer index line
+            if (trimmed.all { it.isDigit() } && trimmed.isNotEmpty()) return@filter false
+            // Drop SRT/VTT timestamp arrow line: contains " --> "
+            if (trimmed.contains(" --> ")) return@filter false
+            true
         }
-        if (commaPositions.size < 3) return bytes
+        val joined = textLines.joinToString("\n").trim()
+        return convertHtmlToAss(joined)
+    }
 
-        // Embedded ASS packets include: Start,End,ReadOrder,... while ass_process_chunk
-        // receives timecode/duration separately and expects only the event payload.
-        val normalized = body.substring(commaPositions[1] + 1)
-        return normalized.toByteArray(Charsets.UTF_8)
+    /** Converts common HTML inline tags to ASS override codes. */
+    private fun convertHtmlToAss(text: String): String {
+        return text
+            .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\\N")
+            .replace(Regex("<i>", RegexOption.IGNORE_CASE), "{\\i1}")
+            .replace(Regex("</i>", RegexOption.IGNORE_CASE), "{\\i0}")
+            .replace(Regex("<b>", RegexOption.IGNORE_CASE), "{\\b1}")
+            .replace(Regex("</b>", RegexOption.IGNORE_CASE), "{\\b0}")
+            .replace(Regex("<u>", RegexOption.IGNORE_CASE), "{\\u1}")
+            .replace(Regex("</u>", RegexOption.IGNORE_CASE), "{\\u0}")
+            // Strip any remaining unknown HTML tags
+            .replace(Regex("<[^>]+>"), "")
+    }
+
+    private fun normalizeAssChunkForLibass(bytes: ByteArray): ByteArray {
+        val text = String(bytes, Charsets.UTF_8)
+        if (text.startsWith("Dialogue:")) {
+            val body = text.removePrefix("Dialogue:").trimStart()
+            val commaPositions = ArrayList<Int>(3)
+            body.forEachIndexed { index, c ->
+                if (c == ',') {
+                    commaPositions += index
+                    if (commaPositions.size == 3) return@forEachIndexed
+                }
+            }
+            if (commaPositions.size < 3) return bytes
+
+            // Embedded ASS packets include: Start,End,ReadOrder,... while ass_process_chunk
+            // receives timecode/duration separately and expects only the event payload.
+            val normalized = body.substring(commaPositions[1] + 1)
+            return normalized.toByteArray(Charsets.UTF_8)
+        } else {
+            // SRT or VTT raw block. Strip the index number and timestamp line, convert
+            // HTML tags, then return the MKV event body format that ass_process_chunk expects:
+            // ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+            // ReadOrder must be unique per event — libass deduplicates events with the same value.
+            val cleanText = parseSrtOrVttText(text)
+            val readOrder = srtReadOrder++
+            return "$readOrder,0,Default,,0,0,0,,$cleanText".toByteArray(Charsets.UTF_8)
+        }
     }
 
     override fun isReady(): Boolean = true

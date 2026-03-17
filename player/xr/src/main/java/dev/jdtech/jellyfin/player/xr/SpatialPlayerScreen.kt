@@ -115,9 +115,9 @@ import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
+import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
-import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -129,6 +129,7 @@ import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.nio.file.Paths
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -415,11 +416,6 @@ fun SpatialPlayerScreen(
             viewModel = viewModel,
             uiState = uiState,
             controlsVisible = controlsVisible,
-            activeDialog = activeDialog,
-            voiceSearchQuery = voiceSearchQuery,
-            voiceSearchResultsCount = voiceSearchResults.size,
-            syncPlayGroupName = syncPlayState.activeGroup?.name,
-            syncPlayParticipants = syncPlayState.activeGroup?.participants.orEmpty(),
             controller = sessionController,
             telemetryStore = telemetryStore,
             onSearchQuery = onSearchQuery,
@@ -546,10 +542,9 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(voiceFeedback, isTtsSpeaking) {
         if (voiceFeedback != null && !isTtsSpeaking && voiceFeedback != "Thinking...") {
-            delay(4_000L) // slightly longer delay for user to read if needed
-            if (!isTtsSpeaking) { // double check
+            delay(4_000L)
+            if (!isTtsSpeaking) {
                 voiceFeedback = null
-                voiceService.resetState()
             }
         }
     }
@@ -729,8 +724,9 @@ fun SpatialPlayerScreen(
                 mascotEntity.value = entity
                 Timber.i("Paused mascot loaded and attached to activity space")
             }
-        }.onFailure {
-            Timber.w(it, "Unable to load paused mascot model")
+        }.onFailure { e ->
+            if (e is CancellationException) throw e
+            Timber.w(e, "Unable to load paused mascot model")
         }
     }
 
@@ -1465,11 +1461,6 @@ private fun startVoiceCapture(
     viewModel: PlayerViewModel,
     uiState: PlayerViewModel.UiState,
     controlsVisible: Boolean,
-    activeDialog: String?,
-    voiceSearchQuery: String,
-    voiceSearchResultsCount: Int,
-    syncPlayGroupName: String?,
-    syncPlayParticipants: List<String>,
     controller: PlayerSessionController,
     telemetryStore: VoiceTelemetryStore,
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
@@ -1481,57 +1472,44 @@ private fun startVoiceCapture(
     val startedAtMs = System.currentTimeMillis()
     voiceService.startListening { transcript ->
         scope.launch {
-            val snapshot =
-                PlayerStateSnapshot(
-                    isPlaying = player.isPlaying,
-                    positionSeconds = player.currentPosition / 1_000L,
-                    durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
-                    controlsVisible = controlsVisible,
-                    currentItemTitle = uiState.currentItemTitle,
-                    currentOverview = uiState.currentOverview,
-                    currentSeriesName = uiState.currentSeriesName,
-                    currentSeasonNumber = uiState.currentSeasonNumber,
-                    currentEpisodeNumber = uiState.currentEpisodeNumber,
-                    currentSegmentType = uiState.currentSegment?.type?.toString(),
-                    currentChapterName = currentChapterName(uiState, player.currentPosition),
-                    nextEpisodeTitle = uiState.nextEpisode?.name,
-                    currentGenres = uiState.currentGenres,
-                    castNames = uiState.currentPeople.map { "${it.name} (${it.role})" },
-                    audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
-                    subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
-                    chapterNames = uiState.currentChapters.mapNotNull { it.name },
-                    currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
-                    currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
-                    currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
-                    currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
-                    inVoiceSearch = activeDialog == "voice_search",
-                    voiceSearchQuery = voiceSearchQuery.takeIf { it.isNotBlank() },
-                    voiceSearchResultsCount = voiceSearchResultsCount,
-                    syncPlayActive = syncPlayGroupName != null,
-                    syncPlayGroupName = syncPlayGroupName,
-                    syncPlayParticipantNames = syncPlayParticipants,
-                )
-            val parseResult = commandCoordinator.parse(transcript, snapshot)
-
-            val action = parseResult.action
-            if (action is XrPlayerAction.ChatQuery) {
-                if (chatEngine.isModelAvailable) {
-                    val mediaTitle = uiState.currentItemTitle
-                    val mediaDescription = uiState.currentOverview
-                    val storySoFar = uiState.storySoFarContext
-                    val recentSubtitlesText = recentSubtitles.joinToString(" ")
-                    onResult("Thinking...")
-                    val response = chatEngine.query(
-                        question = action.query,
-                        playerState = snapshot.copy(
-                            currentItemTitle = mediaTitle,
-                            currentOverview = mediaDescription,
-                        ),
-                        storySoFarContext = storySoFar,
-                        recentSubtitles = recentSubtitlesText,
-                        assistantPreferences = assistantPreferences,
-                        onSearchQuery = onSearchQuery,
+            try {
+                val snapshot =
+                    PlayerStateSnapshot(
+                        isPlaying = player.isPlaying,
+                        positionSeconds = player.currentPosition / 1_000L,
+                        durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
+                        controlsVisible = controlsVisible,
+                        currentItemTitle = uiState.currentItemTitle,
+                        currentOverview = uiState.currentOverview,
+                        currentSeriesName = uiState.currentSeriesName,
+                        currentSeasonNumber = uiState.currentSeasonNumber,
+                        currentEpisodeNumber = uiState.currentEpisodeNumber,
+                        currentSegmentType = uiState.currentSegment?.type?.toString(),
+                        currentChapterName = currentChapterName(uiState, player.currentPosition),
+                        nextEpisodeTitle = uiState.nextEpisode?.name,
+                        currentGenres = uiState.currentGenres,
+                        castNames = uiState.currentPeople.map { "${it.name} (${it.role})" },
+                        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
+                        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
+                        chapterNames = uiState.currentChapters.mapNotNull { it.name },
+                        currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
+                        currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
+                        currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
+                        currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
                     )
+                val parseResult = commandCoordinator.parse(transcript, snapshot)
+                val action = parseResult.action
+                if (action is XrPlayerAction.ChatQuery) {
+                    onResult("Thinking...")
+                    val response =
+                        chatEngine.query(
+                            question = action.query,
+                            playerState = snapshot,
+                            storySoFarContext = uiState.storySoFarContext,
+                            recentSubtitles = recentSubtitles.joinToString(" "),
+                            assistantPreferences = assistantPreferences,
+                            onSearchQuery = onSearchQuery,
+                        )
                     if (response != null) {
                         onResult(response)
                         if (assistantPreferences.spokenRepliesEnabled) {
@@ -1541,22 +1519,21 @@ private fun startVoiceCapture(
                         onResult("Sorry, I couldn't process that.")
                     }
                 } else {
-                    onResult("Chat model is unavailable.")
+                    val feedback = dispatchVoiceParseResult(controller, parseResult)
+                    onResult(feedback)
                 }
-            } else {
-                val feedback = dispatchVoiceParseResult(controller, parseResult)
-                onResult(feedback)
-            }
-
-            telemetryStore.record(
-                VoiceTelemetryEntry(
-                    transcript = transcript,
-                    action = parseResult.action::class.simpleName ?: "Unknown",
-                    strategy = parseResult.strategy.name,
-                    latencyMs = System.currentTimeMillis() - startedAtMs,
-                    success = parseResult.action !is XrPlayerAction.Unrecognized,
+                telemetryStore.record(
+                    VoiceTelemetryEntry(
+                        transcript = transcript,
+                        action = parseResult.action::class.simpleName ?: "Unknown",
+                        strategy = parseResult.strategy.name,
+                        latencyMs = System.currentTimeMillis() - startedAtMs,
+                        success = parseResult.action !is XrPlayerAction.Unrecognized,
+                    )
                 )
-            )
+            } finally {
+                voiceService.resetState()
+            }
         }
     }
 }

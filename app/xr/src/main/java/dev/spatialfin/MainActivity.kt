@@ -222,6 +222,18 @@ class MainActivity : AppCompatActivity() {
                                 commandCoordinator.initialize()
                             }
 
+                            LaunchedEffect(hasHandTrackingPermission) {
+                                if (!hasHandTrackingPermission) {
+                                    handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
+                                }
+                            }
+
+                            LaunchedEffect(hasAudioPermission) {
+                                if (!hasAudioPermission) {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+
                             LaunchedEffect(session, hasHandTrackingPermission) {
                                 if (hasHandTrackingPermission) {
                                     runCatching {

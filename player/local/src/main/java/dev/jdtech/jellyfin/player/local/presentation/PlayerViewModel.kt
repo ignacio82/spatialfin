@@ -12,7 +12,9 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -206,7 +208,10 @@ constructor(
                 // Allow fallback to the HDR10 base-layer decoder when the primary Dolby Vision
                 // decoder fails, rather than surfacing an error to the user.
                 .setEnableDecoderFallback(true)
+
         val initialPlayer = ExoPlayer.Builder(application, renderersFactory)
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(application)
+                .experimentalParseSubtitlesDuringExtraction(true))
             .setAudioAttributes(audioAttributes, false)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(
@@ -244,8 +249,16 @@ constructor(
     private var currentItemKind: String? = null
 
     fun replacePlayer(newPlayer: Player) {
+        Timber.i(
+            "Replacing player instance old=%s new=%s currentMediaId=%s",
+            player.javaClass.simpleName,
+            newPlayer.javaClass.simpleName,
+            player.currentMediaItem?.mediaId,
+        )
+        player.removeListener(this)
         player.release()
         player = newPlayer
+        (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
     }
 
     fun refreshSyncPlayGroups() {
@@ -607,7 +620,6 @@ constructor(
     }
 
     fun updateCurrentSegment() {
-        Timber.d("Updating current segment")
         viewModelScope.launch(Dispatchers.Main) {
             if (currentMediaItemSegments.isEmpty()) {
                 return@launch
@@ -736,12 +748,60 @@ constructor(
                             _uiState.update { it.copy(nextEpisode = null) }
                         }
 
+                        applyContentTypeTrackPreferences(item.genres)
                         Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
                     }
             } catch (e: Exception) {
                 Timber.e(e)
             }
         }
+    }
+
+    /**
+     * Applies audio and subtitle track preferences based on content type (anime vs non-anime).
+     * Anime is detected when the item's genre list contains "Anime" (case-insensitive).
+     *
+     * Called on every media item transition so preferences take effect immediately when
+     * the player moves to a new item, overriding ExoPlayer's global track selector defaults.
+     */
+    private fun applyContentTypeTrackPreferences(genres: List<String>) {
+        val isAnime = genres.any { it.equals("anime", ignoreCase = true) }
+
+        val audioLang: String? = if (isAnime) {
+            appPreferences.getValue(appPreferences.animeAudioLanguage)
+                ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
+        } else {
+            appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
+                ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
+        }
+
+        val disableSubtitles: Boolean
+        val subtitleLang: String?
+        if (isAnime) {
+            disableSubtitles = false
+            subtitleLang = appPreferences.getValue(appPreferences.animeSubtitleLanguage)
+                ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
+        } else {
+            disableSubtitles = appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)
+            subtitleLang = if (disableSubtitles) {
+                null
+            } else {
+                appPreferences.getValue(appPreferences.nonAnimeSubtitleLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
+            }
+        }
+
+        val params = player.trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguage(audioLang)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, disableSubtitles)
+            .setPreferredTextLanguage(if (disableSubtitles) null else subtitleLang)
+            .build()
+        player.trackSelectionParameters = params
+
+        Timber.d(
+            "Content-type track prefs: isAnime=%b audio=%s subtitlesDisabled=%b subtitle=%s",
+            isAnime, audioLang, disableSubtitles, subtitleLang,
+        )
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -832,7 +892,37 @@ constructor(
                 eventsChannel.trySend(PlayerEvents.NavigateBack)
             }
         }
-        Timber.d("Changed player state to $stateString")
+        Timber.d(
+            "Changed player state to %s playWhenReady=%b isPlaying=%b posMs=%d mediaId=%s error=%s",
+            stateString,
+            player.playWhenReady,
+            player.isPlaying,
+            player.currentPosition,
+            player.currentMediaItem?.mediaId,
+            player.playerError?.errorCodeName,
+        )
+    }
+
+    override fun onPlayerError(error: PlaybackException) {
+        Timber.e(
+            error,
+            "Player error code=%s name=%s mediaId=%s posMs=%d",
+            error.errorCode,
+            error.errorCodeName,
+            player.currentMediaItem?.mediaId,
+            player.currentPosition,
+        )
+    }
+
+    override fun onTracksChanged(tracks: Tracks) {
+        val summary = tracks.groups.joinToString(separator = " | ") { group ->
+            val formats = (0 until group.length).joinToString { index ->
+                val format = group.getTrackFormat(index)
+                "${format.sampleMimeType ?: "unknown"}/${format.language ?: "und"}"
+            }
+            "type=${group.type} selected=${group.isSelected} supported=${group.isSupported} tracks=[$formats]"
+        }
+        Timber.i("Player tracks changed: %s", summary.ifBlank { "<none>" })
     }
 
     override fun onCleared() {

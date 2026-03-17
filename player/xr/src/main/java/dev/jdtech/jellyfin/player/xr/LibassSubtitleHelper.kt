@@ -43,18 +43,19 @@ object LibassSubtitleHelper {
             }
         }
 
-        // Check for ASS/SSA tracks with raw bytes (subtitle transcoding disabled)
-        val hasRawAssTrack = textGroups.any { group ->
+        // Check for any text tracks that we can handle via libass
+        val hasCompatibleTrack = textGroups.any { group ->
             group.isSupported &&
             (0 until group.length).any { i ->
                 val mime = group.getTrackFormat(i).sampleMimeType
-                mime == MimeTypes.TEXT_SSA || mime == "text/x-ssa"
+                // We now allow ASS/SSA and SRT/VTT fallback to libass for consistent styling
+                mime == MimeTypes.TEXT_SSA || mime == "text/x-ssa" || 
+                mime == MimeTypes.APPLICATION_SUBRIP || mime == MimeTypes.TEXT_VTT
             }
         }
 
-        if (!hasRawAssTrack) {
-            // Check if subtitle transcoding ate the ASS format — happens when
-            // experimentalParseSubtitlesDuringExtraction is still true on the MediaSourceFactory.
+        if (!hasCompatibleTrack) {
+            // Check if subtitle transcoding ate the format
             val hasTranscodedTrack = textGroups.any { group ->
                 (0 until group.length).any { i ->
                     group.getTrackFormat(i).sampleMimeType == "application/x-media3-cues"
@@ -62,23 +63,20 @@ object LibassSubtitleHelper {
             }
             if (hasTranscodedTrack) {
                 Timber.e("subtitle: useLibass=false — tracks show application/x-media3-cues, " +
-                    "meaning Media3 subtitle transcoding is still active. " +
-                    "Ensure experimentalParseSubtitlesDuringExtraction(false) is set on MediaSourceFactory.")
+                    "meaning Media3 subtitle transcoding is still active.")
             } else {
-                Timber.i("subtitle: useLibass=false — no ASS/SSA track found (pref=%s)", preference)
+                Timber.i("subtitle: useLibass=false — no compatible text track found (pref=%s)", preference)
             }
             return false
         }
 
         val result = if (preference == "auto") {
-            genres.isEmpty() || genres.any {
-                it.equals("Anime", ignoreCase = true) ||
-                it.equals("Animation", ignoreCase = true)
-            }
+            // In 2D mode, we prefer libass for everything if the user hasn't opted out
+            true 
         } else {
             true // "always"
         }
-        Timber.i("subtitle: useLibass=%b — ASS track found, pref=%s genres=%s", result, preference, genres)
+        Timber.i("subtitle: useLibass=%b — compatible track found, pref=%s", result, preference)
         return result
     }
 }

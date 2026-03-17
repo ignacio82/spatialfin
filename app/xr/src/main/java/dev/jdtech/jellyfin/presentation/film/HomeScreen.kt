@@ -227,9 +227,6 @@ private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
         return deduplicated.filter { item ->
             val uniqueKey = item.movieVersionGroupKey() ?: item.id.toString()
             val isNew = seenKeys.add(uniqueKey)
-            if (!isNew) {
-                Timber.d("Filtering duplicate home item section=%s title=%s key=%s", sectionLabel, item.name, uniqueKey)
-            }
             isNew
         }
     }

@@ -9,9 +9,18 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // Server
     val currentServer = Preference<String?>("pref_current_server", null)
 
-    // Language
+    // Language — global fallback
     val preferredAudioLanguage = Preference<String?>("pref_audio_language", null)
     val preferredSubtitleLanguage = Preference<String?>("pref_subtitle_language", null)
+
+    // Language — content-type overrides
+    // Anime: detected when genres contain "Anime" (case-insensitive)
+    val animeAudioLanguage = Preference<String?>("pref_anime_audio_language", "jpn")
+    val animeSubtitleLanguage = Preference<String?>("pref_anime_subtitle_language", "eng")
+    // Non-anime: movies and TV shows that are not tagged as Anime
+    val nonAnimeAudioLanguage = Preference<String?>("pref_non_anime_audio_language", "eng")
+    val nonAnimeSubtitleDisabled = Preference("pref_non_anime_subtitle_disabled", true)
+    val nonAnimeSubtitleLanguage = Preference<String?>("pref_non_anime_subtitle_language", null)
 
     // Interface
     val theme = Preference("pref_theme", "system")
@@ -83,7 +92,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val offlineMode = Preference("pref_offline_mode", false)
 
     // XR Subtitles
-    val xrSubtitleSize = Preference("pref_xr_subtitle_size", 24)
+    val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)
     val xrPlayerPanelY = Preference("pref_xr_player_panel_y", 0f)
     val xrPlayerPanelZ = Preference("pref_xr_player_panel_z", 0f)

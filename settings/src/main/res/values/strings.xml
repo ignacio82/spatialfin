@@ -3,6 +3,21 @@
     <string name="settings_category_language">Language</string>
     <string name="settings_preferred_audio_language">Preferred audio language</string>
     <string name="settings_preferred_subtitle_language">Preferred subtitle language</string>
+
+    <string name="settings_category_content_type">Content type preferences</string>
+    <string name="settings_category_content_type_summary">Override audio and subtitle tracks based on whether content is anime or not</string>
+
+    <string name="settings_anime_audio_language">Anime: audio language</string>
+    <string name="settings_anime_audio_language_summary">Audio track to select when the content is tagged as Anime</string>
+    <string name="settings_anime_subtitle_language">Anime: subtitle language</string>
+    <string name="settings_anime_subtitle_language_summary">Subtitle track to select for anime (e.g. English subs with Japanese audio)</string>
+
+    <string name="settings_non_anime_audio_language">Non-anime: audio language</string>
+    <string name="settings_non_anime_audio_language_summary">Audio track to select for movies and TV shows</string>
+    <string name="settings_non_anime_subtitle_disabled">Non-anime: disable subtitles</string>
+    <string name="settings_non_anime_subtitle_disabled_summary">Automatically turn off subtitles for non-anime content</string>
+    <string name="settings_non_anime_subtitle_language">Non-anime: subtitle language</string>
+    <string name="settings_non_anime_subtitle_language_summary">Subtitle language when subtitles are not disabled for non-anime</string>
     <string name="settings_category_servers">Servers</string>
     <string name="settings_category_player">Player</string>
     <string name="settings_category_download">Downloads</string>

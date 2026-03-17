@@ -136,6 +136,7 @@ class XrPlayerActivity : AppCompatActivity() {
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
 
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+        val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
         Timber.i(
             "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
             libassUsagePref,
@@ -160,11 +161,19 @@ class XrPlayerActivity : AppCompatActivity() {
             ) {
                 val renderer = libassRenderer
                 if (renderer != null) {
-                    out.add(LibassTextRenderer(renderer, onTrackInitialized = {}, usagePref = libassUsagePref))
+                    out.add(LibassTextRenderer(renderer, onTrackInitialized = {}, usagePref = libassUsagePref, srtFontSize = xrSubtitleSize))
                     Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
+                    // Do NOT add the default TextRenderer here. With parsing disabled,
+                    // raw subtitle bytes (e.g. application/pgs) arrive in their original
+                    // format which the modern TextRenderer cannot decode (it expects
+                    // application/x-media3-cues). LibassTextRenderer handles all text-based
+                    // formats (ASS/SSA/SRT/VTT). PGS (bitmap) is unsupported by libass and
+                    // intentionally left unclaimed so ExoPlayer skips those tracks silently.
+                } else {
+                    // Stereo mode: no libass, parsing is enabled → subtitles arrive as
+                    // application/x-media3-cues which the default TextRenderer can handle.
+                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
                 }
-                // Keep default TextRenderer as fallback for SRT/VTT/PGS tracks
-                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
          .setEnableDecoderFallback(true)

@@ -8,13 +8,6 @@ fun List<SpatialFinItem>.deduplicateMovieVersions(): List<SpatialFinItem> {
         .groupBy { item -> item.movieVersionGroupKey() ?: item.id.toString() }
         .values
         .map { groupedItems ->
-            if (groupedItems.size > 1) {
-                Timber.d(
-                    "Deduplicating movie versions key=%s titles=%s",
-                    groupedItems.first().movieVersionGroupKey(),
-                    groupedItems.joinToString { it.name },
-                )
-            }
             groupedItems
                 .sortedWith(compareByDescending<SpatialFinItem> { it is SpatialFinMovie && it.playbackPositionTicks > 0L }
                     .thenByDescending { it is SpatialFinMovie && !it.played }

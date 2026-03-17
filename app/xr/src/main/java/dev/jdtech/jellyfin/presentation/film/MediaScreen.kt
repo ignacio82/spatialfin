@@ -131,6 +131,31 @@ private fun MediaScreenLayout(
         }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = minColumnSize),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding =
+                PaddingValues(
+                    start = paddingStart,
+                    top = contentPaddingTop,
+                    end = paddingEnd,
+                    bottom = paddingBottom,
+                ),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                FavoritesCard(onClick = { onAction(MediaAction.OnFavoritesClick) })
+            }
+            items(state.libraries, key = { it.id }) { library ->
+                ItemCard(
+                    item = library,
+                    direction = Direction.HORIZONTAL,
+                    onClick = { onAction(MediaAction.OnItemClick(library)) },
+                    modifier = Modifier.animateItem(),
+                )
+            }
+        }
         Column(
             modifier =
                 Modifier.fillMaxWidth()
@@ -159,31 +184,6 @@ private fun MediaScreenLayout(
                 onAction = onSearchAction,
                 modifier = Modifier.fillMaxWidth(),
             )
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = minColumnSize),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding =
-                PaddingValues(
-                    start = paddingStart,
-                    top = contentPaddingTop,
-                    end = paddingEnd,
-                    bottom = paddingBottom,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
-        ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                FavoritesCard(onClick = { onAction(MediaAction.OnFavoritesClick) })
-            }
-            items(state.libraries, key = { it.id }) { library ->
-                ItemCard(
-                    item = library,
-                    direction = Direction.HORIZONTAL,
-                    onClick = { onAction(MediaAction.OnItemClick(library)) },
-                    modifier = Modifier.animateItem(),
-                )
-            }
         }
         if (state.error != null) {
             ErrorCard(

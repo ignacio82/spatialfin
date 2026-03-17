@@ -125,6 +125,69 @@ class SettingsViewModel @Inject constructor(
                                                 ),
                                             )
                                     ),
+                                    PreferenceGroup(
+                                        nameStringResource = R.string.settings_category_content_type,
+                                        preferences =
+                                            listOf(
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.settings_anime_audio_language,
+                                                    descriptionStringRes =
+                                                        R.string.settings_anime_audio_language_summary,
+                                                    iconDrawableId = R.drawable.ic_speaker,
+                                                    backendPreference =
+                                                        appPreferences.animeAudioLanguage,
+                                                    options = R.array.languages,
+                                                    optionValues = R.array.languages_values,
+                                                    optionsIncludeNull = true,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.settings_anime_subtitle_language,
+                                                    descriptionStringRes =
+                                                        R.string.settings_anime_subtitle_language_summary,
+                                                    iconDrawableId = R.drawable.ic_closed_caption,
+                                                    backendPreference =
+                                                        appPreferences.animeSubtitleLanguage,
+                                                    options = R.array.languages,
+                                                    optionValues = R.array.languages_values,
+                                                    optionsIncludeNull = true,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.settings_non_anime_audio_language,
+                                                    descriptionStringRes =
+                                                        R.string.settings_non_anime_audio_language_summary,
+                                                    iconDrawableId = R.drawable.ic_speaker,
+                                                    backendPreference =
+                                                        appPreferences.nonAnimeAudioLanguage,
+                                                    options = R.array.languages,
+                                                    optionValues = R.array.languages_values,
+                                                    optionsIncludeNull = true,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource =
+                                                        R.string.settings_non_anime_subtitle_disabled,
+                                                    descriptionStringRes =
+                                                        R.string.settings_non_anime_subtitle_disabled_summary,
+                                                    iconDrawableId = R.drawable.ic_closed_caption,
+                                                    backendPreference =
+                                                        appPreferences.nonAnimeSubtitleDisabled,
+                                                ),
+                                                PreferenceSelect(
+                                                    nameStringResource =
+                                                        R.string.settings_non_anime_subtitle_language,
+                                                    descriptionStringRes =
+                                                        R.string.settings_non_anime_subtitle_language_summary,
+                                                    iconDrawableId = R.drawable.ic_closed_caption,
+                                                    backendPreference =
+                                                        appPreferences.nonAnimeSubtitleLanguage,
+                                                    options = R.array.languages,
+                                                    optionValues = R.array.languages_values,
+                                                    optionsIncludeNull = true,
+                                                ),
+                                            )
+                                    ),
                                 ),
                         )
                     )
