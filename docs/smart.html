@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpatialFin Smart Playback | Language, AI, and Series Memory</title>
+    <meta name="description" content="How SpatialFin handles smart language selection, subtitle fallback, series-level memory, and AI-assisted playback on Android XR.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="images/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-glow page-glow-left" aria-hidden="true"></div>
+    <div class="page-glow page-glow-right" aria-hidden="true"></div>
+
+    <header>
+        <div class="nav-container">
+            <a href="index.html#home" class="logo-link">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="logo">
+                <span class="logo-text">SpatialFin</span>
+            </a>
+            <nav>
+                <a href="index.html#features">Features</a>
+                <a href="smart.html" class="nav-cta">Smart Playback</a>
+                <a href="index.html#early-access">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero" id="home">
+            <div class="hero-copy">
+                <p class="eyebrow">Smart playback in XR</p>
+                <h1>SpatialFin is getting opinionated in the right places.</h1>
+                <p class="hero-lead">
+                    Audio language, subtitle fallback, series memory, voice parsing, AI chat, and diagnostics
+                    now work together so playback feels more adaptive and less manual.
+                </p>
+                <div class="hero-buttons">
+                    <a href="index.html#early-access" class="btn btn-primary">Get Early Access</a>
+                    <a href="index.html#features" class="btn btn-secondary">Back To Main Site</a>
+                </div>
+                <div class="hero-highlights" aria-label="Key smart features">
+                    <span>Original Audio Preference</span>
+                    <span>Ordered Spoken Languages</span>
+                    <span>Per-Series Memory</span>
+                    <span>Voice + AI Fallback</span>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="hero-panel hero-panel-main">
+                    <img src="images/Screenshot_20260315_102004_SpatialFin~2.jpg" alt="SpatialFin smart playback UI">
+                </div>
+                <div class="hero-float hero-float-top">
+                    <strong>Less setup per episode</strong>
+                    <span>Make a correction once and SpatialFin can remember it for the whole series.</span>
+                </div>
+                <div class="hero-float hero-float-bottom">
+                    <strong>Smarter defaults</strong>
+                    <span>Prioritized spoken languages, subtitle fallback, and runtime diagnostics.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="proof-strip" aria-label="Smart playback pillars">
+            <div class="proof-card">
+                <span class="proof-label">Languages</span>
+                <h2>Built for multilingual libraries</h2>
+                <p>Choose spoken languages in priority order, prefer original audio when appropriate, and let SpatialFin enable subtitles only when they are actually needed.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Memory</span>
+                <h2>Manual fixes should compound</h2>
+                <p>If SpatialFin guesses wrong for a series, your later audio or subtitle correction can be remembered across episodes instead of resetting every time.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Runtime</span>
+                <h2>AI and voice are transparent</h2>
+                <p>Voice telemetry, AICore visibility, and cloud fallback status make it obvious what path the headset is actually using.</p>
+            </div>
+        </section>
+
+        <section class="features-section">
+            <div class="container section-shell">
+                <div class="section-heading">
+                    <p class="eyebrow">How it works</p>
+                    <h2>Smart playback is a stack, not a checkbox.</h2>
+                    <p>SpatialFin now combines language preferences, track ranking, memory, and AI tooling so common playback decisions need fewer manual corrections.</p>
+                </div>
+
+                <div class="all-features-grid">
+                    <div class="feature-group">
+                        <h3>Smart Audio And Subtitles</h3>
+                        <ul>
+                            <li><strong>Ordered spoken languages:</strong> Users can add, search, and reorder the languages they understand.</li>
+                            <li><strong>OS-aware defaults:</strong> The first spoken language starts from the headset OS language before the user customizes it.</li>
+                            <li><strong>Original audio preference:</strong> SpatialFin can favor likely-original audio instead of defaulting to the first dub it finds.</li>
+                            <li><strong>Subtitle fallback:</strong> If selected audio is not in a spoken language, SpatialFin tries to enable an appropriate subtitle track automatically.</li>
+                            <li><strong>Subtitle ranking:</strong> When several subtitle tracks share the same language, SpatialFin now ranks candidates instead of blindly taking the first one.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Series-Level Memory</h3>
+                        <ul>
+                            <li><strong>Audio memory:</strong> Switch one episode of a series to Japanese and future episodes can start there too.</li>
+                            <li><strong>Subtitle memory:</strong> SpatialFin stores the exact subtitle variant, not just the language, when you make a better track choice manually.</li>
+                            <li><strong>Correction-friendly behavior:</strong> Smart defaults are useful, but user overrides should win and stay won.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Voice And AI</h3>
+                        <ul>
+                            <li><strong>Deterministic first:</strong> Common playback commands are handled directly for reliability.</li>
+                            <li><strong>On-device where available:</strong> SpatialFin includes an AICore / Gemini Nano path for compatible runtimes.</li>
+                            <li><strong>Cloud fallback when needed:</strong> Users can supply a Gemini API key for devices where AICore is absent.</li>
+                            <li><strong>Telemetry built in:</strong> Device status, AICore availability, and inference path details are visible for debugging.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="section-heading" style="margin-top: 72px;">
+                    <p class="eyebrow">Current reality</p>
+                    <h2>Galaxy XR still needs cloud fallback for Gemini features.</h2>
+                    <p>Current testing on Galaxy XR firmware shows that the system image does not expose <code>com.google.android.aicore</code> to third-party apps, so on-device Gemini features are currently unavailable there. SpatialFin’s voice stack still works through deterministic handling and optional cloud fallback.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-container">
+            <div class="footer-left">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="footer-logo">
+                <p>&copy; 2026 SpatialFin Contributors. Open source software for immersive Jellyfin playback on Android XR.</p>
+            </div>
+            <div class="footer-links">
+                <a href="index.html">Main Site</a>
+                <a href="https://github.com/ignacio82/SpatialFin" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://github.com/ignacio82/SpatialFin/blob/main/PRIVACY" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

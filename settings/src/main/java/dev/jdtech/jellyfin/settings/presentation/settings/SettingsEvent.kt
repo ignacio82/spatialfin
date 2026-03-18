@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.settings.presentation.settings
 
 import android.content.Intent
+import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 
 sealed interface SettingsEvent {
     data object NavigateToUsers : SettingsEvent
@@ -14,6 +15,10 @@ sealed interface SettingsEvent {
     data class UpdateTheme(val theme: String) : SettingsEvent
 
     data class LaunchIntent(val intent: Intent) : SettingsEvent
+
+    data class ShowCloudApiKeyDialog(val currentValue: String?) : SettingsEvent
+
+    data class ShowSmartLanguageDialog(val settings: SmartLanguageSettings) : SettingsEvent
 
     data object RestartActivity : SettingsEvent
 }

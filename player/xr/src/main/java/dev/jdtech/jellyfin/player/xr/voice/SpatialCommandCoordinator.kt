@@ -3,10 +3,13 @@ package dev.jdtech.jellyfin.player.xr.voice
 import android.content.Context
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
+import org.json.JSONObject
+import timber.log.Timber
 
 enum class VoiceParseStrategy {
     KEYWORD,
     MODEL,
+    CLOUD,
     FALLBACK,
 }
 
@@ -14,10 +17,17 @@ data class VoiceParseResult(
     val action: XrPlayerAction,
     val strategy: VoiceParseStrategy,
     val normalizedTranscript: String,
+    val debugInfo: String = "",
 )
 
-class SpatialCommandCoordinator(@Suppress("UNUSED_PARAMETER") private val appContext: Context) {
-    suspend fun initialize() {}
+class SpatialCommandCoordinator(
+    @Suppress("UNUSED_PARAMETER") private val appContext: Context,
+    private val geminiNanoService: GeminiNanoService,
+    private val geminiCloudService: GeminiCloudService,
+) {
+    suspend fun initialize() {
+        geminiNanoService.initialize()
+    }
 
     suspend fun parse(
         transcript: String,
@@ -34,21 +44,105 @@ class SpatialCommandCoordinator(@Suppress("UNUSED_PARAMETER") private val appCon
                 action = XrPlayerAction.Unrecognized(transcript),
                 strategy = VoiceParseStrategy.FALLBACK,
                 normalizedTranscript = normalized,
+                debugInfo = "blank transcript",
             )
         }
 
         keywordMatch(normalized, playerState, transcript)?.let {
-            return VoiceParseResult(it, VoiceParseStrategy.KEYWORD, normalized)
+            return VoiceParseResult(
+                action = it,
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "keyword parser matched",
+            )
         }
+
+        val aiAttempt = parseWithModel(transcript, normalized, playerState)
+        aiAttempt.result?.let { return it }
 
         return VoiceParseResult(
             action = XrPlayerAction.Unrecognized(transcript),
             strategy = VoiceParseStrategy.FALLBACK,
             normalizedTranscript = normalized,
+            debugInfo = aiAttempt.debugInfo.ifBlank { "model parse unavailable; fallback unrecognized" },
         )
     }
 
-    fun destroy() {}
+    fun destroy() {
+        geminiNanoService.destroy()
+    }
+
+    private data class ParseAttemptOutcome(
+        val result: VoiceParseResult? = null,
+        val debugInfo: String = "",
+    )
+
+    private suspend fun parseWithModel(
+        transcript: String,
+        normalized: String,
+        playerState: PlayerStateSnapshot,
+    ): ParseAttemptOutcome {
+        val prompt = buildModelPrompt(transcript, playerState)
+        val onDeviceResult = geminiNanoService.generateText(prompt = prompt, reason = "voice-parse")
+        if (onDeviceResult.usedModel && !onDeviceResult.text.isNullOrBlank()) {
+            val json = extractJson(onDeviceResult.text) ?: return ParseAttemptOutcome(
+                debugInfo = onDeviceResult.status.details,
+            )
+            return runCatching {
+                val payload = JSONObject(json)
+                val action = mapModelAction(payload, transcript)
+                ParseAttemptOutcome(
+                    result =
+                        VoiceParseResult(
+                            action = action,
+                            strategy = VoiceParseStrategy.MODEL,
+                            normalizedTranscript = normalized,
+                            debugInfo = onDeviceResult.status.details,
+                        ),
+                    debugInfo = onDeviceResult.status.details,
+                )
+            }.onFailure {
+                Timber.w(it, "GEMINI: failed to parse on-device model response as JSON: %s", onDeviceResult.text)
+            }.getOrElse { ParseAttemptOutcome(debugInfo = onDeviceResult.status.details) }
+        }
+
+        val cloudResult =
+            geminiCloudService.generateText(
+                prompt = prompt,
+                reason = "voice-parse",
+                temperature = 0.0,
+                maxOutputTokens = 220,
+            )
+        if (!cloudResult.status.usedModel || cloudResult.text.isNullOrBlank()) {
+            return ParseAttemptOutcome(
+                debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
+            )
+        }
+
+        val cloudJson = extractJson(cloudResult.text) ?: return ParseAttemptOutcome(
+            debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
+        )
+        return runCatching {
+            val payload = JSONObject(cloudJson)
+            val action = mapModelAction(payload, transcript)
+            ParseAttemptOutcome(
+                result =
+                    VoiceParseResult(
+                        action = action,
+                        strategy = VoiceParseStrategy.CLOUD,
+                        normalizedTranscript = normalized,
+                        debugInfo = cloudResult.status.details,
+                    ),
+                debugInfo = cloudResult.status.details,
+            )
+        }.onFailure {
+            Timber.w(it, "GEMINI: failed to parse cloud model response as JSON: %s", cloudResult.text)
+        }.getOrElse {
+            ParseAttemptOutcome(
+                debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
+            )
+        }
+    }
 
     private fun keywordMatch(
         text: String,
@@ -135,6 +229,103 @@ class SpatialCommandCoordinator(@Suppress("UNUSED_PARAMETER") private val appCon
             text.matches(Regex(".*(double speed|two ?x|2x).*")) -> XrPlayerAction.SetSpeed(2.0f)
             text.matches(Regex(".*(half speed|0\\.5x).*")) -> XrPlayerAction.SetSpeed(0.5f)
             else -> null
+        }
+    }
+
+    private fun buildModelPrompt(
+        transcript: String,
+        playerState: PlayerStateSnapshot,
+    ): String {
+        return """
+            You convert XR media-player voice transcripts into a single JSON action.
+            Return ONLY minified JSON.
+            Supported action values:
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,chat,unrecognized
+
+            Rules:
+            - Prefer a direct player action when the transcript clearly asks for one.
+            - Use "chat" for questions, recommendations, clarifications, recaps, or metadata questions.
+            - Use "search" for find/search/show me requests.
+            - If unsure, use "chat" rather than "unrecognized".
+            - Include only fields that matter for the chosen action.
+
+            JSON field schema:
+            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends"}
+
+            Current player state:
+            title=${playerState.currentItemTitle}
+            series=${playerState.currentSeriesName ?: ""}
+            overview=${playerState.currentOverview.take(600)}
+            chapter=${playerState.currentChapterName ?: ""}
+            genres=${playerState.currentGenres.joinToString(",")}
+            audioTracks=${playerState.audioTrackNames.joinToString(",")}
+            subtitleTracks=${playerState.subtitleTrackNames.joinToString(",")}
+            currentAudio=${playerState.currentAudioTrack ?: ""}
+            currentSubtitles=${playerState.currentSubtitleTrack ?: ""}
+            controlsVisible=${playerState.controlsVisible}
+            syncPlayActive=${playerState.syncPlayActive}
+            syncPlayGroup=${playerState.syncPlayGroupName ?: ""}
+            voiceSearchCount=${playerState.voiceSearchResultsCount}
+
+            Transcript:
+            $transcript
+        """.trimIndent()
+    }
+
+    private fun extractJson(raw: String): String? {
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        if (start == -1 || end == -1 || end <= start) return null
+        return raw.substring(start, end + 1)
+    }
+
+    private fun mapModelAction(payload: JSONObject, transcript: String): XrPlayerAction {
+        return when (payload.optString("action").lowercase()) {
+            "play" -> XrPlayerAction.Play
+            "pause" -> XrPlayerAction.Pause
+            "toggle_play_pause" -> XrPlayerAction.TogglePlayPause
+            "seek_forward" -> XrPlayerAction.SeekForward(payload.optInt("seconds", 15))
+            "seek_backward" -> XrPlayerAction.SeekBackward(payload.optInt("seconds", 10))
+            "seek_to" -> XrPlayerAction.SeekTo(payload.optLong("position_seconds"))
+            "skip_intro" -> XrPlayerAction.SkipIntro
+            "skip_outro" -> XrPlayerAction.SkipOutro
+            "next_episode" -> XrPlayerAction.NextEpisode
+            "previous_episode" -> XrPlayerAction.PreviousEpisode
+            "set_speed" -> XrPlayerAction.SetSpeed(payload.optDouble("speed", 1.0).toFloat())
+            "set_quality" -> XrPlayerAction.SetQuality(payload.optLong("max_bitrate"))
+            "select_audio" -> XrPlayerAction.SelectAudioTrack(
+                language = payload.optString("language").ifBlank { null },
+                index = payload.optInt("index").takeIf { it >= 0 },
+            )
+            "select_subtitles" -> XrPlayerAction.SelectSubtitleTrack(
+                language = payload.optString("language").ifBlank { null },
+                index = payload.optInt("index").takeIf { it >= 0 },
+            )
+            "disable_subtitles" -> XrPlayerAction.DisableSubtitles
+            "search" -> XrPlayerAction.Search(
+                query = payload.optString("query").ifBlank { transcript },
+                autoPlay = payload.optBoolean("auto_play", false),
+            )
+            "select_option" -> XrPlayerAction.SelectOption(payload.optInt("index", 0))
+            "open_syncplay" -> XrPlayerAction.OpenSyncPlay
+            "create_syncplay" -> XrPlayerAction.CreateSyncPlayGroup
+            "join_syncplay" -> XrPlayerAction.JoinSyncPlayGroup(
+                groupName = payload.optString("group_name").ifBlank { null },
+                selectionIndex = payload.optInt("index").takeIf { it >= 0 },
+            )
+            "leave_syncplay" -> XrPlayerAction.LeaveSyncPlayGroup
+            "refresh_syncplay" -> XrPlayerAction.RefreshSyncPlay
+            "adjust_volume" -> XrPlayerAction.AdjustVolume(
+                percentage = payload.optDouble("percentage", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+                delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+            )
+            "go_home" -> XrPlayerAction.GoHome
+            "close_app" -> XrPlayerAction.CloseApp
+            "go_back" -> XrPlayerAction.GoBack
+            "show_controls" -> XrPlayerAction.ShowControls
+            "hide_controls" -> XrPlayerAction.HideControls
+            "chat" -> XrPlayerAction.ChatQuery(payload.optString("query").ifBlank { transcript })
+            else -> XrPlayerAction.Unrecognized(transcript)
         }
     }
 

@@ -112,6 +112,8 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
+import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
+import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
@@ -201,8 +203,14 @@ fun SpatialPlayerScreen(
     val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
     val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
-    val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
-    val chatEngine = remember(context) { SmartChatEngine(context.applicationContext) }
+    val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
+    val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences) }
+    val commandCoordinator = remember(context) {
+        SpatialCommandCoordinator(context.applicationContext, geminiNanoService, geminiCloudService)
+    }
+    val chatEngine = remember(context) {
+        SmartChatEngine(context.applicationContext, geminiNanoService, geminiCloudService)
+    }
     val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
     val recentSubtitles = remember { mutableStateListOf<Pair<Long, String>>() }
@@ -254,7 +262,6 @@ fun SpatialPlayerScreen(
     var hasLibassContent by remember { mutableStateOf(false) }
     var libassFrameVersion by remember { mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-
     // Build caption style from user preferences so the selected colours / background
     // are honoured instead of the system default (which renders a black background box).
     val subtitleTextColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor)
@@ -327,6 +334,7 @@ fun SpatialPlayerScreen(
     var voiceSearchResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
     var voiceSearchLoading by remember { mutableStateOf(false) }
     var voiceSearchError by remember { mutableStateOf<String?>(null) }
+    val voiceSearchOpen = activeDialog == "voice_search"
     val latestSyncPlayGroups = androidx.compose.runtime.rememberUpdatedState(syncPlayState.availableGroups)
 
     fun resetAutoHide() {
@@ -650,11 +658,16 @@ fun SpatialPlayerScreen(
                 val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session, false)
                 root.addComponent(movable)
                 movableComponent.value = movable
+                Timber.d("VOICE: Player movable enabled controlsVisible=%b", controlsVisible)
             }
         } else {
             movableComponent.value?.let {
                 root.removeComponent(it)
                 movableComponent.value = null
+                Timber.d(
+                    "VOICE: Player movable disabled controlsVisible=%b",
+                    controlsVisible,
+                )
             }
         }
     }
@@ -1145,7 +1158,8 @@ fun SpatialPlayerScreen(
         }
 
         // ── Contextual Skip Panel ────────────────────────────────────────────────
-        uiState.currentSegment?.let { segment ->
+        if (!voiceSearchOpen) {
+            uiState.currentSegment?.let { segment ->
             SpatialPanel(
                 modifier = SubspaceModifier
                     .width(360.dp)
@@ -1180,10 +1194,11 @@ fun SpatialPlayerScreen(
                 }
             }
         }
+        }
 
         // ── Next Episode Panel ───────────────────────────────────────────────────
         // Floats to the LEFT of the control panel during the last 2 minutes of an episode.
-        if (showNextEpisodePanel) {
+        if (!voiceSearchOpen && showNextEpisodePanel) {
             SpatialPanel(
                 modifier = SubspaceModifier
                     .width(700.dp)
@@ -1199,7 +1214,7 @@ fun SpatialPlayerScreen(
                     onDismiss = { nextEpisodePanelDismissed = true },
                 )
             }
-                }
+        }
 
             }
         }
@@ -1510,27 +1525,38 @@ private fun startVoiceCapture(
                             assistantPreferences = assistantPreferences,
                             onSearchQuery = onSearchQuery,
                         )
-                    if (response != null) {
-                        onResult(response)
+                    if (response.text != null) {
+                        onResult(response.text)
                         if (assistantPreferences.spokenRepliesEnabled) {
-                            tts.speak(response, responseLanguageHint)
+                            tts.speak(response.text, responseLanguageHint)
                         }
                     } else {
                         onResult("Sorry, I couldn't process that.")
                     }
+                    telemetryStore.record(
+                        VoiceTelemetryEntry(
+                            transcript = transcript,
+                            action = "ChatQuery",
+                            strategy = response.strategy,
+                            latencyMs = System.currentTimeMillis() - startedAtMs,
+                            success = response.text != null,
+                            details = response.debugInfo,
+                        )
+                    )
                 } else {
                     val feedback = dispatchVoiceParseResult(controller, parseResult)
                     onResult(feedback)
-                }
-                telemetryStore.record(
-                    VoiceTelemetryEntry(
-                        transcript = transcript,
-                        action = parseResult.action::class.simpleName ?: "Unknown",
-                        strategy = parseResult.strategy.name,
-                        latencyMs = System.currentTimeMillis() - startedAtMs,
-                        success = parseResult.action !is XrPlayerAction.Unrecognized,
+                    telemetryStore.record(
+                        VoiceTelemetryEntry(
+                            transcript = transcript,
+                            action = parseResult.action::class.simpleName ?: "Unknown",
+                            strategy = parseResult.strategy.name,
+                            latencyMs = System.currentTimeMillis() - startedAtMs,
+                            success = parseResult.action !is XrPlayerAction.Unrecognized,
+                            details = parseResult.debugInfo,
+                        )
                     )
-                )
+                }
             } finally {
                 voiceService.resetState()
             }
@@ -1602,11 +1628,18 @@ private fun VoiceSearchDialogContent(
             modifier = Modifier.fillMaxSize().padding(28.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Text(
-                text = "Voice Search",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Color.White,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Voice Search",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                )
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
             Text(
                 text = "Query: $query",
                 style = MaterialTheme.typography.titleLarge,

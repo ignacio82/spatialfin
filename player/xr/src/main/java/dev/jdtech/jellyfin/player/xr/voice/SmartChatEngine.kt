@@ -5,6 +5,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 data class AssistantPreferences(
     val verbosity: String = "balanced",
@@ -12,8 +13,20 @@ data class AssistantPreferences(
     val spokenRepliesEnabled: Boolean = true,
 )
 
-class SmartChatEngine(@Suppress("UNUSED_PARAMETER") private val appContext: Context) {
-    suspend fun initialize() = withContext(Dispatchers.IO) {}
+data class AssistantReply(
+    val text: String?,
+    val strategy: String,
+    val debugInfo: String,
+)
+
+class SmartChatEngine(
+    @Suppress("UNUSED_PARAMETER") private val appContext: Context,
+    private val geminiNanoService: GeminiNanoService,
+    private val geminiCloudService: GeminiCloudService,
+) {
+    suspend fun initialize() = withContext(Dispatchers.IO) {
+        geminiNanoService.initialize()
+    }
 
     suspend fun query(
         question: String,
@@ -22,11 +35,83 @@ class SmartChatEngine(@Suppress("UNUSED_PARAMETER") private val appContext: Cont
         recentSubtitles: String = "",
         assistantPreferences: AssistantPreferences = AssistantPreferences(),
         onSearchQuery: (suspend (String) -> List<SpatialFinItem>)? = null,
-    ): String? = withContext(Dispatchers.IO) {
-        heuristicAnswer(question, playerState, storySoFarContext, recentSubtitles)
+    ): AssistantReply = withContext(Dispatchers.IO) {
+        val prompt =
+            buildPrompt(
+                question = question,
+                playerState = playerState,
+                storySoFarContext = storySoFarContext,
+                recentSubtitles = recentSubtitles,
+                assistantPreferences = assistantPreferences,
+            )
+        val result = geminiNanoService.generateText(prompt = prompt, reason = "chat")
+        if (result.usedModel && !result.text.isNullOrBlank()) {
+            return@withContext AssistantReply(
+                text = result.text.trim(),
+                strategy = "MODEL",
+                debugInfo = result.status.details,
+            )
+        }
+
+        val cloudResult =
+            geminiCloudService.generateText(
+                prompt = prompt,
+                reason = "chat",
+                temperature = 0.3,
+                maxOutputTokens = 320,
+            )
+        if (cloudResult.status.usedModel && !cloudResult.text.isNullOrBlank()) {
+            return@withContext AssistantReply(
+                text = cloudResult.text.trim(),
+                strategy = "CLOUD",
+                debugInfo = cloudResult.status.details,
+            )
+        }
+
+        Timber.d("GEMINI: chat fallback to heuristic answer details=%s", result.status.details)
+        AssistantReply(
+            text = heuristicAnswer(question, playerState, storySoFarContext, recentSubtitles),
+            strategy = "HEURISTIC",
+            debugInfo = "${result.status.details}; ${cloudResult.status.details}",
+        )
     }
 
-    fun destroy() {}
+    fun destroy() {
+        geminiNanoService.destroy()
+    }
+
+    private fun buildPrompt(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        storySoFarContext: String?,
+        recentSubtitles: String,
+        assistantPreferences: AssistantPreferences,
+    ): String {
+        return """
+            You are SpatialFin, an on-device XR media assistant.
+            Answer briefly and directly.
+            Respect the spoiler policy: ${assistantPreferences.spoilerPolicy}.
+            Verbosity: ${assistantPreferences.verbosity}.
+            If the answer is uncertain, say so plainly.
+            Do not invent details not present in the supplied context.
+
+            Current title: ${playerState.currentItemTitle}
+            Series: ${playerState.currentSeriesName ?: ""}
+            Season: ${playerState.currentSeasonNumber ?: ""}
+            Episode: ${playerState.currentEpisodeNumber ?: ""}
+            Overview: ${playerState.currentOverview.take(1000)}
+            Genres: ${playerState.currentGenres.joinToString(", ")}
+            Cast: ${playerState.castNames.take(12).joinToString(", ")}
+            Current chapter: ${playerState.currentChapterName ?: ""}
+            Story so far: ${(storySoFarContext ?: "").take(1200)}
+            Recent subtitles: ${recentSubtitles.takeLast(1200)}
+            Audio track: ${playerState.currentAudioTrack ?: ""}
+            Subtitle track: ${playerState.currentSubtitleTrack ?: ""}
+
+            User question:
+            $question
+        """.trimIndent()
+    }
 
     private fun heuristicAnswer(
         question: String,

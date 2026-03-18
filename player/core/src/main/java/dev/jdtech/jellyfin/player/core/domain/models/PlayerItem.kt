@@ -26,6 +26,7 @@ data class PlayerItem(
     val backdropImageUri: String? = null,
     /** Series name for episodes, used in next-up panel display. */
     val seriesName: String? = null,
+    val seriesId: UUID? = null,
     val contentSource: PlayerContentSource = PlayerContentSource.JELLYFIN,
     val localMediaId: Long? = null,
 ) : Parcelable

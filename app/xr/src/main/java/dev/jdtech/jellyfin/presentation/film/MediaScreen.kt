@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowSizeClass
@@ -156,36 +158,68 @@ private fun MediaScreenLayout(
                 )
             }
         }
-        Column(
-            modifier =
-                Modifier.fillMaxWidth()
-                    .padding(
-                        start = paddingStart,
-                        top = safePadding.top + MaterialTheme.spacings.default,
-                        end = paddingEnd,
-                    ),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-        ) {
-            XrBrowseHeader(
-                title = stringResource(CoreR.string.title_media),
-                primaryAction =
-                    BrowseHeaderAction(
-                        label = "Search",
-                        icon = CoreR.drawable.ic_search,
-                        onClick = { onSearchExpand(true) },
-                    ),
-            )
-            FilmSearchBar(
-                state = searchState,
-                expanded = searchExpanded,
-                initialQuery = initialSearchQuery,
-                onExpand = onSearchExpand,
-                onInitialQueryConsumed = onInitialSearchConsumed,
-                onAction = onSearchAction,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (!searchExpanded) {
+            Column(
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .padding(
+                            start = paddingStart,
+                            top = safePadding.top + MaterialTheme.spacings.default,
+                            end = paddingEnd,
+                        ),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+            ) {
+                XrBrowseHeader(
+                    title = stringResource(CoreR.string.title_media),
+                    primaryAction =
+                        BrowseHeaderAction(
+                            label = "Search",
+                            icon = CoreR.drawable.ic_search,
+                            onClick = { onSearchExpand(true) },
+                        ),
+                )
+                FilmSearchBar(
+                    state = searchState,
+                    expanded = false,
+                    initialQuery = initialSearchQuery,
+                    onExpand = onSearchExpand,
+                    onInitialQueryConsumed = onInitialSearchConsumed,
+                    onAction = onSearchAction,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxSize().zIndex(2f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+            ) {
+                Column(
+                    modifier =
+                        Modifier.fillMaxSize().padding(
+                            start = paddingStart,
+                            top = safePadding.top + MaterialTheme.spacings.default,
+                            end = paddingEnd,
+                            bottom = paddingBottom,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+                ) {
+                    XrBrowseHeader(
+                        title = "Search",
+                        onBackClick = { onSearchExpand(false) },
+                    )
+                    FilmSearchBar(
+                        state = searchState,
+                        expanded = true,
+                        initialQuery = initialSearchQuery,
+                        onExpand = onSearchExpand,
+                        onInitialQueryConsumed = onInitialSearchConsumed,
+                        onAction = onSearchAction,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                }
+            }
         }
-        if (state.error != null) {
+        if (!searchExpanded && state.error != null) {
             ErrorCard(
                 onShowStacktrace = { showErrorDialog = true },
                 onRetryClick = { onAction(MediaAction.OnRetryClick) },

@@ -4,4 +4,15 @@
     <string name="continue_watching">Continue Watching</string>
     <string name="latest_library">Latest %1$s</string>
     <string name="search_placeholder">Search movies and TV shows</string>
+    <string name="search_loading_title">Searching...</string>
+    <string name="search_loading_subtitle">Looking for matches for "%1$s"</string>
+    <string name="search_prompt_title">Search your library</string>
+    <string name="search_prompt_subtitle">Type a movie, show, collection, or episode name to see results.</string>
+    <string name="search_empty_title">No results found</string>
+    <string name="search_empty_subtitle">No matches for "%1$s". Try a shorter title or different words.</string>
+    <string name="search_error_title">Search failed</string>
+    <string name="search_error_subtitle">The search request failed. Try again.</string>
+    <string name="search_results_title">Results</string>
+    <string name="search_results_subtitle">%1$d matches for "%2$s"</string>
+    <string name="search_open_action">Open</string>
 </resources>

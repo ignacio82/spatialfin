@@ -16,9 +16,10 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
 - **XR-First Action Layouts** — Detail screens use larger readable typography and labeled action buttons instead of dense icon-only controls.
 - **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
+- **Smart Audio And Subtitle Selection** — Ordered spoken languages, optional original-audio preference, automatic subtitle fallback when the chosen audio is not one you speak, smarter subtitle-track ranking, and per-series memory for manual audio/subtitle corrections.
 - **Version Selection (Media Source)** — Choose between different versions of the same movie or episode (e.g., 3D vs. 2D, 4K vs. 1080p) before playing or during playback.
 - **Dynamic Quality Selection** — Control streaming bitrate on the fly. Use the sparkle icon in the player or the media info screen to switch between bitrates (from 480 Kbps up to 120 Mbps) or stay on "Auto" for direct play.
-- **Hands-Free Voice Control** — Hold-to-talk pinch on a configurable hand or use the mic orbiter button to control playback, audio, subtitles, quality, SyncPlay, and search with on-device speech recognition plus Gemini Nano intent parsing.
+- **Hands-Free Voice Control** — Hold-to-talk middle-finger pinch on a configurable hand or use the mic orbiter button to control playback, audio, subtitles, quality, SyncPlay, and search with on-device speech recognition plus deterministic parsing, on-device AI when available, and cloud fallback when a user supplies a Gemini API key.
 - **Global Bitrate Settings** — Set a default maximum streaming bitrate in the app settings to optimize for your network conditions across all media.
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search, disambiguate, and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
@@ -101,8 +102,8 @@ SpatialFin can now operate as a local-first XR player, even without a Jellyfin s
 
 SpatialFin now supports hands-free voice control in the XR player.
 
-- **Unified Smart Assistant:** Hold a deliberate pinch on your configured voice hand to arm voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
-- **On-Device AI Chat:** Powered by Android AICore (Gemini Nano), the assistant answers questions using Jellyfin metadata (Title, Plot) completely offline, with zero network latency and full privacy.
+- **Unified Smart Assistant:** Hold a deliberate middle-finger pinch on your configured voice hand to arm voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
+- **AI Chat And Parsing:** SpatialFin includes an Android AICore (Gemini Nano) integration path for compatible devices, and falls back to cloud Gemini (`gemini-3.1-flash-lite-preview`) when the user provides an API key in settings.
 - **Contextual Awareness:** The assistant maintains a 60-second rolling buffer of recent subtitles, allowing you to ask "What just happened?" or clarify confusing dialogue.
 - **Spatial Voice Feedback:** The AI responds out loud using Android's native Text-To-Speech engine. Media volume is automatically ducked while the assistant is speaking, and its text response remains visible until the speech finishes.
 - Use the mic button in the player orbiter as a fallback.
@@ -111,9 +112,27 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, quality/bitrate adjustments, controls visibility, next/previous episode, SyncPlay actions, search, going home, and closing SpatialFin.
 - Voice search results are shown in a spatial in-player overlay, and follow-up commands like "play the first one" now resolve against the active result set.
 - SyncPlay voice commands support opening the panel, creating a group, joining a named or indexed group, refreshing groups, and leaving the current watch party.
-- Voice parsing uses both deterministic command handling and richer multimodal player context for compatible on-device AI devices.
+- Voice parsing uses deterministic command handling first, then attempts richer AI parsing on compatible runtimes.
+- Current Galaxy XR testing found that the shipped firmware does not expose `com.google.android.aicore` to third-party apps, so on-device Gemini features currently fall back to deterministic handling unless the user configures a cloud Gemini API key.
+- Voice settings now show whether AICore is installed on the device and include a bring-your-own Gemini API key field for cloud fallback features.
 - On first app launch, SpatialFin requests the microphone, hand-tracking, and local video permissions needed for voice input and the on-device library.
 - Voice settings include status, command examples, configurable gesture handedness, and a local telemetry dashboard for iteration and debugging.
+
+## Smart Playback
+
+SpatialFin now includes a smarter language and subtitle system aimed at real-world multilingual libraries.
+
+- Users can define an ordered list of spoken languages instead of a single preferred language.
+- The first spoken language defaults to the headset OS language until the user customizes it.
+- Users can search for and add more languages from a dedicated XR dialog, then reorder them by priority.
+- A `prefer original audio when known` option allows SpatialFin to keep likely-original audio for multilingual content instead of always preferring a dub.
+- If the chosen audio is not in the user’s spoken-language list, SpatialFin automatically enables the best subtitle track it can find in one of the user’s spoken languages.
+- When several subtitle tracks share the same language, SpatialFin now ranks them instead of blindly taking the first one, preferring better candidates over forced/signs-only style tracks where the metadata allows that distinction.
+- If the user manually changes audio or subtitle tracks while watching a series, SpatialFin stores that override for the whole series so future episodes can start closer to what the user actually wants.
+
+Current limitation:
+
+- Jellyfin metadata in this app does not always expose a definitive original-audio field, so `prefer original audio` is still a best-effort inference based on the available tracks.
 
 ## XR Usability
 
@@ -123,6 +142,7 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Media, downloads, and settings now use larger XR browse headers, roomier grids, and larger settings rows instead of compact phone-style top bars and list density.
 - Collection browsing, About, and local video detail screens now follow the same XR-first header and spacing model, with larger action surfaces and more readable metadata.
 - Setup and onboarding screens now use wider XR forms, larger cards, larger confirmation dialogs, and more readable login/server selection flows instead of phone-scale layouts.
+- Smart language configuration now uses a larger XR dialog with searchable language adding, ordering controls, and clearer visibility for available results.
 
 ## SyncPlay
 

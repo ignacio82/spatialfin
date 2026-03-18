@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.settings.presentation.settings
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.speech.SpeechRecognizer
@@ -24,8 +25,11 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSmartLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
+import dev.jdtech.jellyfin.settings.language.LanguageCatalog
+import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import javax.inject.Inject
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,89 +106,14 @@ class SettingsViewModel @Inject constructor(
                                     PreferenceGroup(
                                         preferences =
                                             listOf(
-                                                PreferenceSelect(
+                                                PreferenceSmartLanguage(
                                                     nameStringResource =
-                                                        R.string.settings_preferred_audio_language,
-                                                    iconDrawableId = R.drawable.ic_speaker,
-                                                    backendPreference =
-                                                        appPreferences.preferredAudioLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
-                                                ),
-                                                PreferenceSelect(
-                                                    nameStringResource =
-                                                        R.string
-                                                            .settings_preferred_subtitle_language,
-                                                    iconDrawableId = R.drawable.ic_closed_caption,
-                                                    backendPreference =
-                                                        appPreferences.preferredSubtitleLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
-                                                ),
-                                            )
-                                    ),
-                                    PreferenceGroup(
-                                        nameStringResource = R.string.settings_category_content_type,
-                                        preferences =
-                                            listOf(
-                                                PreferenceSelect(
-                                                    nameStringResource =
-                                                        R.string.settings_anime_audio_language,
+                                                        R.string.settings_smart_audio_subtitles,
                                                     descriptionStringRes =
-                                                        R.string.settings_anime_audio_language_summary,
-                                                    iconDrawableId = R.drawable.ic_speaker,
-                                                    backendPreference =
-                                                        appPreferences.animeAudioLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
-                                                ),
-                                                PreferenceSelect(
-                                                    nameStringResource =
-                                                        R.string.settings_anime_subtitle_language,
-                                                    descriptionStringRes =
-                                                        R.string.settings_anime_subtitle_language_summary,
-                                                    iconDrawableId = R.drawable.ic_closed_caption,
-                                                    backendPreference =
-                                                        appPreferences.animeSubtitleLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
-                                                ),
-                                                PreferenceSelect(
-                                                    nameStringResource =
-                                                        R.string.settings_non_anime_audio_language,
-                                                    descriptionStringRes =
-                                                        R.string.settings_non_anime_audio_language_summary,
-                                                    iconDrawableId = R.drawable.ic_speaker,
-                                                    backendPreference =
-                                                        appPreferences.nonAnimeAudioLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
-                                                ),
-                                                PreferenceSwitch(
-                                                    nameStringResource =
-                                                        R.string.settings_non_anime_subtitle_disabled,
-                                                    descriptionStringRes =
-                                                        R.string.settings_non_anime_subtitle_disabled_summary,
-                                                    iconDrawableId = R.drawable.ic_closed_caption,
-                                                    backendPreference =
-                                                        appPreferences.nonAnimeSubtitleDisabled,
-                                                ),
-                                                PreferenceSelect(
-                                                    nameStringResource =
-                                                        R.string.settings_non_anime_subtitle_language,
-                                                    descriptionStringRes =
-                                                        R.string.settings_non_anime_subtitle_language_summary,
-                                                    iconDrawableId = R.drawable.ic_closed_caption,
-                                                    backendPreference =
-                                                        appPreferences.nonAnimeSubtitleLanguage,
-                                                    options = R.array.languages,
-                                                    optionValues = R.array.languages_values,
-                                                    optionsIncludeNull = true,
+                                                        R.string.settings_smart_audio_subtitles_summary,
+                                                    iconDrawableId = R.drawable.ic_languages,
+                                                    summary = smartLanguageSummary(),
+                                                    onClick = { showSmartLanguageDialog() },
                                                 ),
                                             )
                                     ),
@@ -783,6 +712,16 @@ class SettingsViewModel @Inject constructor(
                                                         ),
                                                 )
                                             }
+                                            is PreferenceSmartLanguage -> {
+                                                preference.copy(
+                                                    enabled =
+                                                        preference.enabled &&
+                                                            preference.dependencies.all {
+                                                                appPreferences.getValue(it)
+                                                            },
+                                                    summary = smartLanguageSummary(),
+                                                )
+                                            }
                                             else -> preference
                                         }
                                     }
@@ -799,6 +738,7 @@ class SettingsViewModel @Inject constructor(
             is SettingsAction.OnPreferenceClick -> {
                 when (action.preference) {
                     is PreferenceCategory -> action.preference.onClick(action.preference)
+                    is PreferenceSmartLanguage -> action.preference.onClick(action.preference)
                     else -> Unit
                 }
             }
@@ -844,6 +784,57 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun showCloudApiKeyDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowCloudApiKeyDialog(
+                    appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey)
+                )
+            )
+        }
+    }
+
+    fun saveCloudApiKey(value: String) {
+        appPreferences.setValue(
+            appPreferences.voiceAssistantCloudApiKey,
+            value.trim().takeIf { it.isNotEmpty() },
+        )
+    }
+
+    fun showSmartLanguageDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowSmartLanguageDialog(
+                    appPreferences.getSmartLanguageSettings(context)
+                )
+            )
+        }
+    }
+
+    fun saveSmartLanguageSettings(settings: SmartLanguageSettings) {
+        appPreferences.setSmartLanguageSettings(
+            settings.copy(
+                spokenLanguageCodes =
+                    settings.spokenLanguageCodes
+                        .mapNotNull { LanguageCatalog.normalize(context, it) }
+                        .distinct()
+                        .ifEmpty { listOf(LanguageCatalog.defaultDeviceLanguageCode(context)) },
+            )
+        )
+    }
+
+    private fun smartLanguageSummary(): String {
+        val settings = appPreferences.getSmartLanguageSettings(context)
+        val spokenLanguages = LanguageCatalog.summarize(context, settings.spokenLanguageCodes)
+        val audioMode =
+            if (settings.preferOriginalAudio) {
+                context.getString(R.string.settings_original_audio_enabled)
+            } else {
+                context.getString(R.string.settings_original_audio_disabled)
+            }
+        return "$audioMode. $spokenLanguages."
+    }
+
     private fun voicePreferenceGroups(): List<PreferenceGroup> {
         val handTrackingPermission = "android.permission.HAND_TRACKING"
         val hasMicPermission =
@@ -853,10 +844,19 @@ class SettingsViewModel @Inject constructor(
             ContextCompat.checkSelfPermission(context, handTrackingPermission) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         val speechAvailable = SpeechRecognizer.isRecognitionAvailable(context)
+        val aicoreInstalled = isPackageInstalled("com.google.android.aicore")
+        val cloudApiKeyConfigured =
+            !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
         val telemetry = voiceTelemetryStore.summary()
         val recentEntries =
             telemetry.recentEntries.joinToString("\n") { entry ->
-                "${entry.action} via ${entry.strategy} in ${entry.latencyMs}ms"
+                buildString {
+                    append("${entry.action} via ${entry.strategy} in ${entry.latencyMs}ms")
+                    if (entry.details.isNotBlank()) {
+                        append("\n")
+                        append(entry.details)
+                    }
+                }
             }.ifBlank { "No voice sessions recorded yet." }
 
         return listOf(
@@ -906,6 +906,12 @@ class SettingsViewModel @Inject constructor(
                             backendPreference = appPreferences.voiceAssistantSpokenReplies,
                         ),
                         PreferenceCategory(
+                            nameStringResource = R.string.voice_cloud_api_key,
+                            descriptionStringRes = R.string.voice_cloud_api_key_summary,
+                            iconDrawableId = R.drawable.ic_info,
+                            onClick = { showCloudApiKeyDialog() },
+                        ),
+                        PreferenceCategory(
                             nameStringResource = R.string.voice_permissions,
                             descriptionStringRes = R.string.voice_permissions_summary,
                             iconDrawableId = R.drawable.ic_info,
@@ -936,7 +942,15 @@ class SettingsViewModel @Inject constructor(
                             title = "On-device availability",
                             description =
                                 "Offline speech recognition: ${if (speechAvailable) "Available" else "Unavailable"}\n" +
-                                    "Gemini Nano parsing: Compatible devices only",
+                                    "AICore package: ${if (aicoreInstalled) "Installed" else "Missing on this device"}\n" +
+                                    "Gemini Nano parsing: ${if (aicoreInstalled) "Check voice telemetry after a test run for exact AICore/model status" else "Unavailable until AICore is present on the device"}",
+                            iconDrawableId = R.drawable.ic_microphone,
+                        ),
+                        PreferenceInfo(
+                            title = "Cloud AI fallback",
+                            description =
+                                "API key: ${if (cloudApiKeyConfigured) "Configured" else "Not configured"}\n" +
+                                    "When configured, SpatialFin uses Gemini 3.1 Flash-Lite Preview as a cloud fallback for AI parsing and chat on devices without AICore.",
                             iconDrawableId = R.drawable.ic_microphone,
                         ),
                         PreferenceInfo(
@@ -969,5 +983,22 @@ class SettingsViewModel @Inject constructor(
                     )
             ),
         )
+    }
+
+    private fun isPackageInstalled(packageName: String): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(packageName, 0)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 }

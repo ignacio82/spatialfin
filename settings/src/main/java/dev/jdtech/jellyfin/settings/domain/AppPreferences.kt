@@ -1,8 +1,13 @@
 package dev.jdtech.jellyfin.settings.domain
 
 import android.content.SharedPreferences
+import android.content.Context
+import dev.jdtech.jellyfin.settings.language.LanguageCatalog
+import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
+import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import dev.jdtech.jellyfin.settings.domain.models.Preference
 import javax.inject.Inject
+import org.json.JSONObject
 import timber.log.Timber
 
 class AppPreferences @Inject constructor(val sharedPreferences: SharedPreferences) {
@@ -115,6 +120,10 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantVerbosity = Preference("pref_voice_assistant_verbosity", "balanced")
     val voiceAssistantSpoilerPolicy = Preference("pref_voice_assistant_spoiler_policy", "cautious")
     val voiceAssistantSpokenReplies = Preference("pref_voice_assistant_spoken_replies", true)
+    val voiceAssistantCloudApiKey = Preference<String?>("pref_voice_assistant_cloud_api_key", null)
+    val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
+    val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
+    val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
@@ -164,5 +173,86 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
             else -> throw Exception()
         }
         editor.apply()
+    }
+
+    fun getSmartLanguageSettings(context: Context): SmartLanguageSettings {
+        return SmartLanguageSettings(
+            preferOriginalAudio = getValue(smartPreferOriginalAudio),
+            spokenLanguageCodes = getSmartSpokenLanguageCodes(context),
+        )
+    }
+
+    fun getSmartSpokenLanguageCodes(context: Context): List<String> {
+        val stored =
+            getValue(smartSpokenLanguages)
+                ?.split(",")
+                ?.mapNotNull { LanguageCatalog.normalize(context, it) }
+                ?.distinct()
+                .orEmpty()
+
+        return if (stored.isNotEmpty()) {
+            stored
+        } else {
+            listOf(LanguageCatalog.defaultDeviceLanguageCode(context))
+        }
+    }
+
+    fun setSmartLanguageSettings(settings: SmartLanguageSettings) {
+        setValue(smartPreferOriginalAudio, settings.preferOriginalAudio)
+        setValue(
+            smartSpokenLanguages,
+            settings.spokenLanguageCodes.distinct().joinToString(",").ifBlank { null },
+        )
+    }
+
+    fun getSeriesLanguageOverride(seriesId: String): SeriesLanguageOverride? {
+        val root = getSeriesOverridesJson() ?: return null
+        val entry = root.optJSONObject(seriesId) ?: return null
+        return SeriesLanguageOverride(
+            audioLanguageCode = entry.optString("audio", "").ifBlank { null },
+            subtitleLanguageCode = entry.optString("subtitle", "").ifBlank { null },
+            subtitleTrackSignature = entry.optString("subtitleSignature", "").ifBlank { null },
+            subtitlesEnabled =
+                if (entry.has("subtitlesEnabled")) entry.optBoolean("subtitlesEnabled") else null,
+        )
+    }
+
+    fun setSeriesLanguageOverride(seriesId: String, override: SeriesLanguageOverride?) {
+        val root = getSeriesOverridesJson() ?: JSONObject()
+        if (override == null) {
+            root.remove(seriesId)
+        } else {
+            root.put(
+                seriesId,
+                JSONObject().apply {
+                    if (override.audioLanguageCode != null) {
+                        put("audio", override.audioLanguageCode)
+                    }
+                    if (override.subtitleLanguageCode != null) {
+                        put("subtitle", override.subtitleLanguageCode)
+                    }
+                    if (override.subtitleTrackSignature != null) {
+                        put("subtitleSignature", override.subtitleTrackSignature)
+                    }
+                    if (override.subtitlesEnabled != null) {
+                        put("subtitlesEnabled", override.subtitlesEnabled)
+                    }
+                }
+            )
+        }
+        setValue(
+            seriesLanguageOverrides,
+            root.takeIf { it.length() > 0 }?.toString()
+        )
+    }
+
+    private fun getSeriesOverridesJson(): JSONObject? {
+        return getValue(seriesLanguageOverrides)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { raw ->
+                runCatching { JSONObject(raw) }
+                    .onFailure { Timber.w(it, "Failed to parse series language overrides") }
+                    .getOrNull()
+            }
     }
 }

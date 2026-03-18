@@ -24,19 +24,49 @@ class SearchViewModel @Inject constructor(private val repository: JellyfinReposi
         currentJob?.cancel()
         currentJob =
             viewModelScope.launch {
+                val trimmedQuery = query.trim()
                 try {
-                    if (query.isBlank()) {
-                        _state.emit(SearchState(items = emptyList(), loading = false))
+                    if (trimmedQuery.isBlank()) {
+                        _state.emit(SearchState())
                         return@launch
                     }
 
-                    _state.emit(_state.value.copy(loading = true))
-                    val items = repository.getSearchItems(query)
+                    _state.emit(
+                        SearchState(
+                            query = trimmedQuery,
+                            items = emptyList(),
+                            loading = true,
+                            hasSearched = true,
+                            errorMessage = null,
+                        )
+                    )
+                    val items = repository.getSearchItems(trimmedQuery)
 
-                    _state.emit(SearchState(items = items, loading = false))
+                    Timber.i(
+                        "SEARCH: query=%s results=%d",
+                        trimmedQuery,
+                        items.size,
+                    )
+                    _state.emit(
+                        SearchState(
+                            query = trimmedQuery,
+                            items = items,
+                            loading = false,
+                            hasSearched = true,
+                            errorMessage = null,
+                        )
+                    )
                 } catch (_: CancellationException) {} catch (e: Exception) {
-                    Timber.e(e)
-                    _state.emit(_state.value.copy(loading = false))
+                    Timber.e(e, "SEARCH: query failed: %s", trimmedQuery)
+                    _state.emit(
+                        SearchState(
+                            query = trimmedQuery,
+                            items = emptyList(),
+                            loading = false,
+                            hasSearched = true,
+                            errorMessage = e.message ?: "Search failed",
+                        )
+                    )
                 }
             }
     }

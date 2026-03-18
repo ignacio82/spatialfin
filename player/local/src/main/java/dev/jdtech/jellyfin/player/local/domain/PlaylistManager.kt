@@ -317,6 +317,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                 else -> null
             },
             seriesName = if (this is SpatialFinEpisode) seriesName else null,
+            seriesId = if (this is SpatialFinEpisode) seriesId else null,
         )
     }
 

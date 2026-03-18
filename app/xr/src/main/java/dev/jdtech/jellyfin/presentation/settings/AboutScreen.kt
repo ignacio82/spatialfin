@@ -29,6 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.mikepenz.aboutlibraries.ui.compose.android.produceLibraries
 import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 import dev.spatialfin.BuildConfig
@@ -49,20 +50,6 @@ fun AboutScreen(navigateBack: () -> Unit) {
     val libraries by produceLibraries(R.raw.aboutlibraries)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier.fillMaxWidth()
-                    .padding(
-                        start = safePadding.start + MaterialTheme.spacings.default,
-                        top = safePadding.top + MaterialTheme.spacings.default,
-                        end = safePadding.end + MaterialTheme.spacings.default,
-                    ),
-        ) {
-            XrBrowseHeader(
-                title = stringResource(SettingsR.string.about),
-                onBackClick = navigateBack,
-            )
-        }
         LibrariesContainer(
             libraries = libraries,
             modifier = Modifier.fillMaxSize(),
@@ -108,7 +95,7 @@ fun AboutScreen(navigateBack: () -> Unit) {
                                     onClick = {
                                         try {
                                             uriHandler.openUri(
-                                                "https://github.com/jarnedemeulemeester/findroid"
+                                                "https://github.com/ignacio82/SpatialFin"
                                             )
                                         } catch (e: IllegalArgumentException) {
                                             Toast.makeText(
@@ -129,7 +116,7 @@ fun AboutScreen(navigateBack: () -> Unit) {
                                     onClick = {
                                         try {
                                             uriHandler.openUri(
-                                                "https://ko-fi.com/jarnedemeulemeester"
+                                                "https://spatialfin.martinez.fyi"
                                             )
                                         } catch (e: IllegalArgumentException) {
                                             Toast.makeText(
@@ -153,6 +140,21 @@ fun AboutScreen(navigateBack: () -> Unit) {
                 }
             },
         )
+        Column(
+            modifier =
+                Modifier.fillMaxWidth()
+                    .zIndex(1f)
+                    .padding(
+                        start = safePadding.start + MaterialTheme.spacings.default,
+                        top = safePadding.top + MaterialTheme.spacings.default,
+                        end = safePadding.end + MaterialTheme.spacings.default,
+                    ),
+        ) {
+            XrBrowseHeader(
+                title = stringResource(SettingsR.string.about),
+                onBackClick = navigateBack,
+            )
+        }
     }
 }
 

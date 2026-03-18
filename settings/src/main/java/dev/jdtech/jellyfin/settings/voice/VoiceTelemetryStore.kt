@@ -10,6 +10,7 @@ data class VoiceTelemetryEntry(
     val strategy: String,
     val latencyMs: Long,
     val success: Boolean,
+    val details: String = "",
 )
 
 data class VoiceTelemetrySummary(
@@ -71,18 +72,20 @@ class VoiceTelemetryStore @Inject constructor(@ApplicationContext context: Conte
             sanitize(entry.strategy),
             entry.latencyMs.toString(),
             entry.success.toString(),
+            sanitize(entry.details),
         ).joinToString("|")
     }
 
     private fun decode(raw: String): VoiceTelemetryEntry? {
         val parts = raw.split("|")
-        if (parts.size != 5) return null
+        if (parts.size !in 5..6) return null
         return VoiceTelemetryEntry(
             transcript = parts[0],
             action = parts[1],
             strategy = parts[2],
             latencyMs = parts[3].toLongOrNull() ?: return null,
             success = parts[4].toBooleanStrictOrNull() ?: return null,
+            details = parts.getOrElse(5) { "" },
         )
     }
 

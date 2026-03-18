@@ -229,7 +229,13 @@ class JellyfinRepositoryImpl(
                 .getItems(
                     jellyfinApi.userId!!,
                     searchTerm = query,
-                    includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
+                    includeItemTypes =
+                        listOf(
+                            BaseItemKind.MOVIE,
+                            BaseItemKind.SERIES,
+                            BaseItemKind.EPISODE,
+                            BaseItemKind.BOX_SET,
+                        ),
                     recursive = true,
                 )
                 .content

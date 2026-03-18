@@ -73,5 +73,7 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     // Utils
+    implementation(libs.mlkit.genai.prompt)
+    implementation(libs.okhttp)
     implementation(libs.timber)
 }

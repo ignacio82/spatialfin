@@ -23,6 +23,7 @@
             </a>
             <nav>
                 <a href="#features">Features</a>
+                <a href="smart.html">Smart Playback</a>
                 <a href="#trailer">Trailer</a>
                 <a href="#early-access" class="nav-cta">Join Beta</a>
             </nav>
@@ -46,6 +47,7 @@
                 <div class="hero-highlights" aria-label="Key features">
                     <span>Full Space Mode</span>
                     <span>Voice + AI Search</span>
+                    <span>Smart Language Memory</span>
                     <span>Offline + Local Media</span>
                     <span>SyncPlay Watch Parties</span>
                 </div>
@@ -87,6 +89,11 @@
                 <span class="proof-label">Control</span>
                 <h2>Hands-free and social by default</h2>
                 <p>Voice commands, in-player AI search, and native Jellyfin SyncPlay keep playback comfortable whether you are solo, remote, online, or offline.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Smart Playback</span>
+                <h2>Gets closer to what you actually want</h2>
+                <p>Ordered spoken languages, original-audio preference, smarter subtitle selection, and per-series memory reduce repetitive track fixes.</p>
             </div>
         </section>
 
@@ -134,6 +141,42 @@
                     </article>
                 </div>
 
+                <div class="section-heading" style="margin-top: 72px;">
+                    <p class="eyebrow">Smart Playback</p>
+                    <h2>SpatialFin is starting to remember how you actually watch.</h2>
+                    <p>Smart language preferences and series-level memory now sit alongside XR playback instead of feeling like generic media-player toggles.</p>
+                </div>
+
+                <div class="all-features-grid">
+                    <div class="feature-group">
+                        <h3>Smarter Language Handling</h3>
+                        <ul>
+                            <li><strong>Ordered spoken languages:</strong> Add and prioritize the languages you understand instead of choosing only one.</li>
+                            <li><strong>Original audio preference:</strong> SpatialFin can favor likely-original audio for multilingual content.</li>
+                            <li><strong>Automatic subtitle fallback:</strong> If the selected audio is not one you speak, SpatialFin enables a matching subtitle track when possible.</li>
+                            <li><strong>Searchable XR setup:</strong> Language configuration uses a larger XR-first dialog with search, ordering, and clearer result visibility.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>Series Memory</h3>
+                        <ul>
+                            <li><strong>Audio overrides persist:</strong> If you switch a series from dub to original audio, future episodes can inherit that choice.</li>
+                            <li><strong>Subtitle-track memory:</strong> SpatialFin now stores the exact subtitle variant when you correct a bad subtitle pick.</li>
+                            <li><strong>Manual corrections compound:</strong> The goal is fewer repeated fixes as you move episode to episode.</li>
+                        </ul>
+                    </div>
+                    <div class="feature-group">
+                        <h3>AI Runtime Reality</h3>
+                        <ul>
+                            <li><strong>On-device path included:</strong> SpatialFin supports an AICore / Gemini Nano integration path where the runtime is exposed.</li>
+                            <li><strong>Galaxy XR fallback today:</strong> Current Galaxy XR firmware testing indicates third-party AICore is unavailable, so deterministic voice handling and optional cloud Gemini fallback are the practical path.</li>
+                            <li><strong>Diagnostics built in:</strong> Voice settings surface AICore package status, permissions, and telemetry summaries for debugging.</li>
+                            <li><strong>More detail available:</strong> A dedicated page explains the smart playback model in one place.</li>
+                        </ul>
+                        <a href="smart.html" class="btn btn-secondary" style="margin-top: 16px; display: inline-flex;">Explore Smart Playback</a>
+                    </div>
+                </div>
+
                 <h2 class="section-title">Everything in the stack supports the experience</h2>
                 <div class="all-features-grid">
                     <div class="feature-group">
@@ -154,17 +197,19 @@
                             <li><strong>Version Selection:</strong> Choose between different versions, such as 3D vs. 2D or 4K vs. 1080p.</li>
                             <li><strong>Dynamic Quality:</strong> Control streaming bitrate on the fly from 480 Kbps to 120 Mbps.</li>
                             <li><strong>Global Bitrate Settings:</strong> Set a default maximum streaming bitrate globally.</li>
+                            <li><strong>Smart Audio And Subtitles:</strong> Spoken-language ordering, subtitle fallback, and per-series memory reduce repetitive track management.</li>
                         </ul>
                     </div>
                     <div class="feature-group">
                         <h3>Voice Control &amp; AI</h3>
                         <ul>
-                            <li><strong>Unified Smart Assistant:</strong> Use the hold-to-talk pinch gesture to issue playback commands or ask natural language questions about the movie.</li>
-                            <li><strong>On-Device Metadata Chat:</strong> Powered by Android AICore (Gemini Nano) to answer queries using Jellyfin metadata privately and offline.</li>
+                            <li><strong>Unified Smart Assistant:</strong> Use the hold-to-talk middle-finger pinch gesture to issue playback commands or ask natural language questions about the movie.</li>
+                            <li><strong>AI Metadata Chat:</strong> Uses on-device AICore where available and falls back to cloud Gemini when the user provides an API key.</li>
                             <li><strong>Contextual Subtitle Awareness:</strong> The assistant tracks recent dialogue so you can ask for clarifications on what characters just said.</li>
                             <li><strong>Spatial TTS Feedback:</strong> The AI responds aloud with automatic volume ducking, keeping you immersed without reading text.</li>
                             <li><strong>In-Player AI Search:</strong> Voice search opens as a spatial overlay to search and launch media seamlessly.</li>
-                            <li><strong>Voice Diagnostics:</strong> Dedicated settings showing enablement, permissions, and on-device availability.</li>
+                            <li><strong>Voice Diagnostics:</strong> Dedicated settings showing enablement, permissions, AICore package status, and runtime availability.</li>
+                            <li><strong>Cloud Key Option:</strong> Advanced users can store their own Gemini API key in settings to enable cloud-backed fallback features on devices without AICore.</li>
                         </ul>
                     </div>
                     <div class="feature-group">

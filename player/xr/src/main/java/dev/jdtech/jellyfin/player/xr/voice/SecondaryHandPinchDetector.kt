@@ -30,8 +30,8 @@ class SecondaryHandPinchDetector(
     }
 
     companion object {
-        private const val PINCH_THRESHOLD = 0.022f
-        private const val RELEASE_THRESHOLD = 0.038f
+        private const val PINCH_THRESHOLD = 0.050f // significantly increased from 0.030f
+        private const val RELEASE_THRESHOLD = 0.070f // significantly increased from 0.050f
         private const val POLL_INTERVAL_MS = 30L
         private const val MIN_HOLD_MS = 320L
         private const val MAX_PINCH_DISTANCE_FROM_CENTER = 0.34f
@@ -125,19 +125,16 @@ class SecondaryHandPinchDetector(
                 handState.handJoints[HandJointType.HAND_JOINT_TYPE_MIDDLE_TIP]?.translation ?: continue
             val wrist =
                 handState.handJoints[HandJointType.HAND_JOINT_TYPE_WRIST]?.translation ?: continue
-            val distance = Vector3.distance(thumbTip, indexTip)
+            val distance = Vector3.distance(thumbTip, middleTip)
 
             val pinchCenter =
                 Vector3(
-                    (thumbTip.x + indexTip.x) / 2f,
-                    (thumbTip.y + indexTip.y) / 2f,
-                    (thumbTip.z + indexTip.z) / 2f,
+                    (thumbTip.x + middleTip.x) / 2f,
+                    (thumbTip.y + middleTip.y) / 2f,
+                    (thumbTip.z + middleTip.z) / 2f,
                 )
-            val isCentered = abs(wrist.x) < MAX_PINCH_DISTANCE_FROM_CENTER
-            val isInFront = wrist.z < -MIN_WRIST_FORWARD_DISTANCE
-            val isComfortableHeight = wrist.y in MIN_WRIST_HEIGHT..MAX_WRIST_HEIGHT
-            val isIndexIsolated =
-                Vector3.distance(thumbTip, middleTip) > distance * MIN_INDEX_EXTENSION_RATIO
+            val isCentered = abs(wrist.x) < 0.6f // Relaxed to allow lap resting
+            val isIndexOut = Vector3.distance(thumbTip, indexTip) > 0.015f // Ensure OS doesn't think it's an index pinch
             val isStable =
                 pinchAnchor?.let { anchor ->
                     Vector3.distance(anchor, pinchCenter) <= MAX_PINCH_TRAVEL_METERS
@@ -146,10 +143,15 @@ class SecondaryHandPinchDetector(
             val isDeliberatePinch =
                 distance < PINCH_THRESHOLD &&
                     isCentered &&
-                    isInFront &&
-                    isComfortableHeight &&
-                    isIndexIsolated &&
+                    isIndexOut &&
                     isStable
+
+            if (!isDeliberatePinch && distance < 0.06f) {
+                Timber.d(
+                    "Pinch attempt failed: distance=%.4f (th=%.4f), center=%b, indexOut=%b, stable=%b",
+                    distance, PINCH_THRESHOLD, isCentered, isIndexOut, isStable
+                )
+            }
 
             if (isDeliberatePinch) {
                 invalidFrameCount = 0

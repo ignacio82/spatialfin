@@ -19,17 +19,23 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
+import androidx.xr.compose.spatial.SpatialDialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
+import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
+import dev.jdtech.jellyfin.presentation.settings.components.SettingsTextInputDialog
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -44,6 +50,7 @@ import dev.jdtech.jellyfin.settings.presentation.settings.SettingsState
 import dev.jdtech.jellyfin.settings.presentation.settings.SettingsViewModel
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.jdtech.jellyfin.utils.restart
+import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import timber.log.Timber
 
 @Composable
@@ -59,6 +66,8 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var cloudApiKeyDraft by remember { mutableStateOf<String?>(null) }
+    var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
 
@@ -103,11 +112,47 @@ fun SettingsScreen(
                     Timber.e(e)
                 }
             }
+            is SettingsEvent.ShowCloudApiKeyDialog -> {
+                cloudApiKeyDraft = event.currentValue.orEmpty()
+            }
+            is SettingsEvent.ShowSmartLanguageDialog -> {
+                smartLanguageDraft = event.settings
+            }
             is SettingsEvent.RestartActivity -> {
                 try {
                     (context as Activity).restart()
                 } catch (_: Exception) {}
             }
+        }
+    }
+
+    smartLanguageDraft?.let { currentSettings ->
+        SpatialDialog(onDismissRequest = { smartLanguageDraft = null }) {
+            SmartLanguageSettingsDialog(
+                initialSettings = currentSettings,
+                onUpdate = { settings ->
+                    viewModel.saveSmartLanguageSettings(settings)
+                    smartLanguageDraft = null
+                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                },
+                onDismissRequest = { smartLanguageDraft = null },
+            )
+        }
+    }
+
+    cloudApiKeyDraft?.let { currentValue ->
+        SpatialDialog(onDismissRequest = { cloudApiKeyDraft = null }) {
+            SettingsTextInputDialog(
+                title = stringResource(SettingsR.string.voice_cloud_api_key),
+                description = stringResource(SettingsR.string.voice_cloud_api_key_summary),
+                initialValue = currentValue,
+                onUpdate = { value ->
+                    viewModel.saveCloudApiKey(value)
+                    cloudApiKeyDraft = null
+                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                },
+                onDismissRequest = { cloudApiKeyDraft = null },
+            )
         }
     }
 

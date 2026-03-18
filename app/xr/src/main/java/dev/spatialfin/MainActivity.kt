@@ -65,6 +65,8 @@ import timber.log.Timber
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableFloatStateOf
+import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
@@ -137,13 +139,24 @@ class MainActivity : AppCompatActivity() {
                         if (session != null) {
                             // --- Voice and Gesture state ---
                             val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
-                            val commandCoordinator = remember(context) { SpatialCommandCoordinator(context.applicationContext) }
+                            val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
+                            val geminiCloudService = remember(context) {
+                                GeminiCloudService(context.applicationContext, appPreferences)
+                            }
+                            val commandCoordinator = remember(context) {
+                                SpatialCommandCoordinator(
+                                    context.applicationContext,
+                                    geminiNanoService,
+                                    geminiCloudService,
+                                )
+                            }
                             val voiceState by voiceService.state.collectAsState()
                             val partialTranscript by voiceService.partialTranscript.collectAsState()
                             var voiceFeedback by remember { mutableStateOf<String?>(null) }
                             var voiceGestureHint by remember { mutableStateOf<String?>(null) }
                             var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
                             var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
+                            val voiceControlEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
                             val voiceGestureHand = appPreferences.getValue(appPreferences.voiceGestureHand) ?: "left"
 
                             val pinchDetector = remember(session, voiceGestureHand) {
@@ -297,11 +310,16 @@ class MainActivity : AppCompatActivity() {
                                         val m = MovableComponent.createSystemMovable(session, false)
                                         root.addComponent(m)
                                         movableComponent.value = m
+                                        Timber.d("VOICE: Home movable enabled controlsVisible=%b", controlsVisible)
                                     }
                                 } else {
                                     movableComponent.value?.let {
                                         root.removeComponent(it)
                                         movableComponent.value = null
+                                        Timber.d(
+                                            "VOICE: Home movable disabled controlsVisible=%b",
+                                            controlsVisible,
+                                        )
                                     }
                                 }
                             }
