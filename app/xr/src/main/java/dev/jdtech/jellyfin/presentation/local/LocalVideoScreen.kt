@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
+import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.spatialfin.presentation.theme.spacings
 
@@ -48,11 +49,24 @@ fun LocalVideoScreen(
         state = state,
         onBack = navigateBack,
         onPlay = { startFromBeginning ->
+            val item = state.item
+            val stereoMode = if (item != null) {
+                StereoModeDetector.detect(item.name, null, listOf(item.fileName))
+            } else {
+                StereoModeDetector.StereoMode.MONO
+            }
+            val stereoModeStr = when (stereoMode) {
+                StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                else -> "mono"
+            }
             context.startActivity(
                 XrPlayerActivity.createIntentForLocalMedia(
                     context = context,
                     mediaStoreId = mediaStoreId,
                     startFromBeginning = startFromBeginning,
+                    stereoMode = stereoModeStr,
                 )
             )
         },

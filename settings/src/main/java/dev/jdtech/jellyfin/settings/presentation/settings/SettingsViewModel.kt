@@ -46,6 +46,8 @@ class SettingsViewModel @Inject constructor(
     ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
     val state = _state.asStateFlow()
+    private var currentIndexes: IntArray = intArrayOf()
+    private var currentDeviceType: DeviceType = DeviceType.XR
 
     private val eventsChannel = Channel<SettingsEvent>()
     val events = eventsChannel.receiveAsFlow()
@@ -289,7 +291,7 @@ class SettingsViewModel @Inject constructor(
                                                             )
                                                         }
                                                     },
-                                                    nestedPreferenceGroups = voicePreferenceGroups(),
+                                                    nestedPreferenceGroups = emptyList(),
                                                 ),
                                             )
                                     ),
@@ -618,14 +620,24 @@ class SettingsViewModel @Inject constructor(
         )
 
     fun loadPreferences(indexes: IntArray = intArrayOf(), deviceType: DeviceType) {
+        currentIndexes = indexes
+        currentDeviceType = deviceType
+        refreshLoadedPreferences()
+    }
+
+    private fun refreshLoadedPreferences() {
         viewModelScope.launch {
             var preferences = topLevelPreferences
 
             // Show preferences based on the name of the parent
-            for (index in indexes) {
+            for (index in currentIndexes) {
                 // If index is root (Settings) don't search for category
                 if (index == R.string.title_settings) {
                     break
+                }
+                if (index == R.string.voice_controls) {
+                    preferences = voicePreferenceGroups()
+                    continue
                 }
                 val preference =
                     preferences
@@ -644,7 +656,7 @@ class SettingsViewModel @Inject constructor(
                         preferenceGroup.copy(
                             preferences =
                                 preferenceGroup.preferences
-                                    .filter { it.supportedDeviceTypes.contains(deviceType) }
+                                    .filter { it.supportedDeviceTypes.contains(currentDeviceType) }
                                     .map { preference ->
                                         when (preference) {
                                             is PreferenceSwitch -> {
@@ -779,6 +791,7 @@ class SettingsViewModel @Inject constructor(
                             action.preference.value,
                         )
                 }
+                refreshLoadedPreferences()
             }
             else -> Unit
         }
@@ -799,6 +812,7 @@ class SettingsViewModel @Inject constructor(
             appPreferences.voiceAssistantCloudApiKey,
             value.trim().takeIf { it.isNotEmpty() },
         )
+        refreshLoadedPreferences()
     }
 
     fun showSmartLanguageDialog() {
@@ -821,6 +835,7 @@ class SettingsViewModel @Inject constructor(
                         .ifEmpty { listOf(LanguageCatalog.defaultDeviceLanguageCode(context)) },
             )
         )
+        refreshLoadedPreferences()
     }
 
     private fun smartLanguageSummary(): String {
@@ -904,6 +919,16 @@ class SettingsViewModel @Inject constructor(
                             descriptionStringRes = R.string.voice_assistant_spoken_replies_summary,
                             iconDrawableId = R.drawable.ic_microphone,
                             backendPreference = appPreferences.voiceAssistantSpokenReplies,
+                        ),
+                        PreferenceSelect(
+                            nameStringResource = R.string.voice_assistant_voice,
+                            descriptionStringRes = R.string.voice_assistant_voice_summary,
+                            iconDrawableId = R.drawable.ic_microphone,
+                            backendPreference = appPreferences.voiceAssistantVoice,
+                            options = R.array.voice_assistant_voice_options,
+                            optionValues = R.array.voice_assistant_voice_values,
+                            value = appPreferences.getValue(appPreferences.voiceAssistantVoice),
+                            dependencies = listOf(appPreferences.voiceControlEnabled),
                         ),
                         PreferenceCategory(
                             nameStringResource = R.string.voice_cloud_api_key,

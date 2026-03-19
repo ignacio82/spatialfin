@@ -10,6 +10,9 @@ import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import timber.log.Timber
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.math.min
 
@@ -25,6 +28,8 @@ class PlayerSessionController(
     private val onLaunchSearchResult: (SpatialFinItem) -> Unit,
     private val onSearchQuery: suspend (String) -> List<SpatialFinItem>,
     private val getAvailableSyncPlayGroups: () -> List<SyncPlayGroup>,
+    private val setPassthroughEnabled: (Boolean) -> Unit,
+    private val getPassthroughEnabled: () -> Boolean,
 ) {
     private var pendingSelection: PendingSelection? = null
 
@@ -61,22 +66,16 @@ class PlayerSessionController(
                 "Seeked to ${action.positionSeconds}s"
             }
             is XrPlayerAction.SkipIntro -> {
-                val segment = viewModel.uiState.value.currentSegment
-                if (segment != null) {
-                    viewModel.skipSegment(segment)
-                    "Skipping intro"
-                } else {
-                    "No skippable intro right now"
-                }
+                skipCurrentSegment(
+                    defaultSegmentName = "intro",
+                    preferredSegmentNames = arrayOf("intro", "recap", "previously on", "preview"),
+                )
             }
             is XrPlayerAction.SkipOutro -> {
-                val segment = viewModel.uiState.value.currentSegment
-                if (segment != null) {
-                    viewModel.skipSegment(segment)
-                    "Skipping outro"
-                } else {
-                    "No skippable outro right now"
-                }
+                skipCurrentSegment(
+                    defaultSegmentName = "outro",
+                    preferredSegmentNames = arrayOf("outro", "credits", "ending"),
+                )
             }
             is XrPlayerAction.NextEpisode -> {
                 viewModel.skipToNextItem()
@@ -168,6 +167,22 @@ class PlayerSessionController(
             is XrPlayerAction.HideControls -> {
                 onControlsVisibilityChange(false)
                 "Controls hidden"
+            }
+            is XrPlayerAction.ReportCurrentTime -> currentTimeFeedback()
+            is XrPlayerAction.ReportRemainingTime -> remainingTimeFeedback()
+            is XrPlayerAction.ReportEndTime -> endTimeFeedback()
+            is XrPlayerAction.ReportCurrentMedia -> currentMediaFeedback()
+            is XrPlayerAction.ReportPassthroughStatus -> {
+                if (getPassthroughEnabled()) "Passthrough is on" else "Passthrough is off"
+            }
+            is XrPlayerAction.SetPassthrough -> {
+                setPassthroughEnabled(action.enabled)
+                if (action.enabled) "Passthrough on" else "Passthrough off"
+            }
+            is XrPlayerAction.TogglePassthrough -> {
+                val enabled = !getPassthroughEnabled()
+                setPassthroughEnabled(enabled)
+                if (enabled) "Passthrough on" else "Passthrough off"
             }
             is XrPlayerAction.ChatQuery -> {
                 "Thinking..." // Handled upstream, should not reach here
@@ -279,6 +294,83 @@ class PlayerSessionController(
                 "Joining ${group.name}"
             }
         }
+    }
+
+    private fun currentTimeFeedback(): String {
+        val now =
+            DateTimeFormatter.ofPattern("h:mm a")
+                .withZone(ZoneId.systemDefault())
+                .format(Instant.now())
+                .lowercase()
+        return "It's $now"
+    }
+
+    private fun remainingTimeFeedback(): String {
+        val durationMs = player.duration.takeIf { it > 0L } ?: return "I can't tell how much time is left yet"
+        val remainingSeconds = ((durationMs - player.currentPosition).coerceAtLeast(0L) / 1_000L)
+        return when {
+            remainingSeconds < 5L -> "There's only a few seconds left"
+            else -> "${formatDuration(remainingSeconds)} left"
+        }
+    }
+
+    private fun endTimeFeedback(): String {
+        val durationMs = player.duration.takeIf { it > 0L } ?: return "I can't tell when this ends yet"
+        val remainingMs = (durationMs - player.currentPosition).coerceAtLeast(0L)
+        val endTime =
+            DateTimeFormatter.ofPattern("h:mm a")
+                .withZone(ZoneId.systemDefault())
+                .format(Instant.now().plusMillis(remainingMs))
+                .lowercase()
+        return "This should end around $endTime"
+    }
+
+    private fun currentMediaFeedback(): String {
+        val state = viewModel.uiState.value
+        val seasonEpisode =
+            if (state.currentSeasonNumber != null && state.currentEpisodeNumber != null) {
+                "Season ${state.currentSeasonNumber}, episode ${state.currentEpisodeNumber}"
+            } else {
+                null
+            }
+        val title = state.currentItemTitle.ifBlank { "this title" }
+        val series = state.currentSeriesName?.takeIf { it.isNotBlank() }
+        val pieces = listOfNotNull(series, seasonEpisode, title)
+        return when {
+            pieces.isNotEmpty() -> "You're watching ${pieces.joinToString(", ")}"
+            else -> "You're watching $title"
+        }
+    }
+
+    private fun skipCurrentSegment(
+        defaultSegmentName: String,
+        preferredSegmentNames: Array<String>,
+    ): String {
+        val segment =
+            viewModel.skipActiveSegmentForVoice(*preferredSegmentNames)
+                ?: return "No skippable $defaultSegmentName right now"
+        val segmentName =
+            when (segment.type.toString().lowercase()) {
+                "recap", "previously_on", "previouslyon" -> "recap"
+                "intro", "preview" -> "intro"
+                "outro" -> "outro"
+                "credits" -> "credits"
+                else -> segment.type.toString().lowercase().replace('_', ' ')
+            }
+        return "Skipping $segmentName"
+    }
+
+    private fun formatDuration(totalSeconds: Long): String {
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return buildList {
+            if (hours > 0) add("$hours hour${if (hours == 1L) "" else "s"}")
+            if (minutes > 0) add("$minutes minute${if (minutes == 1L) "" else "s"}")
+            if (hours == 0L && minutes == 0L && seconds > 0) {
+                add("$seconds second${if (seconds == 1L) "" else "s"}")
+            }
+        }.joinToString(" and ")
     }
 
     private fun updateQuality(maxBitrate: Long): String {

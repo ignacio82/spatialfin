@@ -38,6 +38,7 @@ fun SpatialFinMovie.versionChipLabel(): String {
         when (stereoMode) {
             MovieStereoMode.SIDE_BY_SIDE -> "3D SBS"
             MovieStereoMode.TOP_BOTTOM -> "3D T/B"
+            MovieStereoMode.MULTIVIEW -> "Spatial"
             else -> "2D"
         }
     val qualityLabel = sources.firstNotNullOfOrNull { source -> source.qualityTag() }
@@ -69,6 +70,7 @@ private fun SpatialFinMovie.versionSortRank(): Int {
         MovieStereoMode.MONO -> 0
         MovieStereoMode.SIDE_BY_SIDE -> 1
         MovieStereoMode.TOP_BOTTOM -> 2
+        MovieStereoMode.MULTIVIEW -> 3
     }
 }
 
@@ -84,7 +86,7 @@ private fun SpatialFinItem.canonicalMovieTitle(): String? {
         .replace(Regex("""\([^)]*\)"""), " ")
         .replace(Regex("""\[[^]]*]"""), " ")
         .replace(Regex("""\{[^}]*\}"""), " ")
-        .replace(Regex("""\b(3d|sbs|hsbs|fsbs|tab|tb|top.?bottom|ou|over.?under|half.?sbs|full.?sbs|4k|uhd|2160p|1080p|720p|bluray|blu.?ray|remux|hevc|x264|x265|av1|hdr10|hdr|dv|dovi|dolby.?vision)\b"""), " ")
+        .replace(Regex("""\b(3d|sbs|hsbs|fsbs|tab|tb|top.?bottom|ou|over.?under|half.?sbs|full.?sbs|mv-hevc|mvhevc|spatial|spatial.video|4k|uhd|2160p|1080p|720p|bluray|blu.?ray|remux|hevc|x264|x265|av1|hdr10|hdr|dv|dovi|dolby.?vision)\b"""), " ")
         .replace(Regex("""\b(3d|sbs|hsbs|fsbs|tab|tb|top.?bottom|half.?sbs|full.?sbs)\b"""), " ")
         .replace(Regex("""\.(mkv|mp4|avi|mov|m4v)$"""), " ")
         .replace(Regex("""[^a-z0-9]+"""), " ")
@@ -132,6 +134,7 @@ private enum class MovieStereoMode {
     MONO,
     SIDE_BY_SIDE,
     TOP_BOTTOM,
+    MULTIVIEW,
 }
 
 private fun detectMovieStereoMode(
@@ -146,6 +149,7 @@ private fun detectMovieStereoMode(
     }.joinToString(" ").lowercase(Locale.US)
 
     return when {
+        MULTIVIEW_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.MULTIVIEW
         TOP_BOTTOM_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.TOP_BOTTOM
         SIDE_BY_SIDE_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.SIDE_BY_SIDE
         GENERIC_3D_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.SIDE_BY_SIDE
@@ -153,6 +157,8 @@ private fun detectMovieStereoMode(
     }
 }
 
+private val MULTIVIEW_REGEX =
+    Regex("""\b(mv-hevc|mvhevc|spatial|spatial[\s.-]?video|mvc)\b""")
 private val SIDE_BY_SIDE_REGEX =
     Regex("""\b(hsbs|half[\s.-]?sbs|fsbs|full[\s.-]?sbs|sbs|side[\s.-]?by[\s.-]?side|3d[\s.-]?h?sbs)\b""")
 private val TOP_BOTTOM_REGEX =

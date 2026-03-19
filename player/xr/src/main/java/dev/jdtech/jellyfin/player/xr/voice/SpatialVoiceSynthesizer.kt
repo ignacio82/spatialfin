@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr.voice
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,14 +50,20 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    fun speak(text: String, languageHint: String? = null) {
+    fun speak(
+        text: String,
+        languageHint: String? = null,
+        voicePreference: String = "male",
+    ) {
         if (!isInitialized) return
         resolveLocale(languageHint)?.let { locale ->
-            tts?.setLanguage(locale)
+            applyVoiceSelection(locale, voicePreference)
         }
         val utteranceId = "spatialfin_chat_${System.currentTimeMillis()}"
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
+
+    fun canSpeak(): Boolean = isInitialized && tts != null
 
     fun stop() {
         if (!isInitialized) return
@@ -68,6 +75,35 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         tts = null
+    }
+
+    private fun applyVoiceSelection(locale: Locale, voicePreference: String) {
+        val engine = tts ?: return
+        val languageResult = engine.setLanguage(locale)
+        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            Timber.w("TTS: Requested locale %s is not supported", locale)
+            return
+        }
+
+        if (voicePreference == "system") return
+
+        val preferredVoice =
+            engine.voices
+                ?.asSequence()
+                ?.filter { voiceMatchesLocale(it, locale) }
+                ?.sortedWith(
+                    compareBy<Voice>(
+                        { if (voiceMatchesPreference(it, voicePreference)) 0 else 1 },
+                        { if (it.isNetworkConnectionRequired) 1 else 0 },
+                        { it.latency },
+                        { -it.quality },
+                    )
+                )
+                ?.firstOrNull()
+
+        if (preferredVoice != null && voiceMatchesPreference(preferredVoice, voicePreference)) {
+            engine.voice = preferredVoice
+        }
     }
 
     private fun resolveLocale(languageHint: String?): Locale? {
@@ -102,5 +138,26 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
                 "ru" to Locale("ru"),
             )
         return keywordMap.entries.firstOrNull { normalized.contains(it.key) }?.value ?: Locale.getDefault()
+    }
+
+    private fun voiceMatchesLocale(voice: Voice, locale: Locale): Boolean {
+        val voiceLocale = voice.locale ?: return false
+        return voiceLocale.language.equals(locale.language, ignoreCase = true)
+    }
+
+    private fun voiceMatchesPreference(voice: Voice, voicePreference: String): Boolean {
+        val haystack =
+            buildString {
+                append(voice.name.lowercase())
+                append(' ')
+                append(voice.features.joinToString(" ").lowercase())
+            }
+        val maleMarkers = listOf("male", "man", "boy", "masculine")
+        val femaleMarkers = listOf("female", "woman", "girl", "feminine")
+        return when (voicePreference) {
+            "male" -> maleMarkers.any(haystack::contains) && femaleMarkers.none(haystack::contains)
+            "female" -> femaleMarkers.any(haystack::contains) && maleMarkers.none(haystack::contains)
+            else -> true
+        }
     }
 }

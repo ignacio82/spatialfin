@@ -133,7 +133,7 @@ class XrPlayerActivity : AppCompatActivity() {
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
         currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
-        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
+        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
 
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)

@@ -64,6 +64,8 @@ import dev.jdtech.jellyfin.presentation.setup.servers.ServersScreen
 import dev.jdtech.jellyfin.presentation.setup.users.UsersScreen
 import dev.jdtech.jellyfin.presentation.setup.welcome.WelcomeScreen
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
+import dev.jdtech.jellyfin.settings.R as SettingsR
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import kotlinx.serialization.Serializable
 
@@ -148,12 +150,15 @@ fun NavigationRoot(
     hasServers: Boolean,
     hasCurrentServer: Boolean,
     hasCurrentUser: Boolean,
+    onboardingCompleted: Boolean,
+    appPreferences: AppPreferences,
     initialSearchQuery: String? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
     val startDestination =
         when {
+            !onboardingCompleted -> WelcomeRoute
             hasServers && hasCurrentServer && hasCurrentUser -> HomeRoute
             hasServers && hasCurrentServer -> UsersRoute
             hasServers -> ServersRoute
@@ -236,7 +241,21 @@ fun NavigationRoot(
             exitTransition = { fadeOut(tween(300)) },
         ) {
             composable<WelcomeRoute> {
-                WelcomeScreen(onContinueClick = { navController.safeNavigate(ServersRoute) })
+                WelcomeScreen(
+                    appPreferences = appPreferences,
+                    onContinueToServerSetup = {
+                        navController.safeNavigate(ServersRoute) {
+                            popUpTo(WelcomeRoute) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onContinueToLocalLibrary = {
+                        navController.safeNavigate(LocalRoute) {
+                            popUpTo(WelcomeRoute) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                )
             }
             composable<ServersRoute> {
                 ServersScreen(
@@ -300,6 +319,7 @@ fun NavigationRoot(
             }
             composable<HomeRoute> {
                 HomeScreen(
+                    appPreferences = appPreferences,
                     onLibraryClick = {
                         navController.safeNavigate(
                             LibraryRoute(
@@ -323,6 +343,27 @@ fun NavigationRoot(
                         )
                     },
                     onManageServers = { navController.safeNavigate(ServersRoute) },
+                    onLanguageSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(
+                                indexes =
+                                    intArrayOf(
+                                        SettingsR.string.settings_category_language,
+                                    )
+                            )
+                        )
+                    },
+                    onVoiceSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(
+                                indexes =
+                                    intArrayOf(
+                                        SettingsR.string.settings_category_player,
+                                        SettingsR.string.voice_controls,
+                                    )
+                            )
+                        )
+                    },
                     onItemClick = { item ->
                         navigateToItem(navController = navController, item = item)
                     },
@@ -342,6 +383,7 @@ fun NavigationRoot(
             }
             composable<LocalRoute> {
                 LocalMediaScreen(
+                    appPreferences = appPreferences,
                     hasServers = hasServers,
                     onItemClick = { item ->
                         navController.safeNavigate(LocalVideoRoute(item.mediaStoreId))
@@ -350,6 +392,27 @@ fun NavigationRoot(
                     onSettingsClick = {
                         navController.safeNavigate(
                             SettingsRoute(indexes = intArrayOf(CoreR.string.title_settings))
+                        )
+                    },
+                    onLanguageSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(
+                                indexes =
+                                    intArrayOf(
+                                        SettingsR.string.settings_category_language,
+                                    )
+                            )
+                        )
+                    },
+                    onVoiceSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(
+                                indexes =
+                                    intArrayOf(
+                                        SettingsR.string.settings_category_player,
+                                        SettingsR.string.voice_controls,
+                                    )
+                            )
                         )
                     },
                 )

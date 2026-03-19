@@ -3,6 +3,8 @@
     <string name="app_description">Third-party native Jellyfin app</string>
     <string name="jellyfin_banner">Jellyfin banner</string>
     <string name="remove">Remove</string>
+    <string name="paste">Paste</string>
+    <string name="clear">Clear</string>
     <string name="cancel">Cancel</string>
     <string name="title_home">Home</string>
     <string name="title_media">My media</string>
@@ -110,6 +112,15 @@
     <string name="local_permission_action">Grant access</string>
     <string name="local_empty_title">No local videos found</string>
     <string name="local_empty_body">Add video files to this XR device and they will appear here, even when you are offline.</string>
+    <string name="finish_setup_connect_server_title">Connect your Jellyfin server</string>
+    <string name="finish_setup_connect_server_body">You can keep using local files only, but connecting a Jellyfin server unlocks your full library, users, watch history, and server sync.</string>
+    <string name="finish_setup_connect_server_action">Add server</string>
+    <string name="finish_setup_languages_title">Review language defaults</string>
+    <string name="finish_setup_languages_body">SpatialFin is still using the default spoken-language setup. Pick your languages once so audio and subtitle selection works better everywhere.</string>
+    <string name="finish_setup_languages_action">Choose languages</string>
+    <string name="finish_setup_ai_title">Set up AI fallback</string>
+    <string name="finish_setup_ai_body">Local AI does not appear to be available on this device and no cloud API key is configured yet.</string>
+    <string name="finish_setup_ai_action">Open AI settings</string>
     <string name="local_video_missing">This local video is no longer available.</string>
     <string name="local_restart">Restart</string>
     <string name="download_pending">Pending…</string>

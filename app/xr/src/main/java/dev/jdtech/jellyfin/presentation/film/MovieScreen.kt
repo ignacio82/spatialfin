@@ -130,6 +130,7 @@ fun MovieScreen(
                         val stereoModeStr = when (stereoMode) {
                             StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
                             StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                            StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                             else -> "mono"
                         }
                         intent.putExtra("stereoMode", stereoModeStr)
@@ -289,6 +290,7 @@ private fun MovieScreenLayout(
                                     when (stereoMode) {
                                         StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
                                         StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                                        StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                                         else -> "mono"
                                     },
                                 openSyncPlayDialogOnStart = true,

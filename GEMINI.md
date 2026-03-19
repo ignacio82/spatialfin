@@ -123,6 +123,20 @@ To ensure low-latency movement of complex UIs (e.g., a video player with control
 - **HSM (Home Space Mode):** Used only as a fallback when spatial capabilities are unavailable.
 - **Logic:** Check `SpatialCapability.SPATIAL_3D_CONTENT` within the XR session before triggering FSM-only features.
 
+## Release & Compliance Mandates
+
+### Versioning
+- **Semantic Versioning:** Follow `major.minor.patch` for `APP_NAME`.
+- **Play Store Requirements:** ALWAYS increment `APP_CODE` (integer) and `APP_NAME` in `buildSrc/src/main/kotlin/Versions.kt` before building a production bundle. The Play Store will reject bundles with duplicate version codes.
+
+### Minification & R8 (CRITICAL)
+- **XR Extensions ProGuard:** Android XR sidecar extensions (under `com.android.extensions.xr`) are provided by the system. R8 minification MUST be configured to `-keep` these classes and interfaces. Failure to do so results in `java.lang.AbstractMethodError` at runtime when the app attempts to invoke system-provided shim methods (e.g., `Consumer.accept`).
+- **Rule Verification:** Ensure `app/xr/proguard-rules.pro` contains:
+  ```proguard
+  -keep class com.android.extensions.xr.** { *; }
+  -keep interface com.android.extensions.xr.** { *; }
+  ```
+
 ## Component Cheat Sheet
 | Component | Description |
 | :--- | :--- |

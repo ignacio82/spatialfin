@@ -62,6 +62,20 @@ sealed interface XrPlayerAction {
 
     data object HideControls : XrPlayerAction
 
+    data object ReportCurrentTime : XrPlayerAction
+
+    data object ReportRemainingTime : XrPlayerAction
+
+    data object ReportEndTime : XrPlayerAction
+
+    data object ReportCurrentMedia : XrPlayerAction
+
+    data object ReportPassthroughStatus : XrPlayerAction
+
+    data class SetPassthrough(val enabled: Boolean) : XrPlayerAction
+
+    data object TogglePassthrough : XrPlayerAction
+
     data class ChatQuery(val query: String) : XrPlayerAction
 
     data class Unrecognized(val transcript: String) : XrPlayerAction

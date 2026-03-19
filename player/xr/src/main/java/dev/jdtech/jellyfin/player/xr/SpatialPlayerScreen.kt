@@ -202,6 +202,7 @@ fun SpatialPlayerScreen(
     val assistantVerbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity)
     val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
     val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
+    val assistantVoicePreference = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVoice) ?: "male"
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
     val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences) }
@@ -293,10 +294,15 @@ fun SpatialPlayerScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var passthroughOverrideEnabled by remember { mutableStateOf<Boolean?>(null) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
     var videoWidth by remember { mutableFloatStateOf(10.0f) }
     var videoHeight by remember { mutableFloatStateOf(5.625f) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
+    var resumePlaybackAfterAssistantSpeech by remember { mutableStateOf(false) }
+    var assistantSpeechPendingStart by remember { mutableStateOf(false) }
+    var assistantSpeechStarted by remember { mutableStateOf(false) }
 
     var showPausedMascot by remember { mutableStateOf(false) }
     val isActuallyPaused = playbackState == Player.STATE_READY && !isPlaying
@@ -390,8 +396,21 @@ fun SpatialPlayerScreen(
                 },
                 onSearchQuery = onSearchQuery,
                 getAvailableSyncPlayGroups = { latestSyncPlayGroups.value },
+                setPassthroughEnabled = { enabled -> passthroughOverrideEnabled = enabled },
+                getPassthroughEnabled = { passthroughEnabled },
             )
         }
+
+    fun speakAssistantReply(text: String, languageHint: String?) {
+        if (!assistantSpokenReplies || !tts.canSpeak()) return
+        resumePlaybackAfterAssistantSpeech = player.isPlaying
+        assistantSpeechPendingStart = true
+        assistantSpeechStarted = false
+        if (resumePlaybackAfterAssistantSpeech) {
+            player.pause()
+        }
+        tts.speak(text, languageHint, assistantVoicePreference)
+    }
 
     fun requestVoiceCommand() {
         if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
@@ -418,7 +437,6 @@ fun SpatialPlayerScreen(
             voiceService = voiceService,
             commandCoordinator = commandCoordinator,
             chatEngine = chatEngine,
-            tts = tts,
             recentSubtitles = recentSubtitles.map { it.second },
             player = player,
             viewModel = viewModel,
@@ -432,12 +450,14 @@ fun SpatialPlayerScreen(
                 spoilerPolicy = assistantSpoilerPolicy,
                 spokenRepliesEnabled = assistantSpokenReplies,
             ),
+            passthroughEnabled = passthroughEnabled,
             responseLanguageHint =
                 selectedTrackLanguage(player, C.TRACK_TYPE_TEXT)
                     ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO)
                     ?: selectedTrackName(player, C.TRACK_TYPE_TEXT)
                     ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO),
             onResult = { voiceFeedback = it },
+            onSpokenReply = { text, languageHint -> speakAssistantReply(text, languageHint) },
             scope = coroutineScope,
         )
     }
@@ -457,15 +477,13 @@ fun SpatialPlayerScreen(
         }
     }
 
-    // Immersive environment: blackout during playback, passthrough when paused
-    LaunchedEffect(isPlaying) {
+    // Immersive environment: blackout during playback unless passthrough is forced on.
+    LaunchedEffect(passthroughEnabled) {
         val environment = session.scene.spatialEnvironment
         try {
-            environment.preferredSpatialEnvironment = if (isPlaying) {
-                SpatialEnvironment.SpatialEnvironmentPreference(skybox = null, geometry = null)
-            } else {
-                null
-            }
+            environment.preferredSpatialEnvironment =
+                if (passthroughEnabled) null
+                else SpatialEnvironment.SpatialEnvironmentPreference(skybox = null, geometry = null)
         } catch (_: Exception) {}
     }
 
@@ -557,6 +575,29 @@ fun SpatialPlayerScreen(
         }
     }
 
+    LaunchedEffect(isTtsSpeaking, assistantSpeechPendingStart, assistantSpeechStarted) {
+        if (assistantSpeechPendingStart && isTtsSpeaking) {
+            assistantSpeechPendingStart = false
+            assistantSpeechStarted = true
+        } else if (assistantSpeechPendingStart && !isTtsSpeaking) {
+            delay(1_500L)
+            if (assistantSpeechPendingStart && !isTtsSpeaking) {
+                assistantSpeechPendingStart = false
+                if (resumePlaybackAfterAssistantSpeech) {
+                    player.play()
+                }
+                resumePlaybackAfterAssistantSpeech = false
+                assistantSpeechStarted = false
+            }
+        } else if (!isTtsSpeaking && assistantSpeechStarted) {
+            if (resumePlaybackAfterAssistantSpeech) {
+                player.play()
+            }
+            resumePlaybackAfterAssistantSpeech = false
+            assistantSpeechStarted = false
+        }
+    }
+
     // Subtitle cue listener
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -589,7 +630,7 @@ fun SpatialPlayerScreen(
 
     // Initialize libass when track info becomes available
     LaunchedEffect(viewModel.player.currentTracks, currentStereoMode) {
-        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom"
+        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
         useLibass = !stereoPlayback &&
             libassRenderer != null &&
             LibassSubtitleHelper.shouldUseLibass(viewModel.player, emptyList(), libassUsagePref)
@@ -662,7 +703,14 @@ fun SpatialPlayerScreen(
             }
         } else {
             movableComponent.value?.let {
+                val latestPose = safeGetEntityPose(root)
+                latestPose?.let { pose ->
+                    savePlayerRootPose(viewModel, pose)
+                }
                 root.removeComponent(it)
+                latestPose?.let { pose ->
+                    runCatching { root.setPose(pose) }
+                }
                 movableComponent.value = null
                 Timber.d(
                     "VOICE: Player movable disabled controlsVisible=%b",
@@ -1470,7 +1518,6 @@ private fun startVoiceCapture(
     voiceService: SpatialVoiceService,
     commandCoordinator: SpatialCommandCoordinator,
     chatEngine: SmartChatEngine,
-    tts: SpatialVoiceSynthesizer,
     recentSubtitles: List<String>,
     player: Player,
     viewModel: PlayerViewModel,
@@ -1480,8 +1527,10 @@ private fun startVoiceCapture(
     telemetryStore: VoiceTelemetryStore,
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
     assistantPreferences: AssistantPreferences,
+    passthroughEnabled: Boolean,
     responseLanguageHint: String?,
     onResult: (String) -> Unit,
+    onSpokenReply: (String, String?) -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
     val startedAtMs = System.currentTimeMillis()
@@ -1511,6 +1560,7 @@ private fun startVoiceCapture(
                         currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
                         currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
                         currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
+                        passthroughEnabled = passthroughEnabled,
                     )
                 val parseResult = commandCoordinator.parse(transcript, snapshot)
                 val action = parseResult.action
@@ -1524,11 +1574,11 @@ private fun startVoiceCapture(
                             recentSubtitles = recentSubtitles.joinToString(" "),
                             assistantPreferences = assistantPreferences,
                             onSearchQuery = onSearchQuery,
-                        )
+                    )
                     if (response.text != null) {
                         onResult(response.text)
                         if (assistantPreferences.spokenRepliesEnabled) {
-                            tts.speak(response.text, responseLanguageHint)
+                            onSpokenReply(response.text, responseLanguageHint)
                         }
                     } else {
                         onResult("Sorry, I couldn't process that.")
@@ -1546,6 +1596,9 @@ private fun startVoiceCapture(
                 } else {
                     val feedback = dispatchVoiceParseResult(controller, parseResult)
                     onResult(feedback)
+                    if (assistantPreferences.spokenRepliesEnabled && shouldSpeakVoiceFeedback(action)) {
+                        onSpokenReply(feedback, responseLanguageHint)
+                    }
                     telemetryStore.record(
                         VoiceTelemetryEntry(
                             transcript = transcript,
@@ -1568,6 +1621,17 @@ private suspend fun dispatchVoiceParseResult(
     controller: PlayerSessionController,
     parseResult: VoiceParseResult,
 ): String = controller.dispatch(parseResult.action)
+
+private fun shouldSpeakVoiceFeedback(action: XrPlayerAction): Boolean {
+    return when (action) {
+        is XrPlayerAction.ReportCurrentTime,
+        is XrPlayerAction.ReportRemainingTime,
+        is XrPlayerAction.ReportEndTime,
+        is XrPlayerAction.ReportCurrentMedia,
+        is XrPlayerAction.ReportPassthroughStatus -> true
+        else -> false
+    }
+}
 
 private fun currentChapterName(
     uiState: PlayerViewModel.UiState,
@@ -2663,6 +2727,7 @@ private fun ProgressSection(
 private fun mapStereoMode(mode: String): SurfaceEntity.StereoMode? = when (mode) {
     "sbs" -> SurfaceEntity.StereoMode.SIDE_BY_SIDE
     "top_bottom" -> SurfaceEntity.StereoMode.TOP_BOTTOM
+    "multiview" -> SurfaceEntity.StereoMode.MULTIVIEW_LEFT_PRIMARY
     else -> null
 }
 

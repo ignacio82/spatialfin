@@ -152,6 +152,13 @@ class SpatialCommandCoordinator(
         extractSyncPlayAction(text)?.let { return it }
         extractSelectionAction(text)?.let { return it }
 
+        extractPassthroughAction(text)?.let { return it }
+        extractStatusAction(text)?.let { return it }
+
+        if (text.matches(Regex(".*(skip (the )?(recap|previously on|previously)).*"))) {
+            return XrPlayerAction.SkipIntro
+        }
+
         // Prioritize Chat Queries to avoid greedy navigation matches (e.g. "previous episode about")
         if (text.contains("what happened") || text.contains("what did they say") || text.contains("what's happened")) {
             return XrPlayerAction.ChatQuery(transcript)
@@ -240,7 +247,7 @@ class SpatialCommandCoordinator(
             You convert XR media-player voice transcripts into a single JSON action.
             Return ONLY minified JSON.
             Supported action values:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,chat,unrecognized
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
 
             Rules:
             - Prefer a direct player action when the transcript clearly asks for one.
@@ -250,7 +257,7 @@ class SpatialCommandCoordinator(
             - Include only fields that matter for the chosen action.
 
             JSON field schema:
-            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends"}
+            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends","enabled":true}
 
             Current player state:
             title=${playerState.currentItemTitle}
@@ -266,6 +273,7 @@ class SpatialCommandCoordinator(
             syncPlayActive=${playerState.syncPlayActive}
             syncPlayGroup=${playerState.syncPlayGroupName ?: ""}
             voiceSearchCount=${playerState.voiceSearchResultsCount}
+            passthroughEnabled=${playerState.passthroughEnabled}
 
             Transcript:
             $transcript
@@ -324,6 +332,13 @@ class SpatialCommandCoordinator(
             "go_back" -> XrPlayerAction.GoBack
             "show_controls" -> XrPlayerAction.ShowControls
             "hide_controls" -> XrPlayerAction.HideControls
+            "report_current_time" -> XrPlayerAction.ReportCurrentTime
+            "report_remaining_time" -> XrPlayerAction.ReportRemainingTime
+            "report_end_time" -> XrPlayerAction.ReportEndTime
+            "report_current_media" -> XrPlayerAction.ReportCurrentMedia
+            "report_passthrough_status" -> XrPlayerAction.ReportPassthroughStatus
+            "set_passthrough" -> XrPlayerAction.SetPassthrough(payload.optBoolean("enabled", true))
+            "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
             "chat" -> XrPlayerAction.ChatQuery(payload.optString("query").ifBlank { transcript })
             else -> XrPlayerAction.Unrecognized(transcript)
         }
@@ -380,6 +395,33 @@ class SpatialCommandCoordinator(
             return XrPlayerAction.SelectOption(selectionIndex)
         }
         return null
+    }
+
+    private fun extractPassthroughAction(text: String): XrPlayerAction? {
+        val mentionsPassthrough =
+            listOf("passthrough", "pass through", "see through", "mixed reality").any(text::contains)
+        if (!mentionsPassthrough) return null
+        return when {
+            listOf("turn on", "enable", "show", "start").any(text::contains) -> XrPlayerAction.SetPassthrough(true)
+            listOf("turn off", "disable", "hide", "stop").any(text::contains) -> XrPlayerAction.SetPassthrough(false)
+            text.contains("toggle") || text.contains("switch") -> XrPlayerAction.TogglePassthrough
+            text.contains("is") || text.contains("status") || text.contains("are we in") -> XrPlayerAction.ReportPassthroughStatus
+            else -> null
+        }
+    }
+
+    private fun extractStatusAction(text: String): XrPlayerAction? {
+        return when {
+            Regex(".*\\b(what time is it|current time|tell me the time)\\b.*").matches(text) ->
+                XrPlayerAction.ReportCurrentTime
+            Regex(".*\\b(how much time (is )?(left|remaining)|time left|time remaining|how long is left)\\b.*").matches(text) ->
+                XrPlayerAction.ReportRemainingTime
+            Regex(".*\\b(when does (this|it|the episode|the movie) end|what time does (this|it|the episode|the movie) end|when will (this|it) end)\\b.*").matches(text) ->
+                XrPlayerAction.ReportEndTime
+            Regex(".*\\b(what am i watching|what is this|which episode is this|what episode is this|what movie is this|what chapter is this)\\b.*").matches(text) ->
+                XrPlayerAction.ReportCurrentMedia
+            else -> null
+        }
     }
 
     private fun isSubtitleDisableCommand(text: String): Boolean {

@@ -120,9 +120,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantVerbosity = Preference("pref_voice_assistant_verbosity", "balanced")
     val voiceAssistantSpoilerPolicy = Preference("pref_voice_assistant_spoiler_policy", "cautious")
     val voiceAssistantSpokenReplies = Preference("pref_voice_assistant_spoken_replies", true)
+    val voiceAssistantVoice = Preference<String?>("pref_voice_assistant_voice", "male")
     val voiceAssistantCloudApiKey = Preference<String?>("pref_voice_assistant_cloud_api_key", null)
     val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
     val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
+    val onboardingCompleted = Preference("pref_onboarding_completed", false)
     val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
 
     // Logging

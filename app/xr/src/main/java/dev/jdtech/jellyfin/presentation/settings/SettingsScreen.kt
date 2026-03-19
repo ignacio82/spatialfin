@@ -1,7 +1,9 @@
 package dev.jdtech.jellyfin.presentation.settings
 
 import android.app.Activity
+import android.content.Intent
 import android.app.UiModeManager
+import android.net.Uri
 import android.os.Build
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatDelegate
@@ -133,7 +135,6 @@ fun SettingsScreen(
                 onUpdate = { settings ->
                     viewModel.saveSmartLanguageSettings(settings)
                     smartLanguageDraft = null
-                    viewModel.loadPreferences(indexes, DeviceType.XR)
                 },
                 onDismissRequest = { smartLanguageDraft = null },
             )
@@ -146,10 +147,22 @@ fun SettingsScreen(
                 title = stringResource(SettingsR.string.voice_cloud_api_key),
                 description = stringResource(SettingsR.string.voice_cloud_api_key_summary),
                 initialValue = currentValue,
+                actionLabel = stringResource(SettingsR.string.voice_cloud_api_key_get_one),
+                onActionClick = {
+                    try {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://aistudio.google.com/app/apikey"),
+                            ),
+                        )
+                    } catch (e: Exception) {
+                        Timber.e(e)
+                    }
+                },
                 onUpdate = { value ->
                     viewModel.saveCloudApiKey(value)
                     cloudApiKeyDraft = null
-                    viewModel.loadPreferences(indexes, DeviceType.XR)
                 },
                 onDismissRequest = { cloudApiKeyDraft = null },
             )
@@ -162,14 +175,8 @@ fun SettingsScreen(
         onAction = { action ->
             when (action) {
                 is SettingsAction.OnBackClick -> navigateBack()
-                is SettingsAction.OnPreferenceClick -> {
-                    viewModel.onAction(action)
-                    viewModel.loadPreferences(indexes, DeviceType.XR)
-                }
-                is SettingsAction.OnUpdate -> {
-                    viewModel.onAction(action)
-                    viewModel.loadPreferences(indexes, DeviceType.XR)
-                }
+                is SettingsAction.OnPreferenceClick -> viewModel.onAction(action)
+                is SettingsAction.OnUpdate -> viewModel.onAction(action)
             }
         },
     )

@@ -21,6 +21,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.autofill.contentType
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.res.stringResource
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.components.BaseDialog
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.spatialfin.presentation.theme.spacings
@@ -41,6 +44,8 @@ fun SettingsTextInputDialog(
     initialValue: String,
     onUpdate: (String) -> Unit,
     onDismissRequest: () -> Unit,
+    actionLabel: String? = null,
+    onActionClick: (() -> Unit)? = null,
 ) {
     val clipboardManager = LocalClipboardManager.current
     var textFieldValue by remember {
@@ -76,7 +81,10 @@ fun SettingsTextInputDialog(
             OutlinedTextField(
                 value = textFieldValue,
                 onValueChange = { textFieldValue = it },
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .focusRequester(focusRequester)
+                        .contentType(ContentType.Password),
                 keyboardOptions =
                     KeyboardOptions(
                         keyboardType = KeyboardType.Password,
@@ -101,12 +109,17 @@ fun SettingsTextInputDialog(
                             )
                     },
                 ) {
-                    Text("Paste")
+                    Text(stringResource(CoreR.string.paste))
                 }
                 TextButton(
                     onClick = { textFieldValue = TextFieldValue("") },
                 ) {
-                    Text("Clear")
+                    Text(stringResource(CoreR.string.clear))
+                }
+                if (actionLabel != null && onActionClick != null) {
+                    TextButton(onClick = onActionClick) {
+                        Text(actionLabel)
+                    }
                 }
             }
         }

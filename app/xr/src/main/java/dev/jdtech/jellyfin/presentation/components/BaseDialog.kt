@@ -32,11 +32,13 @@ import dev.spatialfin.presentation.theme.spacings
 fun BaseDialog(
     title: String,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.(contentPadding: PaddingValues) -> Unit,
 ) {
     BaseDialog(
         title = title,
         onDismiss = onDismiss,
+        modifier = modifier,
         negativeButton = null,
         positiveButton = null,
         content = content
@@ -47,12 +49,13 @@ fun BaseDialog(
 fun BaseDialog(
     title: String,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
     negativeButton: (@Composable () -> Unit)? = null,
     positiveButton: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.(contentPadding: PaddingValues) -> Unit,
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 520.dp, max = 760.dp)
             .heightIn(max = 720.dp)
             .padding(20.dp),
@@ -71,7 +74,7 @@ fun BaseDialog(
                 modifier = Modifier.padding(bottom = MaterialTheme.spacings.large)
             )
             
-            Box(modifier = Modifier.weight(1f, fill = false)) {
+            Box(modifier = Modifier.weight(1f, fill = true)) {
                 Column {
                     content(PaddingValues(vertical = MaterialTheme.spacings.small))
                 }

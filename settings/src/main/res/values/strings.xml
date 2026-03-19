@@ -20,6 +20,21 @@
     <string name="settings_smart_language_remove">Remove</string>
     <string name="settings_smart_language_add">Add</string>
     <string name="settings_smart_language_empty">No spoken languages selected yet. Add at least one language.</string>
+    <string name="settings_smart_language_picker_hint">Tap a language below to add it right away. Search narrows the list instantly.</string>
+    <string name="settings_smart_language_selected_preview_title">Selected right now</string>
+    <string name="settings_smart_language_added_feedback">%1$s added</string>
+    <string name="settings_smart_language_selected_title">Current priority order</string>
+    <string name="settings_smart_language_reorder_hint">Top priority is tried first. Use the actions on each row to move a language earlier, later, or straight to the top.</string>
+    <string name="settings_smart_language_top_priority">Top priority</string>
+    <string name="settings_smart_language_quick_add_title">Tap to add</string>
+    <string name="settings_smart_language_more_selected">+%1$d more selected languages</string>
+    <string name="settings_smart_language_first">Move first</string>
+    <string name="settings_smart_language_earlier">Earlier</string>
+    <string name="settings_smart_language_later">Later</string>
+    <string name="settings_smart_language_moved_first">%1$s moved to the top</string>
+    <string name="settings_smart_language_moved_earlier">%1$s moved earlier</string>
+    <string name="settings_smart_language_moved_later">%1$s moved later</string>
+    <string name="settings_smart_language_removed_feedback">%1$s removed</string>
 
     <string name="settings_category_content_type">Content type preferences</string>
     <string name="settings_category_content_type_summary">Override audio and subtitle tracks based on whether content is anime or not</string>
@@ -204,10 +219,13 @@
     <string name="voice_assistant_spoiler_policy_summary">Choose how cautious the assistant should be with spoilers</string>
     <string name="voice_assistant_spoken_replies">Spoken AI replies</string>
     <string name="voice_assistant_spoken_replies_summary">Read AI answers aloud with text-to-speech by default</string>
+    <string name="voice_assistant_voice">Assistant voice</string>
+    <string name="voice_assistant_voice_summary">Choose how SpatialFin selects the Android text-to-speech voice for spoken replies. Prefer male is the default when supported by the installed TTS engine.</string>
     <string name="voice_permissions">App permissions</string>
     <string name="voice_permissions_summary">Open app settings to review microphone and hand-tracking permissions</string>
     <string name="voice_cloud_api_key">Cloud AI API key</string>
     <string name="voice_cloud_api_key_summary">Provide your own Gemini API key to enable cloud AI fallback on devices where AICore is unavailable. Stored locally on this device.</string>
+    <string name="voice_cloud_api_key_get_one">Get API key</string>
     <string name="voice_status">Voice status</string>
     <string name="voice_telemetry_dashboard">Voice telemetry dashboard</string>
 
@@ -238,5 +256,15 @@
         <item>strict</item>
         <item>cautious</item>
         <item>open</item>
+    </string-array>
+    <string-array name="voice_assistant_voice_options">
+        <item>Prefer male</item>
+        <item>Prefer female</item>
+        <item>System default</item>
+    </string-array>
+    <string-array name="voice_assistant_voice_values">
+        <item>male</item>
+        <item>female</item>
+        <item>system</item>
     </string-array>
 </resources>

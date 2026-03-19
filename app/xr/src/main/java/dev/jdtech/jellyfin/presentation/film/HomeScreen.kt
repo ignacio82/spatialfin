@@ -2,7 +2,10 @@ package dev.jdtech.jellyfin.presentation.film
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +24,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.traversalIndex
@@ -27,6 +33,7 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyHomeSection
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyHomeSuggestions
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyHomeView
@@ -41,36 +48,65 @@ import dev.jdtech.jellyfin.models.View
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.presentation.components.ErrorDialog
+import dev.jdtech.jellyfin.presentation.components.FinishSetupCard
 import dev.jdtech.jellyfin.presentation.film.components.HomeCarousel
 import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
 import dev.jdtech.jellyfin.presentation.film.components.HomeSection
 import dev.jdtech.jellyfin.presentation.film.components.HomeView
 import dev.jdtech.jellyfin.presentation.film.components.ServerSelectionBottomSheet
+import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import kotlinx.coroutines.launch
 
-import androidx.compose.ui.platform.LocalContext
 import android.app.Activity
 import timber.log.Timber
 
 @Composable
 fun HomeScreen(
+    appPreferences: AppPreferences,
     onLibraryClick: (library: SpatialFinCollection) -> Unit,
     onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onManageServers: () -> Unit,
+    onLanguageSettingsClick: () -> Unit,
+    onVoiceSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val needsLanguageSetup =
+        appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
+    val hasCloudApiKey =
+        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
+    val shouldCheckLocalAi = !hasCloudApiKey
+    val geminiNanoService =
+        remember(context, shouldCheckLocalAi) {
+            if (shouldCheckLocalAi) GeminiNanoService(context.applicationContext) else null
+        }
+    var localAiAvailable by remember(shouldCheckLocalAi) {
+        mutableStateOf<Boolean?>(if (shouldCheckLocalAi) null else true)
+    }
 
     LaunchedEffect(true) { viewModel.loadData() }
+    LaunchedEffect(geminiNanoService) {
+        if (geminiNanoService != null) {
+            localAiAvailable = runCatching { geminiNanoService.status().supported }.getOrNull()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { geminiNanoService?.destroy() }
+    }
 
     HomeScreenLayout(
         state = state,
+        needsLanguageSetup = needsLanguageSetup,
+        needsAiSetup = localAiAvailable == false && !hasCloudApiKey,
+        onLanguageSettingsClick = onLanguageSettingsClick,
+        onVoiceSettingsClick = onVoiceSettingsClick,
         onAction = { action ->
             when (action) {
                 is HomeAction.OnItemClick -> onItemClick(action.item)
@@ -88,7 +124,14 @@ fun HomeScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
+private fun HomeScreenLayout(
+    state: HomeState,
+    needsLanguageSetup: Boolean,
+    needsAiSetup: Boolean,
+    onLanguageSettingsClick: () -> Unit,
+    onVoiceSettingsClick: () -> Unit,
+    onAction: (HomeAction) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val safePadding = rememberSafePadding(handleStartInsets = false)
 
@@ -99,6 +142,29 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
 
     val itemsPadding = PaddingValues(start = paddingStart, end = paddingEnd)
     val visibleHomeSections = remember(state) { state.filteredForUniqueHomeItems() }
+    val finishSetupItems =
+        buildList {
+            if (needsLanguageSetup) {
+                add(
+                    FinishSetupItem(
+                        titleRes = CoreR.string.finish_setup_languages_title,
+                        bodyRes = CoreR.string.finish_setup_languages_body,
+                        actionRes = CoreR.string.finish_setup_languages_action,
+                        onClick = onLanguageSettingsClick,
+                    )
+                )
+            }
+            if (needsAiSetup) {
+                add(
+                    FinishSetupItem(
+                        titleRes = CoreR.string.finish_setup_ai_title,
+                        bodyRes = CoreR.string.finish_setup_ai_body,
+                        actionRes = CoreR.string.finish_setup_ai_action,
+                        onClick = onVoiceSettingsClick,
+                    )
+                )
+            }
+        }
 
     val contentPaddingTop = safePadding.top + 88.dp
 
@@ -113,6 +179,25 @@ private fun HomeScreenLayout(state: HomeState, onAction: (HomeAction) -> Unit) {
                 contentPadding = PaddingValues(top = contentPaddingTop, bottom = paddingBottom),
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
             ) {
+                if (finishSetupItems.isNotEmpty()) {
+                    item(key = "finish_setup_cards") {
+                        Box(modifier = Modifier.padding(horizontal = paddingStart, vertical = 0.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
+                            ) {
+                                finishSetupItems.forEach { item ->
+                                    FinishSetupCard(
+                                        title = stringResource(item.titleRes),
+                                        body = stringResource(item.bodyRes),
+                                        actionLabel = stringResource(item.actionRes),
+                                        onActionClick = item.onClick,
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(MaterialTheme.spacings.small))
+                            }
+                        }
+                    }
+                }
                 visibleHomeSections.suggestionsSection?.let { section ->
                     item(key = section.id) {
                         HomeCarousel(
@@ -207,10 +292,21 @@ private fun HomeScreenLayoutPreview() {
                     views = listOf(dummyHomeView),
                     error = Exception("Failed to load data"),
                 ),
+            needsLanguageSetup = false,
+            needsAiSetup = false,
+            onLanguageSettingsClick = {},
+            onVoiceSettingsClick = {},
             onAction = {},
         )
     }
 }
+
+private data class FinishSetupItem(
+    val titleRes: Int,
+    val bodyRes: Int,
+    val actionRes: Int,
+    val onClick: () -> Unit,
+)
 
 private data class FilteredHomeSections(
     val suggestionsSection: HomeItem.Suggestions?,

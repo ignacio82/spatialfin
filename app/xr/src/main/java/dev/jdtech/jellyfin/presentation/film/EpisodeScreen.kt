@@ -111,6 +111,13 @@ fun EpisodeScreen(
         onAction = { action ->
             when (action) {
                 is EpisodeAction.Play -> {
+                    val episode = state.episode
+                    val sourceNames = episode?.sources?.flatMap { listOf(it.name, it.path) } ?: emptyList()
+                    val stereoMode = if (episode != null) {
+                        StereoModeDetector.detect(episode.name, null, sourceNames)
+                    } else {
+                        StereoModeDetector.StereoMode.MONO
+                    }
                     val targetActivity = XrPlayerActivity::class.java
                     val intent = Intent(context, targetActivity)
                     intent.putExtra("itemId", episodeId.toString())
@@ -119,7 +126,13 @@ fun EpisodeScreen(
                     action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
                     action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
                     if (true) {
-                        intent.putExtra("stereoMode", action.force3dMode ?: "mono")
+                        val stereoModeStr = when (stereoMode) {
+                            StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                            StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                            StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                            else -> "mono"
+                        }
+                        intent.putExtra("stereoMode", action.force3dMode ?: stereoModeStr)
                     }
                     context.startActivity(intent)
                 }
@@ -237,12 +250,20 @@ private fun EpisodeScreenLayout(
                         downloaderState = downloaderState,
                         initialMaxBitrate = initialMaxBitrate,
                         onSyncPlayClick = {
+                            val sourceNames = episode.sources.flatMap { listOf(it.name, it.path) }
+                            val stereoMode = StereoModeDetector.detect(episode.name, null, sourceNames)
                             val intent = XrPlayerActivity.createIntent(
                                 context = context,
                                 itemId = episode.id,
                                 itemKind = BaseItemKind.EPISODE.serialName,
                                 startFromBeginning = false,
-                                stereoMode = "mono",
+                                stereoMode =
+                                    when (stereoMode) {
+                                        StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                                        StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                                        StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                                        else -> "mono"
+                                    },
                                 openSyncPlayDialogOnStart = true,
                             )
                             context.startActivity(intent)

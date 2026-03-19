@@ -64,6 +64,7 @@ import timber.log.Timber
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
@@ -90,7 +91,7 @@ class MainActivity : AppCompatActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     @Inject lateinit var appPreferences: AppPreferences
-    private var xrSession: Session? = null
+    private val xrSessionState = mutableStateOf<Session?>(null)
     private val startupPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
@@ -98,30 +99,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
-        requestStartupPermissionsIfNeeded()
+        val onboardingCompleted = appPreferences.getValue(appPreferences.onboardingCompleted)
 
         // Ensure window is transparent so we can see the XR scene behind the UI
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
-
-        // Initialize XR Session
-        try {
-            val result = Session.create(this)
-            if (result is SessionCreateSuccess) {
-                xrSession = result.session
-
-                // Request full space mode for 3D support and immersive app experience
-                try {
-                    val capabilities = xrSession?.scene?.spatialCapabilities
-                    if (capabilities?.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_3D_CONTENT) == true) {
-                        xrSession?.scene?.requestFullSpaceMode()
-                    }
-                } catch (e: Exception) {
-                    Timber.w(e, "Failed to request full space mode")
-                }
-            }
-        } catch (e: Exception) {
-            Timber.w(e, "XR session not available")
-        }
 
         val initialSearchQueryExtra = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
 
@@ -133,23 +114,42 @@ class MainActivity : AppCompatActivity() {
             SpatialFinTheme(dynamicColor = state.isDynamicColors) {
                 val navController = rememberNavController()
                 val lifecycleOwner = LocalLifecycleOwner.current
-                if (!state.isLoading) {
+                LaunchedEffect(Unit) {
+                    // Let the first frame render before permission work starts.
+                    delay(350L)
+                    requestStartupPermissionsIfNeeded()
+                }
+                LaunchedEffect(Unit) {
+                    if (xrSessionState.value == null) {
+                        try {
+                            val result = Session.create(this@MainActivity)
+                            if (result is SessionCreateSuccess) {
+                                xrSessionState.value = result.session
+
+                                try {
+                                    val capabilities = xrSessionState.value?.scene?.spatialCapabilities
+                                    if (capabilities?.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_3D_CONTENT) == true) {
+                                        xrSessionState.value?.scene?.requestFullSpaceMode()
+                                    }
+                                } catch (e: Exception) {
+                                    Timber.w(e, "Failed to request full space mode")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.w(e, "XR session not available")
+                        }
+                    }
+                }
+
+                if (!onboardingCompleted || !state.isLoading) {
                     CompositionLocalProvider(LocalOfflineMode provides state.isOfflineMode) {
-                        val session = xrSession
+                        val session = xrSessionState.value
                         if (session != null) {
                             // --- Voice and Gesture state ---
                             val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
-                            val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
-                            val geminiCloudService = remember(context) {
-                                GeminiCloudService(context.applicationContext, appPreferences)
-                            }
-                            val commandCoordinator = remember(context) {
-                                SpatialCommandCoordinator(
-                                    context.applicationContext,
-                                    geminiNanoService,
-                                    geminiCloudService,
-                                )
-                            }
+                            var geminiNanoService by remember { mutableStateOf<GeminiNanoService?>(null) }
+                            var geminiCloudService by remember { mutableStateOf<GeminiCloudService?>(null) }
+                            var commandCoordinator by remember { mutableStateOf<SpatialCommandCoordinator?>(null) }
                             val voiceState by voiceService.state.collectAsState()
                             val partialTranscript by voiceService.partialTranscript.collectAsState()
                             var voiceFeedback by remember { mutableStateOf<String?>(null) }
@@ -222,28 +222,31 @@ class MainActivity : AppCompatActivity() {
                                     return
                                 }
                                 
-                                val startedAtMs = System.currentTimeMillis()
                                 voiceService.startListening { transcript ->
                                     coroutineScope.launch {
-                                        val parseResult = commandCoordinator.parse(transcript)
+                                        val nanoService =
+                                            geminiNanoService
+                                                ?: GeminiNanoService(context.applicationContext)
+                                                    .also { geminiNanoService = it }
+                                        val cloudService =
+                                            geminiCloudService
+                                                ?: GeminiCloudService(
+                                                    context.applicationContext,
+                                                    appPreferences,
+                                                ).also { geminiCloudService = it }
+                                        val coordinator =
+                                            commandCoordinator
+                                                ?: SpatialCommandCoordinator(
+                                                    context.applicationContext,
+                                                    nanoService,
+                                                    cloudService,
+                                                ).also {
+                                                    it.initialize()
+                                                    commandCoordinator = it
+                                                }
+                                        val parseResult = coordinator.parse(transcript)
                                         voiceFeedback = handleVoiceAction(parseResult.action)
                                     }
-                                }
-                            }
-
-                            LaunchedEffect(Unit) {
-                                commandCoordinator.initialize()
-                            }
-
-                            LaunchedEffect(hasHandTrackingPermission) {
-                                if (!hasHandTrackingPermission) {
-                                    handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
-                                }
-                            }
-
-                            LaunchedEffect(hasAudioPermission) {
-                                if (!hasAudioPermission) {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
                             }
 
@@ -314,7 +317,12 @@ class MainActivity : AppCompatActivity() {
                                     }
                                 } else {
                                     movableComponent.value?.let {
+                                        val latestPose = safeGetAppRootPose(root)
+                                        latestPose?.let(::saveAppRootPose)
                                         root.removeComponent(it)
+                                        latestPose?.let { pose ->
+                                            runCatching { root.setPose(pose) }
+                                        }
                                         movableComponent.value = null
                                         Timber.d(
                                             "VOICE: Home movable disabled controlsVisible=%b",
@@ -356,7 +364,7 @@ class MainActivity : AppCompatActivity() {
                                         safeGetAppRootPose(root)?.let(::saveAppRootPose)
                                     }
                                     voiceService.destroy()
-                                    commandCoordinator.destroy()
+                                    commandCoordinator?.destroy()
                                     rootEntity.value?.dispose()
                                     rootEntity.value = null
                                 }
@@ -393,6 +401,8 @@ class MainActivity : AppCompatActivity() {
                                                     hasServers = state.hasServers,
                                                     hasCurrentServer = state.hasCurrentServer,
                                                     hasCurrentUser = state.hasCurrentUser,
+                                                    onboardingCompleted = onboardingCompleted,
+                                                    appPreferences = appPreferences,
                                                     initialSearchQuery = voiceSearchQuery,
                                                 )
 
@@ -413,6 +423,8 @@ class MainActivity : AppCompatActivity() {
                                 hasServers = state.hasServers,
                                 hasCurrentServer = state.hasCurrentServer,
                                 hasCurrentUser = state.hasCurrentUser,
+                                onboardingCompleted = onboardingCompleted,
+                                appPreferences = appPreferences,
                                 initialSearchQuery = initialSearchQueryExtra,
                             )
                         }

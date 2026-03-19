@@ -665,6 +665,28 @@ constructor(
         }
     }
 
+    fun skipActiveSegmentForVoice(vararg preferredNames: String): SpatialFinSegment? {
+        val activeSegment = currentMediaItemSegments.firstOrNull { segment ->
+            player.currentPosition in segment.startTicks..<(segment.endTicks - 100L)
+        } ?: return null
+
+        val normalizedType = activeSegment.type.toString().lowercase()
+        val normalizedRequestedNames = preferredNames.map { it.lowercase() }
+        val matchesRequestedType =
+            normalizedRequestedNames.isEmpty() ||
+                normalizedRequestedNames.any { preferredName ->
+                    normalizedType.contains(preferredName.replace(' ', '_')) ||
+                        normalizedType.contains(preferredName.replace(" ", ""))
+                }
+
+        if (!matchesRequestedType) {
+            return null
+        }
+
+        skipSegment(activeSegment)
+        return activeSegment
+    }
+
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
