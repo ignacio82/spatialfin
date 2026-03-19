@@ -56,8 +56,11 @@ android {
             isDebuggable = true
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // XR system-extension callbacks are still crashing in optimized builds with
+            // AbstractMethodError inside com.android.extensions.xr.Consumer bridges.
+            // Keep release unminified until the androidx.xr / R8 interaction is resolved.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

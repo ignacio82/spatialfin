@@ -3,37 +3,43 @@ default_platform(:android)
 platform :android do
   desc "Build and publish"
   lane :publish do
+    keystore = ENV["SPATIALFIN_KEYSTORE"] || ENV["FINDROID_KEYSTORE"]
+    keystore_password = ENV["SPATIALFIN_KEYSTORE_PASSWORD"] || ENV["FINDROID_KEYSTORE_PASSWORD"]
+    key_alias = ENV["SPATIALFIN_KEY_ALIAS"] || ENV["FINDROID_KEY_ALIAS"]
+    key_password = ENV["SPATIALFIN_KEY_PASSWORD"] || ENV["FINDROID_KEY_PASSWORD"]
+    play_credentials = ENV["SPATIALFIN_PLAY_API_CREDENTIALS"] || ENV["FINDROID_PLAY_API_CREDENTIALS"]
+
     gradle(task: "clean")
 
     gradle(
-      task: "app:phone:assemble",
+      task: "app:xr:assemble",
       flavor: "libre",
       build_type: "release",
       print_command: false,
       properties: {
-        "android.injected.signing.store.file" => ENV["FINDROID_KEYSTORE"],
-        "android.injected.signing.store.password" => ENV["FINDROID_KEYSTORE_PASSWORD"],
-        "android.injected.signing.key.alias" => ENV["FINDROID_KEY_ALIAS"],
-        "android.injected.signing.key.password" => ENV["FINDROID_KEY_PASSWORD"],
+        "android.injected.signing.store.file" => keystore,
+        "android.injected.signing.store.password" => keystore_password,
+        "android.injected.signing.key.alias" => key_alias,
+        "android.injected.signing.key.password" => key_password,
       }
     )
 
     gradle(
-      task: "app:phone:bundle",
+      task: "app:xr:bundle",
       flavor: "libre",
       build_type: "release",
       print_command: false,
       properties: {
-        "android.injected.signing.store.file" => ENV["FINDROID_KEYSTORE"],
-        "android.injected.signing.store.password" => ENV["FINDROID_KEYSTORE_PASSWORD"],
-        "android.injected.signing.key.alias" => ENV["FINDROID_KEY_ALIAS"],
-        "android.injected.signing.key.password" => ENV["FINDROID_KEY_PASSWORD"],
+        "android.injected.signing.store.file" => keystore,
+        "android.injected.signing.store.password" => keystore_password,
+        "android.injected.signing.key.alias" => key_alias,
+        "android.injected.signing.key.password" => key_password,
       }
     )
 
     upload_to_play_store(
       track: "production",
-      json_key: ENV["FINDROID_PLAY_API_CREDENTIALS"],
+      json_key: play_credentials,
       skip_upload_apk: true,
       sync_image_upload: true
     )
