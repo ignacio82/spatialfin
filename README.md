@@ -46,13 +46,13 @@ SpatialFin now treats offline support as a first-class mode instead of a manual 
 
 ### Download Storage
 
-On Android 10 and higher, app-managed downloads are stored in the app's private data folder to comply with Scoped Storage:
+All app-managed downloads are stored in the public Android downloads area under:
 
 ```text
-Android/data/dev.spatialfin/files/Download/SpatialFin
+Downloads/SpatialFin
 ```
 
-This keeps your downloads organized and ensures they are cleaned up if the app is uninstalled. For older devices, they may still appear in the public `Downloads/SpatialFin` folder.
+This makes the files easier to inspect, copy, back up, or manage from outside the app. If you delete the file manually from this folder, SpatialFin will detect it and remove the stale entry automatically.
 
 ### Reliable Resumable Downloads
 

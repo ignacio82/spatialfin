@@ -24,12 +24,7 @@ constructor(
 ) {
     fun downloadsRoot(): File =
         File(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    ?: context.filesDir
-            } else {
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            },
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             DOWNLOADS_FOLDER_NAME,
         )
 
