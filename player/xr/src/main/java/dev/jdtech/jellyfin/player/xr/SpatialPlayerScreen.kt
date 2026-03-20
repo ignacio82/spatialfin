@@ -861,7 +861,7 @@ fun SpatialPlayerScreen(
 
     // --- Layout calculations ---
     val videoDepth = 5.0f
-    val uiDepth = 1.75f
+    val uiDepth = 1.25f
     val uiScaleFactor = uiDepth / videoDepth
     val subtitleScaleFactor = uiDepth / videoDepth
     val scaledVideoWidthDp = videoWidth * subtitleScaleFactor * 1000f
@@ -870,11 +870,13 @@ fun SpatialPlayerScreen(
     val subtitlePanelHeightDp = scaledVideoHeightDp
     val finalSubtitleSize = xrSubtitleSize * (subtitlePanelHeightDp / 600f).coerceAtLeast(1f)
     val controlsReferenceHeightDp = videoHeight * uiScaleFactor * 1000f
-    // Controls sit further below the video surface to prevent overlap
-    val controlsPanelY = -(controlsReferenceHeightDp / 2f + 1400f)
+    // Controls sit further below the video surface to prevent overlap.
+    // Reduced offset from 1400f to 1100f to bring them slightly higher/closer to video bottom.
+    val controlsPanelY = -(controlsReferenceHeightDp / 2f + 1100f)
 
     val subtitlePanelZDp = -uiDepth * 1000f
     // XR guide recommended spawn depth: 1.75 m (-1750 dp) from user.
+    // We are bringing it closer to 1.25 m for a more reachable, "IMAX" feel for controls.
     val uiAnchorZDp = -uiDepth * 1000f
 
     LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
@@ -890,7 +892,7 @@ fun SpatialPlayerScreen(
     }
 
     // Controls at same depth as UI anchor.
-    val controlsZDp = -1750f
+    val controlsZDp = -uiDepth * 1000f
 
     Subspace {
         val root = rootEntity.value
@@ -1002,8 +1004,8 @@ fun SpatialPlayerScreen(
         // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
         SpatialPanel(
             modifier = SubspaceModifier
-                .width(1400.dp)
-                .height(600.dp)
+                .width(1800.dp)
+                .height(800.dp)
                 .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
             resizePolicy = ResizePolicy(),
         ) {
@@ -1012,7 +1014,7 @@ fun SpatialPlayerScreen(
                 Orbiter(
                     position = ContentEdge.End,
                     alignment = Alignment.CenterVertically,
-                    offset = 20.dp,
+                    offset = 40.dp,
                 ) {
                     SecondaryControlsOrbiter(
                         onAudioClick = { activeDialog = "audio"; resetAutoHide() },
@@ -1210,9 +1212,9 @@ fun SpatialPlayerScreen(
             uiState.currentSegment?.let { segment ->
             SpatialPanel(
                 modifier = SubspaceModifier
-                    .width(360.dp)
-                    .height(120.dp)
-                    .offset(x = 950.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
+                    .width(480.dp)
+                    .height(160.dp)
+                    .offset(x = 1150.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
             ) {
                 Surface(
                     onClick = { viewModel.skipSegment(segment); resetAutoHide() },
@@ -1230,12 +1232,12 @@ fun SpatialPlayerScreen(
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_skip_forward),
                             contentDescription = null,
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(64.dp),
                         )
-                        Spacer(Modifier.width(16.dp))
+                        Spacer(Modifier.width(20.dp))
                         Text(
                             text = stringResource(uiState.currentSkipButtonStringRes),
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -1249,9 +1251,9 @@ fun SpatialPlayerScreen(
         if (!voiceSearchOpen && showNextEpisodePanel) {
             SpatialPanel(
                 modifier = SubspaceModifier
-                    .width(700.dp)
-                    .height(440.dp)
-                    .offset(x = (-1150).dp, y = controlsPanelY.dp, z = controlsZDp.dp),
+                    .width(900.dp)
+                    .height(560.dp)
+                    .offset(x = (-1350).dp, y = controlsPanelY.dp, z = controlsZDp.dp),
             ) {
                 NextEpisodePanelContent(
                     nextEpisode = uiState.nextEpisode!!,
@@ -1318,60 +1320,60 @@ private fun SecondaryControlsOrbiter(
         tonalElevation = 4.dp,
     ) {
         Column(
-            modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            IconButton(onClick = onAudioClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onAudioClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_speaker),
                     contentDescription = "Audio track",
                     tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onSubtitleClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onSubtitleClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_closed_caption),
                     contentDescription = "Subtitle track",
                     tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onSpeedClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onSpeedClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_gauge),
                     contentDescription = "Playback speed",
                     tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onQualityClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onQualityClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_sparkles),
                     contentDescription = "Playback quality",
                     tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_tv),
                     contentDescription = "SyncPlay",
                     tint = if (syncPlayActive) Color(0xFF4FC3F7) else Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onCastCrewClick, modifier = Modifier.size(80.dp)) {
+            IconButton(onClick = onCastCrewClick, modifier = Modifier.size(100.dp)) {
                 Icon(
                     painterResource(CoreR.drawable.ic_user),
                     contentDescription = "Cast & crew",
                     tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(64.dp),
                 )
             }
             if (voiceControlEnabled) {
-                IconButton(onClick = onVoiceClick, modifier = Modifier.size(80.dp)) {
+                IconButton(onClick = onVoiceClick, modifier = Modifier.size(100.dp)) {
                     Icon(
                         painterResource(CoreR.drawable.ic_microphone),
                         contentDescription = "Voice command",
@@ -1386,7 +1388,7 @@ private fun SecondaryControlsOrbiter(
                                     VoiceState.IDLE -> Color.White
                                 }
                             },
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(64.dp),
                     )
                 }
             }
@@ -1801,25 +1803,25 @@ private fun ControlPanelUI(
         tonalElevation = 4.dp,
         modifier = Modifier.fillMaxSize(),
     ) {
-        Column(modifier = Modifier.padding(40.dp)) {
+        Column(modifier = Modifier.padding(60.dp)) {
             // ── Top row: back / title / indicator / lock / hide ──
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                IconButton(onClick = onBackClick, modifier = Modifier.size(80.dp)) {
+                IconButton(onClick = onBackClick, modifier = Modifier.size(100.dp)) {
                     Icon(
                         painter = painterResource(CoreR.drawable.ic_arrow_left),
                         contentDescription = "Back",
                         tint = Color.White,
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(64.dp),
                     )
                 }
-                Spacer(Modifier.width(24.dp))
+                Spacer(Modifier.width(32.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = uiState.currentItemTitle,
-                        style = MaterialTheme.typography.displaySmall,
+                        style = MaterialTheme.typography.displayMedium,
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1830,7 +1832,7 @@ private fun ControlPanelUI(
                             spatialAudioAvailable -> "Spatial Playback • Spatial Audio"
                             else -> "Spatial Playback"
                         },
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.headlineMedium,
                         color = if (spatialAudioAvailable && !isLocked)
                             Color(0xFF4FC3F7).copy(alpha = 0.8f)
                         else
@@ -1838,18 +1840,18 @@ private fun ControlPanelUI(
                     )
                 }
                 if (!isLocked) {
-                    IconButton(onClick = { onHideClick() }, modifier = Modifier.size(80.dp)) {
+                    IconButton(onClick = { onHideClick() }, modifier = Modifier.size(100.dp)) {
                         Icon(
                             painterResource(CoreR.drawable.ic_eye_off),
                             contentDescription = "Hide Controls",
                             tint = Color.White,
-                            modifier = Modifier.size(48.dp),
+                            modifier = Modifier.size(64.dp),
                         )
                     }
                 }
                 IconButton(
                     onClick = { onLockToggle(); resetAutoHide() },
-                    modifier = Modifier.size(80.dp),
+                    modifier = Modifier.size(100.dp),
                 ) {
                     Icon(
                         painter = painterResource(
@@ -1857,7 +1859,7 @@ private fun ControlPanelUI(
                         ),
                         contentDescription = "Lock Controls",
                         tint = if (isLocked) Color.Red else Color.White,
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(64.dp),
                     )
                 }
             }
@@ -1874,7 +1876,7 @@ private fun ControlPanelUI(
                 )
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(48.dp))
 
             // ── Playback controls ──
             Row(
@@ -1885,16 +1887,16 @@ private fun ControlPanelUI(
                 if (!isLocked) {
                     IconButton(
                         onClick = { player.seekBack(); resetAutoHide() },
-                        modifier = Modifier.size(112.dp),
+                        modifier = Modifier.size(140.dp),
                     ) {
                         Icon(
                             painterResource(CoreR.drawable.ic_rewind),
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(80.dp),
                         )
                     }
-                    Spacer(Modifier.width(48.dp))
+                    Spacer(Modifier.width(64.dp))
                 }
 
                 FilledIconButton(
@@ -1902,39 +1904,39 @@ private fun ControlPanelUI(
                         if (isPlaying) player.pause() else player.play()
                         resetAutoHide()
                     },
-                    modifier = Modifier.size(120.dp),
+                    modifier = Modifier.size(160.dp),
                 ) {
                     Icon(
                         painter = painterResource(
                             if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play,
                         ),
                         contentDescription = null,
-                        modifier = Modifier.size(72.dp),
+                        modifier = Modifier.size(96.dp),
                     )
                 }
 
                 if (!isLocked) {
-                    Spacer(Modifier.width(48.dp))
+                    Spacer(Modifier.width(64.dp))
                     TextButton(
                         onClick = { onChaptersClick() },
-                        modifier = Modifier.height(88.dp),
+                        modifier = Modifier.height(112.dp),
                     ) {
                         Text(
                             "Chapters",
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.displaySmall,
                             color = Color.White,
                         )
                     }
-                    Spacer(Modifier.width(24.dp))
+                    Spacer(Modifier.width(32.dp))
                     IconButton(
                         onClick = { player.seekForward(); resetAutoHide() },
-                        modifier = Modifier.size(112.dp),
+                        modifier = Modifier.size(140.dp),
                     ) {
                         Icon(
                             painterResource(CoreR.drawable.ic_fast_forward),
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(80.dp),
                         )
                     }
                 }
@@ -2663,7 +2665,7 @@ private fun ProgressSection(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 formatTime(currentPosition),
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineMedium,
                 color = Color.White.copy(alpha = 0.8f),
             )
             // Slider wrapped in a Box so we can overlay chapter tick marks on the track.
@@ -2674,15 +2676,15 @@ private fun ProgressSection(
                     Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(20.dp)
+                            .height(24.dp)
                             .align(Alignment.Center),
                     ) {
                         // The slider track occupies the width minus the horizontal padding on
                         // each side (same value as the Slider's own padding modifier below).
                         val padPx = sliderHPad.toPx()
                         val trackWidth = size.width - 2 * padPx
-                        val markerH = 24f
-                        val markerW = 6f
+                        val markerH = 32f
+                        val markerW = 8f
                         val centerY = size.height / 2f
                         chapters.forEach { chapter ->
                             val fraction = (chapter.startPosition.toFloat() / duration.toFloat())
@@ -2715,7 +2717,7 @@ private fun ProgressSection(
             }
             Text(
                 formatTime(duration),
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineMedium,
                 color = Color.White.copy(alpha = 0.8f),
             )
         }
