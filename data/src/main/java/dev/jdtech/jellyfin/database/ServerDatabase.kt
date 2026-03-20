@@ -10,6 +10,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
+import dev.jdtech.jellyfin.models.DownloadTaskDto
 import dev.jdtech.jellyfin.models.SpatialFinMediaStreamDto
 import dev.jdtech.jellyfin.models.SpatialFinMovieDto
 import dev.jdtech.jellyfin.models.SpatialFinSeasonDto
@@ -38,8 +39,9 @@ import dev.jdtech.jellyfin.models.User
             SpatialFinTrickplayInfoDto::class,
             SpatialFinSegmentDto::class,
             LocalMediaPlaybackStateDto::class,
+            DownloadTaskDto::class,
         ],
-    version = 10,
+    version = 13,
     autoMigrations =
         [
             AutoMigration(from = 2, to = 3),
@@ -49,6 +51,9 @@ import dev.jdtech.jellyfin.models.User
             AutoMigration(from = 7, to = 8),
             AutoMigration(from = 8, to = 9),
             AutoMigration(from = 9, to = 10),
+            AutoMigration(from = 10, to = 11),
+            AutoMigration(from = 11, to = 12),
+            AutoMigration(from = 12, to = 13),
         ],
 )
 @TypeConverters(Converters::class)

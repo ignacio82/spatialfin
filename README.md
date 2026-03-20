@@ -28,7 +28,8 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
 - **Automatic Offline Mode** — SpatialFin monitors server reachability and automatically switches into offline mode when the selected Jellyfin server is unavailable, then switches back online when the server becomes reachable again.
-- **Offline Playback** — Download media for offline viewing and continue watching local or downloaded media without server access.
+- **Offline Playback** — Download media for offline viewing with a new reliable, resumable engine that continues interrupted downloads automatically.
+- **Full Offline Metadata Mirroring** — SpatialFin now downloads everything needed for a complete offline experience, including posters, backdrops, and scrubber thumbnails (trickplay).
 - **Smart Download Reconciliation** — If files disappear from the download folder outside the app, SpatialFin removes the stale entries from its catalog automatically.
 - **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
@@ -52,6 +53,15 @@ Downloads/SpatialFin
 ```
 
 This makes the files easier to inspect, copy, back up, or manage from outside the app.
+
+### Reliable Resumable Downloads
+
+SpatialFin has moved beyond the standard system `DownloadManager` to a custom, `WorkManager`-backed engine. This provides:
+
+- **Resume Support**: If your network drops or the headset restarts, downloads resume from exactly where they left off using HTTP `Range` headers.
+- **Parallel Background Tasks**: Media files, external subtitles, posters, and scrubber thumbnails (trickplay) are all downloaded in parallel in the background.
+- **Real-Time Progress**: A system-level foreground notification keeps you updated on download progress without needing to stay in the app.
+- **Network Awareness**: Downloads respect your settings for mobile data and roaming, pausing and resuming automatically as connectivity changes.
 
 ### Download Types
 

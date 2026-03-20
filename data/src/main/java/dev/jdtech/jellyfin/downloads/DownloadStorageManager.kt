@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.downloads
 
 import android.content.Context
+import android.os.Build
 import android.os.Environment
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -23,7 +24,12 @@ constructor(
 ) {
     fun downloadsRoot(): File =
         File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: context.filesDir
+            } else {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            },
             DOWNLOADS_FOLDER_NAME,
         )
 
@@ -34,14 +40,23 @@ constructor(
         source: SpatialFinSource,
         modeSuffix: String,
         extension: String,
+        inProgress: Boolean = true,
     ): File {
         val safeTitle = sanitizeFileName(item.name)
         val safeSource = sanitizeFileName(source.name).ifBlank { "source" }
+        val baseName = "${safeTitle}_${item.id}_${safeSource}_${modeSuffix}.$extension"
         return File(
             ensureDownloadsRoot(),
-            "${safeTitle}_${item.id}_${safeSource}_${modeSuffix}.$extension",
+            if (inProgress) "$baseName$DOWNLOAD_TEMP_SUFFIX" else baseName,
         )
     }
+
+    fun completedPathFor(path: String): String =
+        if (path.endsWith(DOWNLOAD_TEMP_SUFFIX)) {
+            path.removeSuffix(DOWNLOAD_TEMP_SUFFIX)
+        } else {
+            path
+        }
 
     suspend fun reconcileCurrentServerDownloads(serverId: String?, userId: UUID?) {
         if (serverId == null || userId == null) return
@@ -166,5 +181,6 @@ constructor(
 
     companion object {
         private const val DOWNLOADS_FOLDER_NAME = "SpatialFin"
+        const val DOWNLOAD_TEMP_SUFFIX = ".download"
     }
 }

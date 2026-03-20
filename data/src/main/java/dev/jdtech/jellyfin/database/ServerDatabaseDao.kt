@@ -8,6 +8,8 @@ import androidx.room.Transaction
 import androidx.room.Update
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
+import dev.jdtech.jellyfin.models.DownloadTaskDto
+import dev.jdtech.jellyfin.models.DownloadTaskKind
 import dev.jdtech.jellyfin.models.SpatialFinMediaStreamDto
 import dev.jdtech.jellyfin.models.SpatialFinMovieDto
 import dev.jdtech.jellyfin.models.SpatialFinSeasonDto
@@ -24,6 +26,7 @@ import dev.jdtech.jellyfin.models.ServerWithAddressesAndUsers
 import dev.jdtech.jellyfin.models.ServerWithUsers
 import dev.jdtech.jellyfin.models.User
 import java.util.UUID
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ServerDatabaseDao {
@@ -111,6 +114,9 @@ interface ServerDatabaseDao {
     @Query("UPDATE sources SET downloadId = :downloadId WHERE id = :id")
     fun setSourceDownloadId(id: String, downloadId: Long)
 
+    @Query("UPDATE sources SET downloadId = NULL WHERE id = :id")
+    fun clearSourceDownloadId(id: String)
+
     @Query("UPDATE sources SET path = :path WHERE id = :id")
     fun setSourcePath(id: String, path: String)
 
@@ -135,6 +141,9 @@ interface ServerDatabaseDao {
     @Query("UPDATE mediastreams SET downloadId = :downloadId WHERE id = :id")
     fun setMediaStreamDownloadId(id: UUID, downloadId: Long)
 
+    @Query("UPDATE mediastreams SET downloadId = NULL WHERE id = :id")
+    fun clearMediaStreamDownloadId(id: UUID)
+
     @Query("UPDATE mediastreams SET path = :path WHERE id = :id")
     fun setMediaStreamPath(id: UUID, path: String)
 
@@ -142,6 +151,56 @@ interface ServerDatabaseDao {
 
     @Query("DELETE FROM mediastreams WHERE sourceId = :sourceId")
     fun deleteMediaStreamsBySourceId(sourceId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertDownloadTask(downloadTask: DownloadTaskDto)
+
+    @Query("SELECT * FROM downloadtasks WHERE id = :id")
+    fun getDownloadTaskById(id: String): DownloadTaskDto?
+
+    @Query(
+        "SELECT * FROM downloadtasks WHERE itemId = :itemId AND kind = :kind ORDER BY updatedAt DESC LIMIT 1"
+    )
+    fun observeDownloadTask(itemId: UUID, kind: DownloadTaskKind = DownloadTaskKind.PRIMARY): Flow<DownloadTaskDto?>
+
+    @Query(
+        "SELECT * FROM downloadtasks WHERE itemId = :itemId AND kind = :kind ORDER BY updatedAt DESC LIMIT 1"
+    )
+    fun getDownloadTask(itemId: UUID, kind: DownloadTaskKind = DownloadTaskKind.PRIMARY): DownloadTaskDto?
+
+    @Query("SELECT * FROM downloadtasks WHERE itemId = :itemId")
+    fun getDownloadTasksByItemId(itemId: UUID): List<DownloadTaskDto>
+
+    @Query("SELECT * FROM downloadtasks WHERE sourceId = :sourceId")
+    fun getDownloadTasksBySourceId(sourceId: String): List<DownloadTaskDto>
+
+    @Query("SELECT * FROM downloadtasks WHERE mediaStreamId = :mediaStreamId ORDER BY updatedAt DESC LIMIT 1")
+    fun getDownloadTaskByMediaStreamId(mediaStreamId: UUID): DownloadTaskDto?
+
+    @Query(
+        "UPDATE downloadtasks SET downloadId = :downloadId, bytesDownloaded = :bytesDownloaded, totalBytes = :totalBytes, eTag = :eTag, lastModified = :lastModified, status = :status, progress = :progress, errorMessage = :errorMessage, updatedAt = :updatedAt WHERE id = :id"
+    )
+    fun updateDownloadTask(
+        id: String,
+        downloadId: Long?,
+        bytesDownloaded: Long,
+        totalBytes: Long?,
+        eTag: String?,
+        lastModified: String?,
+        status: Int,
+        progress: Int,
+        errorMessage: String?,
+        updatedAt: Long,
+    )
+
+    @Query("DELETE FROM downloadtasks WHERE itemId = :itemId")
+    fun deleteDownloadTasksByItemId(itemId: UUID)
+
+    @Query("DELETE FROM downloadtasks WHERE itemId = :itemId AND sourceId = :sourceId")
+    fun deleteDownloadTask(itemId: UUID, sourceId: String)
+
+    @Query("DELETE FROM downloadtasks WHERE mediaStreamId = :mediaStreamId")
+    fun deleteDownloadTaskByMediaStreamId(mediaStreamId: UUID)
 
     @Query("UPDATE userdata SET played = :played WHERE userId = :userId AND itemId = :itemId")
     fun setPlayed(userId: UUID, itemId: UUID, played: Boolean)
