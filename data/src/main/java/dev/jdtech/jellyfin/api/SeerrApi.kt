@@ -34,16 +34,26 @@ class SeerrApi(
     }
 
     suspend fun search(query: String): SeerrSearchResponse? = withContext(Dispatchers.IO) {
-        if (!appPreferences.getValue(appPreferences.seerrEnabled)) return@withContext null
+        if (!appPreferences.getValue(appPreferences.seerrEnabled)) {
+            Timber.d("Seerr search skipped: disabled in settings")
+            return@withContext null
+        }
+
+        val baseUrl = appPreferences.getValue(appPreferences.seerrUrl)
+        if (baseUrl.isNullOrBlank()) {
+            Timber.w("Seerr search skipped: no server URL configured")
+            return@withContext null
+        }
 
         try {
             val request = buildRequest("/search?query=$query")
+            Timber.v("Seerr search request: ${request.url}")
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string() ?: return@withContext null
                 json.decodeFromString<SeerrSearchResponse>(body)
             } else {
-                Timber.e("Seerr search failed: ${response.code}")
+                Timber.e("Seerr search failed: ${response.code} ${response.message}")
                 null
             }
         } catch (e: Exception) {
@@ -52,23 +62,67 @@ class SeerrApi(
         }
     }
 
-    suspend fun createRequest(mediaType: String, mediaId: Int): Boolean = withContext(Dispatchers.IO) {
-        if (!appPreferences.getValue(appPreferences.seerrEnabled)) return@withContext false
+    suspend fun createRequest(
+        mediaType: String,
+        tmdbId: Int,
+        is4k: Boolean = false,
+        tvdbId: Int? = null,
+        seasons: List<Int>? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!appPreferences.getValue(appPreferences.seerrEnabled)) {
+            Timber.d("Seerr request skipped: disabled in settings")
+            return@withContext false
+        }
 
         try {
-            val createRequest = SeerrCreateRequest(mediaType = mediaType, mediaId = mediaId)
+            val finalSeasons = if (mediaType == "tv") {
+                seasons ?: getTvSeasons(tmdbId)
+            } else null
+
+            val createRequest = SeerrCreateRequest(
+                mediaType = mediaType,
+                mediaId = tmdbId,
+                tvdbId = tvdbId,
+                seasons = finalSeasons,
+                is4k = is4k
+            )
             val body = json.encodeToString(SeerrCreateRequest.serializer(), createRequest)
             val request = buildRequest("/request", "POST", body)
+            
+            Timber.i("Creating Seerr request for $mediaType $tmdbId (TVDB: $tvdbId, 4K: $is4k, Seasons: $finalSeasons)")
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
+                Timber.i("Seerr request successful")
                 true
             } else {
-                Timber.e("Seerr request failed: ${response.code}")
+                Timber.e("Seerr request failed: ${response.code} ${response.message}")
+                val errorBody = response.body?.string()
+                if (!errorBody.isNullOrBlank()) {
+                    Timber.e("Seerr error body: $errorBody")
+                }
                 false
             }
         } catch (e: Exception) {
             Timber.e(e, "Seerr request error")
             false
+        }
+    }
+
+    private suspend fun getTvSeasons(tmdbId: Int): List<Int> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("/tv/$tmdbId")
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: return@withContext emptyList()
+                val tvInfo = json.decodeFromString<SeerrTvResponse>(body)
+                tvInfo.seasons.map { it.seasonNumber }.filter { it > 0 } // Exclude Season 0 (Specials) usually
+            } else {
+                Timber.e("Failed to get TV seasons for $tmdbId: ${response.code}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Error getting TV seasons")
+            emptyList()
         }
     }
 }

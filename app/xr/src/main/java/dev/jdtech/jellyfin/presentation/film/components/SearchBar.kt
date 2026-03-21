@@ -181,7 +181,7 @@ fun FilmSearchBar(
                     subtitle = stringResource(FilmR.string.search_prompt_subtitle),
                 )
             }
-            state.hasSearched && visibleItems.isEmpty() -> {
+            state.hasSearched && visibleItems.isEmpty() && state.seerrItems.isEmpty() -> {
                 SearchStatusPanel(
                     title = stringResource(FilmR.string.search_empty_title),
                     subtitle = stringResource(FilmR.string.search_empty_subtitle, state.query),
@@ -221,11 +221,13 @@ fun FilmSearchBar(
                             )
                         }
 
-                        items(items = state.seerrItems, key = { "seerr_${it.mediaType}_${it.tmdbId}" }) { item ->
+                        items(items = state.seerrItems, key = { "seerr_${it.mediaType}_${it.mediaId}" }) { item ->
                             SeerrItemCard(
                                 item = item,
                                 direction = Direction.VERTICAL,
-                                onRequestClick = { onAction(SearchAction.RequestSeerrItem(it)) },
+                                onRequestClick = { itemToRequest, is4k -> 
+                                    onAction(SearchAction.RequestSeerrItem(itemToRequest, is4k)) 
+                                },
                                 modifier = Modifier.animateItem(),
                             )
                         }
@@ -314,10 +316,10 @@ private fun SearchSummaryCard(
                         stringResource(FilmR.string.search_error_subtitle)
                     query.isBlank() ->
                         stringResource(FilmR.string.search_prompt_subtitle)
-                    state.hasSearched && visibleItemsCount > 0 ->
+                    state.hasSearched && (visibleItemsCount > 0 || state.seerrItems.isNotEmpty()) ->
                         stringResource(
                             FilmR.string.search_results_subtitle,
-                            visibleItemsCount,
+                            visibleItemsCount + state.seerrItems.size,
                             state.query,
                         )
                     state.hasSearched ->

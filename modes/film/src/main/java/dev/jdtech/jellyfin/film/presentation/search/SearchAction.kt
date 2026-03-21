@@ -8,5 +8,5 @@ sealed interface SearchAction {
 
     data class OnItemClick(val item: SpatialFinItem) : SearchAction
 
-    data class RequestSeerrItem(val item: SeerrSearchResult) : SearchAction
+    data class RequestSeerrItem(val item: SeerrSearchResult, val is4k: Boolean = false) : SearchAction
 }

@@ -58,18 +58,21 @@ class SearchViewModel @Inject constructor(
 
                     val items = jellyfinSearch.await()
                     val seerrResults = seerrSearch.await()
+                    val filteredSeerrResults = seerrResults?.results?.filter { 
+                        it.mediaId != null && it.mediaType != "person" && it.mediaType != "collection"
+                    } ?: emptyList()
 
                     Timber.i(
-                        "SEARCH: query=%s jellyfin=%d seerr=%d",
+                        "SEARCH: query=%s jellyfin=%d seerr=%s",
                         trimmedQuery,
                         items.size,
-                        seerrResults?.results?.size ?: 0
+                        if (seerrResults == null) "error" else filteredSeerrResults.size.toString()
                     )
                     _state.emit(
                         SearchState(
                             query = trimmedQuery,
                             items = items,
-                            seerrItems = seerrResults?.results ?: emptyList(),
+                            seerrItems = filteredSeerrResults,
                             displayRatings = displayRatings,
                             loading = false,
                             hasSearched = true,
@@ -93,17 +96,18 @@ class SearchViewModel @Inject constructor(
             }
     }
 
-    private fun requestSeerrItem(item: SeerrSearchResult) {
+    private fun requestSeerrItem(item: SeerrSearchResult, is4k: Boolean) {
+        val mediaId = item.mediaId ?: return
         viewModelScope.launch {
-            val success = seerrApi.createRequest(item.mediaType, item.tmdbId)
+            val success = seerrApi.createRequest(item.mediaType, mediaId, is4k, item.tvdbId)
             if (success) {
                 // Refresh search to show updated status if possible, 
                 // but Seerr API might not reflect it immediately.
                 // For now just toast or log.
-                Timber.i("Successfully requested ${item.title ?: item.name}")
+                Timber.i("Successfully requested ${item.title ?: item.name} (4K: $is4k)")
                 // Optionally update state to show it was requested
                 val updatedSeerrItems = _state.value.seerrItems.map {
-                    if (it.tmdbId == item.tmdbId && it.mediaType == item.mediaType) {
+                    if (it.mediaId == mediaId && it.mediaType == item.mediaType) {
                         it.copy(mediaInfo = it.mediaInfo?.copy(status = 2) ?: SeerrMediaInfo(status = 2))
                     } else it
                 }
@@ -120,7 +124,7 @@ class SearchViewModel @Inject constructor(
                 search(query = action.query)
             }
             is SearchAction.RequestSeerrItem -> {
-                requestSeerrItem(action.item)
+                requestSeerrItem(action.item, action.is4k)
             }
             else -> Unit
         }

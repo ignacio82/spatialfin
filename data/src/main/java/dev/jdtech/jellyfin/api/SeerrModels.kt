@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 data class SeerrSearchResult(
     val id: Int? = null,
     val mediaType: String,
-    val tmdbId: Int,
+    val tmdbId: Int? = null,
     val tvdbId: Int? = null,
     val title: String? = null,
     val name: String? = null,
@@ -16,7 +16,9 @@ data class SeerrSearchResult(
     val releaseDate: String? = null,
     val firstAirDate: String? = null,
     val mediaInfo: SeerrMediaInfo? = null,
-)
+) {
+    val mediaId: Int? get() = tmdbId ?: id ?: tvdbId
+}
 
 @Serializable
 data class SeerrMediaInfo(
@@ -45,6 +47,17 @@ data class SeerrSearchResponse(
 data class SeerrCreateRequest(
     val mediaType: String,
     val mediaId: Int,
+    val tvdbId: Int? = null,
     val seasons: List<Int>? = null,
     val is4k: Boolean = false,
+)
+
+@Serializable
+data class SeerrTvResponse(
+    val seasons: List<SeerrSeason>
+)
+
+@Serializable
+data class SeerrSeason(
+    val seasonNumber: Int
 )

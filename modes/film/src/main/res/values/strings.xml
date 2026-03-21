@@ -18,4 +18,8 @@
     <string name="search_seerr_results_title">Available on Seerr</string>
     <string name="search_request_action">Request</string>
     <string name="search_request_pending">Request Pending</string>
+    <string name="search_request_quality_title">Select Request Quality</string>
+    <string name="search_request_quality_subtitle">Which quality would you like to request for \"%1$s\"?</string>
+    <string name="search_request_quality_standard">Standard HD</string>
+    <string name="search_request_quality_4k">4K Ultra HD</string>
 </resources>

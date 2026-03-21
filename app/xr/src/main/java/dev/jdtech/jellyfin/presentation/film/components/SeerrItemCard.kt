@@ -1,7 +1,6 @@
 package dev.jdtech.jellyfin.presentation.film.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,9 +12,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.xr.compose.spatial.SpatialDialog
 import dev.jdtech.jellyfin.api.SeerrSearchResult
 import dev.jdtech.jellyfin.film.R
 import dev.spatialfin.presentation.theme.spacings
@@ -31,9 +37,22 @@ import dev.spatialfin.presentation.theme.spacings
 fun SeerrItemCard(
     item: SeerrSearchResult,
     direction: Direction,
-    onRequestClick: (SeerrSearchResult) -> Unit,
+    onRequestClick: (SeerrSearchResult, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showQualityDialog by remember { mutableStateOf(false) }
+
+    if (showQualityDialog) {
+        SeerrRequestQualityDialog(
+            item = item,
+            onConfirm = { is4k ->
+                onRequestClick(item, is4k)
+                showQualityDialog = false
+            },
+            onDismiss = { showQualityDialog = false }
+        )
+    }
+
     val width =
         when (direction) {
             Direction.HORIZONTAL -> 360
@@ -68,7 +87,7 @@ fun SeerrItemCard(
         if (status == 1) { // Unknown / Not Requested
             Spacer(modifier = Modifier.height(MaterialTheme.spacings.small))
             Button(
-                onClick = { onRequestClick(item) },
+                onClick = { showQualityDialog = true },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.search_request_action))
@@ -83,6 +102,63 @@ fun SeerrItemCard(
         }
         
         Spacer(Modifier.height(6.dp))
+    }
+}
+
+@Composable
+private fun SeerrRequestQualityDialog(
+    item: SeerrSearchResult,
+    onConfirm: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    SpatialDialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.width(400.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(MaterialTheme.spacings.large),
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium)
+            ) {
+                Text(
+                    text = stringResource(R.string.search_request_quality_title),
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Text(
+                    text = stringResource(
+                        R.string.search_request_quality_subtitle,
+                        item.title ?: item.name ?: ""
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small)) {
+                    FilledTonalButton(
+                        onClick = { onConfirm(false) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.search_request_quality_standard))
+                    }
+                    FilledTonalButton(
+                        onClick = { onConfirm(true) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.search_request_quality_4k))
+                    }
+                }
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                }
+            }
+        }
     }
 }
 
