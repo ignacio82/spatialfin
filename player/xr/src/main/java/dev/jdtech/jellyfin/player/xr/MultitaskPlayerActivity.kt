@@ -115,6 +115,17 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 putExtra("startFromBeginning", startFromBeginning)
             }
         }
+
+        fun createIntentForNetworkMedia(
+            context: Context,
+            networkVideoId: String,
+            startFromBeginning: Boolean = false,
+        ): Intent {
+            return Intent(context, MultitaskPlayerActivity::class.java).apply {
+                putExtra("networkVideoId", networkVideoId)
+                putExtra("startFromBeginning", startFromBeginning)
+            }
+        }
     }
 
     @OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -126,8 +137,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
 
         val itemIdString = intent.extras?.getString("itemId")
         val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
-        
-        if (itemIdString == null && localMediaId == null) {
+        val networkVideoId = intent.extras?.getString("networkVideoId")
+
+        if (itemIdString == null && localMediaId == null && networkVideoId == null) {
             finish()
             return
         }
@@ -154,6 +166,8 @@ class MultitaskPlayerActivity : ComponentActivity() {
         
         if (localMediaId != null) {
             viewModel.initializeLocalPlayer(localMediaId, startFromBeginning)
+        } else if (networkVideoId != null) {
+            viewModel.initializeNetworkPlayer(networkVideoId, startFromBeginning)
         } else if (itemId != null) {
             viewModel.initializePlayer(
                 itemId = itemId,

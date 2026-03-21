@@ -13,7 +13,16 @@ import dev.jdtech.jellyfin.repository.JellyfinRepositoryImpl
 import dev.jdtech.jellyfin.repository.JellyfinRepositoryOfflineImpl
 import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.repository.LocalMediaRepositoryImpl
+import dev.jdtech.jellyfin.repository.NetworkMediaRepository
+import dev.jdtech.jellyfin.repository.NetworkMediaRepositoryImpl
 import dev.jdtech.jellyfin.repository.SmartJellyfinRepository
+import dev.jdtech.jellyfin.api.TmdbApi
+import dev.jdtech.jellyfin.network.MetadataMatchService
+import dev.jdtech.jellyfin.network.NetworkDiscovery
+import dev.jdtech.jellyfin.network.NetworkFileClientFactory
+import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.network.NfsFileClient
+import dev.jdtech.jellyfin.network.SmbFileClient
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
 
@@ -79,4 +88,59 @@ object RepositoryModule {
         application: Application,
         serverDatabase: ServerDatabaseDao,
     ): LocalMediaRepository = LocalMediaRepositoryImpl(application, serverDatabase)
+
+    @Singleton
+    @Provides
+    fun provideSmbFileClient(): SmbFileClient = SmbFileClient()
+
+    @Singleton
+    @Provides
+    fun provideNfsFileClient(): NfsFileClient = NfsFileClient()
+
+    @Singleton
+    @Provides
+    fun provideNetworkFileClientFactory(
+        smbFileClient: SmbFileClient,
+        nfsFileClient: NfsFileClient,
+    ): NetworkFileClientFactory = NetworkFileClientFactory(smbFileClient, nfsFileClient)
+
+    @Singleton
+    @Provides
+    fun provideNetworkStreamProxy(
+        clientFactory: NetworkFileClientFactory,
+        serverDatabase: ServerDatabaseDao,
+    ): NetworkStreamProxy = NetworkStreamProxy(clientFactory, serverDatabase)
+
+    @Singleton
+    @Provides
+    fun provideNetworkDiscovery(): NetworkDiscovery = NetworkDiscovery()
+
+    @Singleton
+    @Provides
+    fun provideTmdbApi(
+        appPreferences: AppPreferences,
+    ): TmdbApi = TmdbApi(appPreferences)
+
+    @Singleton
+    @Provides
+    fun provideMetadataMatchService(
+        tmdbApi: TmdbApi,
+        serverDatabase: ServerDatabaseDao,
+    ): MetadataMatchService = MetadataMatchService(tmdbApi, serverDatabase)
+
+    @Singleton
+    @Provides
+    fun provideNetworkMediaRepository(
+        serverDatabase: ServerDatabaseDao,
+        clientFactory: NetworkFileClientFactory,
+        streamProxy: NetworkStreamProxy,
+        discovery: NetworkDiscovery,
+        metadataMatchService: MetadataMatchService,
+    ): NetworkMediaRepository = NetworkMediaRepositoryImpl(
+        serverDatabase,
+        clientFactory,
+        streamProxy,
+        discovery,
+        metadataMatchService,
+    )
 }

@@ -28,6 +28,7 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Large-Target Playback UI** — The XR player exposes larger controls and a dedicated chapter picker for easier hand-first interaction.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
+- **Network Shares (SMB/NFS)** — Browse and stream media from SMB and NFS network shares on your local network. Autodiscovery finds shares via mDNS, and TMDB metadata enrichment adds posters, descriptions, ratings, and proper watch tracking — bringing network content close to the Jellyfin experience.
 - **Automatic Offline Mode** — SpatialFin monitors server reachability and automatically switches into offline mode when the selected Jellyfin server is unavailable, then switches back online when the server becomes reachable again.
 - **Offline Playback** — Download media for offline viewing with a new reliable, resumable engine that continues interrupted downloads automatically.
 - **Full Offline Metadata Mirroring** — SpatialFin now downloads everything needed for a complete offline experience, including posters, backdrops, and scrubber thumbnails (trickplay).
@@ -92,6 +93,20 @@ If you delete the file manually from `Downloads/SpatialFin`, SpatialFin detects 
 - Offline browsing uses cached/downloaded media when the server is unavailable.
 - Playback progress and media state continue to work for local and downloaded content.
 - Reconnection triggers a sync pass so offline state can be pushed back when the server is available again.
+
+## Network Shares
+
+SpatialFin can browse and stream media directly from SMB and NFS shares on your local network, turning a NAS or file server into a media source without requiring a Jellyfin server.
+
+- A dedicated `Network` tab lists saved shares and continues-watching items.
+- **Autodiscovery** uses mDNS to find SMB (`_smb._tcp.local.`) and NFS (`_nfs._tcp.local.`) services automatically.
+- Add shares manually or tap a discovered share to pre-fill host, share name, and protocol.
+- SMB supports guest and authenticated access (username, password, domain). NFS uses standard v4.1 mounts.
+- **Recursive scanning** walks share directories and indexes video files (mkv, mp4, avi, m4v, ts, wmv, mov).
+- **TMDB metadata enrichment** parses filenames for titles, years, and season/episode numbers, then matches against TMDB to fetch posters, backdrops, descriptions, and ratings. Provide a TMDB API key in Settings → Network to enable this.
+- Videos are grouped by Movies, TV Shows, and Uncategorized within each share.
+- Watch progress and played/unplayed state are tracked locally per video.
+- Playback uses a local HTTP proxy that bridges SMB/NFS streams to ExoPlayer with full seek support via HTTP Range headers.
 
 ## Requirements
 

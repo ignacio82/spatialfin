@@ -45,5 +45,8 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+    implementation(libs.smbj)
+    implementation(libs.nfs4j)
+    implementation(libs.jmdns)
     implementation(libs.timber)
 }

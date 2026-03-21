@@ -40,6 +40,7 @@ import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.LocalMediaRepository
+import dev.jdtech.jellyfin.repository.NetworkMediaRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
@@ -82,6 +83,7 @@ constructor(
     private val playlistManager: PlaylistManager,
     private val repository: JellyfinRepository,
     private val localMediaRepository: LocalMediaRepository,
+    private val networkMediaRepository: NetworkMediaRepository,
     val appPreferences: AppPreferences,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel(), Player.Listener {
@@ -545,6 +547,58 @@ constructor(
         }
     }
 
+    fun initializeNetworkPlayer(networkVideoId: String, startFromBeginning: Boolean) {
+        player.removeListener(this)
+        player.addListener(this)
+
+        viewModelScope.launch {
+            val startItem =
+                try {
+                    networkMediaRepository.getVideo(networkVideoId)?.let { item ->
+                        val streamUrl = networkMediaRepository.getStreamUrl(networkVideoId) ?: ""
+                        PlayerItem(
+                            name = item.name,
+                            itemId = item.id,
+                            mediaSourceId = "network-$networkVideoId",
+                            playbackPosition =
+                                if (startFromBeginning) 0L else item.playbackPositionTicks / 10000L,
+                            mediaSourceUri = streamUrl,
+                            chapters = emptyList(),
+                            people = emptyList(),
+                            overview = item.overview,
+                            backdropImageUri = item.images.backdrop?.toString(),
+                            seriesName = null,
+                            contentSource = PlayerContentSource.NETWORK,
+                            networkVideoId = networkVideoId,
+                        )
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e)
+                    Toast.makeText(application, e.localizedMessage, Toast.LENGTH_LONG).show()
+                    null
+                }
+
+            if (startItem == null) {
+                Timber.e("No network start item, stopping player initialization")
+                return@launch
+            }
+
+            items = mutableListOf(startItem)
+            currentMediaItemIndex = 0
+
+            val startPosition =
+                if (playbackPosition == 0L) {
+                    startItem.playbackPosition.takeIf { !startFromBeginning } ?: C.TIME_UNSET
+                } else {
+                    playbackPosition
+                }
+
+            player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
+            player.prepare()
+            player.play()
+        }
+    }
+
     private fun PlayerItem.toMediaItem(): MediaItem {
         val streamUrl = mediaSourceUri
         val mediaSubtitles =
@@ -598,6 +652,15 @@ constructor(
                                 )
                             }
                         }
+                        PlayerContentSource.NETWORK -> {
+                            currentItem.networkVideoId?.let { videoId ->
+                                networkMediaRepository.updatePlaybackState(
+                                    videoId = videoId,
+                                    positionMs = position,
+                                    durationMs = duration,
+                                )
+                            }
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -632,6 +695,15 @@ constructor(
                             currentItem.localMediaId?.let { localMediaId ->
                                 localMediaRepository.updatePlaybackState(
                                     mediaStoreId = localMediaId,
+                                    positionMs = player.currentPosition,
+                                    durationMs = player.duration.coerceAtLeast(0L),
+                                )
+                            }
+                        }
+                        PlayerContentSource.NETWORK -> {
+                            currentItem.networkVideoId?.let { videoId ->
+                                networkMediaRepository.updatePlaybackState(
+                                    videoId = videoId,
                                     positionMs = player.currentPosition,
                                     durationMs = player.duration.coerceAtLeast(0L),
                                 )
@@ -939,6 +1011,15 @@ constructor(
                             currentPlayerItem()?.localMediaId?.let { localMediaId ->
                                 localMediaRepository.updatePlaybackState(
                                     mediaStoreId = localMediaId,
+                                    positionMs = position,
+                                    durationMs = duration,
+                                )
+                            }
+                        }
+                        PlayerContentSource.NETWORK -> {
+                            currentPlayerItem()?.networkVideoId?.let { networkVideoId ->
+                                networkMediaRepository.updatePlaybackState(
+                                    videoId = networkVideoId,
                                     positionMs = position,
                                     durationMs = duration,
                                 )

@@ -584,6 +584,17 @@ class SettingsViewModel @Inject constructor(
                                     PreferenceGroup(
                                         preferences =
                                             listOf(
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_tmdb_api_key,
+                                                    descriptionStringRes = R.string.settings_tmdb_api_key_summary,
+                                                    iconDrawableId = R.drawable.ic_info,
+                                                    onClick = { showTmdbApiKeyDialog() },
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.settings_tmdb_auto_match,
+                                                    descriptionStringRes = R.string.settings_tmdb_auto_match_summary,
+                                                    backendPreference = appPreferences.tmdbAutoMatch,
+                                                ),
                                                 PreferenceLongInput(
                                                     nameStringResource =
                                                         R.string.settings_request_timeout,
@@ -871,6 +882,24 @@ class SettingsViewModel @Inject constructor(
     fun saveCloudApiKey(value: String) {
         appPreferences.setValue(
             appPreferences.voiceAssistantCloudApiKey,
+            value.trim().takeIf { it.isNotEmpty() },
+        )
+        refreshLoadedPreferences()
+    }
+
+    fun showTmdbApiKeyDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowTmdbApiKeyDialog(
+                    appPreferences.getValue(appPreferences.tmdbApiKey)
+                )
+            )
+        }
+    }
+
+    fun saveTmdbApiKey(value: String) {
+        appPreferences.setValue(
+            appPreferences.tmdbApiKey,
             value.trim().takeIf { it.isNotEmpty() },
         )
         refreshLoadedPreferences()

@@ -31,4 +31,5 @@ data class PlayerItem(
     val seriesId: UUID? = null,
     val contentSource: PlayerContentSource = PlayerContentSource.JELLYFIN,
     val localMediaId: Long? = null,
+    val networkVideoId: String? = null,
 ) : Parcelable

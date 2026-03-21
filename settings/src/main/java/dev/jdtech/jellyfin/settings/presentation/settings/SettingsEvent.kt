@@ -22,6 +22,8 @@ sealed interface SettingsEvent {
 
     data class ShowSeerrApiKeyDialog(val currentValue: String?) : SettingsEvent
 
+    data class ShowTmdbApiKeyDialog(val currentValue: String?) : SettingsEvent
+
     data class ShowSmartLanguageDialog(val settings: SmartLanguageSettings) : SettingsEvent
 
     data object RestartActivity : SettingsEvent

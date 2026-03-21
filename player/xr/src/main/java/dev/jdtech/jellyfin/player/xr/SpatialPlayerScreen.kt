@@ -178,6 +178,7 @@ fun SpatialPlayerScreen(
     initialStereoMode: String,
     itemId: UUID?,
     localMediaId: Long?,
+    networkVideoId: String? = null,
     itemKind: String,
     startFromBeginning: Boolean,
     mediaSourceIndex: Int? = null,
@@ -817,6 +818,12 @@ fun SpatialPlayerScreen(
                     localMediaId != null -> {
                         viewModel.initializeLocalPlayer(
                             localMediaId = localMediaId,
+                            startFromBeginning = startFromBeginning,
+                        )
+                    }
+                    networkVideoId != null -> {
+                        viewModel.initializeNetworkPlayer(
+                            networkVideoId = networkVideoId,
                             startFromBeginning = startFromBeginning,
                         )
                     }

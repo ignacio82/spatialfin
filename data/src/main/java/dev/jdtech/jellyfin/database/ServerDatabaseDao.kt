@@ -9,6 +9,9 @@ import androidx.room.Update
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
 import dev.jdtech.jellyfin.models.DownloadTaskDto
+import dev.jdtech.jellyfin.models.NetworkPlaybackStateDto
+import dev.jdtech.jellyfin.models.NetworkShareDto
+import dev.jdtech.jellyfin.models.NetworkVideoDto
 import dev.jdtech.jellyfin.models.DownloadTaskKind
 import dev.jdtech.jellyfin.models.SpatialFinMediaStreamDto
 import dev.jdtech.jellyfin.models.SpatialFinMovieDto
@@ -330,4 +333,61 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertLocalMediaPlaybackState(state: LocalMediaPlaybackStateDto)
+
+    // Network shares
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertNetworkShare(share: NetworkShareDto)
+
+    @Query("SELECT * FROM networkShares ORDER BY addedAtEpochMs DESC")
+    fun getNetworkShares(): List<NetworkShareDto>
+
+    @Query("SELECT * FROM networkShares WHERE id = :id")
+    fun getNetworkShare(id: String): NetworkShareDto?
+
+    @Query("DELETE FROM networkShares WHERE id = :id")
+    fun deleteNetworkShare(id: String)
+
+    @Query("UPDATE networkShares SET lastScannedAtEpochMs = :timestamp WHERE id = :id")
+    fun updateNetworkShareLastScanned(id: String, timestamp: Long)
+
+    // Network videos
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertNetworkVideo(video: NetworkVideoDto)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertNetworkVideos(videos: List<NetworkVideoDto>)
+
+    @Query("SELECT * FROM networkVideos WHERE shareId = :shareId ORDER BY title ASC")
+    fun getNetworkVideosByShare(shareId: String): List<NetworkVideoDto>
+
+    @Query("SELECT * FROM networkVideos WHERE id = :id")
+    fun getNetworkVideo(id: String): NetworkVideoDto?
+
+    @Query("SELECT * FROM networkVideos ORDER BY title ASC")
+    fun getAllNetworkVideos(): List<NetworkVideoDto>
+
+    @Query("SELECT * FROM networkVideos WHERE title LIKE '%' || :query || '%' OR fileName LIKE '%' || :query || '%'")
+    fun searchNetworkVideos(query: String): List<NetworkVideoDto>
+
+    @Query("DELETE FROM networkVideos WHERE shareId = :shareId")
+    fun deleteNetworkVideosByShare(shareId: String)
+
+    @Query("DELETE FROM networkVideos WHERE id = :id")
+    fun deleteNetworkVideo(id: String)
+
+    // Network playback state
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertNetworkPlaybackState(state: NetworkPlaybackStateDto)
+
+    @Query("SELECT * FROM networkPlaybackState WHERE videoId = :videoId")
+    fun getNetworkPlaybackState(videoId: String): NetworkPlaybackStateDto?
+
+    @Query("SELECT * FROM networkPlaybackState")
+    fun getAllNetworkPlaybackStates(): List<NetworkPlaybackStateDto>
+
+    @Query("SELECT * FROM networkPlaybackState WHERE positionMs > 0 ORDER BY lastPlayedAtEpochMs DESC")
+    fun getNetworkResumeItems(): List<NetworkPlaybackStateDto>
 }

@@ -11,6 +11,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
 import dev.jdtech.jellyfin.models.DownloadTaskDto
+import dev.jdtech.jellyfin.models.NetworkPlaybackStateDto
+import dev.jdtech.jellyfin.models.NetworkShareDto
+import dev.jdtech.jellyfin.models.NetworkVideoDto
 import dev.jdtech.jellyfin.models.SpatialFinMediaStreamDto
 import dev.jdtech.jellyfin.models.SpatialFinMovieDto
 import dev.jdtech.jellyfin.models.SpatialFinSeasonDto
@@ -40,8 +43,11 @@ import dev.jdtech.jellyfin.models.User
             SpatialFinSegmentDto::class,
             LocalMediaPlaybackStateDto::class,
             DownloadTaskDto::class,
+            NetworkShareDto::class,
+            NetworkVideoDto::class,
+            NetworkPlaybackStateDto::class,
         ],
-    version = 13,
+    version = 14,
     autoMigrations =
         [
             AutoMigration(from = 2, to = 3),
@@ -54,6 +60,7 @@ import dev.jdtech.jellyfin.models.User
             AutoMigration(from = 10, to = 11),
             AutoMigration(from = 11, to = 12),
             AutoMigration(from = 12, to = 13),
+            AutoMigration(from = 13, to = 14),
         ],
 )
 @TypeConverters(Converters::class)

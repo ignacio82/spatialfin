@@ -65,4 +65,5 @@ fun SpatialFinSourceDto.toSpatialFinSource(serverDatabaseDao: ServerDatabaseDao)
 enum class SpatialFinSourceType {
     REMOTE,
     LOCAL,
+    NETWORK,
 }

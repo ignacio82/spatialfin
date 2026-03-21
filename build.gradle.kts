@@ -14,6 +14,7 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://download.dcache.org/nexus/repository/public/") }
     }
 }
 

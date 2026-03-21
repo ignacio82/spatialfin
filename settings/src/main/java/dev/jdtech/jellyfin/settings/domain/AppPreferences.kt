@@ -133,6 +133,10 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val seerrUrl = Preference<String?>("pref_seerr_url", null)
     val seerrApiKey = Preference<String?>("pref_seerr_api_key", null)
 
+    // TMDB
+    val tmdbApiKey = Preference<String?>("pref_tmdb_api_key", null)
+    val tmdbAutoMatch = Preference("pref_tmdb_auto_match", true)
+
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
 

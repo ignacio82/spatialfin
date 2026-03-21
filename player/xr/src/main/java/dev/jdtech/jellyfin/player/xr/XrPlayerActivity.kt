@@ -90,6 +90,19 @@ class XrPlayerActivity : AppCompatActivity() {
             }
         }
 
+        fun createIntentForNetworkMedia(
+            context: android.content.Context,
+            networkVideoId: String,
+            startFromBeginning: Boolean = false,
+            stereoMode: String = "mono",
+        ): android.content.Intent {
+            return android.content.Intent(context, XrPlayerActivity::class.java).apply {
+                putExtra("networkVideoId", networkVideoId)
+                putExtra("startFromBeginning", startFromBeginning)
+                putExtra("stereoMode", stereoMode)
+            }
+        }
+
         fun createIntentForItem(
             context: android.content.Context,
             item: SpatialFinItem,
@@ -125,7 +138,8 @@ class XrPlayerActivity : AppCompatActivity() {
 
         val itemIdString = intent.extras?.getString("itemId")
         val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
-        if (itemIdString == null && localMediaId == null) {
+        val networkVideoId = intent.extras?.getString("networkVideoId")
+        if (itemIdString == null && localMediaId == null && networkVideoId == null) {
             finish()
             return
         }
@@ -239,6 +253,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         initialStereoMode = currentStereoMode,
                         itemId = itemId,
                         localMediaId = localMediaId,
+                        networkVideoId = networkVideoId,
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,

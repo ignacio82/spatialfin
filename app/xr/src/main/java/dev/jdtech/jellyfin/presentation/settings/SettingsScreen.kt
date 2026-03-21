@@ -71,6 +71,7 @@ fun SettingsScreen(
     var cloudApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var seerrUrlDraft by remember { mutableStateOf<String?>(null) }
     var seerrApiKeyDraft by remember { mutableStateOf<String?>(null) }
+    var tmdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
@@ -125,6 +126,9 @@ fun SettingsScreen(
             is SettingsEvent.ShowSeerrApiKeyDialog -> {
                 seerrApiKeyDraft = event.currentValue.orEmpty()
             }
+            is SettingsEvent.ShowTmdbApiKeyDialog -> {
+                tmdbApiKeyDraft = event.currentValue.orEmpty()
+            }
             is SettingsEvent.ShowSmartLanguageDialog -> {
                 smartLanguageDraft = event.settings
             }
@@ -175,6 +179,21 @@ fun SettingsScreen(
                     smartLanguageDraft = null
                 },
                 onDismissRequest = { smartLanguageDraft = null },
+            )
+        }
+    }
+
+    tmdbApiKeyDraft?.let { currentValue ->
+        SpatialDialog(onDismissRequest = { tmdbApiKeyDraft = null }) {
+            SettingsTextInputDialog(
+                title = stringResource(SettingsR.string.settings_tmdb_api_key),
+                description = stringResource(SettingsR.string.settings_tmdb_api_key_summary),
+                initialValue = currentValue,
+                onUpdate = { value ->
+                    viewModel.saveTmdbApiKey(value)
+                    tmdbApiKeyDraft = null
+                },
+                onDismissRequest = { tmdbApiKeyDraft = null },
             )
         }
     }

@@ -216,6 +216,10 @@
     <string name="settings_seerr_url_summary">The URL of your Jellyseerr/Overseerr instance (e.g., http://192.168.1.50:5055)</string>
     <string name="settings_seerr_api_key">API Key</string>
     <string name="settings_seerr_api_key_summary">Your Seerr API key from Settings -> General</string>
+    <string name="settings_tmdb_api_key">TMDB API Key</string>
+    <string name="settings_tmdb_api_key_summary">API key for The Movie Database metadata enrichment</string>
+    <string name="settings_tmdb_auto_match">Automatic matching</string>
+    <string name="settings_tmdb_auto_match_summary">Automatically match network content with TMDB metadata</string>
     <string name="logging_enabled">Enable Logging</string>
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
     <string name="voice_controls">Voice controls</string>

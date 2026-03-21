@@ -34,6 +34,7 @@ import androidx.navigation.toRoute
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.LocalVideoItem
+import dev.jdtech.jellyfin.models.NetworkVideoItem
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -55,6 +56,10 @@ import dev.jdtech.jellyfin.presentation.film.SeasonScreen
 import dev.jdtech.jellyfin.presentation.film.ShowScreen
 import dev.jdtech.jellyfin.presentation.local.LocalMediaScreen
 import dev.jdtech.jellyfin.presentation.local.LocalVideoScreen
+import dev.jdtech.jellyfin.presentation.network.AddShareScreen
+import dev.jdtech.jellyfin.presentation.network.NetworkScreen
+import dev.jdtech.jellyfin.presentation.network.NetworkShareScreen
+import dev.jdtech.jellyfin.presentation.network.NetworkVideoScreen
 import dev.jdtech.jellyfin.presentation.settings.AboutScreen
 import dev.jdtech.jellyfin.presentation.settings.SettingsScreen
 import dev.jdtech.jellyfin.presentation.setup.addresses.ServerAddressesScreen
@@ -86,6 +91,14 @@ import kotlinx.serialization.Serializable
 @Serializable data object MediaRoute
 
 @Serializable data object LocalRoute
+
+@Serializable data object NetworkRoute
+
+@Serializable data class NetworkShareRoute(val shareId: String)
+
+@Serializable data class NetworkVideoRoute(val videoId: String)
+
+@Serializable data object NetworkAddShareRoute
 
 @Serializable data object DownloadsRoute
 
@@ -137,6 +150,12 @@ val localTab =
         icon = CoreR.drawable.ic_folder,
         route = LocalRoute,
     )
+val networkTab =
+    TabBarItem(
+        title = CoreR.string.title_network,
+        icon = CoreR.drawable.ic_globe,
+        route = NetworkRoute,
+    )
 val downloadsTab =
     TabBarItem(
         title = CoreR.string.title_download,
@@ -167,8 +186,8 @@ fun NavigationRoot(
 
     val navigationItems =
         when (isOfflineMode) {
-            false -> if (hasServers) listOf(homeTab, mediaTab, localTab, downloadsTab) else listOf(localTab)
-            true -> if (hasServers) listOf(homeTab, localTab, downloadsTab) else listOf(localTab)
+            false -> if (hasServers) listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab) else listOf(localTab, networkTab)
+            true -> if (hasServers) listOf(homeTab, localTab, networkTab, downloadsTab) else listOf(localTab, networkTab)
         }
     val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
 
@@ -521,6 +540,44 @@ fun NavigationRoot(
                     navigateBack = { navController.safePopBackStack() },
                 )
             }
+            composable<NetworkRoute> {
+                NetworkScreen(
+                    onShareClick = { share ->
+                        navController.safeNavigate(NetworkShareRoute(shareId = share.id))
+                    },
+                    onAddShareClick = { navController.safeNavigate(NetworkAddShareRoute) },
+                    onItemClick = { item ->
+                        navController.safeNavigate(NetworkVideoRoute(videoId = item.networkVideoId))
+                    },
+                    onSettingsClick = {
+                        navController.safeNavigate(
+                            SettingsRoute(indexes = intArrayOf(CoreR.string.title_settings))
+                        )
+                    },
+                )
+            }
+            composable<NetworkAddShareRoute> {
+                AddShareScreen(
+                    navigateBack = { navController.safePopBackStack() },
+                )
+            }
+            composable<NetworkShareRoute> { backStackEntry ->
+                val route: NetworkShareRoute = backStackEntry.toRoute()
+                NetworkShareScreen(
+                    shareId = route.shareId,
+                    navigateBack = { navController.safePopBackStack() },
+                    onItemClick = { item ->
+                        navController.safeNavigate(NetworkVideoRoute(videoId = item.networkVideoId))
+                    },
+                )
+            }
+            composable<NetworkVideoRoute> { backStackEntry ->
+                val route: NetworkVideoRoute = backStackEntry.toRoute()
+                NetworkVideoScreen(
+                    videoId = route.videoId,
+                    navigateBack = { navController.safePopBackStack() },
+                )
+            }
             composable<PersonRoute> { backStackEntry ->
                 val route: PersonRoute = backStackEntry.toRoute()
                 PersonScreen(
@@ -579,6 +636,7 @@ private fun navigateToItem(navController: NavHostController, item: SpatialFinIte
                 )
             )
         is LocalVideoItem -> navController.safeNavigate(LocalVideoRoute(item.mediaStoreId))
+        is NetworkVideoItem -> navController.safeNavigate(NetworkVideoRoute(videoId = item.networkVideoId))
         is SpatialFinFolder ->
             navController.safeNavigate(
                 LibraryRoute(
