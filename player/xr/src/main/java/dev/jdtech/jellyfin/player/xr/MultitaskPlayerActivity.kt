@@ -13,7 +13,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,18 +27,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,12 +58,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
@@ -54,8 +75,11 @@ import androidx.xr.compose.platform.LocalSession
 import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.local.R as LocalR
 import java.util.UUID
+import kotlinx.coroutines.delay
 
 @AndroidEntryPoint
 class MultitaskPlayerActivity : ComponentActivity() {
@@ -165,48 +189,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 }
 
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        if (!isPipMode) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(64.dp)
-                                    .background(Color.Black.copy(alpha = 0.5f))
-                                    .padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(onClick = { finish() }) {
-                                    Icon(
-                                        painterResource(CoreR.drawable.ic_arrow_left),
-                                        contentDescription = "Back",
-                                        tint = Color.White
-                                    )
-                                }
-                                
-                                val state by viewModel.uiState.collectAsStateWithLifecycle()
-                                Text(
-                                    text = state.currentItemTitle,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    IconButton(onClick = { 
-                                        enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
-                                    }) {
-                                        Icon(
-                                            painterResource(CoreR.drawable.ic_picture_in_picture),
-                                            contentDescription = "PiP",
-                                            tint = Color.White
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
+                    Box(modifier = Modifier.fillMaxSize()) {
                         val context = LocalContext.current
                         val playerView = remember {
                             PlayerView(context).apply {
@@ -215,7 +198,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
-                                useController = true
+                                useController = false // Use custom controller
                                 setBackgroundColor(android.graphics.Color.BLACK)
                             }
                         }
@@ -226,13 +209,16 @@ class MultitaskPlayerActivity : ComponentActivity() {
                             }
                         }
 
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            AndroidView(
-                                factory = { playerView },
-                                modifier = Modifier.fillMaxSize(),
-                                update = { view ->
-                                    view.useController = !isPipMode
-                                }
+                        AndroidView(
+                            factory = { playerView },
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        if (!isPipMode) {
+                            MultitaskControllerOverlay(
+                                player = player,
+                                viewModel = viewModel,
+                                onBackClick = { finish() }
                             )
                         }
                     }
@@ -288,4 +274,238 @@ class MultitaskPlayerActivity : ComponentActivity() {
         mediaSession?.release()
         mediaSession = null
     }
+}
+
+@Composable
+private fun MultitaskControllerOverlay(
+    player: Player,
+    viewModel: PlayerViewModel,
+    onBackClick: () -> Unit,
+) {
+    var visible by remember { mutableStateOf(true) }
+    var activeDialog by remember { mutableStateOf<String?>(null) }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var isPlaying by remember { mutableStateOf(player.isPlaying) }
+
+    LaunchedEffect(player) {
+        while (true) {
+            currentPosition = player.currentPosition
+            duration = player.duration.coerceAtLeast(0L)
+            isPlaying = player.isPlaying
+            delay(500L)
+        }
+    }
+
+    LaunchedEffect(visible) {
+        if (visible && isPlaying) {
+            delay(5000L)
+            visible = false
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { visible = !visible }
+            )
+    ) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+            ) {
+                // Top: Title
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBackClick) {
+                        Icon(painterResource(CoreR.drawable.ic_arrow_left), "Back", tint = Color.White)
+                    }
+                    Text(
+                        text = uiState.currentItemTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        modifier = Modifier.padding(start = 8.dp).weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    IconButton(onClick = { activeDialog = "audio" }) {
+                        Icon(painterResource(CoreR.drawable.ic_speaker), "Audio", tint = Color.White)
+                    }
+                    IconButton(onClick = { activeDialog = "subtitle" }) {
+                        Icon(painterResource(CoreR.drawable.ic_closed_caption), "Subtitles", tint = Color.White)
+                    }
+                }
+
+                // Middle: Play/Pause
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { player.seekBack() }, modifier = Modifier.size(48.dp)) {
+                        Icon(painterResource(CoreR.drawable.ic_rewind), null, tint = Color.White, modifier = Modifier.size(32.dp))
+                    }
+                    
+                    IconButton(
+                        onClick = { if (isPlaying) player.pause() else player.play() },
+                        modifier = Modifier.size(64.dp)
+                    ) {
+                        Icon(
+                            painterResource(if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play),
+                            null,
+                            tint = Color.White,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+
+                    IconButton(onClick = { player.seekForward() }, modifier = Modifier.size(48.dp)) {
+                        Icon(painterResource(CoreR.drawable.ic_fast_forward), null, tint = Color.White, modifier = Modifier.size(32.dp))
+                    }
+                }
+
+                // Bottom: Progress
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(formatTime(currentPosition), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        Text(formatTime(duration), color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
+                        onValueChange = { player.seekTo((it * duration).toLong()) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+
+    if (activeDialog == "audio") {
+        Dialog(onDismissRequest = { activeDialog = null }) {
+            TrackSelectionDialogContent(
+                title = stringResource(LocalR.string.select_audio_track),
+                player = player,
+                trackType = C.TRACK_TYPE_AUDIO,
+                onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index) },
+                onDismiss = { activeDialog = null }
+            )
+        }
+    }
+    if (activeDialog == "subtitle") {
+        Dialog(onDismissRequest = { activeDialog = null }) {
+            TrackSelectionDialogContent(
+                title = stringResource(LocalR.string.select_subtitle_track),
+                player = player,
+                trackType = C.TRACK_TYPE_TEXT,
+                onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
+                onDismiss = { activeDialog = null }
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrackSelectionDialogContent(
+    title: String,
+    player: Player,
+    trackType: @C.TrackType Int,
+    onTrackSelected: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+    val trackNames = trackGroups.getTrackNames()
+    val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
+
+    Surface(
+        modifier = Modifier
+            .width(400.dp)
+            .heightIn(max = 450.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF1C1C1C),
+        tonalElevation = 8.dp,
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onTrackSelected(-1); onDismiss() }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = selectedIndex == -1,
+                        onClick = { onTrackSelected(-1); onDismiss() },
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(LocalR.string.none), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                }
+                trackNames.forEachIndexed { index, name ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onTrackSelected(index); onDismiss() }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = index == selectedIndex,
+                            onClick = { onTrackSelected(index); onDismiss() },
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            name,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                Text("CLOSE", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+private fun formatTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) String.format("%d:%02d:%02d", hours, minutes, seconds)
+    else String.format("%d:%02d", minutes, seconds)
 }
