@@ -56,7 +56,7 @@ import dev.spatialfin.presentation.theme.spacings
 @Composable
 fun ItemButtonsBar(
     item: SpatialFinItem,
-    onPlayClick: (startFromBeginning: Boolean, mediaSourceIndex: Int?, maxBitrate: Long?) -> Unit,
+    onPlayClick: (startFromBeginning: Boolean, mediaSourceIndex: Int?, maxBitrate: Long?, multitask: Boolean) -> Unit,
     onSyncPlayClick: (() -> Unit)?,
     onMarkAsPlayedClick: () -> Unit,
     onMarkAsFavoriteClick: () -> Unit,
@@ -112,14 +112,21 @@ fun ItemButtonsBar(
             ) {
                 PlayButton(
                     item = item,
-                    onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate) },
+                    onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate, false) },
                     enabled = item.canPlay && canPlay,
                 )
+                if (item.canPlay && canPlay) {
+                    XrActionButton(
+                        label = "Multitask",
+                        icon = CoreR.drawable.ic_picture_in_picture,
+                        onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate, true) },
+                    )
+                }
                 if (item.playbackPositionTicks.div(600000000) > 0) {
                     XrActionButton(
                         label = "Restart",
                         icon = CoreR.drawable.ic_rotate_ccw,
-                        onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate) },
+                        onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate, false) },
                     )
                 }
                 onSyncPlayClick?.let { syncClick ->
@@ -382,7 +389,7 @@ private fun ItemButtonsBarPreview() {
     SpatialFinTheme {
         ItemButtonsBar(
             item = dummyEpisode,
-            onPlayClick = { _, _, _ -> },
+            onPlayClick = { _, _, _, _ -> },
             onSyncPlayClick = null,
             onMarkAsPlayedClick = {},
             onMarkAsFavoriteClick = {},
@@ -402,7 +409,7 @@ private fun ItemButtonsBarDownloadingPreview() {
             item = dummyEpisode,
             downloaderState =
                 DownloaderState(status = DownloadManager.STATUS_RUNNING, progress = 0.3f),
-            onPlayClick = { _, _, _ -> },
+            onPlayClick = { _, _, _, _ -> },
             onSyncPlayClick = null,
             onMarkAsPlayedClick = {},
             onMarkAsFavoriteClick = {},

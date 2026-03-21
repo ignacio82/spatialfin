@@ -120,14 +120,18 @@ fun MovieScreen(
                     } else {
                         StereoModeDetector.StereoMode.MONO
                     }
-                    val targetActivity = XrPlayerActivity::class.java
+                    val targetActivity = if (action.multitask) {
+                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
+                    } else {
+                        XrPlayerActivity::class.java
+                    }
                     val intent = Intent(context, targetActivity)
                     intent.putExtra("itemId", (movie?.id ?: movieId).toString())
                     intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
                     intent.putExtra("startFromBeginning", action.startFromBeginning)
                     action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
                     action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                    if (true) {
+                    if (!action.multitask) {
                         val stereoModeStr = when (stereoMode) {
                             StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
                             StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
@@ -302,12 +306,13 @@ private fun MovieScreenLayout(
                             )
                             context.startActivity(intent)
                         },
-                        onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate ->
+                        onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate, multitask ->
                             onAction(
                                 MovieAction.Play(
                                     startFromBeginning = startFromBeginning,
                                     mediaSourceIndex = mediaSourceIndex,
-                                    maxBitrate = maxBitrate
+                                    maxBitrate = maxBitrate,
+                                    multitask = multitask
                                 )
                             )
                         },

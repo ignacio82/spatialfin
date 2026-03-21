@@ -4,7 +4,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import java.util.UUID
 
 sealed interface ShowAction {
-    data class Play(val startFromBeginning: Boolean = false) : ShowAction
+    data class Play(val startFromBeginning: Boolean = false, val multitask: Boolean = false) : ShowAction
 
     data class PlayTrailer(val trailer: String) : ShowAction
 

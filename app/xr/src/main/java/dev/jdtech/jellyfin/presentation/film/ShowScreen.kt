@@ -86,11 +86,15 @@ fun ShowScreen(
         onAction = { action ->
             when (action) {
                 is ShowAction.Play -> {
-                    val targetActivity = XrPlayerActivity::class.java
+                    val targetActivity = if (action.multitask) {
+                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
+                    } else {
+                        XrPlayerActivity::class.java
+                    }
                     val intent = Intent(context, targetActivity)
                     intent.putExtra("itemId", showId.toString())
                     intent.putExtra("itemKind", BaseItemKind.SERIES.serialName)
-                    if (true) {
+                    if (!action.multitask) {
                         intent.putExtra("stereoMode", "mono")
                     }
                     context.startActivity(intent)
@@ -198,8 +202,8 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
                     ItemButtonsBar(
                         item = show,
-                        onPlayClick = { startFromBeginning, _, _ ->
-                            onAction(ShowAction.Play(startFromBeginning = startFromBeginning))
+                        onPlayClick = { startFromBeginning, _, _, multitask ->
+                            onAction(ShowAction.Play(startFromBeginning = startFromBeginning, multitask = multitask))
                         },
                         onSyncPlayClick = null,
                         onMarkAsPlayedClick = {

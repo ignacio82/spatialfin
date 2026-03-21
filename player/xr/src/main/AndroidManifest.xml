@@ -26,5 +26,15 @@
                 android:name="androidx.xr.full_space_mode"
                 android:value="true" />
         </activity>
+        
+        <activity
+            android:name="dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
+            android:launchMode="singleTask"
+            android:autoRemoveFromRecents="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.SpatialFin">
+        </activity>
     </application>
 </manifest>

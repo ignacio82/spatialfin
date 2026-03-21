@@ -72,11 +72,15 @@ fun SeasonScreen(
         onAction = { action ->
             when (action) {
                 is SeasonAction.Play -> {
-                    val targetActivity = XrPlayerActivity::class.java
+                    val targetActivity = if (action.multitask) {
+                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
+                    } else {
+                        XrPlayerActivity::class.java
+                    }
                     val intent = Intent(context, targetActivity)
                     intent.putExtra("itemId", seasonId.toString())
                     intent.putExtra("itemKind", BaseItemKind.SEASON.serialName)
-                    if (true) {
+                    if (!action.multitask) {
                         intent.putExtra("stereoMode", "mono")
                     }
                     context.startActivity(intent)
@@ -148,8 +152,8 @@ private fun SeasonScreenLayout(state: SeasonState, onAction: (SeasonAction) -> U
                     Spacer(Modifier.height(MaterialTheme.spacings.default.div(2)))
                     ItemButtonsBar(
                         item = season,
-                        onPlayClick = { startFromBeginning, _, _ ->
-                            onAction(SeasonAction.Play(startFromBeginning = startFromBeginning))
+                        onPlayClick = { startFromBeginning, _, _, multitask ->
+                            onAction(SeasonAction.Play(startFromBeginning = startFromBeginning, multitask = multitask))
                         },
                         onSyncPlayClick = null,
                         onMarkAsPlayedClick = {

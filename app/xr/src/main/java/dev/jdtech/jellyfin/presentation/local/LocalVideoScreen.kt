@@ -48,7 +48,7 @@ fun LocalVideoScreen(
     LocalVideoScreenLayout(
         state = state,
         onBack = navigateBack,
-        onPlay = { startFromBeginning ->
+        onPlay = { startFromBeginning, multitask ->
             val item = state.item
             val stereoMode = if (item != null) {
                 StereoModeDetector.detect(item.name, null, listOf(item.fileName))
@@ -61,14 +61,24 @@ fun LocalVideoScreen(
                 StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                 else -> "mono"
             }
-            context.startActivity(
-                XrPlayerActivity.createIntentForLocalMedia(
-                    context = context,
-                    mediaStoreId = mediaStoreId,
-                    startFromBeginning = startFromBeginning,
-                    stereoMode = stereoModeStr,
+            if (multitask) {
+                context.startActivity(
+                    dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity.createIntentForLocalMedia(
+                        context = context,
+                        mediaStoreId = mediaStoreId,
+                        startFromBeginning = startFromBeginning,
+                    )
                 )
-            )
+            } else {
+                context.startActivity(
+                    XrPlayerActivity.createIntentForLocalMedia(
+                        context = context,
+                        mediaStoreId = mediaStoreId,
+                        startFromBeginning = startFromBeginning,
+                        stereoMode = stereoModeStr,
+                    )
+                )
+            }
         },
         onTogglePlayed = { played -> viewModel.markPlayed(mediaStoreId, played) },
     )
@@ -78,7 +88,7 @@ fun LocalVideoScreen(
 private fun LocalVideoScreenLayout(
     state: LocalVideoState,
     onBack: () -> Unit,
-    onPlay: (Boolean) -> Unit,
+    onPlay: (Boolean, Boolean) -> Unit,
     onTogglePlayed: (Boolean) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
@@ -151,14 +161,20 @@ private fun LocalVideoScreenLayout(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        FilledTonalButton(onClick = { onPlay(false) }) {
+                        FilledTonalButton(onClick = { onPlay(false, false) }) {
                             Text(
                                 stringResource(CoreR.string.play),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
+                        FilledTonalButton(onClick = { onPlay(false, true) }) {
+                            Text(
+                                "Multitask",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
                         if (item.playbackPositionTicks > 0) {
-                            FilledTonalButton(onClick = { onPlay(true) }) {
+                            FilledTonalButton(onClick = { onPlay(true, false) }) {
                                 Text(
                                     stringResource(CoreR.string.local_restart),
                                     style = MaterialTheme.typography.titleMedium,

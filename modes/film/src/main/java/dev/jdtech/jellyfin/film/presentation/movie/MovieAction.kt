@@ -7,6 +7,7 @@ sealed interface MovieAction {
         val startFromBeginning: Boolean = false,
         val mediaSourceIndex: Int? = null,
         val maxBitrate: Long? = null,
+        val multitask: Boolean = false,
     ) : MovieAction
 
     data class SelectVersion(val movieId: UUID) : MovieAction

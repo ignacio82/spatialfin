@@ -4,7 +4,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import java.util.UUID
 
 sealed interface SeasonAction {
-    data class Play(val startFromBeginning: Boolean = false) : SeasonAction
+    data class Play(val startFromBeginning: Boolean = false, val multitask: Boolean = false) : SeasonAction
 
     data object MarkAsPlayed : SeasonAction
 

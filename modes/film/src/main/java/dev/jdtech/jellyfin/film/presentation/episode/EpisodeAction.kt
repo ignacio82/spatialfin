@@ -8,6 +8,7 @@ sealed interface EpisodeAction {
         val force3dMode: String? = null,
         val mediaSourceIndex: Int? = null,
         val maxBitrate: Long? = null,
+        val multitask: Boolean = false,
     ) : EpisodeAction
 
     data object MarkAsPlayed : EpisodeAction
