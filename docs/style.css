@@ -398,6 +398,12 @@ nav a:hover {
     border: 1px solid var(--line-soft);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-md);
+    transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.proof-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--line-strong);
 }
 
 .proof-label,
@@ -414,6 +420,186 @@ nav a:hover {
 .proof-card h2 {
     font-size: 1.55rem;
     margin-bottom: 0.8rem;
+}
+
+/* Bento Grid System */
+.bento-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, auto);
+    gap: 1.5rem;
+    margin-bottom: 4rem;
+}
+
+.bento-item {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 340px;
+    transition: transform 0.4s cubic-bezier(0.165, 0.84, 0.44, 1), border-color 0.4s ease;
+    box-shadow: var(--shadow-md);
+}
+
+.bento-item:hover {
+    transform: scale(1.02);
+    border-color: var(--line-strong);
+}
+
+.bento-item-large {
+    grid-column: span 2;
+    grid-row: span 1;
+}
+
+.bento-item h3 {
+    font-size: 1.85rem;
+    margin-bottom: 0.75rem;
+    z-index: 2;
+}
+
+.bento-item p {
+    font-size: 1.05rem;
+    z-index: 2;
+}
+
+.bento-visual {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 60%;
+    height: 100%;
+    opacity: 0.4;
+    z-index: 1;
+    pointer-events: none;
+    mask-image: linear-gradient(to left, black 20%, transparent 90%);
+}
+
+.bento-visual img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Feature Explorer */
+.feature-explorer {
+    margin-top: 3.5rem;
+    background: rgba(8, 14, 25, 0.4);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.explorer-nav {
+    display: flex;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--line-soft);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.explorer-nav::-webkit-scrollbar {
+    display: none;
+}
+
+.explorer-tab {
+    padding: 1.25rem 2rem;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.3s ease, background 0.3s ease;
+    border-right: 1px solid var(--line-soft);
+}
+
+.explorer-tab:hover {
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.explorer-tab.active {
+    color: var(--primary);
+    background: rgba(121, 208, 199, 0.08);
+}
+
+.explorer-content {
+    padding: 3rem;
+    min-height: 400px;
+}
+
+.explorer-pane {
+    display: none;
+    animation: fadeUp 0.5s ease-out forwards;
+}
+
+.explorer-pane.active {
+    display: block;
+}
+
+.explorer-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+}
+
+.explorer-group h4 {
+    color: var(--primary);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 1.5rem;
+}
+
+.explorer-list {
+    list-style: none;
+}
+
+.explorer-list li {
+    margin-bottom: 1.25rem;
+    padding-left: 1.75rem;
+    position: relative;
+    font-size: 1.02rem;
+}
+
+.explorer-list li::before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--primary);
+    font-weight: 700;
+}
+
+/* Animations */
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.8s ease-out, transform 0.8s cubic-bezier(0.165, 0.84, 0.44, 1);
+}
+
+.reveal.active {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .trailer-section {
@@ -649,8 +835,13 @@ footer {
 
     .proof-strip,
     .steps-grid,
-    .feature-grid {
+    .feature-grid,
+    .bento-grid {
         grid-template-columns: 1fr;
+    }
+
+    .bento-item-large {
+        grid-column: span 1;
     }
 }
 
@@ -693,7 +884,8 @@ footer {
         padding: 0.85rem 0.95rem;
     }
 
-    .all-features-grid {
+    .all-features-grid,
+    .explorer-grid {
         grid-template-columns: 1fr;
     }
 
@@ -701,6 +893,10 @@ footer {
     .hero-buttons {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .explorer-content {
+        padding: 1.5rem;
     }
 }
 
@@ -729,7 +925,8 @@ footer {
     .proof-card,
     .feature-group,
     .step,
-    .feature-card-copy {
+    .feature-card-copy,
+    .bento-item {
         padding-left: 1.2rem;
         padding-right: 1.2rem;
     }

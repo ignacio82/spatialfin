@@ -66,7 +66,7 @@
             </div>
         </section>
 
-        <section class="proof-strip" aria-label="Smart playback pillars">
+        <section class="proof-strip reveal" aria-label="Smart playback pillars">
             <div class="proof-card">
                 <span class="proof-label">Languages</span>
                 <h2>Built for multilingual libraries</h2>
@@ -84,7 +84,7 @@
             </div>
         </section>
 
-        <section class="features-section">
+        <section class="features-section reveal">
             <div class="container section-shell">
                 <div class="section-heading">
                     <p class="eyebrow">How it works</p>
@@ -92,37 +92,37 @@
                     <p>SpatialFin now combines language preferences, track ranking, memory, and AI tooling so common playback decisions need fewer manual corrections.</p>
                 </div>
 
-                <div class="all-features-grid">
-                    <div class="feature-group">
-                        <h3>Smart Audio And Subtitles</h3>
-                        <ul>
-                            <li><strong>Ordered spoken languages:</strong> Users can add, search, and reorder the languages they understand.</li>
-                            <li><strong>OS-aware defaults:</strong> The first spoken language starts from the headset OS language before the user customizes it.</li>
-                            <li><strong>Original audio preference:</strong> SpatialFin can favor likely-original audio instead of defaulting to the first dub it finds.</li>
-                            <li><strong>Subtitle fallback:</strong> If selected audio is not in a spoken language, SpatialFin tries to enable an appropriate subtitle track automatically.</li>
-                            <li><strong>Subtitle ranking:</strong> When several subtitle tracks share the same language, SpatialFin now ranks candidates instead of blindly taking the first one.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
-                        <h3>Series-Level Memory</h3>
-                        <ul>
-                            <li><strong>Audio memory:</strong> Switch one episode of a series to Japanese and future episodes can start there too.</li>
-                            <li><strong>Subtitle memory:</strong> SpatialFin stores the exact subtitle variant, not just the language, when you make a better track choice manually.</li>
-                            <li><strong>Correction-friendly behavior:</strong> Smart defaults are useful, but user overrides should win and stay won.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
-                        <h3>Voice And AI</h3>
-                        <ul>
-                            <li><strong>Deterministic first:</strong> Common playback commands are handled directly for reliability.</li>
-                            <li><strong>On-device where available:</strong> SpatialFin includes an AICore / Gemini Nano path for compatible runtimes.</li>
-                            <li><strong>Cloud fallback when needed:</strong> Users can supply a Gemini API key for devices where AICore is absent.</li>
-                            <li><strong>Telemetry built in:</strong> Device status, AICore availability, and inference path details are visible for debugging.</li>
-                        </ul>
+                <div class="feature-explorer" style="border: 1px solid var(--line-soft); background: rgba(255,255,255,0.02); border-radius: var(--radius-lg); padding: 3rem;">
+                    <div class="explorer-grid">
+                        <div class="explorer-group">
+                            <h4>Smart Audio And Subtitles</h4>
+                            <ul class="explorer-list">
+                                <li><strong>Ordered spoken languages:</strong> Users can add, search, and reorder the languages they understand.</li>
+                                <li><strong>OS-aware defaults:</strong> The first spoken language starts from the headset OS language.</li>
+                                <li><strong>Original audio preference:</strong> SpatialFin can favor likely-original audio instead of defaulting to the first dub.</li>
+                                <li><strong>Subtitle fallback:</strong> Automatically enables subtitles if selected audio is not in a spoken language.</li>
+                            </ul>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>Series-Level Memory</h4>
+                            <ul class="explorer-list">
+                                <li><strong>Audio memory:</strong> Switch one episode to a specific language and future episodes inherit it.</li>
+                                <li><strong>Subtitle memory:</strong> Stores the exact subtitle variant when you make a better track choice manually.</li>
+                                <li><strong>Override priority:</strong> Manual user corrections always win and persist across the series.</li>
+                            </ul>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>Voice And AI</h4>
+                            <ul class="explorer-list">
+                                <li><strong>Deterministic first:</strong> Core playback commands are handled directly for reliability.</li>
+                                <li><strong>On-device path:</strong> Uses AICore / Gemini Nano where available for private, fast inference.</li>
+                                <li><strong>Cloud fallback:</strong> Optional Gemini API key support for devices where AICore is absent.</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="section-heading" style="margin-top: 72px;">
+                <div class="section-heading reveal" style="margin-top: 72px;">
                     <p class="eyebrow">Current reality</p>
                     <h2>Galaxy XR still needs cloud fallback for Gemini features.</h2>
                     <p>Current testing on Galaxy XR firmware shows that the system image does not expose <code>com.google.android.aicore</code> to third-party apps, so on-device Gemini features are currently unavailable there. SpatialFin’s voice stack still works through deterministic handling and optional cloud fallback.</p>
@@ -144,5 +144,22 @@
             </div>
         </div>
     </footer>
+
+    <script>
+        // Scroll Reveal Animation
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
 </body>
 </html>

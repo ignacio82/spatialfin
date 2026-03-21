@@ -75,7 +75,7 @@
             </div>
         </section>
 
-        <section class="proof-strip" aria-label="SpatialFin strengths">
+        <section class="proof-strip reveal" aria-label="SpatialFin strengths">
             <div class="proof-card">
                 <span class="proof-label">Immersion</span>
                 <h2>Designed for headset-scale viewing</h2>
@@ -91,14 +91,9 @@
                 <h2>Hands-free and social by default</h2>
                 <p>Voice commands, in-player AI search, and native Jellyfin SyncPlay keep playback comfortable whether you are solo, remote, online, or offline.</p>
             </div>
-            <div class="proof-card">
-                <span class="proof-label">Smart Playback</span>
-                <h2>Gets closer to what you actually want</h2>
-                <p>Ordered spoken languages, original-audio preference, smarter subtitle selection, and per-series memory reduce repetitive track fixes.</p>
-            </div>
         </section>
 
-        <section class="trailer-section" id="trailer">
+        <section class="trailer-section reveal" id="trailer">
             <div class="container section-shell">
                 <div class="section-heading">
                     <p class="eyebrow">See it in motion</p>
@@ -113,142 +108,193 @@
 
         <section class="features-section" id="features">
             <div class="container section-shell">
-                <div class="section-heading">
+                <div class="section-heading reveal">
                     <p class="eyebrow">Why SpatialFin</p>
                     <h2>An XR media client that goes deeper than a skin.</h2>
                     <p>Every major layer of the app, from layout and controls to playback and offline behavior, is tuned for how media actually feels inside a headset.</p>
                 </div>
 
-                <div class="feature-grid">
-                    <article class="feature-card feature-card-large">
-                        <div class="feature-card-media">
-                            <img src="images/Screenshot_20260315_093602_SpatialFin~2.jpg" alt="Immersive spatial panels in SpatialFin">
+                <div class="bento-grid reveal">
+                    <div class="bento-item bento-item-large">
+                        <div class="bento-visual">
+                            <img src="images/Screenshot_20260315_093602_SpatialFin~2.jpg" alt="Immersive spatial panels">
                         </div>
-                        <div class="feature-card-copy">
-                            <span class="card-kicker">Immersive XR</span>
-                            <h3>Headset-scale layouts instead of phone UI stretched into 3D</h3>
-                            <p>Massive spatial panels, restored window placement, orbiting controls, and readable action surfaces built specifically for Android XR.</p>
-                        </div>
-                    </article>
-                    <article class="feature-card feature-card-large">
-                        <div class="feature-card-media">
-                            <img src="images/Screenshot_20260315_102004_SpatialFin~2.jpg" alt="Glassmorphic SpatialFin interface with voice control support">
-                        </div>
-                        <div class="feature-card-copy">
-                            <span class="card-kicker">Control Surface</span>
-                            <h3>Voice, search, and interaction that preserve immersion</h3>
-                            <p>Hold-to-talk voice control, spatial AI search overlays, larger playback targets, and hand-first interaction reduce friction while watching.</p>
-                        </div>
-                    </article>
-                </div>
-
-                <div class="section-heading" style="margin-top: 72px;">
-                    <p class="eyebrow">Smart Playback</p>
-                    <h2>SpatialFin is starting to remember how you actually watch.</h2>
-                    <p>Smart language preferences and series-level memory now sit alongside XR playback instead of feeling like generic media-player toggles.</p>
-                </div>
-
-                <div class="all-features-grid">
-                    <div class="feature-group">
-                        <h3>Smarter Language Handling</h3>
-                        <ul>
-                            <li><strong>Ordered spoken languages:</strong> Add and prioritize the languages you understand instead of choosing only one.</li>
-                            <li><strong>Original audio preference:</strong> SpatialFin can favor likely-original audio for multilingual content.</li>
-                            <li><strong>Automatic subtitle fallback:</strong> If the selected audio is not one you speak, SpatialFin enables a matching subtitle track when possible.</li>
-                            <li><strong>Searchable XR setup:</strong> Language configuration uses a larger XR-first dialog with search, ordering, and clearer result visibility.</li>
-                        </ul>
+                        <span class="card-kicker">Immersive XR</span>
+                        <h3>Headset-scale layouts</h3>
+                        <p>Massive spatial panels, restored window placement, orbiting controls, and readable action surfaces built specifically for Android XR.</p>
                     </div>
-                    <div class="feature-group">
-                        <h3>Series Memory</h3>
-                        <ul>
-                            <li><strong>Audio overrides persist:</strong> If you switch a series from dub to original audio, future episodes can inherit that choice.</li>
-                            <li><strong>Subtitle-track memory:</strong> SpatialFin now stores the exact subtitle variant when you correct a bad subtitle pick.</li>
-                            <li><strong>Manual corrections compound:</strong> The goal is fewer repeated fixes as you move episode to episode.</li>
-                        </ul>
+                    <div class="bento-item">
+                        <span class="card-kicker">Control</span>
+                        <h3>Hands-free control</h3>
+                        <p>Voice commands and AI search preserve immersion while you watch.</p>
                     </div>
-                    <div class="feature-group">
-                        <h3>AI Runtime Reality</h3>
-                        <ul>
-                            <li><strong>On-device path included:</strong> SpatialFin supports an AICore / Gemini Nano integration path where the runtime is exposed.</li>
-                            <li><strong>Galaxy XR fallback today:</strong> Current Galaxy XR firmware testing indicates third-party AICore is unavailable, so deterministic voice handling and optional cloud Gemini fallback are the practical path.</li>
-                            <li><strong>Diagnostics built in:</strong> Voice settings surface AICore package status, permissions, and telemetry summaries for debugging.</li>
-                            <li><strong>More detail available:</strong> A dedicated page explains the smart playback model in one place.</li>
-                        </ul>
-                        <a href="smart.html" class="btn btn-secondary" style="margin-top: 16px; display: inline-flex;">Explore Smart Playback</a>
-                    </div>
-                </div>
-
-                <h2 class="section-title">Everything in the stack supports the experience</h2>
-                <div class="all-features-grid">
-                    <div class="feature-group">
-                        <h3>Immersive XR</h3>
-                        <ul>
-                            <li><strong>Interactive Agency:</strong> Grab and move the entire application or video player window anywhere in 3D space.</li>
-                            <li><strong>Native XR Controls:</strong> Material 3 for XR orbiters float secondary controls in space.</li>
-                            <li><strong>XR-First Layouts:</strong> Larger typography and labeled action buttons instead of dense icon-only controls.</li>
-                            <li><strong>Large-Target Playback UI:</strong> Larger controls and a dedicated chapter picker for easier hand-first interaction.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
-                        <h3>Advanced Playback &amp; Media</h3>
-                        <ul>
-                            <li><strong>Stereoscopic 3D:</strong> Automatic detection and rendering of SBS, top-bottom, and other 3D formats.</li>
-                            <li><strong>Spatial Audio:</strong> High-fidelity positional audio that pins sound to the screen's location.</li>
-                            <li><strong>Pixel-Perfect Anime Subtitles:</strong> Integrated <code>libass</code> JNI renderer for ASS/SSA rendering.</li>
-                            <li><strong>Version Selection:</strong> Choose between different versions, such as 3D vs. 2D or 4K vs. 1080p.</li>
-                            <li><strong>Dynamic Quality:</strong> Control streaming bitrate on the fly from 480 Kbps to 120 Mbps.</li>
-                            <li><strong>Global Bitrate Settings:</strong> Set a default maximum streaming bitrate globally.</li>
-                            <li><strong>Smart Audio And Subtitles:</strong> Spoken-language ordering, subtitle fallback, and per-series memory reduce repetitive track management.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
-                        <h3>Voice Control &amp; AI</h3>
-                        <ul>
-                            <li><strong>Unified Smart Assistant:</strong> Use the hold-to-talk middle-finger pinch gesture to issue playback commands or ask natural language questions about the movie.</li>
-                            <li><strong>AI Metadata Chat:</strong> Uses on-device AICore where available and falls back to cloud Gemini when the user provides an API key.</li>
-                            <li><strong>Contextual Subtitle Awareness:</strong> The assistant tracks recent dialogue so you can ask for clarifications on what characters just said.</li>
-                            <li><strong>Spatial TTS Feedback:</strong> The AI responds aloud with automatic volume ducking, keeping you immersed without reading text.</li>
-                            <li><strong>In-Player AI Search:</strong> Voice search opens as a spatial overlay to search and launch media seamlessly.</li>
-                            <li><strong>Voice Diagnostics:</strong> Dedicated settings showing enablement, permissions, AICore package status, and runtime availability.</li>
-                            <li><strong>Cloud Key Option:</strong> Advanced users can store their own Gemini API key in settings to enable cloud-backed fallback features on devices without AICore.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
-                        <h3>SyncPlay &amp; Ecosystem</h3>
-                        <ul>
-                            <li><strong>SyncPlay Watch Parties:</strong> Create, join, refresh, and mirror playback state with Jellyfin SyncPlay groups natively.</li>
-                            <li><strong>Jellyfin Integration:</strong> Full Jellyfin server connectivity for movies, shows, and collections.</li>
-                            <li><strong>Seerr Integration:</strong> Connect Jellyseerr or Overseerr to search and request media directly from the app search screen.</li>
-                        </ul>
-                    </div>
-                    <div class="feature-group">
+                    <div class="bento-item">
+                        <span class="card-kicker">Connectivity</span>
                         <h3>Network Shares</h3>
-                        <ul>
-                            <li><strong>SMB &amp; NFS Support:</strong> Browse and stream media from SMB and NFS network shares on your local network.</li>
-                            <li><strong>Autodiscovery:</strong> mDNS discovery finds SMB and NFS shares automatically so you can add them with a tap.</li>
-                            <li><strong>TMDB Metadata Enrichment:</strong> Filenames are parsed and matched against TMDB for posters, descriptions, ratings, and proper categorization.</li>
-                            <li><strong>Watch Tracking:</strong> Resume progress and played/unplayed state are tracked locally per video, just like Jellyfin content.</li>
-                            <li><strong>Seamless Playback:</strong> A local HTTP proxy bridges SMB/NFS streams to ExoPlayer with full seek support.</li>
-                        </ul>
+                        <p>SMB and NFS support with automatic discovery and TMDB enrichment.</p>
                     </div>
-                    <div class="feature-group">
-                        <h3>Offline &amp; Local Library</h3>
-                        <ul>
-                            <li><strong>Automatic Offline Mode:</strong> Switches offline when the server is unreachable, then returns online when available.</li>
-                            <li><strong>Local Library:</strong> Browse and play videos stored directly on the XR device with metadata inference.</li>
-                            <li><strong>Reliable Resumable Engine:</strong> Robust background downloading that survives app restarts and network swaps.</li>
-                            <li><strong>Complete Metadata Mirroring:</strong> Offline media now includes all posters, backdrops, and scrubber thumbnails (trickplay).</li>
-                            <li><strong>Real-Time Foreground Progress:</strong> Track download status directly from the system tray.</li>
-                            <li><strong>Configurable Downloads:</strong> Download original files or smaller transcoded versions with your preferred options.</li>
-                            <li><strong>Smart Download Reconciliation:</strong> Automatically cleans up stale entries if files are removed manually.</li>
-                            <li><strong>In-App Download Management:</strong> Delete downloads from the item screen or Downloads tab.</li>
-                        </ul>
+                    <div class="bento-item bento-item-large">
+                        <div class="bento-visual">
+                            <img src="images/Screenshot_20260315_102004_SpatialFin~2.jpg" alt="Smart Playback interface">
+                        </div>
+                        <span class="card-kicker">Intelligence</span>
+                        <h3>Smart Playback Engine</h3>
+                        <p>Ordered spoken languages, original-audio preference, and series-level memory reduce repetitive track management.</p>
+                    </div>
+                </div>
+
+                <div class="section-heading reveal" style="margin-top: 72px;">
+                    <p class="eyebrow">The Full Stack</p>
+                    <h2>Everything designed for depth and distance.</h2>
+                    <p>Explore the complete technical depth of SpatialFin by category below.</p>
+                </div>
+
+                <div class="feature-explorer reveal">
+                    <nav class="explorer-nav">
+                        <button class="explorer-tab active" onclick="showPane('xr')">Immersive XR</button>
+                        <button class="explorer-tab" onclick="showPane('media')">Media & Playback</button>
+                        <button class="explorer-tab" onclick="showPane('voice')">Voice & AI</button>
+                        <button class="explorer-tab" onclick="showPane('sync')">SyncPlay & Social</button>
+                        <button class="explorer-tab" onclick="showPane('network')">Network & Local</button>
+                        <button class="explorer-tab" onclick="showPane('offline')">Offline Engine</button>
+                    </nav>
+                    <div class="explorer-content">
+                        <!-- Immersive XR -->
+                        <div class="explorer-pane active" id="pane-xr">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Agency & Placement</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Interactive Agency:</strong> Grab and move the entire application or video player window anywhere in 3D space.</li>
+                                        <li><strong>Native XR Controls:</strong> Material 3 for XR orbiters float secondary controls in space.</li>
+                                        <li><strong>Persistent Windows:</strong> The app remembers where you placed your panels in the room.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Visual Layout</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>XR-First Layouts:</strong> Larger typography and labeled action buttons instead of dense icon-only controls.</li>
+                                        <li><strong>Large-Target Playback UI:</strong> Larger controls and a dedicated chapter picker for easier hand-first interaction.</li>
+                                        <li><strong>Glassmorphic Aesthetic:</strong> A UI that feels like it belongs in your physical environment.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Media & Playback -->
+                        <div class="explorer-pane" id="pane-media">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Visuals & Audio</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Stereoscopic 3D:</strong> Automatic detection and rendering of SBS, top-bottom, and other 3D formats.</li>
+                                        <li><strong>Spatial Audio:</strong> High-fidelity positional audio that pins sound to the screen's location.</li>
+                                        <li><strong>Pixel-Perfect Subtitles:</strong> Integrated <code>libass</code> JNI renderer for ASS/SSA anime subtitles.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Quality & Selection</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Version Selection:</strong> Choose between different versions, such as 3D vs. 2D or 4K vs. 1080p.</li>
+                                        <li><strong>Dynamic Bitrate:</strong> Control streaming bitrate on the fly from 480 Kbps up to 120 Mbps.</li>
+                                        <li><strong>Smart Language Handling:</strong> Spoken-language ordering and subtitle fallback logic.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Voice & AI -->
+                        <div class="explorer-pane" id="pane-voice">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Assistant Features</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Unified Smart Assistant:</strong> Hold-to-talk pinch gesture for playback commands and natural language questions.</li>
+                                        <li><strong>AI Metadata Chat:</strong> Uses on-device AICore or cloud Gemini for context-aware media info.</li>
+                                        <li><strong>Contextual Awareness:</strong> The assistant tracks recent dialogue for clarifications on characters or plot.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Accessibility</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Spatial TTS Feedback:</strong> The AI responds aloud with automatic volume ducking.</li>
+                                        <li><strong>In-Player AI Search:</strong> Voice search opens as a spatial overlay to find media instantly.</li>
+                                        <li><strong>Detailed Diagnostics:</strong> Real-time visibility into AICore and permission status.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SyncPlay & Social -->
+                        <div class="explorer-pane" id="pane-sync">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Watch Parties</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Jellyfin SyncPlay:</strong> Native support for creating, joining, and mirroring watch party states.</li>
+                                        <li><strong>Real-time Sync:</strong> Seamlessly stay in step with friends regardless of their device type.</li>
+                                        <li><strong>Group Management:</strong> Easy group joining directly from the spatial interface.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Ecosystem</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Server Connectivity:</strong> Deep integration with Jellyfin for libraries and collections.</li>
+                                        <li><strong>Seerr Integration:</strong> Connect Jellyseerr or Overseerr to search and request media.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Network & Local -->
+                        <div class="explorer-pane" id="pane-network">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Direct Streaming</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>SMB & NFS Support:</strong> Stream media directly from network shares without a Jellyfin server.</li>
+                                        <li><strong>mDNS Discovery:</strong> Automatically find network shares on your local network.</li>
+                                        <li><strong>Metadata Enrichment:</strong> TMDB matching for posters, descriptions, and ratings on local files.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Local Playback</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Local Storage:</strong> Browse and play videos stored directly on the XR device.</li>
+                                        <li><strong>HTTP Proxy Bridge:</strong> High-performance seek support for network streams.</li>
+                                        <li><strong>Local Resume:</strong> Progress and unplayed status tracked per video file.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Offline Engine -->
+                        <div class="explorer-pane" id="pane-offline">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>Downloads</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Resumable Engine:</strong> Downloads survive app restarts and network swaps.</li>
+                                        <li><strong>Configurable Options:</strong> Choose between original files or smaller transcoded versions.</li>
+                                        <li><strong>Foreground Tracking:</strong> Monitor download progress in real-time from the system tray.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Offline Experience</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Automatic Mode:</strong> Seamlessly switches to offline library when the server is unreachable.</li>
+                                        <li><strong>Complete Mirroring:</strong> Offline items include posters, backdrops, and scrubber thumbnails.</li>
+                                        <li><strong>Smart Cleanup:</strong> Automatically reconciles library if files are removed manually.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section class="early-access-section" id="early-access">
+        <section class="early-access-section reveal" id="early-access">
             <div class="container section-shell">
                 <div class="section-heading">
                     <p class="eyebrow">Beta access</p>
@@ -288,5 +334,31 @@
             </div>
         </div>
     </footer>
+
+    <script>
+        // Feature Explorer Tab Switching
+        function showPane(id) {
+            document.querySelectorAll('.explorer-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.explorer-pane').forEach(pane => pane.classList.remove('active'));
+            
+            document.querySelector(`[onclick="showPane('${id}')"]`).classList.add('active');
+            document.getElementById(`pane-${id}`).classList.add('active');
+        }
+
+        // Scroll Reveal Animation
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
 </body>
 </html>
