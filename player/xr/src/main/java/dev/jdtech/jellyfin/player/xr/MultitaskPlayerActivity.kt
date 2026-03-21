@@ -121,6 +121,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Enable wide color gamut for HDR support
+        window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+
         val itemIdString = intent.extras?.getString("itemId")
         val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
         

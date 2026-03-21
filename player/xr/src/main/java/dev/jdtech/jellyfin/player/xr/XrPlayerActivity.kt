@@ -117,6 +117,9 @@ class XrPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Enable wide color gamut for HDR support
+        window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+
         // Ensure window is transparent so we can see the XR scene behind the UI
         window.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
 

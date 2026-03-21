@@ -185,6 +185,28 @@ constructor(
     private var isSocketConnected = false
 
     init {
+        // Log HDR capabilities
+        val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            application.display
+        } else {
+            @Suppress("DEPRECATION")
+            (application.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay
+        }
+        
+        display?.hdrCapabilities?.let { caps ->
+            val types = caps.supportedHdrTypes.joinToString { type ->
+                when (type) {
+                    android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "Dolby Vision"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS -> "HDR10+"
+                    android.view.Display.HdrCapabilities.HDR_TYPE_HLG -> "HLG"
+                    else -> "Unknown ($type)"
+                }
+            }
+            Timber.i("HDR: Supported types: [%s]", types)
+            Timber.i("HDR: Max Luminance: %.2f, Min Luminance: %.2f", caps.desiredMaxLuminance, caps.desiredMinLuminance)
+        } ?: Timber.w("HDR: No HDR capabilities found for default display")
+
         segmentsSkipButton = appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)
         segmentsSkipButtonTypes =
             appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButtonType)
