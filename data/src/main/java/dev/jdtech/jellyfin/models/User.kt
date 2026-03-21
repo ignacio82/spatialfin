@@ -23,4 +23,5 @@ data class User(
     val name: String,
     @ColumnInfo(index = true) val serverId: String,
     val accessToken: String? = null,
+    val preferences: String? = null, // JSON string for user-specific preferences
 )

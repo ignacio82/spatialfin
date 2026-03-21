@@ -206,7 +206,7 @@ fun SpatialPlayerScreen(
     val assistantVoicePreference = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVoice) ?: "male"
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
-    val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences) }
+    val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences, viewModel.repository) }
     val commandCoordinator = remember(context) {
         SpatialCommandCoordinator(context.applicationContext, geminiNanoService, geminiCloudService)
     }

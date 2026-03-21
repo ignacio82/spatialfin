@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpatialFin Companion | Fleet Management & Instant Setup</title>
+    <meta name="description" content="Manage your SpatialFin Android XR client with the companion app. Instant setup via QR code, multi-user management, and network share configuration.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="images/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://umami.martinez.fyi/script.js" data-website-id="536d31bc-9ef8-4e22-aa79-3c8a97a11da5"></script>
+</head>
+<body>
+    <div class="page-glow page-glow-left" aria-hidden="true"></div>
+    <div class="page-glow page-glow-right" aria-hidden="true"></div>
+
+    <header>
+        <div class="nav-container">
+            <a href="index.html#home" class="logo-link">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="logo">
+                <span class="logo-text">SpatialFin</span>
+            </a>
+            <nav>
+                <a href="index.html#features">Features</a>
+                <a href="smart.html">Smart Playback</a>
+                <a href="companion.html" class="nav-cta">Companion App</a>
+                <a href="index.html#early-access">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero" id="home">
+            <div class="hero-copy">
+                <p class="eyebrow">Instant XR Configuration</p>
+                <h1>Setup your headset without typing a single URL.</h1>
+                <p class="hero-lead">
+                    The SpatialFin Companion is a dockerized management hub that replaces the high-friction 
+                    keyboard experience of XR with a simple "Scan and Play" workflow.
+                </p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/ignacio82/SpatialFin-Companion" target="_blank" rel="noopener noreferrer" class="btn btn-primary">GitHub Repository</a>
+                    <a href="index.html#features" class="btn btn-secondary">Back To Main Site</a>
+                </div>
+                <div class="hero-highlights" aria-label="Key companion features">
+                    <span>QR Scan-to-Configure</span>
+                    <span>Fleet Management</span>
+                    <span>Network Share Hub</span>
+                    <span>PWA Dashboard</span>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="hero-panel hero-panel-main" style="background: var(--bg-card); padding: 2rem; border-radius: var(--radius-lg); display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--line-soft);">
+                    <img src="images/icon.png" alt="SpatialFin Logo" style="width: 80px; margin-bottom: 1rem;">
+                    <div style="background: white; padding: 10px; border-radius: 8px;">
+                        <!-- Placeholder for a QR code style visual -->
+                        <div style="width: 150px; height: 150px; background: linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000), linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000); background-size: 30px 30px; background-position: 0 0, 15px 15px; opacity: 0.8;"></div>
+                    </div>
+                    <p style="margin-top: 1rem; color: var(--primary); font-family: 'Space+Grotesk'; font-weight: bold;">SCAN TO CONNECT</p>
+                </div>
+                <div class="hero-float hero-float-top">
+                    <strong>No more XR typing</strong>
+                    <span>Configure servers, users, and API keys from the comfort of your physical keyboard.</span>
+                </div>
+                <div class="hero-float hero-float-bottom">
+                    <strong>One hub, many devices</strong>
+                    <span>Manage multiple headsets and users from a single centralized dashboard.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="proof-strip reveal" aria-label="Companion app pillars">
+            <div class="proof-card">
+                <span class="proof-label">Discovery</span>
+                <h2>Zero-Friction Onboarding</h2>
+                <p>Scan a single QR code to instantly import all your Jellyfin servers, user sessions, and preference overrides.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Management</span>
+                <h2>Fleet Ready</h2>
+                <p>Perfect for families or multi-device environments. Push language settings and API keys to every headset at once.</p>
+            </div>
+            <div class="proof-card">
+                <span class="proof-label">Connectivity</span>
+                <h2>Storage Hub</h2>
+                <p>Pre-configure your Samba (SMB) and NFS shares on the web dashboard so they are ready to browse in XR immediately.</p>
+            </div>
+        </section>
+
+        <section class="features-section reveal">
+            <div class="container section-shell">
+                <div class="section-heading">
+                    <p class="eyebrow">Installation</p>
+                    <h2>Deploy in seconds with Docker.</h2>
+                    <p>The SpatialFin Companion runs as a lightweight container on your home server or NAS.</p>
+                </div>
+
+                <div class="feature-explorer" style="border: 1px solid var(--line-soft); background: rgba(255,255,255,0.02); border-radius: var(--radius-lg); padding: 3rem;">
+                    <div class="explorer-grid">
+                        <div class="explorer-group">
+                            <h4>1. Deploy Container</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Use the modern Docker Compose syntax to start the service:</p>
+                            <pre style="background: #000; padding: 1rem; border-radius: 8px; font-family: monospace; color: #fff; font-size: 0.9rem;">docker compose up -d</pre>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>2. Configure Hub</h4>
+                            <p style="color: var(--text-muted);">Navigate to <code>http://your-ip:1982</code> and add your Jellyfin servers, users (Username/Password), and network shares.</p>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>3. Scan & Enjoy</h4>
+                            <p style="color: var(--text-muted);">Open SpatialFin on your XR device, go to <strong>Settings -> SpatialFin Companion</strong>, and scan the QR code displayed on your dashboard.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-heading reveal" style="margin-top: 72px;">
+                    <p class="eyebrow">Technical Details</p>
+                    <h2>A secure, local source of truth.</h2>
+                    <p>The companion app communicates exclusively over your local network. It generates a unique setup token for every discovery attempt, ensuring that only authorized scans can access your configuration details.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-container">
+            <div class="footer-left">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="footer-logo">
+                <p>&copy; 2026 SpatialFin Contributors. Open source software for immersive Jellyfin playback on Android XR.</p>
+            </div>
+            <div class="footer-links">
+                <a href="index.html">Main Site</a>
+                <a href="https://github.com/ignacio82/SpatialFin" target="_blank" rel="noopener noreferrer">SpatialFin App</a>
+                <a href="https://github.com/ignacio82/SpatialFin-Companion" target="_blank" rel="noopener noreferrer">Companion Repo</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Scroll Reveal Animation
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
+</body>
+</html>

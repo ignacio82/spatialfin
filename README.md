@@ -35,6 +35,16 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Smart Download Reconciliation** — If files disappear from the download folder outside the app, SpatialFin removes the stale entries from its catalog automatically.
 - **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
+- **SpatialFin Companion Support** — Effortlessly configure your headset by scanning a QR code from the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app. Centrally manage servers, users, and network shares without using the XR keyboard.
+
+## SpatialFin Companion
+
+To significantly reduce the friction of setting up an XR device, we recommend using the **[SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion)**.
+
+- **Zero-Type Setup**: Point your headset at the companion dashboard to instantly import servers and users.
+- **Fleet Management**: Manage multiple headsets and accounts from any web browser.
+- **Network Share Hub**: Pre-configure SMB and NFS shares for the entire fleet.
+- **PWA Ready**: Install the companion hub on your phone or desktop for quick access.
 
 ## Offline And Downloads
 

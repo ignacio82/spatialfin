@@ -54,8 +54,11 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.xr.compose.spatial.SpatialDialog
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoStatus
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
@@ -68,6 +71,7 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 
 private enum class WelcomeStep {
     Connection,
+    CompanionDiscovery,
     Languages,
     Ai,
 }
@@ -77,10 +81,13 @@ fun WelcomeScreen(
     appPreferences: AppPreferences,
     onContinueToServerSetup: () -> Unit,
     onContinueToLocalLibrary: () -> Unit,
+    companionViewModel: CompanionViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
+
+    val companionState by companionViewModel.state.collectAsStateWithLifecycle()
 
     var currentStepIndex by rememberSaveable { mutableIntStateOf(0) }
     var connectToServer by rememberSaveable { mutableStateOf(true) }
@@ -133,7 +140,7 @@ fun WelcomeScreen(
     }
 
     fun goNext() {
-        if (currentStepIndex == steps.lastIndex) {
+        if (currentStepIndex == steps.lastIndex || (currentStep == WelcomeStep.CompanionDiscovery && companionState is CompanionState.Success)) {
             completeOnboarding(saveChoices = true)
         } else {
             currentStepIndex += 1
@@ -167,6 +174,9 @@ fun WelcomeScreen(
         totalSteps = steps.size,
         connectToServer = connectToServer,
         onConnectToServerChange = { connectToServer = it },
+        companionState = companionState,
+        onStartScanning = { companionViewModel.startScanning() },
+        onPayloadFound = { companionViewModel.fetchAndApplyConfig(it) },
         smartLanguageSettings = smartLanguageSettings,
         onPreferOriginalAudioChange = {
             smartLanguageSettings = smartLanguageSettings.copy(preferOriginalAudio = it)
@@ -203,6 +213,9 @@ private fun WelcomeScreenLayout(
     onWantsApiKeyChange: (Boolean) -> Unit,
     cloudApiKey: String,
     onCloudApiKeyChange: (String) -> Unit,
+    companionState: CompanionState,
+    onStartScanning: () -> Unit,
+    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
     onLearnMoreClick: () -> Unit,
     onOpenAiStudioClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -216,12 +229,14 @@ private fun WelcomeScreenLayout(
     val stepTitle =
         when (currentStep) {
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_title)
+            WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_title)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_title)
             WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_title)
         }
     val stepBody =
         when (currentStep) {
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_body)
+            WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_body)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_body)
             WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_body)
         }
@@ -319,6 +334,13 @@ private fun WelcomeScreenLayout(
                                 onLearnMoreClick = onLearnMoreClick,
                             )
                         }
+                        WelcomeStep.CompanionDiscovery -> {
+                            CompanionDiscoveryStep(
+                                state = companionState,
+                                onStartScanning = onStartScanning,
+                                onPayloadFound = onPayloadFound,
+                            )
+                        }
                         WelcomeStep.Languages -> {
                             LanguagesStep(
                                 smartLanguageSettings = smartLanguageSettings,
@@ -364,6 +386,94 @@ private fun WelcomeScreenLayout(
                                 text = primaryActionText,
                                 style = MaterialTheme.typography.titleMedium,
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompanionDiscoveryStep(
+    state: CompanionState,
+    onStartScanning: () -> Unit,
+    onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        when (state) {
+            CompanionState.Idle -> {
+                StepChoiceCard(
+                    title = stringResource(SettingsR.string.welcome_companion_scan),
+                    body = stringResource(SettingsR.string.welcome_companion_body),
+                    selected = false,
+                    onClick = onStartScanning,
+                )
+            }
+            CompanionState.Scanning -> {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    CompanionScanner(onPayloadFound = onPayloadFound)
+                }
+                Text(
+                    text = stringResource(SettingsR.string.welcome_companion_scanning),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+            }
+            CompanionState.Fetching -> {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            text = stringResource(SettingsR.string.welcome_companion_fetching),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+            }
+            CompanionState.Success -> {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = stringResource(SettingsR.string.welcome_companion_success),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+            }
+            is CompanionState.Error -> {
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = stringResource(SettingsR.string.welcome_companion_error, state.message),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Button(onClick = onStartScanning) {
+                            Text(stringResource(CoreR.string.retry))
                         }
                     }
                 }
@@ -705,6 +815,9 @@ private fun WelcomeScreenLayoutPreview() {
             totalSteps = 3,
             connectToServer = true,
             onConnectToServerChange = {},
+            companionState = CompanionState.Idle,
+            onStartScanning = {},
+            onPayloadFound = {},
             smartLanguageSettings = SmartLanguageSettings(spokenLanguageCodes = listOf("en", "es")),
             onPreferOriginalAudioChange = {},
             onEditLanguages = {},

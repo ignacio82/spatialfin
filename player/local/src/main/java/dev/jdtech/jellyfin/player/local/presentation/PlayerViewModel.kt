@@ -81,7 +81,7 @@ class PlayerViewModel
 constructor(
     private val application: Application,
     private val playlistManager: PlaylistManager,
-    private val repository: JellyfinRepository,
+    val repository: JellyfinRepository,
     private val localMediaRepository: LocalMediaRepository,
     private val networkMediaRepository: NetworkMediaRepository,
     val appPreferences: AppPreferences,

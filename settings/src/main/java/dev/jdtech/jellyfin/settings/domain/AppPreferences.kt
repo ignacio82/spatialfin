@@ -97,6 +97,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // Offline mode
     val offlineMode = Preference("pref_offline_mode", false)
 
+    // Companion Hub
+    val companionUrl = Preference("pref_companion_url", "")
+    val companionToken = Preference("pref_companion_token", "")
+    val lastCompanionSyncTime = Preference("pref_last_companion_sync_time", 0L)
+
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)

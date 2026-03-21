@@ -26,5 +26,7 @@ sealed interface SettingsEvent {
 
     data class ShowSmartLanguageDialog(val settings: SmartLanguageSettings) : SettingsEvent
 
+    data object ShowCompanionDiscoveryDialog : SettingsEvent
+
     data object RestartActivity : SettingsEvent
 }

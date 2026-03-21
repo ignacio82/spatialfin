@@ -7,17 +7,28 @@ import android.net.Uri
 import android.os.Build
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
@@ -53,6 +67,12 @@ import dev.jdtech.jellyfin.settings.presentation.settings.SettingsViewModel
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.jdtech.jellyfin.utils.restart
 import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
+import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionScanner
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionState
+import dev.jdtech.jellyfin.presentation.setup.welcome.CompanionViewModel
+import android.text.format.DateFormat
+import java.util.Date
 import timber.log.Timber
 
 @Composable
@@ -64,10 +84,14 @@ fun SettingsScreen(
     navigateToAbout: () -> Unit,
     navigateBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
+    companionViewModel: CompanionViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val companionState by companionViewModel.state.collectAsStateWithLifecycle()
+    var showCompanionDiscovery by remember { mutableStateOf(false) }
+
     var cloudApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var seerrUrlDraft by remember { mutableStateOf<String?>(null) }
     var seerrApiKeyDraft by remember { mutableStateOf<String?>(null) }
@@ -131,6 +155,10 @@ fun SettingsScreen(
             }
             is SettingsEvent.ShowSmartLanguageDialog -> {
                 smartLanguageDraft = event.settings
+            }
+            is SettingsEvent.ShowCompanionDiscoveryDialog -> {
+                showCompanionDiscovery = true
+                companionViewModel.startScanning()
             }
             is SettingsEvent.RestartActivity -> {
                 try {
@@ -223,6 +251,124 @@ fun SettingsScreen(
                 },
                 onDismissRequest = { cloudApiKeyDraft = null },
             )
+        }
+    }
+
+    if (showCompanionDiscovery) {
+        SpatialDialog(onDismissRequest = { showCompanionDiscovery = false }) {
+            Surface(
+                modifier = Modifier.widthIn(max = 600.dp).shadow(12.dp, RoundedCornerShape(24.dp)),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        text = stringResource(SettingsR.string.welcome_companion_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+
+                    when (val s = companionState) {
+                        CompanionState.Idle,
+                        CompanionState.Scanning -> {
+                            if (!state.companionSyncStatus.isNullOrEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "Connected to: ${state.companionSyncStatus}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    if (state.lastSyncTime > 0) {
+                                        val date = Date(state.lastSyncTime)
+                                        val formatted = DateFormat.getMediumDateFormat(context).format(date) + " " + 
+                                                        DateFormat.getTimeFormat(context).format(date)
+                                        Text(
+                                            text = "Last sync: $formatted",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(onClick = { companionViewModel.syncNow() }) {
+                                            Text("Sync Now")
+                                        }
+                                        TextButton(onClick = { companionViewModel.startScanning() }) {
+                                            Text("Re-scan QR")
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    text = stringResource(SettingsR.string.welcome_companion_body),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Box(
+                                    modifier =
+                                        Modifier.fillMaxWidth()
+                                            .height(300.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                ) {
+                                    CompanionScanner(
+                                        onPayloadFound = { companionViewModel.fetchAndApplyConfig(it) }
+                                    )
+                                }
+                            }
+                        }
+                        CompanionState.Fetching -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator()
+                                Text(
+                                    text = stringResource(SettingsR.string.welcome_companion_fetching),
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                        CompanionState.Success -> {
+                            Text(
+                                text = stringResource(SettingsR.string.welcome_companion_success),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color(0xFF4CAF50),
+                            )
+                            LaunchedEffect(Unit) {
+                                kotlinx.coroutines.delay(1500)
+                                showCompanionDiscovery = false
+                            }
+                        }
+                        is CompanionState.Error -> {
+                            Text(
+                                text = stringResource(SettingsR.string.welcome_companion_error, s.message),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            Button(
+                                onClick = { companionViewModel.startScanning() },
+                                modifier = Modifier.align(Alignment.End),
+                            ) {
+                                Text(stringResource(CoreR.string.retry))
+                            }
+                        }
+                    }
+
+                    TextButton(
+                        onClick = { showCompanionDiscovery = false },
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Text(stringResource(CoreR.string.close))
+                    }
+                }
+            }
         }
     }
 

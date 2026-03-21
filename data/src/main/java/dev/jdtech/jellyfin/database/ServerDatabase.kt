@@ -47,7 +47,7 @@ import dev.jdtech.jellyfin.models.User
             NetworkVideoDto::class,
             NetworkPlaybackStateDto::class,
         ],
-    version = 14,
+    version = 15,
     autoMigrations =
         [
             AutoMigration(from = 2, to = 3),
@@ -71,6 +71,13 @@ abstract class ServerDatabase : RoomDatabase() {
 
     @DeleteTable(tableName = "intros") class IntrosMigration : AutoMigrationSpec
 }
+
+val MIGRATION_14_15 =
+    object : Migration(startVersion = 14, endVersion = 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE users ADD COLUMN preferences TEXT")
+        }
+    }
 
 val MIGRATION_6_7 =
     object : Migration(startVersion = 6, endVersion = 7) {

@@ -280,4 +280,13 @@
         <item>female</item>
         <item>system</item>
     </string-array>
+
+    <string name="welcome_companion_title">SpatialFin Companion</string>
+    <string name="welcome_companion_body">Do you have the SpatialFin Companion app running on your network? You can automatically configure your headset by scanning the QR code.</string>
+    <string name="welcome_companion_scan">Scan QR Code</string>
+    <string name="welcome_companion_skip">Set up manually</string>
+    <string name="welcome_companion_scanning">Scanning for Companion…</string>
+    <string name="welcome_companion_fetching">Fetching configuration…</string>
+    <string name="welcome_companion_error">Failed to configure: %s</string>
+    <string name="welcome_companion_success">Configuration applied!</string>
 </resources>

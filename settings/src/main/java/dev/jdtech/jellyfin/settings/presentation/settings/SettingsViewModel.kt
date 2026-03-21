@@ -670,6 +670,21 @@ class SettingsViewModel @Inject constructor(
                 preferences =
                     listOf(
                         PreferenceCategory(
+                            nameStringResource = R.string.welcome_companion_title,
+                            iconDrawableId = R.drawable.ic_network,
+                            supportedDeviceTypes = listOf(DeviceType.XR),
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(SettingsEvent.ShowCompanionDiscoveryDialog)
+                                }
+                            },
+                        )
+                    )
+            ),
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
                             nameStringResource = R.string.about,
                             iconDrawableId = R.drawable.ic_info,
                             onClick = {
@@ -813,7 +828,13 @@ class SettingsViewModel @Inject constructor(
                     }
                     .filter { it.preferences.isNotEmpty() }
 
-            _state.emit(_state.value.copy(preferenceGroups = preferences))
+            _state.emit(
+                _state.value.copy(
+                    preferenceGroups = preferences,
+                    companionSyncStatus = appPreferences.getValue(appPreferences.companionUrl),
+                    lastSyncTime = appPreferences.getValue(appPreferences.lastCompanionSyncTime),
+                )
+            )
         }
     }
 

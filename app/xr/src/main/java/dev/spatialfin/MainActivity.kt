@@ -59,6 +59,7 @@ import dev.jdtech.jellyfin.presentation.local.localVideoPermission
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.repository.JellyfinRepository
 import kotlinx.coroutines.delay
 import timber.log.Timber
 
@@ -91,6 +92,7 @@ class MainActivity : AppCompatActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     @Inject lateinit var appPreferences: AppPreferences
+    @Inject lateinit var repository: JellyfinRepository
     private val xrSessionState = mutableStateOf<Session?>(null)
     private val startupPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -236,6 +238,7 @@ class MainActivity : AppCompatActivity() {
                                                 ?: GeminiCloudService(
                                                     context.applicationContext,
                                                     appPreferences,
+                                                    repository,
                                                 ).also { geminiCloudService = it }
                                         val coordinator =
                                             commandCoordinator
@@ -447,6 +450,7 @@ class MainActivity : AppCompatActivity() {
         val missingPermissions =
             listOf(
                 Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.CAMERA,
                 HAND_TRACKING_PERMISSION,
                 localVideoPermission(),
             ).distinct().filter { permission ->
