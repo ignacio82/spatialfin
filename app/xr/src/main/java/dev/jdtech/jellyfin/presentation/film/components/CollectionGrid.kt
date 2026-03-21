@@ -23,6 +23,7 @@ import dev.jdtech.jellyfin.presentation.utils.GridCellsAdaptiveWithMinColumns
 @Composable
 fun CollectionGrid(
     sections: List<CollectionSection>,
+    displayRatings: Boolean = true,
     innerPadding: PaddingValues,
     onAction: (CollectionAction) -> Unit,
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
@@ -55,6 +56,7 @@ fun CollectionGrid(
                     item = item,
                     direction =
                         if (item is SpatialFinEpisode) Direction.HORIZONTAL else Direction.VERTICAL,
+                    displayRatings = displayRatings,
                     onClick = { onAction(CollectionAction.OnItemClick(item)) },
                     onDeleteClick = onDeleteItem,
                     modifier = Modifier.animateItem(),

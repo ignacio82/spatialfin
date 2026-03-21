@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.player.core.domain.models
 
 import android.os.Parcelable
+import dev.jdtech.jellyfin.models.Rating
 import java.util.UUID
 import kotlinx.parcelize.Parcelize
 
@@ -21,6 +22,7 @@ data class PlayerItem(
     val people: List<PlayerPerson> = emptyList(),
     val overview: String = "",
     val genres: List<String> = emptyList(),
+    val ratings: List<Rating> = emptyList(),
     val productionYear: Int? = null,
     /** Episode/movie backdrop URI string for next-up cards (null for non-visual items). */
     val backdropImageUri: String? = null,

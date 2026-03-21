@@ -12,6 +12,7 @@ import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +22,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @HiltViewModel
-class CollectionViewModel @Inject constructor(private val repository: JellyfinRepository) :
+class CollectionViewModel @Inject constructor(
+    private val repository: JellyfinRepository,
+    private val appPreferences: AppPreferences,
+) :
     ViewModel() {
     private val _state = MutableStateFlow(CollectionState())
     val state = _state.asStateFlow()
@@ -32,6 +36,7 @@ class CollectionViewModel @Inject constructor(private val repository: JellyfinRe
 
             try {
                 val items = repository.getItems(parentId = parentId, sortBy = SortBy.RELEASE_DATE)
+                val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
 
                 val sections = mutableListOf<CollectionSection>()
 
@@ -68,7 +73,7 @@ class CollectionViewModel @Inject constructor(private val repository: JellyfinRe
                         }
                 }
 
-                _state.emit(_state.value.copy(isLoading = false, sections = sections))
+                _state.emit(_state.value.copy(isLoading = false, sections = sections, displayRatings = displayRatings))
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(isLoading = false, error = e))
             }

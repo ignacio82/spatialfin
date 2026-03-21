@@ -28,5 +28,6 @@ data class PlayerStateSnapshot(
     val syncPlayActive: Boolean = false,
     val syncPlayGroupName: String? = null,
     val syncPlayParticipantNames: List<String> = emptyList(),
+    val currentRatings: List<String> = emptyList(),
     val passthroughEnabled: Boolean = false,
 )

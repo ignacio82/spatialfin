@@ -35,6 +35,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val homeNextUp = Preference<Boolean>("home_next_up", true)
     val homeLatest = Preference<Boolean>("home_latest", true)
     val displayExtraInfo = Preference("pref_display_extra_info", false)
+    val displayRatings = Preference("pref_display_ratings", true)
 
     // Player - seeking
     val playerSeekBackInc = Preference("pref_player_seek_back_inc", 5_000L)

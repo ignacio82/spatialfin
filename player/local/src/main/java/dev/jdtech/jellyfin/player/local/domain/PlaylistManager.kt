@@ -306,6 +306,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                 is SpatialFinShow -> genres
                 else -> emptyList()
             },
+            ratings = ratings,
             productionYear = when (this) {
                 is SpatialFinMovie -> productionYear
                 is SpatialFinShow -> productionYear

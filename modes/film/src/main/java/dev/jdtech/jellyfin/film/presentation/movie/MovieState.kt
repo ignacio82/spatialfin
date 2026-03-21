@@ -12,5 +12,6 @@ data class MovieState(
     val director: SpatialFinItemPerson? = null,
     val writers: List<SpatialFinItemPerson> = emptyList(),
     val displayExtraInfo: Boolean = false,
+    val displayRatings: Boolean = true,
     val error: Exception? = null,
 )

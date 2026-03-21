@@ -32,6 +32,7 @@ import dev.spatialfin.presentation.theme.spacings
 @Composable
 fun HomeView(
     view: HomeItem.ViewItem,
+    displayRatings: Boolean = true,
     itemsPadding: PaddingValues,
     onAction: (HomeAction) -> Unit,
     modifier: Modifier = Modifier,
@@ -74,6 +75,7 @@ fun HomeView(
                 ItemCard(
                     item = item,
                     direction = Direction.VERTICAL,
+                    displayRatings = displayRatings,
                     onClick = { onAction(HomeAction.OnItemClick(item)) },
                 )
             }

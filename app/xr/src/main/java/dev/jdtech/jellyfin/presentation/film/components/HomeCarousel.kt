@@ -37,6 +37,7 @@ private val dynamicPageSize =
 @Composable
 fun HomeCarousel(
     items: List<SpatialFinItem>,
+    displayRatings: Boolean = true,
     itemsPadding: PaddingValues,
     onAction: (HomeAction) -> Unit,
 ) {
@@ -68,7 +69,7 @@ fun HomeCarousel(
         pageSpacing = MaterialTheme.spacings.medium,
     ) { page ->
         val item = visibleItems[page]
-        HomeCarouselItem(item = item, onAction = onAction)
+        HomeCarouselItem(item = item, displayRatings = displayRatings, onAction = onAction)
     }
 }
 

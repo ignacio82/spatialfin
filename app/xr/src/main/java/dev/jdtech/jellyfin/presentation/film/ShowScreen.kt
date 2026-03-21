@@ -57,6 +57,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
+import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -149,6 +150,10 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
                                 }
+                            }
+                            if (state.displayRatings && show.ratings.isNotEmpty()) {
+                                Spacer(Modifier.height(MaterialTheme.spacings.small))
+                                RatingsRow(ratings = show.ratings)
                             }
                         }
                     },
@@ -274,6 +279,7 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                             ItemCard(
                                 item = season,
                                 direction = Direction.VERTICAL,
+                                displayRatings = state.displayRatings,
                                 onClick = { onAction(ShowAction.NavigateToItem(season)) },
                             )
                         }
@@ -301,10 +307,4 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
             onHomeClick = { onAction(ShowAction.OnHomeClick) },
         )
     }
-}
-
-@PreviewScreenSizes
-@Composable
-private fun EpisodeScreenLayoutPreview() {
-    SpatialFinTheme { ShowScreenLayout(state = ShowState(show = dummyShow), onAction = {}) }
 }

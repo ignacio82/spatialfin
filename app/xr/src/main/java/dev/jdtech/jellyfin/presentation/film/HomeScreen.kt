@@ -82,6 +82,7 @@ fun HomeScreen(
         appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
     val hasCloudApiKey =
         !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
+    val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
     val shouldCheckLocalAi = !hasCloudApiKey
     val geminiNanoService =
         remember(context, shouldCheckLocalAi) {
@@ -103,6 +104,7 @@ fun HomeScreen(
 
     HomeScreenLayout(
         state = state,
+        displayRatings = displayRatings,
         needsLanguageSetup = needsLanguageSetup,
         needsAiSetup = localAiAvailable == false && !hasCloudApiKey,
         onLanguageSettingsClick = onLanguageSettingsClick,
@@ -126,6 +128,7 @@ fun HomeScreen(
 @Composable
 private fun HomeScreenLayout(
     state: HomeState,
+    displayRatings: Boolean,
     needsLanguageSetup: Boolean,
     needsAiSetup: Boolean,
     onLanguageSettingsClick: () -> Unit,
@@ -202,6 +205,7 @@ private fun HomeScreenLayout(
                     item(key = section.id) {
                         HomeCarousel(
                             items = section.items,
+                            displayRatings = displayRatings,
                             itemsPadding = itemsPadding,
                             onAction = onAction,
                         )
@@ -211,6 +215,7 @@ private fun HomeScreenLayout(
                     item(key = section.id) {
                         HomeSection(
                             section = section.homeSection,
+                            displayRatings = displayRatings,
                             itemsPadding = itemsPadding,
                             onAction = onAction,
                             modifier = Modifier.animateItem(),
@@ -221,6 +226,7 @@ private fun HomeScreenLayout(
                     item(key = section.id) {
                         HomeSection(
                             section = section.homeSection,
+                            displayRatings = displayRatings,
                             itemsPadding = itemsPadding,
                             onAction = onAction,
                             modifier = Modifier.animateItem(),
@@ -230,6 +236,7 @@ private fun HomeScreenLayout(
                 items(visibleHomeSections.views, key = { it.id }) { view ->
                     HomeView(
                         view = view,
+                        displayRatings = displayRatings,
                         itemsPadding = itemsPadding,
                         onAction = onAction,
                         modifier = Modifier.animateItem(),
@@ -292,6 +299,7 @@ private fun HomeScreenLayoutPreview() {
                     views = listOf(dummyHomeView),
                     error = Exception("Failed to load data"),
                 ),
+            displayRatings = true,
             needsLanguageSetup = false,
             needsAiSetup = false,
             onLanguageSettingsClick = {},

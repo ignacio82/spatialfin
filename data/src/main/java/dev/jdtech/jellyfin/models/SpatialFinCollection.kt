@@ -20,9 +20,10 @@ data class SpatialFinCollection(
     val type: CollectionType,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter> = emptyList(),
-) : SpatialFinItem
+    override val ratings: List<Rating> = emptyList(),
+    ) : SpatialFinItem
 
-fun BaseItemDto.toSpatialFinCollection(jellyfinRepository: JellyfinRepository): SpatialFinCollection? {
+    fun BaseItemDto.toSpatialFinCollection(jellyfinRepository: JellyfinRepository): SpatialFinCollection? {
     val type = CollectionType.fromString(collectionType?.serialName)
 
     if (type !in CollectionType.supported) {
@@ -34,5 +35,6 @@ fun BaseItemDto.toSpatialFinCollection(jellyfinRepository: JellyfinRepository): 
         name = name.orEmpty(),
         type = type,
         images = toSpatialFinImages(jellyfinRepository),
+        ratings = toSpatialFinRatings(),
     )
-}
+    }

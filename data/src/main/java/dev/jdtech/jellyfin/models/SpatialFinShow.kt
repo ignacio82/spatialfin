@@ -31,6 +31,7 @@ data class SpatialFinShow(
     val trailer: String?,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter> = emptyList(),
+    override val ratings: List<Rating> = emptyList(),
 ) : SpatialFinItem
 
 fun BaseItemDto.toSpatialFinShow(jellyfinRepository: JellyfinRepository): SpatialFinShow {
@@ -56,6 +57,7 @@ fun BaseItemDto.toSpatialFinShow(jellyfinRepository: JellyfinRepository): Spatia
         endDate = endDate,
         trailer = remoteTrailers?.getOrNull(0)?.url,
         images = toSpatialFinImages(jellyfinRepository),
+        ratings = toSpatialFinRatings(),
     )
 }
 

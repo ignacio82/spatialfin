@@ -79,6 +79,7 @@ fun CollectionScreenLayout(
 
         CollectionGrid(
             sections = state.sections,
+            displayRatings = state.displayRatings,
             innerPadding =
                 PaddingValues(
                     top = safePadding.top + 96.dp,

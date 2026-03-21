@@ -101,6 +101,7 @@ class SmartChatEngine(
             Episode: ${playerState.currentEpisodeNumber ?: ""}
             Overview: ${playerState.currentOverview.take(1000)}
             Genres: ${playerState.currentGenres.joinToString(", ")}
+            Ratings: ${playerState.currentRatings.joinToString(", ")}
             Cast: ${playerState.castNames.take(12).joinToString(", ")}
             Current chapter: ${playerState.currentChapterName ?: ""}
             Story so far: ${(storySoFarContext ?: "").take(1200)}
@@ -171,6 +172,13 @@ class SmartChatEngine(
                 .takeIf { it.isNotEmpty() }
                 ?.let { "Genres: ${it.take(4).joinToString(", ")}." }
                 ?: "I couldn't find genre metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+        }
+
+        if (normalized.contains("rating") || normalized.contains("score") || normalized.contains("is it good") || normalized.contains("reviews")) {
+            return playerState.currentRatings
+                .takeIf { it.isNotEmpty() }
+                ?.let { "Ratings for ${playerState.currentItemTitle}: ${it.joinToString(", ")}." }
+                ?: "I don't have rating information for ${playerState.currentItemTitle.ifBlank { "this title" }}."
         }
 
         if (normalized.contains("title") || normalized.contains("what am i watching")) {

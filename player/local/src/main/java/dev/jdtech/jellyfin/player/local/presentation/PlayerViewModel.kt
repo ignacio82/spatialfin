@@ -21,6 +21,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.models.Rating
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -105,6 +106,7 @@ constructor(
                 currentPeople = emptyList(),
                 currentOverview = "",
                 currentGenres = emptyList(),
+                currentRatings = emptyList(),
                 currentSeriesName = null,
                 currentSeasonNumber = null,
                 currentEpisodeNumber = null,
@@ -139,6 +141,7 @@ constructor(
         val currentPeople: List<PlayerPerson>,
         val currentOverview: String,
         val currentGenres: List<String> = emptyList(),
+        val currentRatings: List<Rating> = emptyList(),
         val currentSeriesName: String? = null,
         val currentSeasonNumber: Int? = null,
         val currentEpisodeNumber: Int? = null,
@@ -715,6 +718,7 @@ constructor(
                                 currentPeople = item.people,
                                 currentOverview = item.overview,
                                 currentGenres = item.genres,
+                                currentRatings = item.ratings,
                                 currentSeriesName = item.seriesName,
                                 currentSeasonNumber = item.parentIndexNumber,
                                 currentEpisodeNumber = item.indexNumber,

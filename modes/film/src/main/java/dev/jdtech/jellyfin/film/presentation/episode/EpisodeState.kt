@@ -9,5 +9,6 @@ data class EpisodeState(
     val videoMetadata: VideoMetadata? = null,
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val displayExtraInfo: Boolean = false,
+    val displayRatings: Boolean = true,
     val error: Exception? = null,
 )

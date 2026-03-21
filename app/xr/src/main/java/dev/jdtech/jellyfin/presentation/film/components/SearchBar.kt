@@ -204,6 +204,7 @@ fun FilmSearchBar(
                         ItemCard(
                             item = item,
                             direction = Direction.VERTICAL,
+                            displayRatings = state.displayRatings,
                             onClick = { onAction(SearchAction.OnItemClick(item)) },
                             modifier = Modifier.animateItem(),
                         )

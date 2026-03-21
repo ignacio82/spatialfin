@@ -19,6 +19,7 @@ data class SpatialFinBoxSet(
     override val unplayedItemCount: Int? = null,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter> = emptyList(),
+    override val ratings: List<Rating> = emptyList(),
 ) : SpatialFinItem
 
 fun BaseItemDto.toSpatialFinBoxSet(jellyfinRepository: JellyfinRepository): SpatialFinBoxSet {
@@ -26,5 +27,6 @@ fun BaseItemDto.toSpatialFinBoxSet(jellyfinRepository: JellyfinRepository): Spat
         id = id,
         name = name.orEmpty(),
         images = toSpatialFinImages(jellyfinRepository),
+        ratings = toSpatialFinRatings(),
     )
 }

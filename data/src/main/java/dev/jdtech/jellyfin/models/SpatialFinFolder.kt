@@ -19,6 +19,7 @@ data class SpatialFinFolder(
     override val unplayedItemCount: Int?,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter> = emptyList(),
+    override val ratings: List<Rating> = emptyList(),
 ) : SpatialFinItem
 
 fun BaseItemDto.toSpatialFinFolder(jellyfinRepository: JellyfinRepository): SpatialFinFolder {
@@ -29,5 +30,6 @@ fun BaseItemDto.toSpatialFinFolder(jellyfinRepository: JellyfinRepository): Spat
         favorite = userData?.isFavorite == true,
         unplayedItemCount = userData?.unplayedItemCount,
         images = toSpatialFinImages(jellyfinRepository),
+        ratings = toSpatialFinRatings(),
     )
 }

@@ -28,4 +28,5 @@ data class LocalVideoItem(
     override val unplayedItemCount: Int? = null,
     override val images: SpatialFinImages = SpatialFinImages(),
     override val chapters: List<SpatialFinChapter> = emptyList(),
+    override val ratings: List<Rating> = emptyList(),
 ) : SpatialFinItem

@@ -206,6 +206,13 @@ class SettingsViewModel @Inject constructor(
                                                         R.string.extra_info_summary,
                                                     backendPreference =
                                                         appPreferences.displayExtraInfo,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.display_ratings,
+                                                    descriptionStringRes =
+                                                        R.string.display_ratings_summary,
+                                                    backendPreference =
+                                                        appPreferences.displayRatings,
                                                 )
                                             )
                                     ),

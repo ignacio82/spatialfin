@@ -32,7 +32,11 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
-fun HomeCarouselItem(item: SpatialFinItem, onAction: (HomeAction) -> Unit) {
+fun HomeCarouselItem(
+    item: SpatialFinItem,
+    displayRatings: Boolean = true,
+    onAction: (HomeAction) -> Unit
+) {
     val colorStops =
         arrayOf(
             0.0f to Color.Black.copy(alpha = 0.1f),
@@ -72,6 +76,11 @@ fun HomeCarouselItem(item: SpatialFinItem, onAction: (HomeAction) -> Unit) {
                     is SpatialFinShow -> item.genres
                     else -> emptyList()
                 }
+
+            if (displayRatings && item.ratings.isNotEmpty()) {
+                RatingsRow(ratings = item.ratings)
+            }
+
             Text(
                 text = genres.joinToString(),
                 color = Color.LightGray,

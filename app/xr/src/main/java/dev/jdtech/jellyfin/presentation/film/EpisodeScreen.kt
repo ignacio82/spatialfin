@@ -54,6 +54,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemButtonsBar
 import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
+import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.presentation.film.components.VideoMetadataBar
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -201,6 +202,10 @@ private fun EpisodeScreenLayout(
                                 maxLines = 3,
                                 style = MaterialTheme.typography.displaySmall,
                             )
+                            if (state.displayRatings && episode.ratings.isNotEmpty()) {
+                                Spacer(Modifier.height(MaterialTheme.spacings.small))
+                                RatingsRow(ratings = episode.ratings)
+                            }
                         }
                     },
                 )

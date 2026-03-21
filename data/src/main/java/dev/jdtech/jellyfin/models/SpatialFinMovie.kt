@@ -32,6 +32,7 @@ data class SpatialFinMovie(
     override val unplayedItemCount: Int? = null,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter>,
+    override val ratings: List<Rating> = emptyList(),
     override val trickplayInfo: Map<String, SpatialFinTrickplayInfo>?,
 ) : SpatialFinItem, SpatialFinSources
 
@@ -68,6 +69,7 @@ suspend fun BaseItemDto.toSpatialFinMovie(
         video3DFormat = video3dFormat?.name,
         images = toSpatialFinImages(jellyfinRepository),
         chapters = toSpatialFinChapters(),
+        ratings = toSpatialFinRatings(),
         trickplayInfo =
             trickplay?.mapValues { it.value[it.value.keys.max()]!!.toSpatialFinTrickplayInfo() },
     )

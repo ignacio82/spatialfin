@@ -37,6 +37,7 @@ fun ItemCard(
     direction: Direction,
     onClick: (SpatialFinItem) -> Unit,
     onDeleteClick: ((SpatialFinItem) -> Unit)? = null,
+    displayRatings: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val width =
@@ -86,6 +87,10 @@ fun ItemCard(
                     )
                 }
             }
+        }
+        if (displayRatings && item.ratings.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
+            RatingsRow(ratings = item.ratings.take(2))
         }
         Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
         Text(

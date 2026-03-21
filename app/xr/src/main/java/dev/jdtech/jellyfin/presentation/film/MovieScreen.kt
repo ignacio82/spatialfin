@@ -57,6 +57,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemButtonsBar
 import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
+import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.presentation.film.components.VideoMetadataBar
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -200,6 +201,10 @@ private fun MovieScreenLayout(
                                         style = MaterialTheme.typography.titleLarge,
                                     )
                                 }
+                            }
+                            if (state.displayRatings && movie.ratings.isNotEmpty()) {
+                                Spacer(Modifier.height(MaterialTheme.spacings.small))
+                                RatingsRow(ratings = movie.ratings)
                             }
                         }
                     },

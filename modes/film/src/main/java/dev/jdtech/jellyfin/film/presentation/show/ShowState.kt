@@ -12,5 +12,6 @@ data class ShowState(
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val director: SpatialFinItemPerson? = null,
     val writers: List<SpatialFinItemPerson> = emptyList(),
+    val displayRatings: Boolean = true,
     val error: Exception? = null,
 )

@@ -25,6 +25,7 @@ data class SpatialFinSeason(
     override val unplayedItemCount: Int?,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter> = emptyList(),
+    override val ratings: List<Rating> = emptyList(),
 ) : SpatialFinItem
 
 fun BaseItemDto.toSpatialFinSeason(jellyfinRepository: JellyfinRepository): SpatialFinSeason {
@@ -44,6 +45,7 @@ fun BaseItemDto.toSpatialFinSeason(jellyfinRepository: JellyfinRepository): Spat
         seriesId = seriesId!!,
         seriesName = seriesName.orEmpty(),
         images = toSpatialFinImages(jellyfinRepository),
+        ratings = toSpatialFinRatings(),
     )
 }
 

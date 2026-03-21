@@ -34,6 +34,7 @@ data class SpatialFinEpisode(
     val missing: Boolean = false,
     override val images: SpatialFinImages,
     override val chapters: List<SpatialFinChapter>,
+    override val ratings: List<Rating> = emptyList(),
     override val trickplayInfo: Map<String, SpatialFinTrickplayInfo>?,
 ) : SpatialFinItem, SpatialFinSources
 
@@ -72,6 +73,7 @@ suspend fun BaseItemDto.toSpatialFinEpisode(
             missing = locationType == LocationType.VIRTUAL,
             images = toSpatialFinImages(jellyfinRepository),
             chapters = toSpatialFinChapters(),
+            ratings = toSpatialFinRatings(),
             trickplayInfo =
                 trickplay?.mapValues { it.value[it.value.keys.max()]!!.toSpatialFinTrickplayInfo() },
         )

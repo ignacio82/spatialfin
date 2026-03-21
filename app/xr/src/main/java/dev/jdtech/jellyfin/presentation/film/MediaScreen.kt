@@ -153,6 +153,7 @@ private fun MediaScreenLayout(
                 ItemCard(
                     item = library,
                     direction = Direction.HORIZONTAL,
+                    displayRatings = state.displayRatings,
                     onClick = { onAction(MediaAction.OnItemClick(library)) },
                     modifier = Modifier.animateItem(),
                 )

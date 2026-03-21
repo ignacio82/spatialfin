@@ -44,6 +44,7 @@ constructor(
                 val director = getDirector(movie)
                 val writers = getWriters(movie)
                 val displayExtraInfo = appPreferences.getValue(appPreferences.displayExtraInfo)
+                val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
                 _state.emit(
                     _state.value.copy(
                         movie = movie,
@@ -53,6 +54,7 @@ constructor(
                         director = director,
                         writers = writers,
                         displayExtraInfo = displayExtraInfo,
+                        displayRatings = displayRatings,
                     )
                 )
             } catch (e: Exception) {

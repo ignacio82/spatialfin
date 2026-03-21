@@ -21,6 +21,7 @@ interface SpatialFinItem {
     val unplayedItemCount: Int?
     val images: SpatialFinImages
     val chapters: List<SpatialFinChapter>
+    val ratings: List<Rating>
 }
 
 suspend fun BaseItemDto.toSpatialFinItem(

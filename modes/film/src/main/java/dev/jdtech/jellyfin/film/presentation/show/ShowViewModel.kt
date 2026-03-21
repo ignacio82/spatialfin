@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +18,10 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.PersonKind
 
 @HiltViewModel
-class ShowViewModel @Inject constructor(private val repository: JellyfinRepository) : ViewModel() {
+class ShowViewModel @Inject constructor(
+    private val repository: JellyfinRepository,
+    private val appPreferences: AppPreferences
+) : ViewModel() {
     private val _state = MutableStateFlow(ShowState())
     val state = _state.asStateFlow()
 
@@ -33,6 +37,7 @@ class ShowViewModel @Inject constructor(private val repository: JellyfinReposito
                 val actors = getActors(show)
                 val director = getDirector(show)
                 val writers = getWriters(show)
+                val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
                 _state.emit(
                     _state.value.copy(
                         show = show,
@@ -41,6 +46,7 @@ class ShowViewModel @Inject constructor(private val repository: JellyfinReposito
                         actors = actors,
                         director = director,
                         writers = writers,
+                        displayRatings = displayRatings,
                     )
                 )
             } catch (e: Exception) {

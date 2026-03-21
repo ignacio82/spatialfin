@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -13,7 +14,10 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 @HiltViewModel
-class SearchViewModel @Inject constructor(private val repository: JellyfinRepository) :
+class SearchViewModel @Inject constructor(
+    private val repository: JellyfinRepository,
+    private val appPreferences: AppPreferences
+) :
     ViewModel() {
     private val _state = MutableStateFlow(SearchState())
     val state = _state.asStateFlow()
@@ -25,9 +29,10 @@ class SearchViewModel @Inject constructor(private val repository: JellyfinReposi
         currentJob =
             viewModelScope.launch {
                 val trimmedQuery = query.trim()
+                val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
                 try {
                     if (trimmedQuery.isBlank()) {
-                        _state.emit(SearchState())
+                        _state.emit(SearchState(displayRatings = displayRatings))
                         return@launch
                     }
 
@@ -35,6 +40,7 @@ class SearchViewModel @Inject constructor(private val repository: JellyfinReposi
                         SearchState(
                             query = trimmedQuery,
                             items = emptyList(),
+                            displayRatings = displayRatings,
                             loading = true,
                             hasSearched = true,
                             errorMessage = null,
@@ -51,6 +57,7 @@ class SearchViewModel @Inject constructor(private val repository: JellyfinReposi
                         SearchState(
                             query = trimmedQuery,
                             items = items,
+                            displayRatings = displayRatings,
                             loading = false,
                             hasSearched = true,
                             errorMessage = null,
@@ -62,6 +69,7 @@ class SearchViewModel @Inject constructor(private val repository: JellyfinReposi
                         SearchState(
                             query = trimmedQuery,
                             items = emptyList(),
+                            displayRatings = displayRatings,
                             loading = false,
                             hasSearched = true,
                             errorMessage = e.message ?: "Search failed",

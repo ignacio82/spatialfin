@@ -4,6 +4,7 @@ import dev.jdtech.jellyfin.models.CollectionSection
 
 data class CollectionState(
     val sections: List<CollectionSection> = emptyList(),
+    val displayRatings: Boolean = true,
     val isLoading: Boolean = false,
     val error: Exception? = null,
 )
