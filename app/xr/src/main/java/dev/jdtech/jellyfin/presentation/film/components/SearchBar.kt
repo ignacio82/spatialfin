@@ -200,14 +200,35 @@ fun FilmSearchBar(
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
                     verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
                 ) {
-                    items(items = visibleItems, key = { it.id }) { item ->
-                        ItemCard(
-                            item = item,
-                            direction = Direction.VERTICAL,
-                            displayRatings = state.displayRatings,
-                            onClick = { onAction(SearchAction.OnItemClick(item)) },
-                            modifier = Modifier.animateItem(),
-                        )
+                    if (visibleItems.isNotEmpty()) {
+                        items(items = visibleItems, key = { it.id }) { item ->
+                            ItemCard(
+                                item = item,
+                                direction = Direction.VERTICAL,
+                                displayRatings = state.displayRatings,
+                                onClick = { onAction(SearchAction.OnItemClick(item)) },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
+                    }
+
+                    if (state.seerrItems.isNotEmpty()) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                text = stringResource(FilmR.string.search_seerr_results_title),
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(vertical = MaterialTheme.spacings.medium)
+                            )
+                        }
+
+                        items(items = state.seerrItems, key = { "seerr_${it.mediaType}_${it.tmdbId}" }) { item ->
+                            SeerrItemCard(
+                                item = item,
+                                direction = Direction.VERTICAL,
+                                onRequestClick = { onAction(SearchAction.RequestSeerrItem(it)) },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
                     }
                 }
             }

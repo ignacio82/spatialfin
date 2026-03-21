@@ -128,6 +128,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val onboardingCompleted = Preference("pref_onboarding_completed", false)
     val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
 
+    // Seerr (Jellyseerr/Overseerr)
+    val seerrEnabled = Preference("pref_seerr_enabled", false)
+    val seerrUrl = Preference<String?>("pref_seerr_url", null)
+    val seerrApiKey = Preference<String?>("pref_seerr_api_key", null)
+
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
 

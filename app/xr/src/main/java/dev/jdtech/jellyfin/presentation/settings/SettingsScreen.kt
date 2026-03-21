@@ -69,6 +69,8 @@ fun SettingsScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     var cloudApiKeyDraft by remember { mutableStateOf<String?>(null) }
+    var seerrUrlDraft by remember { mutableStateOf<String?>(null) }
+    var seerrApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
@@ -117,6 +119,12 @@ fun SettingsScreen(
             is SettingsEvent.ShowCloudApiKeyDialog -> {
                 cloudApiKeyDraft = event.currentValue.orEmpty()
             }
+            is SettingsEvent.ShowSeerrUrlDialog -> {
+                seerrUrlDraft = event.currentValue.orEmpty()
+            }
+            is SettingsEvent.ShowSeerrApiKeyDialog -> {
+                seerrApiKeyDraft = event.currentValue.orEmpty()
+            }
             is SettingsEvent.ShowSmartLanguageDialog -> {
                 smartLanguageDraft = event.settings
             }
@@ -125,6 +133,36 @@ fun SettingsScreen(
                     (context as Activity).restart()
                 } catch (_: Exception) {}
             }
+        }
+    }
+
+    seerrUrlDraft?.let { currentValue ->
+        SpatialDialog(onDismissRequest = { seerrUrlDraft = null }) {
+            SettingsTextInputDialog(
+                title = stringResource(SettingsR.string.settings_seerr_url),
+                description = stringResource(SettingsR.string.settings_seerr_url_summary),
+                initialValue = currentValue,
+                onUpdate = { value ->
+                    viewModel.saveSeerrUrl(value)
+                    seerrUrlDraft = null
+                },
+                onDismissRequest = { seerrUrlDraft = null },
+            )
+        }
+    }
+
+    seerrApiKeyDraft?.let { currentValue ->
+        SpatialDialog(onDismissRequest = { seerrApiKeyDraft = null }) {
+            SettingsTextInputDialog(
+                title = stringResource(SettingsR.string.settings_seerr_api_key),
+                description = stringResource(SettingsR.string.settings_seerr_api_key_summary),
+                initialValue = currentValue,
+                onUpdate = { value ->
+                    viewModel.saveSeerrApiKey(value)
+                    seerrApiKeyDraft = null
+                },
+                onDismissRequest = { seerrApiKeyDraft = null },
+            )
         }
     }
 

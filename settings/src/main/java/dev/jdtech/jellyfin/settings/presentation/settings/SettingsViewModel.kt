@@ -523,6 +523,51 @@ class SettingsViewModel @Inject constructor(
                 preferences =
                     listOf(
                         PreferenceCategory(
+                            nameStringResource = R.string.settings_category_seerr,
+                            iconDrawableId = R.drawable.ic_server,
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups =
+                                listOf(
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOf(
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.settings_seerr_enabled,
+                                                    descriptionStringRes = R.string.settings_seerr_enabled_summary,
+                                                    backendPreference = appPreferences.seerrEnabled,
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_seerr_url,
+                                                    descriptionStringRes = R.string.settings_seerr_url_summary,
+                                                    iconDrawableId = R.drawable.ic_network,
+                                                    dependencies = listOf(appPreferences.seerrEnabled),
+                                                    onClick = { showSeerrUrlDialog() },
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_seerr_api_key,
+                                                    descriptionStringRes = R.string.settings_seerr_api_key_summary,
+                                                    iconDrawableId = R.drawable.ic_info,
+                                                    dependencies = listOf(appPreferences.seerrEnabled),
+                                                    onClick = { showSeerrApiKeyDialog() },
+                                                ),
+                                            )
+                                    )
+                                ),
+                        )
+                    )
+            ),
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
                             nameStringResource = R.string.settings_category_network,
                             iconDrawableId = R.drawable.ic_network,
                             onClick = {
@@ -741,6 +786,15 @@ class SettingsViewModel @Inject constructor(
                                                     summary = smartLanguageSummary(),
                                                 )
                                             }
+                                            is PreferenceCategory -> {
+                                                preference.copy(
+                                                    enabled =
+                                                        preference.enabled &&
+                                                            preference.dependencies.all {
+                                                                appPreferences.getValue(it)
+                                                            },
+                                                )
+                                            }
                                             else -> preference
                                         }
                                     }
@@ -817,6 +871,42 @@ class SettingsViewModel @Inject constructor(
     fun saveCloudApiKey(value: String) {
         appPreferences.setValue(
             appPreferences.voiceAssistantCloudApiKey,
+            value.trim().takeIf { it.isNotEmpty() },
+        )
+        refreshLoadedPreferences()
+    }
+
+    fun showSeerrUrlDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowSeerrUrlDialog(
+                    appPreferences.getValue(appPreferences.seerrUrl)
+                )
+            )
+        }
+    }
+
+    fun saveSeerrUrl(value: String) {
+        appPreferences.setValue(
+            appPreferences.seerrUrl,
+            value.trim().takeIf { it.isNotEmpty() },
+        )
+        refreshLoadedPreferences()
+    }
+
+    fun showSeerrApiKeyDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowSeerrApiKeyDialog(
+                    appPreferences.getValue(appPreferences.seerrApiKey)
+                )
+            )
+        }
+    }
+
+    fun saveSeerrApiKey(value: String) {
+        appPreferences.setValue(
+            appPreferences.seerrApiKey,
             value.trim().takeIf { it.isNotEmpty() },
         )
         refreshLoadedPreferences()

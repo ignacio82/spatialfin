@@ -7,13 +7,21 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
+import okhttp3.OkHttpClient
 
 @Module
 @InstallIn(SingletonComponent::class)
 object ApiModule {
+    @Singleton
+    @Provides
+    fun provideOkHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder().build()
+    }
+
     @Singleton
     @Provides
     fun provideJellyfinApi(
@@ -42,5 +50,14 @@ object ApiModule {
         }
 
         return jellyfinApi
+    }
+
+    @Singleton
+    @Provides
+    fun provideSeerrApi(
+        appPreferences: AppPreferences,
+        client: OkHttpClient,
+    ): SeerrApi {
+        return SeerrApi(appPreferences, client)
     }
 }

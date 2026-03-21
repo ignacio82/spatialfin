@@ -15,4 +15,7 @@
     <string name="search_results_title">Results</string>
     <string name="search_results_subtitle">%1$d matches for "%2$s"</string>
     <string name="search_open_action">Open</string>
+    <string name="search_seerr_results_title">Available on Seerr</string>
+    <string name="search_request_action">Request</string>
+    <string name="search_request_pending">Request Pending</string>
 </resources>

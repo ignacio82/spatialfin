@@ -24,6 +24,7 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search, disambiguate, and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **SyncPlay Watch Parties** — Create, join, refresh, and leave Jellyfin SyncPlay groups directly from the XR player orbiter. SpatialFin now listens for Jellyfin playstate and SyncPlay websocket commands and mirrors pause, resume, seek, and stop changes back to the group.
+- **Seerr Integration** — Connect your [Jellyseerr](https://github.com/fallenbagel/jellyseerr) or [Overseerr](https://github.com/sct/overseerr) instance to search for and request new media directly from the SpatialFin search screen when items aren't already in your library.
 - **Large-Target Playback UI** — The XR player exposes larger controls and a dedicated chapter picker for easier hand-first interaction.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
 - **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
