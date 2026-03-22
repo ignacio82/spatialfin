@@ -596,9 +596,10 @@ private fun BeamWelcomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Spacer(Modifier.weight(1f))
         Column(
-            modifier = Modifier.fillMaxWidth(0.7f),
+            modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .padding(vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
@@ -641,7 +642,6 @@ private fun BeamWelcomeScreen(
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
     }
 }
 
