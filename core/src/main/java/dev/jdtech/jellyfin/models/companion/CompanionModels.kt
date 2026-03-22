@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.models.companion
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -7,7 +8,8 @@ data class CompanionConfig(
     val version: Int,
     val servers: List<CompanionServer> = emptyList(),
     val networkShares: List<CompanionNetworkShare> = emptyList(),
-    val preferences: Map<String, String> = emptyMap(),
+    @SerialName("globalPreferences")
+    val preferences: Map<String, String?> = emptyMap(),
     val setup_token: String
 )
 
@@ -36,9 +38,12 @@ data class CompanionServer(
 @Serializable
 data class CompanionUser(
     val id: String? = null,
+    val name: String? = null,
     val username: String,
     val password: String? = null,
-    val preferences: Map<String, String> = emptyMap()
+    @SerialName("access_token")
+    val accessToken: String? = null,
+    val preferences: Map<String, String?> = emptyMap()
 )
 
 @Serializable

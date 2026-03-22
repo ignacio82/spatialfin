@@ -15,9 +15,9 @@ import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
+import dev.jdtech.jellyfin.models.companion.CompanionUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -25,6 +25,12 @@ import okhttp3.Request
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import timber.log.Timber
 import java.util.UUID
+
+private data class SyncedServerState(
+    val serverId: String,
+    val addressId: UUID,
+    val userIds: Set<UUID>
+)
 
 @HiltWorker
 class CompanionSyncWorker @AssistedInject constructor(
@@ -46,16 +52,16 @@ class CompanionSyncWorker @AssistedInject constructor(
             return@withContext Result.success()
         }
 
-        Timber.d("COMPANION: Background sync started from $url")
+        Timber.d("COMPANION SYNC: Background sync started from $url")
 
         try {
             val config = fetchConfig(url, token)
             applyConfig(config)
             appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
-            Timber.i("COMPANION: Background sync completed successfully")
+            Timber.i("COMPANION SYNC: Background sync completed successfully")
             Result.success()
         } catch (e: Exception) {
-            Timber.e(e, "COMPANION: Background sync failed")
+            Timber.e(e, "COMPANION SYNC: Background sync failed")
             Result.retry()
         }
     }
@@ -69,13 +75,20 @@ class CompanionSyncWorker @AssistedInject constructor(
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val body = response.body?.string() ?: throw Exception("Empty response")
-            return json.decodeFromString<CompanionConfig>(body)
+            Timber.d("COMPANION SYNC: Fetched config, length=${body.length}")
+            val config = json.decodeFromString<CompanionConfig>(body)
+            Timber.d("COMPANION SYNC: Parsed config: servers=${config.servers.size}, preferences=${config.preferences.size}")
+            return config
         }
     }
 
     private suspend fun applyConfig(config: CompanionConfig) {
-        // Apply Preferences
+        // Apply Global Preferences
+        Timber.d("COMPANION SYNC: Applying ${config.preferences.size} global preferences")
         applyPreferences(config.preferences)
+
+        val syncedServers = mutableListOf<SyncedServerState>()
+        val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users (Merge Logic)
         config.servers.forEach { s ->
@@ -86,47 +99,77 @@ class CompanionSyncWorker @AssistedInject constructor(
             val validUsers = mutableListOf<User>()
             s.users.forEach { u ->
                 try {
-                    jellyfinApi.api.update(baseUrl = baseUrl)
-                    val authResult = jellyfinApi.userApi.authenticateUserByName(
-                        data = AuthenticateUserByName(username = u.username, pw = u.password)
-                    ).content
-
-                    val userId = authResult.user?.id ?: UUID.randomUUID()
-                    validUsers.add(User(
-                        id = userId,
-                        name = u.username,
-                        serverId = serverId,
-                        accessToken = authResult.accessToken,
-                        preferences = if (u.preferences.isNotEmpty()) json.encodeToString(u.preferences) else null
-                    ))
+                    val user = authenticateOrUseToken(u, baseUrl, serverId)
+                    if (user != null) {
+                        validUsers.add(user)
+                        Timber.d("COMPANION SYNC: Added user ${u.username} (id=${user.id})")
+                    }
                 } catch (e: Exception) {
-                    Timber.e(e, "COMPANION SYNC: Failed to authenticate user ${u.username}")
+                    Timber.e(e, "COMPANION SYNC: Failed to add user ${u.username}")
                 }
             }
 
+            Timber.d("COMPANION SYNC: Server ${s.name}: ${validUsers.size}/${s.users.size} users valid")
+
             if (validUsers.isNotEmpty()) {
                 val existingServer = serverDatabase.get(serverId)
+                val preferredCurrentUserId =
+                    existingServer?.currentUserId?.takeIf { currentUserId ->
+                        validUsers.any { it.id == currentUserId }
+                    } ?: validUsers.first().id
                 val server = Server(
                     id = serverId,
                     name = s.name,
-                    currentServerAddressId = existingServer?.currentServerAddressId,
-                    currentUserId = existingServer?.currentUserId ?: validUsers.first().id
+                    currentServerAddressId = null,
+                    currentUserId = preferredCurrentUserId
                 )
                 serverDatabase.insertServer(server)
 
-                // Add address if not exists
                 val addressId = UUID.randomUUID()
                 serverDatabase.insertServerAddress(ServerAddress(id = addressId, serverId = serverId, address = baseUrl))
-                if (server.currentServerAddressId == null) {
-                    server.currentServerAddressId = addressId
-                    serverDatabase.update(server)
-                }
-                
+                server.currentServerAddressId = addressId
+                serverDatabase.update(server)
+
                 validUsers.forEach { serverDatabase.insertUser(it) }
+                syncedServers.add(
+                    SyncedServerState(
+                        serverId = serverId,
+                        addressId = addressId,
+                        userIds = validUsers.map { it.id }.toSet()
+                    )
+                )
+            }
+        }
+
+        val activeServerState =
+            syncedServers.firstOrNull { it.serverId == previousCurrentServer }
+                ?: syncedServers.firstOrNull()
+        activeServerState?.let { synced ->
+            val currentServer = serverDatabase.get(synced.serverId)
+            val currentUserId =
+                currentServer?.currentUserId?.takeIf { it in synced.userIds }
+                    ?: synced.userIds.firstOrNull()
+            if (currentServer != null) {
+                currentServer.currentServerAddressId = synced.addressId
+                currentUserId?.let { currentServer.currentUserId = it }
+                serverDatabase.update(currentServer)
+            }
+            if (previousCurrentServer.isNullOrEmpty()) {
+                appPreferences.setValue(appPreferences.currentServer, synced.serverId)
+            }
+        }
+
+        // Apply user-level preferences from the active user
+        config.servers.flatMap { it.users }.firstOrNull()?.preferences?.let { userPrefs ->
+            val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
+            if (nonNull.isNotEmpty()) {
+                Timber.d("COMPANION SYNC: Applying ${nonNull.size} user-level preferences")
+                applyPreferences(nonNull)
             }
         }
 
         // Apply Network Shares
+        Timber.d("COMPANION SYNC: Applying ${config.networkShares.size} network shares")
         config.networkShares.forEach { s ->
             val share = NetworkShareDto(
                 id = s.id, protocol = s.protocol, host = s.host, shareName = s.shareName,
@@ -138,21 +181,73 @@ class CompanionSyncWorker @AssistedInject constructor(
         }
     }
 
-    private fun applyPreferences(prefs: Map<String, String>) {
+    private suspend fun authenticateOrUseToken(u: CompanionUser, baseUrl: String, serverId: String): User? {
+        // Try pre-authenticated token first
+        if (u.accessToken != null) {
+            Timber.d("COMPANION SYNC: Using pre-authenticated token for ${u.username}")
+            try {
+                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = u.accessToken)
+                val userInfo = jellyfinApi.userApi.getCurrentUser().content
+                return User(
+                    id = userInfo.id,
+                    name = u.username,
+                    serverId = serverId,
+                    accessToken = u.accessToken,
+                    preferences = serializeUserPrefs(u.preferences)
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "COMPANION SYNC: Token invalid for ${u.username}, falling back to password")
+            }
+        }
+
+        if (u.password != null) {
+            Timber.d("COMPANION SYNC: Authenticating ${u.username} with password")
+            jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
+            val authResult = jellyfinApi.userApi.authenticateUserByName(
+                data = AuthenticateUserByName(username = u.username, pw = u.password)
+            ).content
+
+            val userId = authResult.user?.id ?: UUID.randomUUID()
+            return User(
+                id = userId,
+                name = u.username,
+                serverId = serverId,
+                accessToken = authResult.accessToken,
+                preferences = serializeUserPrefs(u.preferences)
+            )
+        }
+
+        Timber.w("COMPANION SYNC: No access_token or password for ${u.username}, skipping")
+        return null
+    }
+
+    private fun serializeUserPrefs(prefs: Map<String, String?>): String? {
+        val nonNull = prefs.filterValues { it != null }.mapValues { it.value!! }
+        return if (nonNull.isNotEmpty()) json.encodeToString(nonNull) else null
+    }
+
+    private fun applyPreferences(prefs: Map<String, String?>) {
         prefs.forEach { (key, value) ->
             try {
                 when (key) {
                     appPreferences.preferredAudioLanguage.backendName -> appPreferences.setValue(appPreferences.preferredAudioLanguage, value)
                     appPreferences.preferredSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.preferredSubtitleLanguage, value)
-                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value.toBoolean())
+                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value?.toBoolean() ?: true)
                     appPreferences.smartSpokenLanguages.backendName -> appPreferences.setValue(appPreferences.smartSpokenLanguages, value)
-                    appPreferences.voiceAssistantCloudApiKey.backendName -> appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
+                    appPreferences.voiceAssistantCloudApiKey.backendName -> {
+                        Timber.d("COMPANION SYNC: Setting cloud API key (length=${value?.length ?: 0})")
+                        appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
+                    }
                     appPreferences.tmdbApiKey.backendName -> appPreferences.setValue(appPreferences.tmdbApiKey, value)
-                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value.toBoolean())
+                    appPreferences.loggingEnabled.backendName -> appPreferences.setValue(appPreferences.loggingEnabled, value?.toBoolean() ?: false)
+                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value?.toBoolean() ?: false)
                     appPreferences.seerrUrl.backendName -> appPreferences.setValue(appPreferences.seerrUrl, value)
                     appPreferences.seerrApiKey.backendName -> appPreferences.setValue(appPreferences.seerrApiKey, value)
+                    else -> Timber.d("COMPANION SYNC: Ignoring unknown preference key: $key")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Timber.w(e, "COMPANION SYNC: Failed to apply preference $key")
+            }
         }
     }
 }

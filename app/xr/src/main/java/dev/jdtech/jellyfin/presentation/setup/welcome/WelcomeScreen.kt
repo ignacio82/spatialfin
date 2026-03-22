@@ -113,6 +113,17 @@ fun WelcomeScreen(
         aiStatusLoading = false
     }
 
+    LaunchedEffect(companionState) {
+        if (companionState is CompanionState.Success) {
+            val importedApiKey =
+                appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
+            if (importedApiKey.isNotBlank()) {
+                wantsApiKey = true
+                cloudApiKey = importedApiKey
+            }
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose { geminiNanoService.destroy() }
     }

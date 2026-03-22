@@ -12,13 +12,13 @@ import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
+import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -44,6 +44,13 @@ sealed class CompanionState {
     data object Success : CompanionState()
     data class Error(val message: String) : CompanionState()
 }
+
+private data class ImportedSession(
+    val serverId: String,
+    val baseUrl: String,
+    val userId: UUID,
+    val accessToken: String?
+)
 
 @HiltViewModel
 class CompanionViewModel @Inject constructor(
@@ -73,7 +80,7 @@ class CompanionViewModel @Inject constructor(
 
     fun fetchAndApplyConfig(payload: CompanionDiscoveryPayload) {
         if (_state.value is CompanionState.Fetching || _state.value is CompanionState.Success) return
-        
+
         // Save companion info for background sync
         appPreferences.setValue(appPreferences.companionUrl, payload.companion_url)
         appPreferences.setValue(appPreferences.companionToken, payload.setup_token)
@@ -98,6 +105,7 @@ class CompanionViewModel @Inject constructor(
     }
 
     private suspend fun fetchConfig(payload: CompanionDiscoveryPayload): CompanionConfig = withContext(Dispatchers.IO) {
+        Timber.d("COMPANION: Fetching config from ${payload.companion_url}/api/v1/config")
         val request = Request.Builder()
             .url("${payload.companion_url}/api/v1/config")
             .addHeader("X-Setup-Token", payload.setup_token)
@@ -106,54 +114,63 @@ class CompanionViewModel @Inject constructor(
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val body = response.body?.string() ?: throw Exception("Empty response")
-            json.decodeFromString<CompanionConfig>(body)
+            Timber.d("COMPANION: Raw config response length=${body.length}")
+            val config = json.decodeFromString<CompanionConfig>(body)
+            Timber.d("COMPANION: Parsed config: version=${config.version}, servers=${config.servers.size}, preferences=${config.preferences.size}, networkShares=${config.networkShares.size}")
+            config.servers.forEachIndexed { i, s ->
+                Timber.d("COMPANION:   server[$i] id=${s.id} name=${s.name} addresses=${s.addresses} users=${s.users.size}")
+                s.users.forEachIndexed { j, u ->
+                    Timber.d("COMPANION:     user[$j] username=${u.username} hasAccessToken=${u.accessToken != null} hasPassword=${u.password != null} preferences=${u.preferences.keys}")
+                }
+            }
+            config.preferences.forEach { (k, v) ->
+                val display = if (k.contains("key", ignoreCase = true) || k.contains("password", ignoreCase = true)) "***" else v
+                Timber.d("COMPANION:   pref: $k = $display")
+            }
+            config
         }
     }
 
     private suspend fun applyConfig(config: CompanionConfig) = withContext(Dispatchers.IO) {
         // Apply Global Preferences first
+        Timber.d("COMPANION: Applying ${config.preferences.size} global preferences")
         applyPreferences(config.preferences)
 
-        var firstValidServerId: String? = null
-        var firstValidAddressId: UUID? = null
-        var firstValidUserId: UUID? = null
+        val importedSessions = mutableListOf<ImportedSession>()
+        val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users
         config.servers.forEach { s ->
             val serverId = s.id
-            var serverAddressId: UUID? = null
-            var serverUserId: UUID? = null
-            
+            var serverSession: ImportedSession? = null
+
             val validUsers = mutableListOf<User>()
-            
+
             // Normalize URL (must have trailing slash for Jellyfin SDK)
             val rawAddress = s.addresses.firstOrNull() ?: ""
             val baseUrl = if (rawAddress.isNotEmpty() && !rawAddress.endsWith("/")) "$rawAddress/" else rawAddress
 
             s.users.forEach { u ->
                 try {
-                    Timber.d("COMPANION: Authenticating user ${u.username} on $baseUrl")
-                    jellyfinApi.api.update(baseUrl = baseUrl)
-                    
-                    val authResult = jellyfinApi.userApi.authenticateUserByName(
-                        data = AuthenticateUserByName(username = u.username, pw = u.password)
-                    ).content
-
-                    val userId = authResult.user?.id ?: UUID.randomUUID()
-                    val user = User(
-                        id = userId,
-                        name = u.username,
-                        serverId = serverId,
-                        accessToken = authResult.accessToken,
-                        preferences = if (u.preferences.isNotEmpty()) json.encodeToString(u.preferences) else null
-                    )
-                    validUsers.add(user)
-                    
-                    if (serverUserId == null) serverUserId = userId
+                    val user = authenticateOrUseToken(u, baseUrl, serverId)
+                    if (user != null) {
+                        validUsers.add(user)
+                        Timber.d("COMPANION: Successfully added user ${u.username} (id=${user.id})")
+                        if (serverSession == null) {
+                            serverSession = ImportedSession(
+                                serverId = serverId,
+                                baseUrl = baseUrl,
+                                userId = user.id,
+                                accessToken = user.accessToken
+                            )
+                        }
+                    }
                 } catch (e: Exception) {
-                    Timber.e(e, "COMPANION: Failed to authenticate user ${u.username} on ${s.name}")
+                    Timber.e(e, "COMPANION: Failed to add user ${u.username} on ${s.name}")
                 }
             }
+
+            Timber.d("COMPANION: Server ${s.name}: ${validUsers.size}/${s.users.size} users valid")
 
             // Only insert server if we have at least one valid user
             if (validUsers.isNotEmpty()) {
@@ -161,7 +178,7 @@ class CompanionViewModel @Inject constructor(
                     id = serverId,
                     name = s.name,
                     currentServerAddressId = null,
-                    currentUserId = serverUserId
+                    currentUserId = serverSession?.userId
                 )
                 serverDatabase.insertServer(server)
 
@@ -169,35 +186,98 @@ class CompanionViewModel @Inject constructor(
                 val addressId = UUID.randomUUID()
                 val serverAddress = ServerAddress(id = addressId, serverId = serverId, address = baseUrl)
                 serverDatabase.insertServerAddress(serverAddress)
-                
+
                 server.currentServerAddressId = addressId
                 serverDatabase.update(server)
-                
-                validUsers.forEach { serverDatabase.insertUser(it) }
 
-                if (firstValidServerId == null) {
-                    firstValidServerId = serverId
-                    firstValidAddressId = addressId
-                    firstValidUserId = serverUserId
-                }
+                validUsers.forEach { serverDatabase.insertUser(it) }
+                serverSession?.let(importedSessions::add)
             }
         }
 
         // Apply Network Shares
         applyNetworkShares(config.networkShares)
-        
-        // If we found any valid server, set it as active
-        firstValidServerId?.let { 
-            appPreferences.setValue(appPreferences.currentServer, it)
+
+        val activeSession =
+            importedSessions.firstOrNull { it.serverId == previousCurrentServer }
+                ?: importedSessions.firstOrNull()
+
+        // If we found any valid server, set it as active and update the live API session.
+        activeSession?.let { session ->
+            appPreferences.setValue(appPreferences.currentServer, session.serverId)
             appPreferences.setValue(appPreferences.onboardingCompleted, true)
+            jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
+            jellyfinApi.userId = session.userId
             scheduleCompanionSync()
         }
+
+        // Apply user-level preferences from the active user
+        config.servers.flatMap { it.users }.firstOrNull()?.preferences?.let { userPrefs ->
+            val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
+            if (nonNull.isNotEmpty()) {
+                Timber.d("COMPANION: Applying ${nonNull.size} user-level preferences")
+                applyPreferences(nonNull)
+            }
+        }
+    }
+
+    /**
+     * Authenticate a companion user against the Jellyfin server.
+     * Uses the pre-authenticated access_token from the companion app if available,
+     * falling back to username/password authentication.
+     */
+    private suspend fun authenticateOrUseToken(u: CompanionUser, baseUrl: String, serverId: String): User? {
+        // Try pre-authenticated token first
+        if (u.accessToken != null) {
+            Timber.d("COMPANION: Using pre-authenticated token for ${u.username} on $baseUrl")
+            try {
+                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = u.accessToken)
+                val userInfo = jellyfinApi.userApi.getCurrentUser().content
+                val userId = userInfo.id
+                Timber.d("COMPANION: Token valid for ${u.username}, userId=$userId")
+                return User(
+                    id = userId,
+                    name = u.username,
+                    serverId = serverId,
+                    accessToken = u.accessToken,
+                    preferences = serializeUserPrefs(u.preferences)
+                )
+            } catch (e: Exception) {
+                Timber.w(e, "COMPANION: Pre-authenticated token invalid for ${u.username}, falling back to password auth")
+            }
+        }
+
+        // Fall back to password authentication
+        if (u.password != null) {
+            Timber.d("COMPANION: Authenticating ${u.username} with password on $baseUrl")
+            jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
+            val authResult = jellyfinApi.userApi.authenticateUserByName(
+                data = AuthenticateUserByName(username = u.username, pw = u.password)
+            ).content
+
+            val userId = authResult.user?.id ?: UUID.randomUUID()
+            Timber.d("COMPANION: Password auth succeeded for ${u.username}, userId=$userId, hasToken=${authResult.accessToken != null}")
+            return User(
+                id = userId,
+                name = u.username,
+                serverId = serverId,
+                accessToken = authResult.accessToken,
+                preferences = serializeUserPrefs(u.preferences)
+            )
+        }
+
+        Timber.w("COMPANION: No access_token or password for ${u.username}, skipping")
+        return null
+    }
+
+    private fun serializeUserPrefs(prefs: Map<String, String?>): String? {
+        val nonNull = prefs.filterValues { it != null }.mapValues { it.value!! }
+        return if (nonNull.isNotEmpty()) json.encodeToString(nonNull) else null
     }
 
     private fun scheduleCompanionSync() {
         val workManager = WorkManager.getInstance(context)
         val syncRequest = PeriodicWorkRequestBuilder<CompanionSyncWorker>(12, TimeUnit.HOURS)
-
             .addTag("CompanionSync")
             .build()
 
@@ -209,6 +289,7 @@ class CompanionViewModel @Inject constructor(
     }
 
     private fun applyNetworkShares(shares: List<CompanionNetworkShare>) {
+        Timber.d("COMPANION: Applying ${shares.size} network shares")
         shares.forEach { s ->
             val share = NetworkShareDto(
                 id = s.id,
@@ -227,7 +308,7 @@ class CompanionViewModel @Inject constructor(
         }
     }
 
-    private fun applyPreferences(prefs: Map<String, String>) {
+    private fun applyPreferences(prefs: Map<String, String?>) {
         prefs.forEach { (key, value) ->
             try {
                 when (key) {
@@ -237,17 +318,21 @@ class CompanionViewModel @Inject constructor(
                     appPreferences.animeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.animeSubtitleLanguage, value)
                     appPreferences.nonAnimeAudioLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeAudioLanguage, value)
                     appPreferences.nonAnimeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleLanguage, value)
-                    appPreferences.nonAnimeSubtitleDisabled.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleDisabled, value.toBoolean())
-                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value.toBoolean())
+                    appPreferences.nonAnimeSubtitleDisabled.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleDisabled, value?.toBoolean() ?: false)
+                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value?.toBoolean() ?: true)
                     appPreferences.smartSpokenLanguages.backendName -> appPreferences.setValue(appPreferences.smartSpokenLanguages, value)
-                    appPreferences.voiceAssistantCloudApiKey.backendName -> appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
+                    appPreferences.voiceAssistantCloudApiKey.backendName -> {
+                        Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
+                        appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
+                    }
                     appPreferences.tmdbApiKey.backendName -> appPreferences.setValue(appPreferences.tmdbApiKey, value)
-                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value.toBoolean())
+                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value?.toBoolean() ?: false)
                     appPreferences.seerrUrl.backendName -> appPreferences.setValue(appPreferences.seerrUrl, value)
                     appPreferences.seerrApiKey.backendName -> appPreferences.setValue(appPreferences.seerrApiKey, value)
+                    else -> Timber.d("COMPANION: Ignoring unknown preference key: $key")
                 }
             } catch (e: Exception) {
-                Timber.w("COMPANION: Failed to apply preference $key: ${e.message}")
+                Timber.w(e, "COMPANION: Failed to apply preference $key")
             }
         }
     }

@@ -10,6 +10,8 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Box
@@ -26,11 +28,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
@@ -89,14 +93,32 @@ fun CompanionScanner(
                                 it.setSurfaceProvider(previewView.surfaceProvider)
                             }
 
+                            // Request higher resolution for better QR detail
+                            val resolutionSelector = ResolutionSelector.Builder()
+                                .setResolutionStrategy(
+                                    ResolutionStrategy(
+                                        Size(1920, 1080),
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
+                                    )
+                                )
+                                .build()
+
                             val imageAnalysis = ImageAnalysis.Builder()
-                                .setTargetResolution(Size(1280, 720))
+                                .setResolutionSelector(resolutionSelector)
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                 .build()
 
-                            val scanner = BarcodeScanning.getClient()
+                            val options = BarcodeScannerOptions.Builder()
+                                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                                .build()
+                            val scanner = BarcodeScanning.getClient(options)
+                            
                             val analysisExecutor = Executors.newSingleThreadExecutor()
+                            var frameCount = 0
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                                if (frameCount++ % 100 == 0) {
+                                    Timber.d("COMPANION: Analyzer heartbeat - frame ${imageProxy.width}x${imageProxy.height} rotation=${imageProxy.imageInfo.rotationDegrees}")
+                                }
                                 processImageProxy(scanner, imageProxy, onPayloadFound, json)
                             }
 
@@ -109,7 +131,7 @@ fun CompanionScanner(
                                 preview,
                                 imageAnalysis
                             )
-                            Timber.d("COMPANION: CameraX bound to lifecycle successfully")
+                            Timber.d("COMPANION: CameraX bound successfully at high res")
                         } catch (e: Exception) {
                             Timber.e(e, "COMPANION: Camera binding failed")
                         }
@@ -147,20 +169,27 @@ private fun processImageProxy(
         val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
         scanner.process(image)
             .addOnSuccessListener { barcodes ->
-                if (barcodes.isNotEmpty()) {
-                    Timber.d("COMPANION: Detected ${barcodes.size} barcodes")
-                }
                 for (barcode in barcodes) {
-                    if (barcode.valueType == Barcode.TYPE_TEXT || barcode.valueType == Barcode.TYPE_URL) {
-                        val rawValue = barcode.rawValue ?: continue
-                        Timber.d("COMPANION: QR Raw Value: $rawValue")
-                        try {
+                    val rawValue = barcode.rawValue ?: continue
+                    Timber.d("COMPANION: Detected barcode: $rawValue")
+                    
+                    try {
+                        // Support both JSON and the new compressed format
+                        if (rawValue.startsWith("sfcp:")) {
+                            val data = rawValue.substring(5).split("|")
+                            if (data.size == 2) {
+                                onPayloadFound(CompanionDiscoveryPayload(
+                                    version = 1,
+                                    companion_url = data[0],
+                                    setup_token = data[1]
+                                ))
+                            }
+                        } else {
                             val payload = json.decodeFromString<CompanionDiscoveryPayload>(rawValue)
-                            Timber.i("COMPANION: Valid payload found, triggering callback")
                             onPayloadFound(payload)
-                        } catch (e: Exception) {
-                            // Not our payload, ignore
                         }
+                    } catch (e: Exception) {
+                        Timber.w("COMPANION: Failed to parse payload: $rawValue")
                     }
                 }
             }

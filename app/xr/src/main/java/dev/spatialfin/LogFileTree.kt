@@ -2,7 +2,6 @@ package dev.spatialfin
 
 import android.util.Log
 import java.io.BufferedWriter
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -14,9 +13,13 @@ import timber.log.Timber
  * the same way logcat entries work. flush() is called after each write so the file
  * is readable even if the process is killed.
  */
-class LogFileTree(val file: File) : Timber.DebugTree() {
+class LogFileTree(
+    private val writer: BufferedWriter,
+    val destination: String,
+    private val onClose: () -> Unit,
+    private val onLog: (priority: Int, tag: String?, message: String, throwable: Throwable?) -> Unit = { _, _, _, _ -> },
+) : Timber.DebugTree() {
 
-    private val writer: BufferedWriter = file.bufferedWriter()
     private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
@@ -41,11 +44,14 @@ class LogFileTree(val file: File) : Timber.DebugTree() {
                 writer.flush()
             } catch (_: Exception) {}
         }
+        onLog(priority, tag, message, t)
     }
 
     fun close() {
         synchronized(writer) {
-            try { writer.close() } catch (_: Exception) {}
+            try {
+                onClose()
+            } catch (_: Exception) {}
         }
     }
 }

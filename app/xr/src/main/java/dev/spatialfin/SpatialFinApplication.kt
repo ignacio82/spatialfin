@@ -1,8 +1,8 @@
 package dev.spatialfin
 
 import android.app.Application
+import android.content.SharedPreferences
 import android.os.Build
-import android.os.Environment
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
@@ -18,10 +18,6 @@ import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import okio.Path.Companion.toOkioPath
@@ -37,6 +33,16 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
     private var logFileTree: LogFileTree? = null
+    private val preferenceListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == appPreferences.loggingEnabled.backendName) {
+                val enabled = appPreferences.getValue(appPreferences.loggingEnabled)
+                updateLogFileTree(enabled = enabled)
+                if (!enabled) {
+                    CompanionLogUploader.flushNow()
+                }
+            }
+        }
 
     override fun onCreate() {
         super.onCreate()
@@ -47,9 +53,9 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
             Timber.plant(Timber.DebugTree())
         }
 
-        if (appPreferences.getValue(appPreferences.loggingEnabled)) {
-            installLogFileTree()
-        }
+        CompanionLogUploader.initialize(this, appPreferences)
+        updateLogFileTree(enabled = appPreferences.getValue(appPreferences.loggingEnabled))
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             val mode =
@@ -63,41 +69,55 @@ class SpatialFinApplication : Application(), Configuration.Provider, SingletonIm
         }
     }
 
+    private fun updateLogFileTree(enabled: Boolean) {
+        if (enabled) {
+            if (logFileTree == null) {
+                installLogFileTree()
+            }
+        } else {
+            uninstallLogFileTree()
+        }
+    }
+
     private fun installLogFileTree() {
         try {
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            dir.mkdirs()
-            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-            val file = File(dir, "spatialfin-log-$timestamp.txt")
-            val tree = LogFileTree(file)
+            val target = DiagnosticsExport.openLogTarget(this)
+            val tree =
+                LogFileTree(
+                    writer = target.writer,
+                    destination = target.destination,
+                    onClose = { target.closeable.close() },
+                    onLog = { priority, tag, message, throwable ->
+                        CompanionLogUploader.enqueue(priority, tag, message, throwable)
+                    },
+                )
             Timber.plant(tree)
             logFileTree = tree
-            Timber.i("LogFileTree: writing to %s", file.absolutePath)
+            Timber.i("LogFileTree: writing to %s", target.destination)
         } catch (e: Exception) {
             Timber.e(e, "LogFileTree: failed to open log file")
         }
     }
 
+    private fun uninstallLogFileTree() {
+        logFileTree?.let { tree ->
+            Timber.uproot(tree)
+            tree.close()
+            logFileTree = null
+        }
+    }
+
     override fun onTerminate() {
         super.onTerminate()
-        logFileTree?.close()
+        appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        uninstallLogFileTree()
     }
 
     private fun installCrashLogger() {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-                val file = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "spatialfin-crash-$timestamp.txt",
-                )
-                file.writeText(buildString {
-                    appendLine("SpatialFin crash — $timestamp")
-                    appendLine("Thread: ${thread.name}")
-                    appendLine()
-                    appendLine(throwable.stackTraceToString())
-                })
+                DiagnosticsExport.writeCrashReport(this, thread, throwable)
             } catch (_: Exception) {}
             defaultHandler?.uncaughtException(thread, throwable)
         }

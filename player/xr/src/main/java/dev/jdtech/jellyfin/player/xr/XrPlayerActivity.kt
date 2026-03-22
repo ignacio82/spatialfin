@@ -136,20 +136,31 @@ class XrPlayerActivity : AppCompatActivity() {
         // Ensure window is transparent so we can see the XR scene behind the UI
         window.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
 
-        val itemIdString = intent.extras?.getString("itemId")
-        val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
-        val networkVideoId = intent.extras?.getString("networkVideoId")
+        val extras = intent.extras
+        val itemIdString = extras?.getString("itemId")
+        val localMediaId = extras?.getLong("localMediaId")?.takeIf { it > 0L }
+        val networkVideoId = extras?.getString("networkVideoId")
         if (itemIdString == null && localMediaId == null && networkVideoId == null) {
+            Timber.w("Player launch rejected: missing itemId/localMediaId/networkVideoId extras")
             finish()
             return
         }
-        val itemId = itemIdString?.let(UUID::fromString)
-        val itemKind = intent.extras?.getString("itemKind") ?: ""
-        val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
+        val itemId =
+            itemIdString?.let { rawId ->
+                runCatching { UUID.fromString(rawId) }
+                    .onFailure { Timber.e(it, "Player launch rejected: invalid itemId=%s", rawId) }
+                    .getOrNull()
+            }
+        if (itemIdString != null && itemId == null) {
+            finish()
+            return
+        }
+        val itemKind = extras.getString("itemKind").orEmpty()
+        val startFromBeginning = intent.getBooleanExtra("startFromBeginning", false)
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
-        currentStereoMode = intent.extras?.getString("stereoMode") ?: "mono"
+        currentStereoMode = extras.getString("stereoMode") ?: "mono"
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
 
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
@@ -162,8 +173,12 @@ class XrPlayerActivity : AppCompatActivity() {
         )
 
         if (!stereoPlayback) {
-            libassRenderer = LibassRenderer(1920, 1080).apply { init() }
-        } else {
+            libassRenderer =
+                runCatching { LibassRenderer(1920, 1080).apply { init() } }
+                    .onFailure { Timber.w(it, "subtitle: failed to initialize LibassRenderer") }
+                    .getOrNull()
+        }
+        if (stereoPlayback) {
             Timber.i("subtitle: stereo playback detected — skipping libass renderer registration")
         }
 
