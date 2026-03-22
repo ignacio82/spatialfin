@@ -39,7 +39,9 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 
 @AndroidEntryPoint
@@ -165,6 +167,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
+        val libassFontLoader = itemId?.let { buildLibassFontLoader(it, maxBitrate) }
         Timber.i(
             "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
             libassUsagePref,
@@ -193,7 +196,15 @@ class XrPlayerActivity : AppCompatActivity() {
             ) {
                 val renderer = libassRenderer
                 if (renderer != null) {
-                    out.add(LibassTextRenderer(renderer, onTrackInitialized = {}, usagePref = libassUsagePref, srtFontSize = xrSubtitleSize))
+                    out.add(
+                        LibassTextRenderer(
+                            renderer,
+                            onTrackInitialized = {},
+                            fontLoader = libassFontLoader,
+                            usagePref = libassUsagePref,
+                            srtFontSize = xrSubtitleSize,
+                        )
+                    )
                     Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
                     // Do NOT add the default TextRenderer here. With parsing disabled,
                     // raw subtitle bytes (e.g. application/pgs) arrive in their original
@@ -334,5 +345,50 @@ class XrPlayerActivity : AppCompatActivity() {
         super.onDestroy()
         xrSession = null
         libassRenderer?.destroy()
+    }
+
+    private fun buildLibassFontLoader(
+        itemId: UUID,
+        maxBitrate: Long?,
+    ): () -> List<Pair<String, ByteArray>> = {
+        runBlocking(Dispatchers.IO) {
+            val sources = repository.getMediaSources(itemId, includePath = false, maxBitrate = maxBitrate)
+            val fontAttachments = sources.flatMap { source ->
+                source.mediaAttachments.map { attachment -> source to attachment }
+            }.filter { (_, attachment) ->
+                isFontAttachment(attachment.fileName, attachment.mimeType, attachment.codec)
+            }
+            Timber.i("subtitle: candidate embedded ASS fonts=%d itemId=%s", fontAttachments.size, itemId)
+            fontAttachments.mapNotNull { (source, attachment) ->
+                val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
+                repository.getMediaAttachment(itemId, source.id, attachment.index)?.let { bytes ->
+                    Timber.i(
+                        "subtitle: loaded embedded font name=%s source=%s index=%d bytes=%d mime=%s codec=%s",
+                        fileName,
+                        source.id,
+                        attachment.index,
+                        bytes.size,
+                        attachment.mimeType,
+                        attachment.codec,
+                    )
+                    fileName to bytes
+                }
+            }
+        }
+    }
+
+    private fun isFontAttachment(fileName: String, mimeType: String, codec: String): Boolean {
+        val normalizedName = fileName.lowercase()
+        val normalizedMime = mimeType.lowercase()
+        val normalizedCodec = codec.lowercase()
+        return normalizedMime.contains("font") ||
+            normalizedMime.contains("truetype") ||
+            normalizedMime.contains("opentype") ||
+            normalizedName.endsWith(".ttf") ||
+            normalizedName.endsWith(".otf") ||
+            normalizedName.endsWith(".ttc") ||
+            normalizedName.endsWith(".otc") ||
+            normalizedCodec.contains("ttf") ||
+            normalizedCodec.contains("otf")
     }
 }

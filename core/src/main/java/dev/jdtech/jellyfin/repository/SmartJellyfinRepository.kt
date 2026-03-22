@@ -240,6 +240,13 @@ constructor(
     override suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String =
         runOnlineOnly { onlineRepository.getStreamUrl(itemId, mediaSourceId) }
 
+    override suspend fun getMediaAttachment(
+        itemId: UUID,
+        mediaSourceId: String,
+        attachmentIndex: Int,
+    ): ByteArray? =
+        runOnlineOnly { onlineRepository.getMediaAttachment(itemId, mediaSourceId, attachmentIndex) }
+
     override suspend fun getSegments(itemId: UUID): List<SpatialFinSegment> =
         runWithFallback(
             online = { onlineRepository.getSegments(itemId) },

@@ -158,6 +158,11 @@ private val PausedMascotPose =
         Quaternion(0f, 0.9914f, 0f, 0.1305f),
     )
 
+private fun Cue.debugSummary(): String {
+    val preview = text?.toString()?.replace('\n', ' ')?.replace('\r', ' ')?.take(60) ?: "<bitmap>"
+    return "text=\"$preview\" line=$line lineType=$lineType lineAnchor=$lineAnchor position=$position positionAnchor=$positionAnchor size=$size textSize=$textSize verticalType=$verticalType"
+}
+
 /**
  * SpatialPlayerScreen — IMAX-style immersive XR playback experience.
  *
@@ -613,6 +618,11 @@ fun SpatialPlayerScreen(
                     }
                     val firstPreview = first?.take(60)
                     Timber.d("subtitle: fallback onCues count=%d first='%s'", cueGroup.cues.size, firstPreview)
+                    cueGroup.cues.take(3).forEachIndexed { index, cue ->
+                        Timber.d("subtitle: fallback cue[%d] %s", index, cue.debugSummary())
+                    }
+                } else {
+                    Timber.d("subtitle: fallback onCues cleared")
                 }
             }
             override fun onPositionDiscontinuity(
@@ -857,6 +867,15 @@ fun SpatialPlayerScreen(
             videoWidth = 10.0f
             videoHeight = videoWidth / (16f / 9f)
         }
+        Timber.i(
+            "subtitle: video geometry source=%dx%d ratio=%.4f stereo=%s world=%.3fm x %.3fm",
+            videoSize.width,
+            videoSize.height,
+            if (videoHeight > 0f) videoWidth / videoHeight else 0f,
+            currentStereoMode,
+            videoWidth,
+            videoHeight,
+        )
 
         // 2. Apply the correct shape and pose to the entity.
         val entity = videoEntity.value ?: return@LaunchedEffect
@@ -891,6 +910,20 @@ fun SpatialPlayerScreen(
         val renderHeight = (subtitlePanelHeightDp * density.density).toInt().coerceIn(720, 4320)
         val videoW = player.videoSize.width
         val videoH = player.videoSize.height
+        Timber.i(
+            "subtitle: panel geometry mode=%s useLibass=%b panel=%.1fdp x %.1fdp density=%.3f render=%dx%d video=%dx%d finalTextSp=%.1f z=%.1fdp",
+            currentStereoMode,
+            useLibass,
+            subtitlePanelWidthDp,
+            subtitlePanelHeightDp,
+            density.density,
+            renderWidth,
+            renderHeight,
+            videoW,
+            videoH,
+            finalSubtitleSize,
+            subtitlePanelZDp,
+        )
         // Only resize when we have valid video dimensions so storage size is set correctly.
         // Without storage size, libass misscales fonts authored at a different resolution.
         if (videoW > 0 && videoH > 0) {
@@ -954,34 +987,10 @@ fun SpatialPlayerScreen(
                         // silently re-applying the system caption style (GEMINI.md guidance).
                         view.setStyle(captionStyle)
                         view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                        // Selective bottom-anchoring for the IMAX experience:
-                        //
-                        //  • Unpositioned cues (SRT/VTT, lineType == TYPE_UNSET):
-                        //    left as-is — SubtitleView places them at the bottom via
-                        //    setBottomPaddingFraction. ✓
-                        //
-                        //  • Top-positioned cues (line < 0.15, e.g. signs/credits at top):
-                        //    left as-is — respect intentional top placement. ✓
-                        //
-                        //  • Bottom-positioned cues (line > 0.85, e.g. PGS for movies):
-                        //    left as-is — already near the bottom, movies display correctly. ✓
-                        //
-                        //  • Middle-zone cues (0.15 ≤ line < 0.85, LINE_TYPE_FRACTION):
-                        //    Media3's ASS/SSA decoder can produce these for anime dialogue
-                        //    that should visually appear at the bottom.  Push them down.
-                        val processedCues = currentCues.map { cue ->
-                            val isMidZone = cue.lineType == Cue.LINE_TYPE_FRACTION &&
-                                cue.line >= 0.15f && cue.line < 0.85f
-                            if (isMidZone) {
-                                cue.buildUpon()
-                                    .setLine(0.95f, Cue.LINE_TYPE_FRACTION)
-                                    .setLineAnchor(Cue.ANCHOR_TYPE_END)
-                                    .build()
-                            } else {
-                                cue
-                            }
-                        }
-                        view.setCues(processedCues)
+                        // Respect authored cue placement. Rewriting fractional line positions
+                        // makes some anime subtitle tracks appear offset even when the subtitle
+                        // panel already matches the projected video surface.
+                        view.setCues(currentCues)
                     },
                     modifier = Modifier.fillMaxSize(),
                 )

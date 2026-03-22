@@ -14,6 +14,7 @@ data class SpatialFinSource(
     val path: String,
     val size: Long,
     val mediaStreams: List<SpatialFinMediaStream>,
+    val mediaAttachments: List<SpatialFinMediaAttachment> = emptyList(),
     val downloadId: Long? = null,
 )
 
@@ -46,6 +47,8 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
         size = size ?: 0,
         mediaStreams =
             mediaStreams?.map { it.toSpatialFinMediaStream(jellyfinRepository) } ?: emptyList(),
+        mediaAttachments =
+            mediaAttachments?.map { it.toSpatialFinMediaAttachment() } ?: emptyList(),
     )
 }
 
@@ -58,6 +61,7 @@ fun SpatialFinSourceDto.toSpatialFinSource(serverDatabaseDao: ServerDatabaseDao)
         size = File(path).length(),
         mediaStreams =
             serverDatabaseDao.getMediaStreamsBySourceId(id).map { it.toSpatialFinMediaStream() },
+        mediaAttachments = emptyList(),
         downloadId = downloadId,
     )
 }

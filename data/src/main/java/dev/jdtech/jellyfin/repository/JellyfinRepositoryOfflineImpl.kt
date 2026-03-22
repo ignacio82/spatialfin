@@ -227,6 +227,12 @@ class JellyfinRepositoryOfflineImpl(
         TODO("Not yet implemented")
     }
 
+    override suspend fun getMediaAttachment(
+        itemId: UUID,
+        mediaSourceId: String,
+        attachmentIndex: Int,
+    ): ByteArray? = null
+
     override suspend fun getSegments(itemId: UUID): List<SpatialFinSegment> =
         withContext(Dispatchers.IO) { database.getSegments(itemId).map { it.toSpatialFinSegment() } }
 

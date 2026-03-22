@@ -99,6 +99,12 @@ interface JellyfinRepository {
 
     suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String
 
+    suspend fun getMediaAttachment(
+        itemId: UUID,
+        mediaSourceId: String,
+        attachmentIndex: Int,
+    ): ByteArray?
+
     suspend fun getSegments(itemId: UUID): List<SpatialFinSegment>
 
     suspend fun getTrickplayData(itemId: UUID, width: Int, index: Int): ByteArray?

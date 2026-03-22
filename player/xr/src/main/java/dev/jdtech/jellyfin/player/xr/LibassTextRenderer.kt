@@ -23,6 +23,7 @@ import timber.log.Timber
 class LibassTextRenderer(
     private val libassRenderer: LibassRenderer,
     private val onTrackInitialized: () -> Unit,
+    private val fontLoader: (() -> List<Pair<String, ByteArray>>)? = null,
     /** Preference value at the time ExoPlayer was built ("auto", "always", "never"). */
     private val usagePref: String = "auto",
     /** Font size (pt) to use in the synthetic ASS header injected for SRT/VTT tracks. */
@@ -36,6 +37,7 @@ class LibassTextRenderer(
     // Monotonically increasing ReadOrder for SRT events. libass deduplicates events that share
     // the same ReadOrder value, so every SRT chunk must get a unique counter. Reset on seek.
     private var srtReadOrder = 0
+    private var fontsLoaded = false
 
     override fun getName(): String = "LibassTextRenderer"
 
@@ -79,6 +81,7 @@ class LibassTextRenderer(
             initData.size,
             initData.map { it.size }
         )
+        ensureFontsLoaded()
         if (!inputFormatReceived && initData.isNotEmpty()) {
             val codecPrivate = buildCodecPrivate(initData)
             Timber.i(
@@ -107,6 +110,18 @@ class LibassTextRenderer(
         super.onPositionReset(positionUs, joining)
         libassRenderer.clearCache()
         srtReadOrder = 0
+    }
+
+    private fun ensureFontsLoaded() {
+        if (fontsLoaded) return
+        fontsLoaded = true
+        val fonts = runCatching { fontLoader?.invoke().orEmpty() }
+            .onFailure { Timber.w(it, "subtitle: failed to load embedded ASS fonts") }
+            .getOrDefault(emptyList())
+        fonts.forEach { (name, data) ->
+            libassRenderer.addFont(name, data)
+        }
+        Timber.i("subtitle: registered %d embedded ASS fonts", fonts.size)
     }
 
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {

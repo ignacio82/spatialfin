@@ -39,6 +39,7 @@ import org.jellyfin.sdk.api.sockets.subscribePlayStateCommands
 import org.jellyfin.sdk.api.sockets.subscribeSyncPlayCommands
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.api.operations.VideoAttachmentsApi
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.GroupInfoDto
@@ -401,6 +402,27 @@ class JellyfinRepositoryImpl(
                 Timber.e(e)
                 ""
             }
+        }
+
+    override suspend fun getMediaAttachment(
+        itemId: UUID,
+        mediaSourceId: String,
+        attachmentIndex: Int,
+    ): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                VideoAttachmentsApi(jellyfinApi.api)
+                    .getAttachment(itemId, mediaSourceId, attachmentIndex)
+                    .content
+            }.onFailure {
+                Timber.w(
+                    it,
+                    "subtitle: failed to fetch attachment itemId=%s mediaSourceId=%s index=%d",
+                    itemId,
+                    mediaSourceId,
+                    attachmentIndex,
+                )
+            }.getOrNull()
         }
 
     override suspend fun getSegments(itemId: UUID): List<SpatialFinSegment> =
