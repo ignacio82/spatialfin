@@ -560,6 +560,69 @@ nav a:hover {
     margin-bottom: 1.5rem;
 }
 
+.command-block {
+    position: relative;
+}
+
+.command-block pre {
+    margin: 0;
+    padding: 1rem 4.5rem 1rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #02060b;
+    color: #f7f7f2;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+    overflow-x: auto;
+}
+
+.command-block code {
+    color: inherit;
+    white-space: pre;
+}
+
+.command-copy {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-width: 3.5rem;
+    min-height: 2rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid rgba(121, 208, 199, 0.28);
+    background: rgba(7, 17, 29, 0.92);
+    color: var(--text-color);
+    font-family: "Instrument Sans", sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.command-copy svg {
+    width: 0.95rem;
+    height: 0.95rem;
+    flex: 0 0 auto;
+}
+
+.command-copy-label {
+    line-height: 1;
+}
+
+.command-copy:hover {
+    background: rgba(121, 208, 199, 0.14);
+    border-color: rgba(121, 208, 199, 0.42);
+}
+
+.command-copy.copied {
+    background: rgba(121, 208, 199, 0.18);
+    color: var(--primary-hover);
+}
+
 .explorer-list {
     list-style: none;
 }

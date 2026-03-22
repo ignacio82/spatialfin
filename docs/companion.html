@@ -101,16 +101,50 @@
                 <div class="feature-explorer" style="border: 1px solid var(--line-soft); background: rgba(255,255,255,0.02); border-radius: var(--radius-lg); padding: 3rem;">
                     <div class="explorer-grid">
                         <div class="explorer-group">
-                            <h4>1. Deploy Container</h4>
-                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Use the modern Docker Compose syntax to start the service:</p>
-                            <pre style="background: #000; padding: 1rem; border-radius: 8px; font-family: monospace; color: #fff; font-size: 0.9rem;">docker compose up -d</pre>
+                            <h4>1. Clone The Repo</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Start by downloading the companion app repository to the machine that will run Docker:</p>
+                            <div class="command-block">
+                                <button class="command-copy" type="button" aria-label="Copy command" data-copy-target="clone-command">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v13a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1h1a2 2 0 0 0 2-2V7zm-8 4V3h8v2zm9 15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7h12zm3-3h-1V7a2 2 0 0 0-2-2H8V3a2 2 0 0 1 2-2h6l4 4z" fill="currentColor"/>
+                                    </svg>
+                                    <span class="command-copy-label">Copy</span>
+                                </button>
+                                <pre id="clone-command"><code>git clone https://github.com/ignacio82/SpatialFin-Companion.git</code></pre>
+                            </div>
                         </div>
                         <div class="explorer-group">
-                            <h4>2. Configure Hub</h4>
+                            <h4>2. Open The Project</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Move into the cloned folder before starting the service:</p>
+                            <div class="command-block">
+                                <button class="command-copy" type="button" aria-label="Copy command" data-copy-target="cd-command">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v13a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1h1a2 2 0 0 0 2-2V7zm-8 4V3h8v2zm9 15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7h12zm3-3h-1V7a2 2 0 0 0-2-2H8V3a2 2 0 0 1 2-2h6l4 4z" fill="currentColor"/>
+                                    </svg>
+                                    <span class="command-copy-label">Copy</span>
+                                </button>
+                                <pre id="cd-command"><code>cd SpatialFin-Companion</code></pre>
+                            </div>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>3. Deploy Container</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Use Docker Compose to start the companion app in the background:</p>
+                            <div class="command-block">
+                                <button class="command-copy" type="button" aria-label="Copy command" data-copy-target="compose-command">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M16 1H8a2 2 0 0 0-2 2v2H5a2 2 0 0 0-2 2v13a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1h1a2 2 0 0 0 2-2V7zm-8 4V3h8v2zm9 15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7h12zm3-3h-1V7a2 2 0 0 0-2-2H8V3a2 2 0 0 1 2-2h6l4 4z" fill="currentColor"/>
+                                    </svg>
+                                    <span class="command-copy-label">Copy</span>
+                                </button>
+                                <pre id="compose-command"><code>docker compose up -d</code></pre>
+                            </div>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>4. Configure Hub</h4>
                             <p style="color: var(--text-muted);">Navigate to <code>http://your-ip:1982</code> and add your Jellyfin servers, users (Username/Password), and network shares.</p>
                         </div>
                         <div class="explorer-group">
-                            <h4>3. Scan & Enjoy</h4>
+                            <h4>5. Scan & Enjoy</h4>
                             <p style="color: var(--text-muted);">Open SpatialFin on your XR device, go to <strong>Settings -> SpatialFin Companion</strong>, and scan the QR code displayed on your dashboard.</p>
                         </div>
                     </div>
@@ -154,6 +188,33 @@
         }, observerOptions);
 
         document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+        document.querySelectorAll('.command-copy').forEach(button => {
+            button.addEventListener('click', async () => {
+                const target = document.getElementById(button.dataset.copyTarget);
+
+                if (!target) {
+                    return;
+                }
+
+                try {
+                    await navigator.clipboard.writeText(target.textContent.trim());
+                    button.classList.add('copied');
+                    button.querySelector('.command-copy-label').textContent = 'Copied';
+
+                    window.setTimeout(() => {
+                        button.classList.remove('copied');
+                        button.querySelector('.command-copy-label').textContent = 'Copy';
+                    }, 1600);
+                } catch (error) {
+                    button.querySelector('.command-copy-label').textContent = 'Failed';
+
+                    window.setTimeout(() => {
+                        button.querySelector('.command-copy-label').textContent = 'Copy';
+                    }, 1600);
+                }
+            });
+        });
     </script>
 </body>
 </html>
