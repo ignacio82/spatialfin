@@ -28,6 +28,9 @@ android {
         targetSdk = Versions.TARGET_SDK
         versionCode = Versions.APP_CODE
         versionName = Versions.APP_NAME
+        val xrSpatialFeatureRequired =
+            (project.findProperty("XR_SPATIAL_FEATURE_REQUIRED") as String?) ?: "false"
+        manifestPlaceholders["xrSpatialFeatureRequired"] = xrSpatialFeatureRequired
     }
 
     signingConfigs {
@@ -59,8 +62,8 @@ android {
             // XR system-extension callbacks are still crashing in optimized builds with
             // AbstractMethodError inside com.android.extensions.xr.Consumer bridges.
             // Keep release unminified until the androidx.xr / R8 interaction is resolved.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

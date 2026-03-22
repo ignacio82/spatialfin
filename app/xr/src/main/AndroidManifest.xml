@@ -14,12 +14,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature
-        android:name="android.software.xr.immersive"
-        android:required="true" />
-
-    <uses-feature
         android:name="android.software.xr.api.spatial"
-        android:required="true" />
+        android:required="${xrSpatialFeatureRequired}" />
 
     <application
         android:name=".SpatialFinApplication"
