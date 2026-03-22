@@ -1,0 +1,1250 @@
+package dev.jdtech.jellyfin.player.tv
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Bundle
+import android.os.Looper
+import androidx.activity.compose.BackHandler
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.text.TextOutput
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.session.MediaSession
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.PlayerView
+import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.player.beam.LibassRenderer
+import dev.jdtech.jellyfin.player.beam.LibassSubtitleHelper
+import dev.jdtech.jellyfin.player.beam.LibassTextRenderer
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
+import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
+import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import timber.log.Timber
+import java.util.ArrayList
+import java.util.UUID
+
+@AndroidEntryPoint
+class TvPlayerActivity : AppCompatActivity() {
+    companion object {
+        private const val EXTRA_ITEM_ID = "itemId"
+        private const val EXTRA_ITEM_KIND = "itemKind"
+        private const val EXTRA_START_FROM_BEGINNING = "startFromBeginning"
+        private const val EXTRA_LOCAL_MEDIA_ID = "localMediaId"
+        private const val EXTRA_NETWORK_VIDEO_ID = "networkVideoId"
+        private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
+        private const val EXTRA_MAX_BITRATE = "maxBitrate"
+
+        fun createIntent(
+            context: Context,
+            itemId: UUID,
+            itemKind: String,
+            startFromBeginning: Boolean = false,
+            mediaSourceIndex: Int? = null,
+            maxBitrate: Long? = null,
+        ): Intent =
+            Intent(context, TvPlayerActivity::class.java).apply {
+                putExtra(EXTRA_ITEM_ID, itemId.toString())
+                putExtra(EXTRA_ITEM_KIND, itemKind)
+                putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+                mediaSourceIndex?.let { putExtra(EXTRA_MEDIA_SOURCE_INDEX, it) }
+                maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
+            }
+
+        fun createIntentForLocalMedia(
+            context: Context,
+            mediaStoreId: Long,
+            startFromBeginning: Boolean = false,
+        ): Intent =
+            Intent(context, TvPlayerActivity::class.java).apply {
+                putExtra(EXTRA_LOCAL_MEDIA_ID, mediaStoreId)
+                putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            }
+
+        fun createIntentForNetworkMedia(
+            context: Context,
+            networkVideoId: String,
+            startFromBeginning: Boolean = false,
+        ): Intent =
+            Intent(context, TvPlayerActivity::class.java).apply {
+                putExtra(EXTRA_NETWORK_VIDEO_ID, networkVideoId)
+                putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            }
+
+        fun createIntentForSpatialItem(
+            context: Context,
+            item: SpatialFinItem,
+            startFromBeginning: Boolean = false,
+        ): Intent? =
+            when (item) {
+                is SpatialFinMovie -> createIntent(context, item.id, "Movie", startFromBeginning)
+                is SpatialFinEpisode -> createIntent(context, item.id, "Episode", startFromBeginning)
+                else -> null
+            }
+    }
+
+    private val viewModel: PlayerViewModel by viewModels()
+    private var mediaSession: MediaSession? = null
+    private var libassRenderer: LibassRenderer? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
+        val itemKind = intent.getStringExtra(EXTRA_ITEM_KIND)
+        val localMediaId = intent.getLongExtra(EXTRA_LOCAL_MEDIA_ID, 0L).takeIf { it > 0L }
+        val networkVideoId = intent.getStringExtra(EXTRA_NETWORK_VIDEO_ID)
+        val mediaSourceIndex =
+            if (intent.hasExtra(EXTRA_MEDIA_SOURCE_INDEX)) {
+                intent.getIntExtra(EXTRA_MEDIA_SOURCE_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val maxBitrate =
+            if (intent.hasExtra(EXTRA_MAX_BITRATE)) {
+                intent.getLongExtra(EXTRA_MAX_BITRATE, 0L).takeIf { it > 0L }
+            } else {
+                null
+            }
+
+        Timber.i(
+            "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s",
+            itemIdString,
+            itemKind,
+            localMediaId,
+            networkVideoId,
+            startFromBeginning,
+            mediaSourceIndex,
+            maxBitrate,
+        )
+
+        replacePlayerForTvSubtitles()
+
+        when {
+            localMediaId != null -> {
+                viewModel.initializeLocalPlayer(
+                    localMediaId = localMediaId,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
+            !networkVideoId.isNullOrBlank() -> {
+                viewModel.initializeNetworkPlayer(
+                    networkVideoId = networkVideoId,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
+            !itemIdString.isNullOrBlank() && !itemKind.isNullOrBlank() -> {
+                val itemId = runCatching { UUID.fromString(itemIdString) }.getOrNull()
+                if (itemId == null) {
+                    finish()
+                    return
+                }
+                viewModel.initializePlayer(
+                    itemId = itemId,
+                    itemKind = itemKind,
+                    startFromBeginning = startFromBeginning,
+                    mediaSourceIndex = mediaSourceIndex,
+                    maxBitrate = maxBitrate,
+                )
+            }
+            else -> {
+                finish()
+                return
+            }
+        }
+
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvPlayerScreen(
+                    viewModel = viewModel,
+                    libassRenderer = libassRenderer,
+                    onBackClick = { finish() },
+                    onSelectQuality = { bitrate ->
+                        val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
+                        val itemKindValue = viewModel.uiState.value.currentItemKind
+                        if (itemId != null && !itemKindValue.isNullOrBlank()) {
+                            viewModel.changeQuality(itemId, itemKindValue, bitrate)
+                        }
+                    },
+                    onSelectSource = { sourceIndex ->
+                        val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
+                        val itemKindValue = viewModel.uiState.value.currentItemKind
+                        if (itemId != null && !itemKindValue.isNullOrBlank()) {
+                            viewModel.changeSource(itemId, itemKindValue, sourceIndex)
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        mediaSession?.release()
+        mediaSession = MediaSession.Builder(this, viewModel.player).build()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.player.playWhenReady = viewModel.playWhenReady
+    }
+
+    override fun onPause() {
+        super.onPause()
+        viewModel.updatePlaybackProgress()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.playWhenReady = viewModel.player.playWhenReady
+        viewModel.player.playWhenReady = false
+        mediaSession?.release()
+        mediaSession = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        libassRenderer?.destroy()
+        libassRenderer = null
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun replacePlayerForTvSubtitles() {
+        val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+        val subtitleTextSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
+        val subtitleTextColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor)
+        val subtitleBackgroundColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor)
+        libassRenderer =
+            runCatching {
+                if (LibassRenderer.isAvailable()) {
+                    LibassRenderer(1920, 1080).apply { init() }
+                } else {
+                    null
+                }
+            }.getOrNull()
+
+        val renderersFactory =
+            object : DefaultRenderersFactory(this) {
+                override fun buildTextRenderers(
+                    context: Context,
+                    output: TextOutput,
+                    outputLooper: Looper,
+                    extensionRendererMode: Int,
+                    out: ArrayList<Renderer>,
+                ) {
+                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                    libassRenderer?.let { renderer ->
+                        out.add(
+                            LibassTextRenderer(
+                                libassRenderer = renderer,
+                                onTrackInitialized = {},
+                                usagePref = libassUsagePref,
+                                srtFontSize = subtitleTextSize.coerceIn(28, 96),
+                                subtitleTextColor = subtitleTextColor,
+                                subtitleBackgroundColor = subtitleBackgroundColor,
+                            )
+                        )
+                    }
+                }
+            }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                .setEnableDecoderFallback(true)
+
+        val mediaSourceFactory =
+            DefaultMediaSourceFactory(this)
+                .experimentalParseSubtitlesDuringExtraction(true)
+
+        val trackSelector = DefaultTrackSelector(this)
+        trackSelector.setParameters(trackSelector.buildUponParameters().setPreferredTextLanguage(null))
+        val audioAttributes =
+            AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setUsage(C.USAGE_MEDIA)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
+                .build()
+
+        val player =
+            ExoPlayer.Builder(this, renderersFactory)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setTrackSelector(trackSelector)
+                .setAudioAttributes(audioAttributes, false)
+                .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
+                .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
+                .setPauseAtEndOfMediaItems(true)
+                .build()
+        viewModel.replacePlayer(player)
+    }
+}
+
+@Composable
+private fun TvPlayerScreen(
+    viewModel: PlayerViewModel,
+    libassRenderer: LibassRenderer?,
+    onBackClick: () -> Unit,
+    onSelectQuality: (Long) -> Unit,
+    onSelectSource: (Int) -> Unit,
+) {
+    val player = viewModel.player
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
+    val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
+    val subtitleSizeSp = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).coerceIn(28, 96).toFloat() }
+    var activeDialog by remember { mutableStateOf<TvPlayerDialog?>(null) }
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var isPlaying by remember { mutableStateOf(player.isPlaying) }
+    var availableSources by remember { mutableStateOf<List<SpatialFinSource>>(emptyList()) }
+    var sourcesLoading by remember { mutableStateOf(false) }
+    var useLibass by remember { mutableStateOf(false) }
+    var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var controlsVisible by remember { mutableStateOf(true) }
+    val density = LocalDensity.current
+    val latestOnBack by rememberUpdatedState(onBackClick)
+    val playPauseFocusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    var controlsHideJob by remember { mutableStateOf<Job?>(null) }
+
+    fun revealControls() {
+        controlsVisible = true
+        controlsHideJob?.cancel()
+        if (isPlaying && activeDialog == null) {
+            controlsHideJob =
+                scope.launch {
+                    delay(4500L)
+                    controlsVisible = false
+                }
+        }
+    }
+
+    LaunchedEffect(player.currentTracks) {
+        val libassPref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+        useLibass = LibassSubtitleHelper.shouldUseLibass(player, libassPref)
+    }
+
+    LaunchedEffect(uiState.currentItemId, uiState.currentItemKind) {
+        val itemId = uiState.currentItemId?.let(UUID::fromString)
+        val itemKind = uiState.currentItemKind
+        if (itemId == null || itemKind.isNullOrBlank()) {
+            availableSources = emptyList()
+            sourcesLoading = false
+            return@LaunchedEffect
+        }
+
+        sourcesLoading = true
+        availableSources =
+            runCatching {
+                viewModel.repository.getMediaSources(itemId = itemId, includePath = true)
+            }.getOrDefault(emptyList())
+        sourcesLoading = false
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.eventsChannelFlow.collect { event ->
+            if (event is PlayerEvents.NavigateBack) {
+                latestOnBack()
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, activeDialog, controlsVisible) {
+        controlsHideJob?.cancel()
+        if (controlsVisible && isPlaying && activeDialog == null) {
+            controlsHideJob =
+                scope.launch {
+                    delay(4500L)
+                    controlsVisible = false
+                }
+        }
+    }
+
+    LaunchedEffect(controlsVisible, activeDialog) {
+        if (controlsVisible && activeDialog == null) {
+            delay(50L)
+            playPauseFocusRequester.requestFocus()
+        }
+    }
+
+    LaunchedEffect(player) {
+        while (true) {
+            currentPosition = player.currentPosition
+            duration = player.duration.coerceAtLeast(0L)
+            isPlaying = player.isPlaying
+            delay(500L)
+        }
+    }
+
+    BackHandler(enabled = activeDialog != null || controlsVisible) {
+        when {
+            activeDialog != null -> activeDialog = null
+            controlsVisible -> controlsVisible = false
+        }
+    }
+
+    BoxWithConstraints(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (keyEvent.key) {
+                        Key.DirectionLeft -> {
+                            if (!controlsVisible) {
+                                revealControls()
+                                player.seekBack()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Key.DirectionRight -> {
+                            if (!controlsVisible) {
+                                revealControls()
+                                player.seekForward()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Key.DirectionUp,
+                        Key.DirectionDown,
+                        Key.DirectionCenter,
+                        Key.Enter,
+                        Key.NumPadEnter -> {
+                            if (!controlsVisible) {
+                                revealControls()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Key.Back,
+                        Key.Escape -> {
+                            if (!controlsVisible) {
+                                revealControls()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Key.MediaPlayPause -> {
+                            revealControls()
+                            if (isPlaying) player.pause() else player.play()
+                            true
+                        }
+                        else -> false
+                    }
+                },
+    ) {
+        val renderWidth = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1280)
+        val renderHeight = with(density) { maxHeight.roundToPx() }.coerceAtLeast(720)
+        LaunchedEffect(renderWidth, renderHeight, player.videoSize.width, player.videoSize.height) {
+            val renderer = libassRenderer ?: return@LaunchedEffect
+            renderer.resize(
+                renderWidth,
+                renderHeight,
+                player.videoSize.width,
+                player.videoSize.height,
+            )
+        }
+
+        LaunchedEffect(useLibass) {
+            val renderer = libassRenderer ?: return@LaunchedEffect
+            while (useLibass) {
+                val result = renderer.renderFrame(player.currentPosition)
+                libassBitmap =
+                    if (result.hasContent) {
+                        result.bitmap
+                    } else {
+                        null
+                    }
+                delay(33L)
+            }
+        }
+
+        val context = LocalContext.current
+        val playerView =
+            remember {
+                PlayerView(context).apply {
+                    this.player = player
+                    useController = false
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                }
+            }
+
+        DisposableEffect(player) {
+            playerView.player = player
+            playerView.subtitleView?.setStyle(
+                CaptionStyleCompat(
+                    subtitleTextColor,
+                    subtitleBackgroundColor,
+                    android.graphics.Color.TRANSPARENT,
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                    android.graphics.Color.BLACK,
+                    null,
+                )
+            )
+            playerView.subtitleView?.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
+            onDispose {
+                playerView.player = null
+            }
+        }
+
+        AndroidView(
+            factory = { playerView },
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            revealControls()
+                            if (isPlaying) player.pause() else player.play()
+                        },
+                    ),
+        )
+
+        if (useLibass) {
+            libassBitmap?.let { bitmap ->
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Subtitles",
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
+            TvControllerOverlay(
+                player = player,
+                viewModel = viewModel,
+                uiState = uiState,
+                isPlaying = isPlaying,
+                currentPosition = currentPosition,
+                duration = duration,
+                availableSources = availableSources,
+                sourcesLoading = sourcesLoading,
+                onBackClick = onBackClick,
+                playPauseFocusRequester = playPauseFocusRequester,
+                onOpenDialog = { activeDialog = it },
+                onSelectQuality = onSelectQuality,
+                onSelectSource = onSelectSource,
+                onInteraction = ::revealControls,
+            )
+        }
+    }
+
+    when (activeDialog) {
+        TvPlayerDialog.Audio ->
+            TvTrackSelectionDialog(
+                title = "Audio Track",
+                player = player,
+                trackType = C.TRACK_TYPE_AUDIO,
+                onTrackSelected = { index ->
+                    viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index)
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        TvPlayerDialog.Subtitle ->
+            TvTrackSelectionDialog(
+                title = "Subtitle Track",
+                player = player,
+                trackType = C.TRACK_TYPE_TEXT,
+                onTrackSelected = { index ->
+                    viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index)
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        TvPlayerDialog.Chapters ->
+            TvChapterDialog(
+                chapters = uiState.currentChapters,
+                onSelectChapter = { index ->
+                    viewModel.seekToChapterIndex(index)
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        TvPlayerDialog.Quality ->
+            TvQualityDialog(
+                onSelectQuality = {
+                    onSelectQuality(it)
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        TvPlayerDialog.Source ->
+            TvSourceDialog(
+                sources = availableSources,
+                selectedSourceId = uiState.currentMediaSourceId,
+                isLoading = sourcesLoading,
+                onSelectSource = { sourceIndex ->
+                    onSelectSource(sourceIndex)
+                    activeDialog = null
+                },
+                onDismiss = { activeDialog = null },
+            )
+        null -> Unit
+    }
+}
+
+private enum class TvPlayerDialog {
+    Audio,
+    Subtitle,
+    Chapters,
+    Quality,
+    Source,
+}
+
+@Composable
+private fun TvControllerOverlay(
+    player: Player,
+    viewModel: PlayerViewModel,
+    uiState: PlayerViewModel.UiState,
+    isPlaying: Boolean,
+    currentPosition: Long,
+    duration: Long,
+    availableSources: List<SpatialFinSource>,
+    sourcesLoading: Boolean,
+    onBackClick: () -> Unit,
+    playPauseFocusRequester: FocusRequester,
+    onOpenDialog: (TvPlayerDialog) -> Unit,
+    onSelectQuality: (Long) -> Unit,
+    onSelectSource: (Int) -> Unit,
+    onInteraction: () -> Unit,
+) {
+    val overlayAlpha by animateFloatAsState(targetValue = 1f, label = "tvControlsAlpha")
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.28f * overlayAlpha)),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TvOverlayTextButton(
+                label = "Back",
+                onClick = {
+                    onInteraction()
+                    onBackClick()
+                },
+            )
+            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(
+                    text = uiState.currentItemTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                buildPlayerSubtitle(uiState)?.let { subtitle ->
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.82f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvOverlayTextButton(
+                    label = "Audio",
+                    onClick = {
+                        onInteraction()
+                        onOpenDialog(TvPlayerDialog.Audio)
+                    },
+                )
+                TvOverlayTextButton(
+                    label = "Subtitles",
+                    onClick = {
+                        onInteraction()
+                        onOpenDialog(TvPlayerDialog.Subtitle)
+                    },
+                )
+                if (uiState.currentChapters.isNotEmpty()) {
+                    TvOverlayTextButton(
+                        label = "Chapters",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Chapters)
+                        },
+                    )
+                }
+                if (sourcesLoading || availableSources.size > 1) {
+                    TvOverlayTextButton(
+                        label = "Source",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Source)
+                        },
+                    )
+                }
+                if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
+                    TvOverlayTextButton(
+                        label = "Quality",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Quality)
+                        },
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (uiState.currentChapters.isNotEmpty()) {
+                    TvOverlayTextButton(
+                        label = "Prev Chapter",
+                        onClick = {
+                            onInteraction()
+                            viewModel.seekToPreviousChapter()
+                        },
+                    )
+                }
+                TvTransportButton(
+                    label = "Rewind",
+                    onClick = {
+                        onInteraction()
+                        player.seekBack()
+                    },
+                )
+                TvTransportButton(
+                    label = if (isPlaying) "Pause" else "Play",
+                    modifier = Modifier.focusRequester(playPauseFocusRequester),
+                    onClick = {
+                        onInteraction()
+                        if (isPlaying) player.pause() else player.play()
+                    },
+                )
+                TvTransportButton(
+                    label = "Forward",
+                    onClick = {
+                        onInteraction()
+                        player.seekForward()
+                    },
+                )
+                if (uiState.currentChapters.isNotEmpty()) {
+                    TvOverlayTextButton(
+                        label = "Next Chapter",
+                        onClick = {
+                            onInteraction()
+                            viewModel.seekToNextChapter()
+                        },
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(formatTime(currentPosition), color = Color.White)
+                Text(formatTime(duration), color = Color.White)
+            }
+            Slider(
+                value = if (duration > 0L) currentPosition.toFloat() / duration.toFloat() else 0f,
+                onValueChange = { fraction ->
+                    onInteraction()
+                    player.seekTo((fraction * duration).toLong())
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = currentChapterLabel(uiState.currentChapters, currentPosition) ?: "",
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (availableSources.size > 1) {
+                        TvOverlayTextButton(
+                            label = "Switch Source",
+                            onClick = {
+                                onInteraction()
+                                onOpenDialog(TvPlayerDialog.Source)
+                            },
+                        )
+                    }
+                    TvOverlayTextButton(
+                        label = "Auto Quality",
+                        onClick = {
+                            onInteraction()
+                            onSelectQuality(0L)
+                        },
+                    )
+                    if (availableSources.size > 1) {
+                        TvOverlayTextButton(
+                            label = "Default Source",
+                            onClick = {
+                                onInteraction()
+                                onSelectSource(0)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvOverlayTextButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    TextButton(
+        onClick = onClick,
+        modifier = modifier.focusable(interactionSource = interactionSource),
+        colors =
+            ButtonDefaults.textButtonColors(
+                containerColor =
+                    if (isFocused) {
+                        Color.White.copy(alpha = 0.18f)
+                    } else {
+                        Color.Transparent
+                    },
+                contentColor = Color.White,
+            ),
+    ) {
+        Text(label, color = Color.White)
+    }
+}
+
+@Composable
+private fun TvTransportButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    Button(
+        onClick = onClick,
+        modifier = modifier.focusable(interactionSource = interactionSource),
+        interactionSource = interactionSource,
+        colors =
+            ButtonDefaults.buttonColors(
+                containerColor =
+                    if (isFocused) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.84f)
+                    },
+                contentColor = Color.White,
+            ),
+    ) {
+        Text(label)
+    }
+}
+
+@Composable
+private fun TvTrackSelectionDialog(
+    title: String,
+    player: Player,
+    trackType: Int,
+    onTrackSelected: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val trackGroups = player.currentTracks.groups.filter { it.type == trackType }
+    val trackNames = trackGroups.getTrackNames()
+    val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
+    val initialFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        initialFocusRequester.requestFocus()
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        TvDialogSurface(
+            title = title,
+            onDismiss = onDismiss,
+            width = 460.dp,
+        ) {
+            TvDialogOptionRow(
+                label = "None",
+                selected = selectedIndex == -1,
+                onClick = { onTrackSelected(-1) },
+                modifier = Modifier.focusRequester(initialFocusRequester),
+            )
+            trackNames.forEachIndexed { index, name ->
+                TvDialogOptionRow(
+                    label = name,
+                    selected = index == selectedIndex,
+                    onClick = { onTrackSelected(index) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvChapterDialog(
+    chapters: List<PlayerChapter>,
+    onSelectChapter: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        initialFocusRequester.requestFocus()
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        TvDialogSurface(
+            title = "Chapters",
+            onDismiss = onDismiss,
+            width = 460.dp,
+        ) {
+            chapters.forEachIndexed { index, chapter ->
+                TvDialogOptionRow(
+                    label = chapter.name?.ifBlank { "Chapter ${index + 1}" } ?: "Chapter ${index + 1}",
+                    selected = false,
+                    supportingText = formatTime(chapter.startPosition),
+                    onClick = { onSelectChapter(index) },
+                    modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvSourceDialog(
+    sources: List<SpatialFinSource>,
+    selectedSourceId: String?,
+    isLoading: Boolean,
+    onSelectSource: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        initialFocusRequester.requestFocus()
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        TvDialogSurface(
+            title = "Media Source",
+            onDismiss = onDismiss,
+            width = 520.dp,
+        ) {
+            when {
+                isLoading -> Text("Loading sources...", color = Color.White.copy(alpha = 0.8f))
+                sources.isEmpty() -> Text("No alternate sources available.", color = Color.White.copy(alpha = 0.8f))
+                else -> {
+                    sources.forEachIndexed { index, source ->
+                        TvDialogOptionRow(
+                            label = source.name.ifBlank { "Source ${index + 1}" },
+                            selected = source.id == selectedSourceId,
+                            supportingText = buildSourceDescription(source),
+                            onClick = { onSelectSource(index) },
+                            modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvQualityDialog(
+    onSelectQuality: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val options =
+        listOf(
+            0L to "Auto",
+            3_000_000L to "3 Mbps",
+            5_000_000L to "5 Mbps",
+            10_000_000L to "10 Mbps",
+            20_000_000L to "20 Mbps",
+            40_000_000L to "40 Mbps",
+        )
+    val initialFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        initialFocusRequester.requestFocus()
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        TvDialogSurface(
+            title = "Playback Quality",
+            onDismiss = onDismiss,
+            width = 420.dp,
+        ) {
+            options.forEachIndexed { index, (bitrate, label) ->
+                TvDialogOptionRow(
+                    label = label,
+                    selected = bitrate == 0L,
+                    onClick = { onSelectQuality(bitrate) },
+                    modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvDialogSurface(
+    title: String,
+    onDismiss: () -> Unit,
+    width: androidx.compose.ui.unit.Dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = Modifier.width(width).heightIn(max = 560.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF1C1C1C),
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier =
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                content = content,
+            )
+            Spacer(Modifier.height(16.dp))
+            TvOverlayTextButton(
+                label = "Close",
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.End),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvDialogOptionRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    supportingText: String? = null,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .focusable(interactionSource = interactionSource)
+                .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+                .background(
+                    color =
+                        when {
+                            isFocused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+                            selected -> Color.White.copy(alpha = 0.10f)
+                            else -> Color.Transparent
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!supportingText.isNullOrBlank()) {
+                Text(
+                    text = supportingText,
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private fun buildPlayerSubtitle(uiState: PlayerViewModel.UiState): String? {
+    val parts = mutableListOf<String>()
+    uiState.currentSeriesName?.takeIf { it.isNotBlank() }?.let(parts::add)
+    if (uiState.currentSeasonNumber != null && uiState.currentEpisodeNumber != null) {
+        parts += "S${uiState.currentSeasonNumber}E${uiState.currentEpisodeNumber}"
+    }
+    uiState.currentProductionYear?.let { parts += it.toString() }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
+}
+
+private fun currentChapterLabel(chapters: List<PlayerChapter>, currentPosition: Long): String? {
+    if (chapters.isEmpty()) return null
+    val currentIndex = chapters.indexOfLast { it.startPosition <= currentPosition }.takeIf { it >= 0 } ?: return null
+    val chapter = chapters[currentIndex]
+    return chapter.name?.ifBlank { null } ?: "Chapter ${currentIndex + 1}"
+}
+
+private fun buildSourceDescription(source: SpatialFinSource): String? {
+    val parts = mutableListOf<String>()
+    if (source.size > 0L) {
+        parts += formatBytes(source.size)
+    }
+    source.path.takeIf { it.isNotBlank() }?.let(parts::add)
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var index = 0
+    while (value >= 1024.0 && index < units.lastIndex) {
+        value /= 1024.0
+        index++
+    }
+    return if (index == 0) {
+        "${value.toInt()} ${units[index]}"
+    } else {
+        String.format("%.1f %s", value, units[index])
+    }
+}
+
+private fun formatTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%d:%02d", minutes, seconds)
+    }
+}

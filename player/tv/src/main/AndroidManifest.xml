@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="dev.jdtech.jellyfin.player.tv.TvPlayerActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
+            android:launchMode="singleTask"
+            android:autoRemoveFromRecents="true"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.SpatialFin.TvPlayer" />
+    </application>
+</manifest>

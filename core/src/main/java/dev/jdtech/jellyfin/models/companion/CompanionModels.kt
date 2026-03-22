@@ -52,3 +52,29 @@ data class CompanionDiscoveryPayload(
     val companion_url: String,
     val setup_token: String
 )
+
+@Serializable
+data class CompanionTvPairingPayload(
+    val version: Int,
+    val receiver_url: String,
+    val pairing_token: String,
+    val manual_code: String,
+    val device_name: String,
+    val expires_at_epoch_ms: Long,
+)
+
+@Serializable
+data class CompanionTvPairingEnvelope(
+    val version: Int,
+    val companion_url: String,
+    val setup_token: String,
+    val config: CompanionConfig,
+)
+
+@Serializable
+data class CompanionTvPairingInfo(
+    val version: Int,
+    val manual_code: String,
+    val device_name: String,
+    val expires_at_epoch_ms: Long,
+)

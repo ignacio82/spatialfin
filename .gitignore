@@ -1,9 +1,13 @@
 # Gradle files
 .gradle/
 build/
+**/build/
 
 # Local configuration file (sdk path, etc)
 local.properties
+*.local
+.env
+.env.*
 
 # Log/OS Files
 *.log
@@ -13,6 +17,8 @@ captures/
 .externalNativeBuild/
 .cxx/
 *.apk
+*.aab
+*.apks
 output.json
 release/
 build_native_work/
@@ -25,10 +31,13 @@ build_native_work/
 misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
+.claude/settings.local.json
 
 # Keystore files
 *.jks
 *.keystore
+*.p12
+*.pfx
 spatialfin-release.jks
 
 # Google Services (e.g. APIs or Firebase)

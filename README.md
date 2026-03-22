@@ -124,6 +124,44 @@ SpatialFin can browse and stream media directly from SMB and NFS shares on your 
 - Android 12 (API 31) or higher
 - Optional: a running [Jellyfin](https://jellyfin.org) server
 
+## Fin Player Packaging
+
+Beam Pro and Google TV now converge on a single consumer Play package:
+
+- Package name: `dev.spatialfin.player`
+- App name: `Fin Player`
+
+XR remains a separate app/package for now.
+
+### Play Console Release Strategy
+
+For Google Play, Beam Pro and TV should share the same Play listing and package name, but be released through different form-factor tracks:
+
+- Beam Pro / handheld build: mobile release track
+- Google TV build: dedicated Android TV track
+
+This matches Google's recommendation to keep the same package name for mobile and TV, while using a dedicated TV track to control the TV release separately.
+
+### Release Signing
+
+Beam and TV release builds use a shared signing configuration so they can be published under the same Play listing.
+
+Preferred signing variables:
+
+- `FIN_PLAYER_KEYSTORE`
+- `FIN_PLAYER_KEYSTORE_PASSWORD`
+- `FIN_PLAYER_KEY_ALIAS`
+- `FIN_PLAYER_KEY_PASSWORD`
+
+For migration convenience, Beam and TV also fall back to the existing XR signing variables if the `FIN_PLAYER_*` values are not set:
+
+- `SPATIALFIN_KEYSTORE`
+- `SPATIALFIN_KEYSTORE_PASSWORD`
+- `SPATIALFIN_KEY_ALIAS`
+- `SPATIALFIN_KEY_PASSWORD`
+
+These values can be provided through Gradle properties, `local.properties`, or environment variables.
+
 ## Local Library
 
 SpatialFin can now operate as a local-first XR player, even without a Jellyfin server.

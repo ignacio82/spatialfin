@@ -3,10 +3,8 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose.compiler)
-    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.aboutlibraries.android)
 }
 
 val localProperties = Properties()
@@ -15,10 +13,10 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
-base.archivesName = "spatialfin"
+base.archivesName = "fin-player-tv"
 
 android {
-    namespace = "dev.spatialfin"
+    namespace = "dev.spatialfin.tv"
     compileSdk = Versions.COMPILE_SDK
     buildToolsVersion = Versions.BUILD_TOOLS
 
@@ -26,41 +24,53 @@ android {
         applicationId = "dev.spatialfin"
         minSdk = Versions.MIN_SDK
         targetSdk = Versions.TARGET_SDK
-        versionCode = Versions.APP_CODE
+        versionCode = Versions.APP_CODE + 1000
         versionName = Versions.APP_NAME
     }
 
     signingConfigs {
         create("release") {
             storeFile =
-                (project.findProperty("SPATIALFIN_KEYSTORE") as String? ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))?.let { file(it) }
+                (
+                    project.findProperty("FIN_PLAYER_KEYSTORE") as String?
+                        ?: localProperties.getProperty("FIN_PLAYER_KEYSTORE")
+                        ?: project.findProperty("SPATIALFIN_KEYSTORE") as String?
+                        ?: localProperties.getProperty("SPATIALFIN_KEYSTORE")
+                )?.let { file(it) }
+                    ?: System.getenv("FIN_PLAYER_KEYSTORE")?.let { file(it) }
                     ?: System.getenv("SPATIALFIN_KEYSTORE")?.let { file(it) }
             storePassword =
-                project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
+                project.findProperty("FIN_PLAYER_KEYSTORE_PASSWORD") as String?
+                    ?: localProperties.getProperty("FIN_PLAYER_KEYSTORE_PASSWORD")
+                    ?: project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEYSTORE_PASSWORD")
+                    ?: System.getenv("FIN_PLAYER_KEYSTORE_PASSWORD")
                     ?: System.getenv("SPATIALFIN_KEYSTORE_PASSWORD")
             keyAlias =
-                project.findProperty("SPATIALFIN_KEY_ALIAS") as String?
+                project.findProperty("FIN_PLAYER_KEY_ALIAS") as String?
+                    ?: localProperties.getProperty("FIN_PLAYER_KEY_ALIAS")
+                    ?: project.findProperty("SPATIALFIN_KEY_ALIAS") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEY_ALIAS")
+                    ?: System.getenv("FIN_PLAYER_KEY_ALIAS")
                     ?: System.getenv("SPATIALFIN_KEY_ALIAS")
             keyPassword =
-                project.findProperty("SPATIALFIN_KEY_PASSWORD") as String?
+                project.findProperty("FIN_PLAYER_KEY_PASSWORD") as String?
+                    ?: localProperties.getProperty("FIN_PLAYER_KEY_PASSWORD")
+                    ?: project.findProperty("SPATIALFIN_KEY_PASSWORD") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEY_PASSWORD")
+                    ?: System.getenv("FIN_PLAYER_KEY_PASSWORD")
                     ?: System.getenv("SPATIALFIN_KEY_PASSWORD")
         }
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = ".tv.debug"
             isDebuggable = true
         }
         release {
-            // XR system-extension callbacks are still crashing in optimized builds with
-            // AbstractMethodError inside com.android.extensions.xr.Consumer bridges.
-            // Keep release unminified until the androidx.xr / R8 interaction is resolved.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -74,7 +84,7 @@ android {
         }
         create("staging") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".staging"
+            applicationIdSuffix = ".tv.staging"
         }
     }
 
@@ -82,19 +92,6 @@ android {
     productFlavors {
         create("libre") {
             dimension = "variant"
-        }
-    }
-
-    splits {
-        abi {
-            // Disabled when building bundles due to AGP 8.9.0 bug:
-            // https://issuetracker.google.com/issues/402800800
-            val isBuildingBundle =
-                gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
-            isEnable = !isBuildingBundle
-
-            reset()
-            include("arm64-v8a")
         }
     }
 
@@ -118,44 +115,37 @@ dependencies {
     implementation(project(":player:core"))
     implementation(project(":player:local"))
     implementation(project(":player:session"))
-    implementation(project(":player:xr"))
+    implementation(project(":player:tv"))
 
     implementation(libs.androidx.core)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.window)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.androidx.work)
     implementation(libs.androidx.hilt.work)
+    implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
-    implementation(libs.androidx.xr.runtime)
-    implementation(libs.androidx.xr.scenecore)
-    implementation(libs.androidx.xr.compose)
-    implementation(libs.androidx.xr.compose.material3)
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.mlkit.barcode.scanning)
-    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.tv.material)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.paging.compose)
     implementation(libs.jellyfin.core)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
-    ksp(libs.androidx.hilt.compiler)
-    implementation(libs.aboutlibraries.compose.m3)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.network.cache.control)
     implementation(libs.coil.svg)
     implementation(libs.timber)
+    implementation("com.google.zxing:core:3.5.3")
+
+    ksp(libs.hilt.compiler)
+    ksp(libs.androidx.hilt.compiler)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
