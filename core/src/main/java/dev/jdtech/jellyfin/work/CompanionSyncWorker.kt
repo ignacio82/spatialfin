@@ -25,6 +25,7 @@ import okhttp3.Request
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import timber.log.Timber
 import java.util.UUID
+import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 
 private data class SyncedServerState(
     val serverId: String,
@@ -88,6 +89,7 @@ class CompanionSyncWorker @AssistedInject constructor(
         applyPreferences(config.preferences)
 
         val syncedServers = mutableListOf<SyncedServerState>()
+        val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
         val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users (Merge Logic)
@@ -102,6 +104,7 @@ class CompanionSyncWorker @AssistedInject constructor(
                     val user = authenticateOrUseToken(u, baseUrl, serverId)
                     if (user != null) {
                         validUsers.add(user)
+                        importedUserPreferences[user.id] = u.preferences
                         Timber.d("COMPANION SYNC: Added user ${u.username} (id=${user.id})")
                     }
                 } catch (e: Exception) {
@@ -157,14 +160,14 @@ class CompanionSyncWorker @AssistedInject constructor(
             if (previousCurrentServer.isNullOrEmpty()) {
                 appPreferences.setValue(appPreferences.currentServer, synced.serverId)
             }
-        }
-
-        // Apply user-level preferences from the active user
-        config.servers.flatMap { it.users }.firstOrNull()?.preferences?.let { userPrefs ->
-            val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
-            if (nonNull.isNotEmpty()) {
-                Timber.d("COMPANION SYNC: Applying ${nonNull.size} user-level preferences")
-                applyPreferences(nonNull)
+            currentUserId?.let { userId ->
+                importedUserPreferences[userId]?.let { userPrefs ->
+                    val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
+                    if (nonNull.isNotEmpty()) {
+                        Timber.d("COMPANION SYNC: Applying ${nonNull.size} user-level preferences")
+                        applyPreferences(nonNull)
+                    }
+                }
             }
         }
 
@@ -229,21 +232,11 @@ class CompanionSyncWorker @AssistedInject constructor(
     private fun applyPreferences(prefs: Map<String, String?>) {
         prefs.forEach { (key, value) ->
             try {
-                when (key) {
-                    appPreferences.preferredAudioLanguage.backendName -> appPreferences.setValue(appPreferences.preferredAudioLanguage, value)
-                    appPreferences.preferredSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.preferredSubtitleLanguage, value)
-                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value?.toBoolean() ?: true)
-                    appPreferences.smartSpokenLanguages.backendName -> appPreferences.setValue(appPreferences.smartSpokenLanguages, value)
-                    appPreferences.voiceAssistantCloudApiKey.backendName -> {
-                        Timber.d("COMPANION SYNC: Setting cloud API key (length=${value?.length ?: 0})")
-                        appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
-                    }
-                    appPreferences.tmdbApiKey.backendName -> appPreferences.setValue(appPreferences.tmdbApiKey, value)
-                    appPreferences.loggingEnabled.backendName -> appPreferences.setValue(appPreferences.loggingEnabled, value?.toBoolean() ?: false)
-                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value?.toBoolean() ?: false)
-                    appPreferences.seerrUrl.backendName -> appPreferences.setValue(appPreferences.seerrUrl, value)
-                    appPreferences.seerrApiKey.backendName -> appPreferences.setValue(appPreferences.seerrApiKey, value)
-                    else -> Timber.d("COMPANION SYNC: Ignoring unknown preference key: $key")
+                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
+                    Timber.d("COMPANION SYNC: Setting cloud API key (length=${value?.length ?: 0})")
+                }
+                if (!appPreferences.applyCompanionPreference(key, value)) {
+                    Timber.d("COMPANION SYNC: Ignoring unknown preference key: $key")
                 }
             } catch (e: Exception) {
                 Timber.w(e, "COMPANION SYNC: Failed to apply preference $key")

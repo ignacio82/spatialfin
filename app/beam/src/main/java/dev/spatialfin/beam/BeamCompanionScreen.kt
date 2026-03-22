@@ -67,6 +67,7 @@ import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 import dev.jdtech.jellyfin.work.CompanionSyncWorker
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -183,6 +184,7 @@ constructor(
             applyPreferences(config.preferences)
 
             val importedSessions = mutableListOf<ImportedSession>()
+            val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
             val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
             config.servers.forEach { serverConfig ->
@@ -198,6 +200,7 @@ constructor(
                         authenticateOrUseToken(companionUser, baseUrl, serverId)
                     }.getOrNull()?.let { user ->
                         validUsers.add(user)
+                        importedUserPreferences[user.id] = companionUser.preferences
                         if (serverSession == null) {
                             serverSession =
                                 ImportedSession(
@@ -246,16 +249,12 @@ constructor(
                 jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
                 jellyfinApi.userId = session.userId
                 scheduleCompanionSync()
+                importedUserPreferences[session.userId]
+                    ?.filterValues { it != null }
+                    ?.mapValues { it.value!! }
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let(::applyPreferences)
             }
-
-            config.servers
-                .flatMap { it.users }
-                .firstOrNull()
-                ?.preferences
-                ?.filterValues { it != null }
-                ?.mapValues { it.value!! }
-                ?.takeIf { it.isNotEmpty() }
-                ?.let(::applyPreferences)
         }
 
     private suspend fun authenticateOrUseToken(
@@ -314,30 +313,11 @@ constructor(
     private fun applyPreferences(preferences: Map<String, String?>) {
         preferences.forEach { (key, value) ->
             try {
-                if (value == null) return@forEach
-                when (key) {
-                    appPreferences.preferredAudioLanguage.backendName -> appPreferences.setValue(appPreferences.preferredAudioLanguage, value)
-                    appPreferences.preferredSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.preferredSubtitleLanguage, value)
-                    appPreferences.animeAudioLanguage.backendName -> appPreferences.setValue(appPreferences.animeAudioLanguage, value)
-                    appPreferences.animeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.animeSubtitleLanguage, value)
-                    appPreferences.nonAnimeAudioLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeAudioLanguage, value)
-                    appPreferences.nonAnimeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleLanguage, value)
-                    appPreferences.nonAnimeSubtitleDisabled.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleDisabled, value.toBoolean())
-                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value.toBoolean())
-                    appPreferences.smartSpokenLanguages.backendName -> appPreferences.setValue(appPreferences.smartSpokenLanguages, value)
-                    appPreferences.voiceControlEnabled.backendName -> appPreferences.setValue(appPreferences.voiceControlEnabled, value.toBoolean())
-                    appPreferences.voiceGestureHand.backendName -> appPreferences.setValue(appPreferences.voiceGestureHand, value)
-                    appPreferences.voiceAssistantVerbosity.backendName -> appPreferences.setValue(appPreferences.voiceAssistantVerbosity, value)
-                    appPreferences.voiceAssistantSpoilerPolicy.backendName -> appPreferences.setValue(appPreferences.voiceAssistantSpoilerPolicy, value)
-                    appPreferences.voiceAssistantSpokenReplies.backendName -> appPreferences.setValue(appPreferences.voiceAssistantSpokenReplies, value.toBoolean())
-                    appPreferences.voiceAssistantVoice.backendName -> appPreferences.setValue(appPreferences.voiceAssistantVoice, value)
-                    appPreferences.voiceAssistantCloudApiKey.backendName -> appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
-                    appPreferences.tmdbApiKey.backendName -> appPreferences.setValue(appPreferences.tmdbApiKey, value)
-                    appPreferences.tmdbAutoMatch.backendName -> appPreferences.setValue(appPreferences.tmdbAutoMatch, value.toBoolean())
-                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value.toBoolean())
-                    appPreferences.seerrUrl.backendName -> appPreferences.setValue(appPreferences.seerrUrl, value)
-                    appPreferences.seerrApiKey.backendName -> appPreferences.setValue(appPreferences.seerrApiKey, value)
-                    else -> Unit
+                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
+                    Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
+                }
+                if (!appPreferences.applyCompanionPreference(key, value)) {
+                    Unit
                 }
             } catch (e: Exception) {
                 Timber.w(e, "COMPANION: Failed to apply preference $key")

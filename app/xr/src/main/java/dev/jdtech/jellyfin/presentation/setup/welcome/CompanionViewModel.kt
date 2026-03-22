@@ -14,6 +14,7 @@ import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -137,6 +138,7 @@ class CompanionViewModel @Inject constructor(
         applyPreferences(config.preferences)
 
         val importedSessions = mutableListOf<ImportedSession>()
+        val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
         val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users
@@ -155,6 +157,7 @@ class CompanionViewModel @Inject constructor(
                     val user = authenticateOrUseToken(u, baseUrl, serverId)
                     if (user != null) {
                         validUsers.add(user)
+                        importedUserPreferences[user.id] = u.preferences
                         Timber.d("COMPANION: Successfully added user ${u.username} (id=${user.id})")
                         if (serverSession == null) {
                             serverSession = ImportedSession(
@@ -209,14 +212,27 @@ class CompanionViewModel @Inject constructor(
             jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
             jellyfinApi.userId = session.userId
             scheduleCompanionSync()
+            importedUserPreferences[session.userId]?.let { userPrefs ->
+                val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
+                if (nonNull.isNotEmpty()) {
+                    Timber.d("COMPANION: Applying ${nonNull.size} user-level preferences")
+                    applyPreferences(nonNull)
+                }
+            }
         }
+    }
 
-        // Apply user-level preferences from the active user
-        config.servers.flatMap { it.users }.firstOrNull()?.preferences?.let { userPrefs ->
-            val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
-            if (nonNull.isNotEmpty()) {
-                Timber.d("COMPANION: Applying ${nonNull.size} user-level preferences")
-                applyPreferences(nonNull)
+    private fun applyPreferences(prefs: Map<String, String?>) {
+        prefs.forEach { (key, value) ->
+            try {
+                if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
+                    Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
+                }
+                if (!appPreferences.applyCompanionPreference(key, value)) {
+                    Timber.d("COMPANION: Ignoring unknown preference key: $key")
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "COMPANION: Failed to apply preference $key")
             }
         }
     }
@@ -308,32 +324,4 @@ class CompanionViewModel @Inject constructor(
         }
     }
 
-    private fun applyPreferences(prefs: Map<String, String?>) {
-        prefs.forEach { (key, value) ->
-            try {
-                when (key) {
-                    appPreferences.preferredAudioLanguage.backendName -> appPreferences.setValue(appPreferences.preferredAudioLanguage, value)
-                    appPreferences.preferredSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.preferredSubtitleLanguage, value)
-                    appPreferences.animeAudioLanguage.backendName -> appPreferences.setValue(appPreferences.animeAudioLanguage, value)
-                    appPreferences.animeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.animeSubtitleLanguage, value)
-                    appPreferences.nonAnimeAudioLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeAudioLanguage, value)
-                    appPreferences.nonAnimeSubtitleLanguage.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleLanguage, value)
-                    appPreferences.nonAnimeSubtitleDisabled.backendName -> appPreferences.setValue(appPreferences.nonAnimeSubtitleDisabled, value?.toBoolean() ?: false)
-                    appPreferences.smartPreferOriginalAudio.backendName -> appPreferences.setValue(appPreferences.smartPreferOriginalAudio, value?.toBoolean() ?: true)
-                    appPreferences.smartSpokenLanguages.backendName -> appPreferences.setValue(appPreferences.smartSpokenLanguages, value)
-                    appPreferences.voiceAssistantCloudApiKey.backendName -> {
-                        Timber.d("COMPANION: Setting cloud API key (length=${value?.length ?: 0})")
-                        appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, value)
-                    }
-                    appPreferences.tmdbApiKey.backendName -> appPreferences.setValue(appPreferences.tmdbApiKey, value)
-                    appPreferences.seerrEnabled.backendName -> appPreferences.setValue(appPreferences.seerrEnabled, value?.toBoolean() ?: false)
-                    appPreferences.seerrUrl.backendName -> appPreferences.setValue(appPreferences.seerrUrl, value)
-                    appPreferences.seerrApiKey.backendName -> appPreferences.setValue(appPreferences.seerrApiKey, value)
-                    else -> Timber.d("COMPANION: Ignoring unknown preference key: $key")
-                }
-            } catch (e: Exception) {
-                Timber.w(e, "COMPANION: Failed to apply preference $key")
-            }
-        }
-    }
 }
