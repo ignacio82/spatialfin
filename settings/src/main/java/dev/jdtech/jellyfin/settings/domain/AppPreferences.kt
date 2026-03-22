@@ -227,6 +227,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
         val entry = root.optJSONObject(seriesId) ?: return null
         return SeriesLanguageOverride(
             audioLanguageCode = entry.optString("audio", "").ifBlank { null },
+            audioTrackSignature = entry.optString("audioSignature", "").ifBlank { null },
             subtitleLanguageCode = entry.optString("subtitle", "").ifBlank { null },
             subtitleTrackSignature = entry.optString("subtitleSignature", "").ifBlank { null },
             subtitlesEnabled =
@@ -244,6 +245,9 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
                 JSONObject().apply {
                     if (override.audioLanguageCode != null) {
                         put("audio", override.audioLanguageCode)
+                    }
+                    if (override.audioTrackSignature != null) {
+                        put("audioSignature", override.audioTrackSignature)
                     }
                     if (override.subtitleLanguageCode != null) {
                         put("subtitle", override.subtitleLanguageCode)

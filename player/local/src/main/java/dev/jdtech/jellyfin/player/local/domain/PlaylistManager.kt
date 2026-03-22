@@ -17,6 +17,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.TrickplayInfo
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
 import org.jellyfin.sdk.model.api.BaseItemKind
@@ -24,7 +25,10 @@ import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
 
-class PlaylistManager @Inject internal constructor(private val repository: JellyfinRepository) {
+class PlaylistManager @Inject internal constructor(
+    private val repository: JellyfinRepository,
+    private val appPreferences: AppPreferences,
+) {
     private var startItem: SpatialFinItem? = null
     private var items: List<SpatialFinItem> = emptyList()
     private val playerItems: MutableList<PlayerItem> = mutableListOf()
@@ -240,12 +244,60 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
         Timber.d("Converting SpatialFinItem ${this.id} to PlayerItem")
 
         val mediaSources = repository.getMediaSources(id, true, maxBitrate)
-        val mediaSource =
+        val resolvedGenres =
+            when (this) {
+                is SpatialFinMovie -> genres
+                is SpatialFinShow -> genres
+                is SpatialFinEpisode ->
+                    runCatching { repository.getShow(seriesId).genres }
+                        .getOrDefault(emptyList())
+                else -> emptyList()
+            }
+        val inferredAnime = isAnimeItem(this, resolvedGenres, mediaSources)
+        val preferredAudioLanguage =
+            if (inferredAnime) {
+                appPreferences.getValue(appPreferences.animeAudioLanguage)
+            } else {
+                appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
+            }
+        val selectedSource =
             if (mediaSourceIndex == null) {
-                mediaSources.firstOrNull { it.type == SpatialFinSourceType.LOCAL } ?: mediaSources.firstOrNull()
+                chooseBestMediaSource(
+                    mediaSources = mediaSources,
+                    preferredAudioLanguage = preferredAudioLanguage,
+                    preferStyledSubtitles = inferredAnime,
+                )
             } else {
                 mediaSources.getOrNull(mediaSourceIndex)
             } ?: throw Exception("No media sources available")
+        val effectiveMaxBitrate =
+            when {
+                maxBitrate != null -> maxBitrate
+                preferredAudioLanguage.isNullOrBlank() -> null
+                sourceHasPreferredLanguageInUnsupportedCodec(selectedSource, preferredAudioLanguage) -> 8_000_000L
+                else -> null
+            }
+        val mediaSource =
+            if (effectiveMaxBitrate == maxBitrate) {
+                selectedSource
+            } else {
+                val rescoredSources = repository.getMediaSources(id, true, effectiveMaxBitrate)
+                chooseBestMediaSource(
+                    mediaSources = rescoredSources,
+                    preferredAudioLanguage = preferredAudioLanguage,
+                    preferStyledSubtitles = inferredAnime,
+                ) ?: selectedSource
+            }
+        Timber.i(
+            "Playlist source selection itemId=%s inferredAnime=%b preferredAudio=%s selectedSource=%s selectedCodec=%s effectiveMaxBitrate=%s",
+            id,
+            inferredAnime,
+            preferredAudioLanguage,
+            mediaSource.name.ifBlank { mediaSource.id },
+            mediaSource.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO && languageMatches(it.language, preferredAudioLanguage) }?.codec,
+            effectiveMaxBitrate,
+        )
         val externalSubtitles =
             mediaSource.mediaStreams
                 .filter { mediaStream ->
@@ -301,11 +353,7 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
                 else -> emptyList()
             },
             overview = overview,
-            genres = when (this) {
-                is SpatialFinMovie -> genres
-                is SpatialFinShow -> genres
-                else -> emptyList()
-            },
+            genres = resolvedGenres,
             ratings = ratings,
             productionYear = when (this) {
                 is SpatialFinMovie -> productionYear
@@ -320,6 +368,100 @@ class PlaylistManager @Inject internal constructor(private val repository: Jelly
             seriesName = if (this is SpatialFinEpisode) seriesName else null,
             seriesId = if (this is SpatialFinEpisode) seriesId else null,
         )
+    }
+
+    private fun chooseBestMediaSource(
+        mediaSources: List<dev.jdtech.jellyfin.models.SpatialFinSource>,
+        preferredAudioLanguage: String?,
+        preferStyledSubtitles: Boolean,
+    ): dev.jdtech.jellyfin.models.SpatialFinSource? {
+        return mediaSources.maxByOrNull { source ->
+            var score = 0
+            if (source.type == SpatialFinSourceType.LOCAL) score += 500
+
+            val preferredAudioStream =
+                preferredAudioLanguage?.let { preferred ->
+                    source.mediaStreams.firstOrNull { stream ->
+                        stream.type == MediaStreamType.AUDIO && languageMatches(stream.language, preferred)
+                    }
+                }
+            if (preferredAudioStream != null) {
+                score += 400
+                if (isBeamFriendlyAudioCodec(preferredAudioStream.codec)) {
+                    score += 120
+                } else {
+                    score -= 80
+                }
+            }
+
+            if (preferStyledSubtitles && source.mediaStreams.any { stream ->
+                    stream.type == MediaStreamType.SUBTITLE &&
+                        (stream.codec.equals("ass", ignoreCase = true) || stream.codec.equals("ssa", ignoreCase = true))
+                }
+            ) {
+                score += 70
+            }
+
+            score += source.mediaStreams.count { it.type == MediaStreamType.AUDIO } * 10
+            score
+        }
+    }
+
+    private fun isAnimeItem(
+        item: SpatialFinItem,
+        genres: List<String>,
+        mediaSources: List<dev.jdtech.jellyfin.models.SpatialFinSource>,
+    ): Boolean {
+        if (genres.any { it.contains("anime", ignoreCase = true) }) return true
+        val hasJapaneseAudio = mediaSources.any { source ->
+            source.mediaStreams.any { stream ->
+                stream.type == MediaStreamType.AUDIO && languageMatches(stream.language, "jpn")
+            }
+        }
+        val hasStyledSubtitles = mediaSources.any { source ->
+            source.mediaStreams.any { stream ->
+                stream.type == MediaStreamType.SUBTITLE &&
+                    (stream.codec.equals("ass", ignoreCase = true) || stream.codec.equals("ssa", ignoreCase = true))
+            }
+        }
+        if (hasJapaneseAudio && hasStyledSubtitles) return true
+
+        val titleText = listOf(item.name, item.originalTitle.orEmpty()).joinToString(" ")
+        return titleText.any { char -> char.code in 0x3040..0x30FF || char.code in 0x4E00..0x9FFF }
+    }
+
+    private fun sourceHasPreferredLanguageInUnsupportedCodec(
+        source: dev.jdtech.jellyfin.models.SpatialFinSource,
+        preferredAudioLanguage: String,
+    ): Boolean {
+        val preferredAudioStream =
+            source.mediaStreams.firstOrNull { stream ->
+                stream.type == MediaStreamType.AUDIO &&
+                    languageMatches(stream.language, preferredAudioLanguage)
+            } ?: return false
+        return !isBeamFriendlyAudioCodec(preferredAudioStream.codec)
+    }
+
+    private fun isBeamFriendlyAudioCodec(codec: String): Boolean {
+        return when (codec.lowercase()) {
+            "aac", "mp4a-latm", "opus", "vorbis", "flac", "mp3" -> true
+            else -> false
+        }
+    }
+
+    private fun languageMatches(candidate: String?, preferred: String?): Boolean {
+        val normalizedCandidate = normalizeLanguage(candidate) ?: return false
+        val normalizedPreferred = normalizeLanguage(preferred) ?: return false
+        return normalizedCandidate == normalizedPreferred
+    }
+
+    private fun normalizeLanguage(value: String?): String? {
+        val normalized = value?.trim()?.lowercase()?.replace('_', '-')?.takeIf { it.isNotBlank() } ?: return null
+        return when {
+            normalized == "ja" || normalized == "jpn" || normalized.startsWith("ja-") || normalized.contains("japanese") -> "jpn"
+            normalized == "en" || normalized == "eng" || normalized.startsWith("en-") || normalized.contains("english") -> "eng"
+            else -> normalized
+        }
     }
 
     private fun List<SpatialFinChapter>.toPlayerChapters(): List<PlayerChapter> {

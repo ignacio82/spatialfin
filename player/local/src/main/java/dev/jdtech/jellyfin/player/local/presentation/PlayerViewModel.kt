@@ -104,6 +104,7 @@ constructor(
                 currentItemTitle = "",
                 currentItemId = null,
                 currentItemKind = null,
+                currentMediaSourceId = null,
                 currentSegment = null,
                 currentSkipButtonStringRes = R.string.player_controls_skip_intro,
                 currentTrickplay = null,
@@ -140,6 +141,7 @@ constructor(
         val currentItemTitle: String,
         val currentItemId: String? = null,
         val currentItemKind: String? = null,
+        val currentMediaSourceId: String? = null,
         val currentSegment: SpatialFinSegment?,        val currentSkipButtonStringRes: Int,
         val currentTrickplay: Trickplay?,
         val currentChapters: List<PlayerChapter>,
@@ -426,6 +428,16 @@ constructor(
         currentItemKind = itemKind
         player.removeListener(this)
         player.addListener(this)
+        Timber.i(
+            "initializePlayer itemId=%s kind=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s autoPlay=%b currentPlayer=%s",
+            itemId,
+            itemKind,
+            startFromBeginning,
+            mediaSourceIndex,
+            maxBitrate,
+            autoPlay,
+            player.javaClass.simpleName,
+        )
 
         viewModelScope.launch {
             val startItem =
@@ -448,6 +460,16 @@ constructor(
                 return@launch
             }
 
+            Timber.i(
+                "initializePlayer startItem id=%s mediaSourceId=%s uri=%s source=%s playbackPosition=%d subtitleCount=%d",
+                startItem.itemId,
+                startItem.mediaSourceId,
+                startItem.mediaSourceUri,
+                startItem.contentSource,
+                startItem.playbackPosition,
+                startItem.externalSubtitles.size,
+            )
+
             items = listOfNotNull(startItem).toMutableList()
             currentMediaItemIndex = items.indexOf(startItem)
 
@@ -468,6 +490,12 @@ constructor(
                 }
 
             player.setMediaItems(mediaItems, 0, startPosition)
+            Timber.i(
+                "initializePlayer prepared mediaItems=%d startPosition=%d currentIndex=%d",
+                mediaItems.size,
+                startPosition,
+                currentMediaItemIndex,
+            )
             player.prepare()
             if (autoPlay) {
                 player.play()
@@ -503,6 +531,12 @@ constructor(
     fun initializeLocalPlayer(localMediaId: Long, startFromBeginning: Boolean) {
         player.removeListener(this)
         player.addListener(this)
+        Timber.i(
+            "initializeLocalPlayer mediaStoreId=%d startFromBeginning=%b currentPlayer=%s",
+            localMediaId,
+            startFromBeginning,
+            player.javaClass.simpleName,
+        )
 
         viewModelScope.launch {
             val startItem =
@@ -535,6 +569,13 @@ constructor(
                 return@launch
             }
 
+            Timber.i(
+                "initializeLocalPlayer startItem id=%s uri=%s playbackPosition=%d",
+                startItem.itemId,
+                startItem.mediaSourceUri,
+                startItem.playbackPosition,
+            )
+
             items = mutableListOf(startItem)
             currentMediaItemIndex = 0
 
@@ -546,6 +587,7 @@ constructor(
                 }
 
             player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
+            Timber.i("initializeLocalPlayer prepared startPosition=%d", startPosition)
             player.prepare()
             player.play()
         }
@@ -554,6 +596,12 @@ constructor(
     fun initializeNetworkPlayer(networkVideoId: String, startFromBeginning: Boolean) {
         player.removeListener(this)
         player.addListener(this)
+        Timber.i(
+            "initializeNetworkPlayer networkVideoId=%s startFromBeginning=%b currentPlayer=%s",
+            networkVideoId,
+            startFromBeginning,
+            player.javaClass.simpleName,
+        )
 
         viewModelScope.launch {
             val startItem =
@@ -587,6 +635,13 @@ constructor(
                 return@launch
             }
 
+            Timber.i(
+                "initializeNetworkPlayer startItem id=%s uri=%s playbackPosition=%d",
+                startItem.itemId,
+                startItem.mediaSourceUri,
+                startItem.playbackPosition,
+            )
+
             items = mutableListOf(startItem)
             currentMediaItemIndex = 0
 
@@ -598,6 +653,7 @@ constructor(
                 }
 
             player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
+            Timber.i("initializeNetworkPlayer prepared startPosition=%d", startPosition)
             player.prepare()
             player.play()
         }
@@ -616,7 +672,13 @@ constructor(
                     .build()
             }
 
-        Timber.d("Stream url: $streamUrl")
+        Timber.i(
+            "Creating media item id=%s source=%s uri=%s subtitles=%d",
+            itemId,
+            contentSource,
+            streamUrl,
+            mediaSubtitles.size,
+        )
         val mediaItem =
             MediaItem.Builder()
                 .setMediaId(itemId.toString())
@@ -811,6 +873,7 @@ constructor(
                                 currentItemTitle = itemTitle,
                                 currentItemId = item.itemId.toString(),
                                 currentItemKind = currentItemKind,
+                                currentMediaSourceId = item.mediaSourceId,
                                 currentSegment = null,
                                 currentChapters = item.chapters,
                                 currentPeople = item.people,
@@ -888,20 +951,60 @@ constructor(
         if (lastAutoLanguageSelectionMediaId == mediaId) return
 
         val spokenLanguages = appPreferences.getSmartSpokenLanguageCodes(application)
+        val currentItem = currentPlayerItem() ?: return
         val seriesOverride = currentPlayerItem()?.seriesId?.let {
             appPreferences.getSeriesLanguageOverride(it.toString())
         }
         val audioGroups =
             player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
         if (audioGroups.isEmpty()) return
+        val subtitleGroups =
+            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+
+        val isAnime =
+            currentItem.genres.any { genre -> genre.contains("anime", ignoreCase = true) } ||
+                (
+                    audioGroups.any { group -> groupMatchesLanguage(group, "jpn") } &&
+                        subtitleGroups.any { group ->
+                            val mime = group.getTrackFormat(0).sampleMimeType.orEmpty()
+                            mime == "text/x-ssa" || mime == androidx.media3.common.MimeTypes.TEXT_SSA
+                        }
+                )
+        val preferredAudioForContent =
+            if (isAnime) {
+                appPreferences.getValue(appPreferences.animeAudioLanguage)
+            } else {
+                appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
+            }
+        val preferredSubtitleForContent =
+            if (isAnime) {
+                appPreferences.getValue(appPreferences.animeSubtitleLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
+            } else {
+                appPreferences.getValue(appPreferences.nonAnimeSubtitleLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
+            }
+        val defaultSubtitleDisabled = !isAnime && appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)
 
         val inferredOriginalAudio = inferOriginalAudioLanguage(audioGroups, spokenLanguages)
         val seriesOverrideAudio = seriesOverride?.audioLanguageCode
+        val seriesOverrideAudioSignature = seriesOverride?.audioTrackSignature
         val selectedAudioGroup =
             when {
+                seriesOverrideAudioSignature != null ->
+                    audioGroups.firstOrNull { group ->
+                        audioTrackSignature(group) == seriesOverrideAudioSignature
+                    } ?: audioGroups.firstOrNull {
+                        seriesOverrideAudio != null && groupMatchesLanguage(it, seriesOverrideAudio)
+                    } ?: audioGroups.first()
                 seriesOverrideAudio != null ->
                     audioGroups.firstOrNull {
                         groupMatchesLanguage(it, seriesOverrideAudio)
+                    } ?: audioGroups.first()
+                !preferredAudioForContent.isNullOrBlank() ->
+                    audioGroups.firstOrNull {
+                        groupMatchesLanguage(it, preferredAudioForContent)
                     } ?: audioGroups.first()
                 appPreferences.getValue(appPreferences.smartPreferOriginalAudio) &&
                     inferredOriginalAudio != null -> {
@@ -924,8 +1027,6 @@ constructor(
                     LanguageCatalog.matches(application, selectedAudioLanguage, preferredCode)
             }
 
-        val subtitleGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
         val seriesOverrideSubtitle = seriesOverride?.subtitleLanguageCode
         val seriesOverrideSubtitleSignature = seriesOverride?.subtitleTrackSignature
         val selectedSubtitleGroup =
@@ -944,6 +1045,13 @@ constructor(
                 subtitleGroups
                     .filter { group -> groupMatchesLanguage(group, seriesOverrideSubtitle) }
                     .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = seriesOverrideSubtitle) }
+            } else if (defaultSubtitleDisabled && audioUnderstood) {
+                null
+            } else if (!preferredSubtitleForContent.isNullOrBlank()) {
+                subtitleGroups
+                    .filter { group -> groupMatchesLanguage(group, preferredSubtitleForContent) }
+                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredSubtitleForContent) }
+                    ?.takeIf { !audioUnderstood || isAnime }
             } else if (audioUnderstood) {
                 null
             } else {
@@ -979,8 +1087,11 @@ constructor(
         lastAutoLanguageSelectionMediaId = mediaId
 
         Timber.d(
-            "Smart language track prefs: preferOriginal=%b seriesOverride=%s inferredOriginal=%s spoken=%s selectedAudio=%s subtitlesDisabled=%b selectedSubtitle=%s subtitleSignature=%s",
+            "Smart language track prefs: isAnime=%b preferOriginal=%b contentAudio=%s contentSubtitle=%s seriesOverride=%s inferredOriginal=%s spoken=%s selectedAudio=%s subtitlesDisabled=%b selectedSubtitle=%s subtitleSignature=%s",
+            isAnime,
             appPreferences.getValue(appPreferences.smartPreferOriginalAudio),
+            preferredAudioForContent,
+            preferredSubtitleForContent,
             seriesOverride,
             inferredOriginalAudio,
             spokenLanguages.joinToString(","),
@@ -1172,7 +1283,7 @@ constructor(
                 persistSeriesLanguageOverride(
                     trackType = trackType,
                     languageCode = selectedLanguage,
-                    trackSignature = null,
+                    trackSignature = audioTrackSignature(selectedGroup),
                     enabled = true,
                 )
                 maybeEnableSubtitleForManualAudioSelection(selectedLanguage)
@@ -1550,7 +1661,10 @@ constructor(
         val updatedOverride =
             when (trackType) {
                 C.TRACK_TYPE_AUDIO ->
-                    existingOverride.copy(audioLanguageCode = languageCode)
+                    existingOverride.copy(
+                        audioLanguageCode = if (enabled) languageCode else null,
+                        audioTrackSignature = if (enabled) trackSignature else null,
+                    )
                 C.TRACK_TYPE_TEXT ->
                     existingOverride.copy(
                         subtitleLanguageCode = if (enabled) languageCode else null,
@@ -1615,6 +1729,19 @@ constructor(
             format.roleFlags.toString(),
             format.selectionFlags.toString(),
             format.sampleMimeType.orEmpty().trim().lowercase(),
+        ).joinToString("|")
+    }
+
+    private fun audioTrackSignature(group: Tracks.Group): String {
+        val format = group.getTrackFormat(0)
+        val label = format.label.orEmpty().trim().lowercase()
+        return listOf(
+            format.language.orEmpty().trim().lowercase(),
+            label,
+            format.roleFlags.toString(),
+            format.selectionFlags.toString(),
+            format.sampleMimeType.orEmpty().trim().lowercase(),
+            format.codecs.orEmpty().trim().lowercase(),
         ).joinToString("|")
     }
 

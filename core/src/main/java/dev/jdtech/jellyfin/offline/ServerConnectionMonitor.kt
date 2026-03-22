@@ -48,6 +48,12 @@ constructor(
     private val database: ServerDatabaseDao,
     private val workManager: WorkManager,
 ) {
+    companion object {
+        private const val ACCESSIBLE_REFRESH_MS = 120_000L
+        private const val INACCESSIBLE_REFRESH_MS = 20_000L
+        private const val PROBE_FAILURE_LOG_INTERVAL_MS = 60_000L
+    }
+
     private val connectivityManager =
         context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -58,6 +64,8 @@ constructor(
             )
         )
     val state: StateFlow<ServerConnectionState> = _state.asStateFlow()
+    @Volatile private var lastProbeFailureLogAtMs: Long = 0L
+    @Volatile private var lastProbeFailureAddress: String? = null
 
     private val preferenceListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -100,7 +108,7 @@ constructor(
         scope.launch {
             refreshServerAccessibility()
             while (isActive) {
-                delay(if (state.value.serverAccessible) 30_000L else 5_000L)
+                delay(if (state.value.serverAccessible) ACCESSIBLE_REFRESH_MS else INACCESSIBLE_REFRESH_MS)
                 refreshServerAccessibility()
             }
         }
@@ -175,7 +183,15 @@ constructor(
                 connection.disconnect()
             }
         } catch (throwable: Throwable) {
-            Timber.d(throwable, "Server probe failed")
+            val now = System.currentTimeMillis()
+            val shouldLog =
+                lastProbeFailureAddress != address ||
+                    now - lastProbeFailureLogAtMs >= PROBE_FAILURE_LOG_INTERVAL_MS
+            if (shouldLog) {
+                lastProbeFailureAddress = address
+                lastProbeFailureLogAtMs = now
+                Timber.d(throwable, "Server probe failed for %s", address)
+            }
             false
         }
     }
