@@ -225,7 +225,7 @@
     <string name="voice_controls">Voice controls</string>
     <string name="voice_controls_summary">Configure on-device XR voice commands, permissions, and diagnostics</string>
     <string name="voice_gesture_hand">Voice gesture hand</string>
-    <string name="voice_gesture_hand_summary">Choose which hand must perform the hold-to-talk middle-finger pinch gesture</string>
+    <string name="voice_gesture_hand_summary">Choose which hand performs the near-face open-palm voice gesture</string>
     <string name="voice_assistant_verbosity">Assistant verbosity</string>
     <string name="voice_assistant_verbosity_summary">Control how short or detailed AI replies should be</string>
     <string name="voice_assistant_spoiler_policy">Spoiler policy</string>

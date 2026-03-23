@@ -526,7 +526,7 @@ fun SpatialPlayerScreen(
             when (event) {
                 is SecondaryHandPinchDetector.GestureState.Arming -> {
                     voiceGestureArmingProgress = event.progress
-                    voiceGestureHint = "Hold to talk"
+                    voiceGestureHint = event.hint
                 }
                 SecondaryHandPinchDetector.GestureState.Started -> {
                     voiceGestureArmingProgress = 1f

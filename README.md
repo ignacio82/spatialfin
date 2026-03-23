@@ -19,7 +19,7 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 - **Smart Audio And Subtitle Selection** — Ordered spoken languages, optional original-audio preference, automatic subtitle fallback when the chosen audio is not one you speak, smarter subtitle-track ranking, and per-series memory for manual audio/subtitle corrections.
 - **Version Selection (Media Source)** — Choose between different versions of the same movie or episode (e.g., 3D vs. 2D, 4K vs. 1080p) before playing or during playback.
 - **Dynamic Quality Selection** — Control streaming bitrate on the fly. Use the sparkle icon in the player or the media info screen to switch between bitrates (from 480 Kbps up to 120 Mbps) or stay on "Auto" for direct play.
-- **Hands-Free Voice Control** — Hold-to-talk middle-finger pinch on a configurable hand or use the mic orbiter button to control playback, audio, subtitles, quality, SyncPlay, and search with on-device speech recognition plus deterministic parsing, on-device AI when available, and cloud fallback when a user supplies a Gemini API key.
+- **Hands-Free Voice Control** — Hold an open palm near your face on a configurable hand, or use the mic orbiter button, to control playback, audio, subtitles, quality, SyncPlay, and search with on-device speech recognition plus deterministic parsing, on-device AI when available, and cloud fallback when a user supplies a Gemini API key.
 - **Global Bitrate Settings** — Set a default maximum streaming bitrate in the app settings to optimize for your network conditions across all media.
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search, disambiguate, and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
@@ -176,13 +176,13 @@ SpatialFin can now operate as a local-first XR player, even without a Jellyfin s
 
 SpatialFin now supports hands-free voice control in the XR player.
 
-- **Unified Smart Assistant:** Hold a deliberate middle-finger pinch on your configured voice hand to arm voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
+- **Unified Smart Assistant:** Hold an open palm near your face on your configured voice hand to start voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
 - **AI Chat And Parsing:** SpatialFin includes an Android AICore (Gemini Nano) integration path for compatible devices, and falls back to cloud Gemini (`gemini-3.1-flash-lite-preview`) when the user provides an API key in settings.
 - **Contextual Awareness:** The assistant maintains a 60-second rolling buffer of recent subtitles, allowing you to ask "What just happened?" or clarify confusing dialogue.
 - **Spatial Voice Feedback:** The AI responds out loud using Android's native Text-To-Speech engine. Media volume is automatically ducked while the assistant is speaking, and its text response remains visible until the speech finishes.
 - Use the mic button in the player orbiter as a fallback.
 - Speech recognition runs on-device and prefers offline recognition.
-- Gesture activation now uses frame smoothing, a short cooldown, and an in-view "Hold to talk" pre-activation overlay to reduce false positives and false negatives.
+- Gesture activation now uses a single near-face open-palm hold, frame smoothing, a dedicated arming zone, a short cooldown, and in-view guidance to reduce resting-hand false positives without adding an extra confirmation step.
 - Commands are mapped to existing player actions such as play, pause, seek, skip intro, subtitle toggles, audio-track changes, quality/bitrate adjustments, controls visibility, next/previous episode, SyncPlay actions, search, going home, and closing SpatialFin.
 - Voice search results are shown in a spatial in-player overlay, and follow-up commands like "play the first one" now resolve against the active result set.
 - SyncPlay voice commands support opening the panel, creating a group, joining a named or indexed group, refreshing groups, and leaving the current watch party.
