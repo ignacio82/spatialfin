@@ -448,4 +448,21 @@ constructor(
             offline()
         }
     }
+
+    override suspend fun searchRemoteSubtitles(
+        itemId: UUID,
+        language: String
+    ): List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo> {
+        return runWithFallback(
+            online = { onlineRepository.searchRemoteSubtitles(itemId, language) },
+            offline = { offlineRepository.searchRemoteSubtitles(itemId, language) },
+        )
+    }
+
+    override suspend fun downloadRemoteSubtitles(itemId: UUID, subtitleId: String) {
+        runWithFallback(
+            online = { onlineRepository.downloadRemoteSubtitles(itemId, subtitleId) },
+            offline = { offlineRepository.downloadRemoteSubtitles(itemId, subtitleId) },
+        )
+    }
 }

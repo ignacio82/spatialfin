@@ -146,7 +146,6 @@
     <string name="none">None</string>
     <string name="xr_subtitle_size">XR Subtitle Size</string>
     <string name="xr_subtitle_size_summary">Adjust the font size of subtitles in XR mode</string>
-
     <string name="libass_subtitle_usage">Advanced subtitle renderer (libass)</string>
     <string name="libass_subtitle_usage_summary">Choose when to use libass for pixel-perfect ASS/SSA subtitle rendering</string>
     

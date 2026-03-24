@@ -149,6 +149,10 @@ interface JellyfinRepository {
 
     suspend fun markAsFavorite(itemId: UUID)
 
+    suspend fun searchRemoteSubtitles(itemId: UUID, language: String): List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo>
+
+    suspend fun downloadRemoteSubtitles(itemId: UUID, subtitleId: String)
+
     suspend fun unmarkAsFavorite(itemId: UUID)
 
     suspend fun markAsPlayed(itemId: UUID)

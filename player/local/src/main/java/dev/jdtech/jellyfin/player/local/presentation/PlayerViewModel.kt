@@ -123,6 +123,17 @@ constructor(
         )
     val uiState = _uiState.asStateFlow()
 
+    sealed interface SubtitleSearchState {
+        data object Idle : SubtitleSearchState
+        data object Searching : SubtitleSearchState
+        data object Downloading : SubtitleSearchState
+        data class Success(val options: List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo>) : SubtitleSearchState
+        data class Error(val message: String?, val ex: Exception?) : SubtitleSearchState
+    }
+
+    private val _subtitleSearchState = MutableStateFlow<SubtitleSearchState>(SubtitleSearchState.Idle)
+    val subtitleSearchState = _subtitleSearchState.asStateFlow()
+
     data class SyncPlayUiState(
         val isLoading: Boolean = false,
         val activeGroup: SyncPlayGroup? = null,
@@ -1913,17 +1924,66 @@ constructor(
         return seekToChapter(chapterIndex)
     }
 
+    fun searchForSubtitles(language: String) {
+        val itemIdStr = _uiState.value.currentItemId ?: return
+        viewModelScope.launch {
+            _subtitleSearchState.value = SubtitleSearchState.Searching
+            try {
+                val results = repository.searchRemoteSubtitles(UUID.fromString(itemIdStr), language)
+                _subtitleSearchState.value = SubtitleSearchState.Success(results)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to search subtitles")
+                _subtitleSearchState.value = SubtitleSearchState.Error(e.message, e)
+            }
+        }
+    }
+
+    fun downloadAndSwitchSubtitles(subtitleInfo: org.jellyfin.sdk.model.api.RemoteSubtitleInfo) {
+        val itemIdStr = _uiState.value.currentItemId ?: return
+        val itemKind = _uiState.value.currentItemKind ?: return
+        val itemId = UUID.fromString(itemIdStr)
+        val subtitleId = subtitleInfo.id ?: return
+
+        viewModelScope.launch {
+            _subtitleSearchState.value = SubtitleSearchState.Downloading
+            try {
+                repository.downloadRemoteSubtitles(itemId, subtitleId)
+                
+                val currentPos = player.currentPosition
+                val isPlaying = player.playWhenReady
+                
+                savedStateHandle["position"] = currentPos
+                
+                initializePlayer(
+                    itemId = itemId,
+                    itemKind = itemKind,
+                    startFromBeginning = false,
+                    autoPlay = isPlaying
+                )
+
+                _subtitleSearchState.value = SubtitleSearchState.Idle
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to download subtitle")
+                _subtitleSearchState.value = SubtitleSearchState.Error(e.message, e)
+            }
+        }
+    }
+
+    fun clearSubtitleSearchState() {
+        _subtitleSearchState.value = SubtitleSearchState.Idle
+    }
+
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         super.onIsPlayingChanged(isPlaying)
         if (isSyncPlayActive() && !shouldSuppressSyncEvents() && player.playbackState == Player.STATE_READY) {
             viewModelScope.launch {
                 runCatching {
-                        if (isPlaying) {
-                            repository.unpauseSyncPlay()
-                        } else {
-                            repository.pauseSyncPlay()
-                        }
+                    if (isPlaying) {
+                        repository.unpauseSyncPlay()
+                    } else {
+                        repository.pauseSyncPlay()
                     }
+                }
                     .onFailure { Timber.w(it, "Failed to push SyncPlay play state") }
             }
         }

@@ -9,6 +9,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import android.graphics.Bitmap
 import android.util.TypedValue
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -816,41 +823,37 @@ fun SpatialPlayerScreen(
     }
 
             var playerInitialized by remember { mutableStateOf(false) }
-
-            // Safety net: re-attach the surface whenever the player instance changes (e.g. if the
-            // player is replaced for reasons outside the onPlayerReplaced callback path). Does not
-            // run for dimension changes — videoWidth/videoHeight are not keys here.
-            LaunchedEffect(player, videoEntity.value) {
+    LaunchedEffect(player, videoEntity.value) {
             videoEntity.value?.let { entity ->
-            player.setVideoSurface(entity.getSurface())
-            if (!playerInitialized) {
-                when {
-                    localMediaId != null -> {
-                        viewModel.initializeLocalPlayer(
-                            localMediaId = localMediaId,
-                            startFromBeginning = startFromBeginning,
-                        )
+                player.setVideoSurface(entity.getSurface())
+                if (!playerInitialized) {
+                    when {
+                        localMediaId != null -> {
+                            viewModel.initializeLocalPlayer(
+                                localMediaId = localMediaId,
+                                startFromBeginning = startFromBeginning,
+                            )
+                        }
+                        networkVideoId != null -> {
+                            viewModel.initializeNetworkPlayer(
+                                networkVideoId = networkVideoId,
+                                startFromBeginning = startFromBeginning,
+                            )
+                        }
+                        itemId != null -> {
+                            viewModel.initializePlayer(
+                                itemId = itemId,
+                                itemKind = itemKind,
+                                startFromBeginning = startFromBeginning,
+                                mediaSourceIndex = mediaSourceIndex,
+                                maxBitrate = maxBitrate,
+                            )
+                        }
                     }
-                    networkVideoId != null -> {
-                        viewModel.initializeNetworkPlayer(
-                            networkVideoId = networkVideoId,
-                            startFromBeginning = startFromBeginning,
-                        )
-                    }
-                    itemId != null -> {
-                        viewModel.initializePlayer(
-                            itemId = itemId,
-                            itemKind = itemKind,
-                            startFromBeginning = startFromBeginning,
-                            mediaSourceIndex = mediaSourceIndex,
-                            maxBitrate = maxBitrate,
-                        )
-                    }
+                    playerInitialized = true
                 }
-                playerInitialized = true
             }
-            }
-            }
+    }
     // Update SurfaceEntity shape when video dimensions or stereo mode changes.
     // Both are consolidated here to avoid races between separate LaunchedEffects.
     LaunchedEffect(player.videoSize, currentStereoMode) {
@@ -938,7 +941,7 @@ fun SpatialPlayerScreen(
         val root = rootEntity.value
         if (root != null) {
             SceneCoreEntity(factory = { root }, modifier = SubspaceModifier) {
-        // ── Subtitle Panel ──────────────────────────────────────────────────────────
+                // ── Subtitle Panel ──────────────────────────────────────────────────────────
         // Spans the full projected video area so PGS cue positions map correctly.
         // In curved mode the panel sits at the front of the cylinder (uiAnchorZDp already
         // incorporates the depth; uiExtraZDp is 0).
@@ -1135,6 +1138,21 @@ fun SpatialPlayerScreen(
                         trackType = C.TRACK_TYPE_TEXT,
                         onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
                         onDismiss = { activeDialog = null },
+                        onSearchSubtitles = { activeDialog = "search_subtitles" },
+                    )
+                }
+            }
+            if (activeDialog == "search_subtitles") {
+                SpatialDialog(onDismissRequest = { 
+                    activeDialog = null
+                    viewModel.clearSubtitleSearchState() 
+                }) {
+                    SubtitleSearchDialogContent(
+                        viewModel = viewModel,
+                        onDismiss = {
+                            activeDialog = null
+                            viewModel.clearSubtitleSearchState()
+                        }
                     )
                 }
             }
@@ -2061,6 +2079,7 @@ private fun TrackSelectionDialogContent(
     trackType: @C.TrackType Int,
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
+    onSearchSubtitles: (() -> Unit)? = null,
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
     val trackNames = trackGroups.getTrackNames()
@@ -2121,8 +2140,20 @@ private fun TrackSelectionDialogContent(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (trackType == C.TRACK_TYPE_TEXT && onSearchSubtitles != null) {
+                    TextButton(onClick = {
+                        onDismiss()
+                        onSearchSubtitles()
+                    }) {
+                        Text("SEARCH SUBTITLES", style = MaterialTheme.typography.labelLarge)
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
@@ -2808,5 +2839,97 @@ private fun safelyToggleMascotEntity(
         }
     }.onFailure {
         Timber.d(it, "Skipping paused mascot visibility update for disposed entity")
+    }
+}
+
+@Composable
+private fun SubtitleSearchDialogContent(
+    viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel,
+    onDismiss: () -> Unit,
+) {
+    val searchState by viewModel.subtitleSearchState.collectAsStateWithLifecycle()
+    var language by remember { mutableStateOf(java.util.Locale.getDefault().language) }
+
+    Surface(
+        modifier = Modifier
+            .width(600.dp)
+            .heightIn(max = 560.dp),
+        shape = RoundedCornerShape(32.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 12.dp,
+    ) {
+        Column(modifier = Modifier.padding(32.dp)) {
+            Text("Search Subtitles", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+            
+            OutlinedTextField(
+                value = language,
+                onValueChange = { language = it },
+                label = { Text("Language Code (e.g. eng, spa, fre)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardActions = KeyboardActions(
+                    onSearch = { viewModel.searchForSubtitles(language) }
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            )
+            
+            Spacer(Modifier.height(16.dp))
+            
+            Button(
+                onClick = { viewModel.searchForSubtitles(language) },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("Search")
+            }
+            
+            Spacer(Modifier.height(16.dp))
+            
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (val state = searchState) {
+                    is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Idle -> {
+                        Text("Enter a language and click search.", modifier = Modifier.align(Alignment.Center))
+                    }
+                    is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Searching -> {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    }
+                    is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Downloading -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(8.dp))
+                            Text("Downloading...")
+                        }
+                    }
+                    is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Error -> {
+                        Text("Error: ${state.message}", color = MaterialTheme.colorScheme.error)
+                    }
+                    is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Success -> {
+                        if (state.options.isEmpty()) {
+                            Text("No subtitles found.", modifier = Modifier.align(Alignment.Center))
+                        } else {
+                            androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                items(state.options) { option ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.downloadAndSwitchSubtitles(option) }
+                                            .padding(vertical = 12.dp, horizontal = 8.dp)
+                                    ) {
+                                        Text(option.name ?: "Unknown", style = MaterialTheme.typography.titleMedium)
+                                        Text("Format: ${option.format} • Rating: ${option.communityRating ?: 0}", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+            }
+        }
     }
 }

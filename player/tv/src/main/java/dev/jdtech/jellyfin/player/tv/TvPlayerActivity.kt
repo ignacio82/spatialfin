@@ -10,6 +10,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.lazy.items
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -646,7 +648,21 @@ private fun TvPlayerScreen(
                     activeDialog = null
                 },
                 onDismiss = { activeDialog = null },
+                onSearchSubtitles = { activeDialog = TvPlayerDialog.SearchSubtitles },
             )
+        TvPlayerDialog.SearchSubtitles ->
+            Dialog(onDismissRequest = { 
+                activeDialog = null
+                viewModel.clearSubtitleSearchState() 
+            }) {
+                TvSubtitleSearchDialogContent(
+                    viewModel = viewModel,
+                    onDismiss = { 
+                        activeDialog = null
+                        viewModel.clearSubtitleSearchState()
+                    }
+                )
+            }
         TvPlayerDialog.Chapters ->
             TvChapterDialog(
                 chapters = uiState.currentChapters,
@@ -682,6 +698,7 @@ private fun TvPlayerScreen(
 private enum class TvPlayerDialog {
     Audio,
     Subtitle,
+    SearchSubtitles,
     Chapters,
     Quality,
     Source,
@@ -965,6 +982,7 @@ private fun TvTrackSelectionDialog(
     trackType: Int,
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
+    onSearchSubtitles: (() -> Unit)? = null,
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType }
     val trackNames = trackGroups.getTrackNames()
@@ -980,6 +998,8 @@ private fun TvTrackSelectionDialog(
             title = title,
             onDismiss = onDismiss,
             width = 460.dp,
+            onSearchSubtitles = onSearchSubtitles,
+            trackType = trackType,
         ) {
             TvDialogOptionRow(
                 label = "None",
@@ -1111,6 +1131,8 @@ private fun TvDialogSurface(
     title: String,
     onDismiss: () -> Unit,
     width: androidx.compose.ui.unit.Dp,
+    onSearchSubtitles: (() -> Unit)? = null,
+    trackType: Int? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -1135,11 +1157,23 @@ private fun TvDialogSurface(
                 content = content,
             )
             Spacer(Modifier.height(16.dp))
-            TvOverlayTextButton(
-                label = "Close",
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.End),
-            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (trackType == C.TRACK_TYPE_TEXT && onSearchSubtitles != null) {
+                    TvOverlayTextButton(
+                        label = "SEARCH SUBTITLES",
+                        onClick = {
+                            onDismiss()
+                            onSearchSubtitles()
+                        }
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                TvOverlayTextButton(
+                    label = "Close",
+                    onClick = onDismiss,
+                )
+            }
         }
     }
 }
@@ -1246,5 +1280,88 @@ private fun formatTime(ms: Long): String {
         String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%d:%02d", minutes, seconds)
+    }
+}
+
+@Composable
+private fun TvSubtitleSearchDialogContent(
+    viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel,
+    onDismiss: () -> Unit,
+) {
+    val searchState by viewModel.subtitleSearchState.collectAsStateWithLifecycle()
+    var language by remember { mutableStateOf(java.util.Locale.getDefault().language) }
+
+    TvDialogSurface(
+        title = "Search Subtitles",
+        onDismiss = onDismiss,
+        width = 460.dp,
+    ) {
+        androidx.compose.material3.OutlinedTextField(
+            value = language,
+            onValueChange = { language = it },
+            label = { Text("Language Code (e.g. eng, spa, fre)", color = Color.White) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                onSearch = { viewModel.searchForSubtitles(language) }
+            ),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = Color.White
+            )
+        )
+        
+        Spacer(Modifier.height(8.dp))
+        
+        TvOverlayTextButton(
+            label = "Search",
+            onClick = { viewModel.searchForSubtitles(language) },
+            modifier = Modifier.align(Alignment.End)
+        )
+        
+        Spacer(Modifier.height(16.dp))
+        
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (val state = searchState) {
+                is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Idle -> {
+                    Text("Enter a language and click search.", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                }
+                is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Searching -> {
+                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                }
+                is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Downloading -> {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                        Spacer(Modifier.height(8.dp))
+                        Text("Downloading...", color = Color.White)
+                    }
+                }
+                is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Error -> {
+                    Text("Error: ${state.message}", color = MaterialTheme.colorScheme.error)
+                }
+                is dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.SubtitleSearchState.Success -> {
+                    if (state.options.isEmpty()) {
+                        Text("No subtitles found.", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(state.options) { option: org.jellyfin.sdk.model.api.RemoteSubtitleInfo ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.downloadAndSwitchSubtitles(option) }
+                                        .padding(vertical = 12.dp, horizontal = 8.dp)
+                                ) {
+                                    Text(option.name ?: "Unknown", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                                    Text("Format: ${option.format} • Rating: ${option.communityRating ?: 0}", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+                                }
+                                androidx.compose.material3.HorizontalDivider(color = Color.DarkGray)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

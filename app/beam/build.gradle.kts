@@ -21,7 +21,7 @@ android {
     buildToolsVersion = Versions.BUILD_TOOLS
 
     defaultConfig {
-        applicationId = "dev.spatialfin"
+        applicationId = "dev.spatialfin.player"
         minSdk = Versions.MIN_SDK
         targetSdk = Versions.TARGET_SDK
         versionCode = Versions.APP_CODE + 2000

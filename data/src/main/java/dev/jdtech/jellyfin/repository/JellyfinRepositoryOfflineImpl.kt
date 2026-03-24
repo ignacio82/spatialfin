@@ -391,4 +391,15 @@ class JellyfinRepositoryOfflineImpl(
     override fun getUserId(): UUID {
         return jellyfinApi.userId!!
     }
+
+    override suspend fun searchRemoteSubtitles(
+        itemId: UUID,
+        language: String
+    ): List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo> {
+        return emptyList()
+    }
+
+    override suspend fun downloadRemoteSubtitles(itemId: UUID, subtitleId: String) {
+        // Offline mode, do nothing
+    }
 }

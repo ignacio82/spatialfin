@@ -270,12 +270,12 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.libass_subtitle_usage_summary,
                                                     backendPreference = appPreferences.libassSubtitleUsage,
                                                     options = R.array.libass_subtitle_usage_options,
-                                                    optionValues = R.array.libass_subtitle_usage_values,
-                                                    supportedDeviceTypes = listOf(DeviceType.XR),
-                                                ),
-                                                @Suppress("UNCHECKED_CAST")
-                                                PreferenceSelect(
-                                                    nameStringResource = R.string.player_max_bitrate,
+                                                     optionValues = R.array.libass_subtitle_usage_values,
+                                                     supportedDeviceTypes = listOf(DeviceType.XR),
+                                                 ),
+                                                 @Suppress("UNCHECKED_CAST")
+                                                 PreferenceSelect(
+                                                     nameStringResource = R.string.player_max_bitrate,
                                                     descriptionStringRes = R.string.player_max_bitrate_summary,
                                                     backendPreference = appPreferences.playerMaxBitrate as Preference<String?>,
                                                     options = R.array.player_max_bitrate_options,

@@ -28,6 +28,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.jellyfin.core)
     implementation(projects.player.beam)
     implementation(projects.data)
     implementation(projects.player.core)

@@ -750,4 +750,24 @@ class JellyfinRepositoryImpl(
     override fun getUserId(): UUID {
         return jellyfinApi.userId!!
     }
+
+    override suspend fun searchRemoteSubtitles(
+        itemId: UUID,
+        language: String
+    ): List<org.jellyfin.sdk.model.api.RemoteSubtitleInfo> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.subtitleApi.searchRemoteSubtitles(
+                itemId = itemId,
+                language = language,
+            ).content.toList()
+        }
+
+    override suspend fun downloadRemoteSubtitles(itemId: UUID, subtitleId: String) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.subtitleApi.downloadRemoteSubtitles(
+                itemId = itemId,
+                subtitleId = subtitleId,
+            )
+        }
+    }
 }

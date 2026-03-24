@@ -452,6 +452,7 @@ private fun TrackSelectionDialogContent(
     trackType: @C.TrackType Int,
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
+    onSearchSubtitles: (() -> Unit)? = null,
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
     val trackNames = trackGroups.getTrackNames()
@@ -511,8 +512,20 @@ private fun TrackSelectionDialogContent(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("CLOSE", color = MaterialTheme.colorScheme.primary)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (trackType == C.TRACK_TYPE_TEXT && onSearchSubtitles != null) {
+                    TextButton(onClick = {
+                        onDismiss()
+                        onSearchSubtitles()
+                    }) {
+                        Text("SEARCH SUBTITLES", color = MaterialTheme.colorScheme.primary)
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("CLOSE", color = MaterialTheme.colorScheme.primary)
+                }
             }
         }
     }

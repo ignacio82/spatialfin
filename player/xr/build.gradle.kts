@@ -34,6 +34,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.jellyfin.core)
     implementation(projects.core)
     implementation(projects.player.core)
     implementation(projects.player.local)

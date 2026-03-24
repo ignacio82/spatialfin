@@ -144,7 +144,6 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
-
     inline fun <reified T> getValue(preference: Preference<T>): T {
         return try {
             @Suppress("UNCHECKED_CAST")
