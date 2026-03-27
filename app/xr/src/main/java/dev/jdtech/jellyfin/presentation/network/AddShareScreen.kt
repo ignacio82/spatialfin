@@ -53,6 +53,7 @@ fun AddShareScreen(
     var password by remember { mutableStateOf("") }
     var domain by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
+    val resetDiscoveredSmbServerShares = { viewModel.clearDiscoveredSmbServerShares() }
 
     LaunchedEffect(Unit) { viewModel.discoverShares() }
 
@@ -94,19 +95,28 @@ fun AddShareScreen(
             ) {
                 FilterChip(
                     selected = protocol == "smb",
-                    onClick = { protocol = "smb" },
+                    onClick = {
+                        protocol = "smb"
+                        resetDiscoveredSmbServerShares()
+                    },
                     label = { Text("SMB") },
                 )
                 FilterChip(
                     selected = protocol == "nfs",
-                    onClick = { protocol = "nfs" },
+                    onClick = {
+                        protocol = "nfs"
+                        resetDiscoveredSmbServerShares()
+                    },
                     label = { Text("NFS") },
                 )
             }
 
             OutlinedTextField(
                 value = host,
-                onValueChange = { host = it },
+                onValueChange = {
+                    host = it
+                    if (protocol == "smb") resetDiscoveredSmbServerShares()
+                },
                 label = { Text(stringResource(CoreR.string.network_host)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -130,14 +140,20 @@ fun AddShareScreen(
             if (protocol == "smb") {
                 OutlinedTextField(
                     value = username,
-                    onValueChange = { username = it },
+                    onValueChange = {
+                        username = it
+                        resetDiscoveredSmbServerShares()
+                    },
                     label = { Text(stringResource(CoreR.string.network_username)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it },
+                    onValueChange = {
+                        password = it
+                        resetDiscoveredSmbServerShares()
+                    },
                     label = { Text(stringResource(CoreR.string.network_password)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -145,7 +161,10 @@ fun AddShareScreen(
                 )
                 OutlinedTextField(
                     value = domain,
-                    onValueChange = { domain = it },
+                    onValueChange = {
+                        domain = it
+                        resetDiscoveredSmbServerShares()
+                    },
                     label = { Text(stringResource(CoreR.string.network_domain)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -158,6 +177,65 @@ fun AddShareScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
+
+            if (protocol == "smb") {
+                FilledTonalButton(
+                    onClick = {
+                        viewModel.discoverSmbServerShares(host, username, password, domain)
+                    },
+                    enabled = host.isNotBlank() && !state.isListingSmbServerShares,
+                ) {
+                    if (state.isListingSmbServerShares) {
+                        CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp))
+                    }
+                    Text(stringResource(CoreR.string.network_list_smb_shares))
+                }
+
+                Text(
+                    text = stringResource(CoreR.string.network_smb_server_shares),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+
+                if (state.isListingSmbServerShares) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        Text(stringResource(CoreR.string.network_listing_smb_shares))
+                    }
+                } else if (state.discoveredSmbServerShares.isNotEmpty()) {
+                    state.discoveredSmbServerShares.forEach { share ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    shareName = share.name
+                                    if (displayName.isBlank()) {
+                                        displayName = share.name
+                                    }
+                                },
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = share.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    text = "SMB://$host/${share.name}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                } else if (state.hasListedSmbServerShares) {
+                    Text(
+                        text = stringResource(CoreR.string.network_no_smb_server_shares),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -241,6 +319,7 @@ fun AddShareScreen(
                                 protocol = share.protocol
                                 host = share.host
                                 shareName = if (share.protocol == "smb") "" else share.serviceName
+                                resetDiscoveredSmbServerShares()
                                 if (displayName.isBlank()) {
                                     displayName = share.serviceName
                                 }

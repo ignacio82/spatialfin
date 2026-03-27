@@ -1,9 +1,11 @@
 package dev.jdtech.jellyfin.di
 
 import android.app.Application
+import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
@@ -114,7 +116,9 @@ object RepositoryModule {
 
     @Singleton
     @Provides
-    fun provideNetworkDiscovery(): NetworkDiscovery = NetworkDiscovery()
+    fun provideNetworkDiscovery(
+        @ApplicationContext context: Context,
+    ): NetworkDiscovery = NetworkDiscovery(context)
 
     @Singleton
     @Provides
@@ -143,12 +147,14 @@ object RepositoryModule {
         clientFactory: NetworkFileClientFactory,
         streamProxy: NetworkStreamProxy,
         discovery: NetworkDiscovery,
+        smbFileClient: SmbFileClient,
         metadataMatchService: MetadataMatchService,
     ): NetworkMediaRepository = NetworkMediaRepositoryImpl(
         serverDatabase,
         clientFactory,
         streamProxy,
         discovery,
+        smbFileClient,
         metadataMatchService,
     )
 }

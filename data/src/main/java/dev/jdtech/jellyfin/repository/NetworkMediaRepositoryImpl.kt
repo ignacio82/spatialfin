@@ -12,6 +12,7 @@ import dev.jdtech.jellyfin.models.RatingType
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.network.DiscoveredShare
+import dev.jdtech.jellyfin.network.DiscoveredSmbServerShare
 import dev.jdtech.jellyfin.network.MetadataMatchService
 import dev.jdtech.jellyfin.network.NetworkCredentials
 import dev.jdtech.jellyfin.network.NetworkDiscovery
@@ -20,6 +21,7 @@ import dev.jdtech.jellyfin.network.NetworkFileClientFactory
 import dev.jdtech.jellyfin.network.NetworkStreamProxy
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
+import dev.jdtech.jellyfin.network.SmbFileClient
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +32,7 @@ class NetworkMediaRepositoryImpl(
     private val clientFactory: NetworkFileClientFactory,
     private val streamProxy: NetworkStreamProxy,
     private val discovery: NetworkDiscovery,
+    private val smbFileClient: SmbFileClient,
     private val metadataMatchService: MetadataMatchService,
 ) : NetworkMediaRepository {
 
@@ -79,6 +82,22 @@ class NetworkMediaRepositoryImpl(
 
     override suspend fun discoverShares(): List<DiscoveredShare> {
         return discovery.discoverAll()
+    }
+
+    override suspend fun discoverSmbServerShares(
+        host: String,
+        username: String?,
+        password: String?,
+        domain: String?,
+    ): List<DiscoveredSmbServerShare> = withContext(Dispatchers.IO) {
+        smbFileClient.listServerShares(
+            host = host,
+            credentials = NetworkCredentials(
+                username = username?.takeIf { it.isNotBlank() },
+                password = password?.takeIf { it.isNotBlank() },
+                domain = domain?.takeIf { it.isNotBlank() },
+            ),
+        )
     }
 
     override suspend fun scanShare(shareId: String) = withContext(Dispatchers.IO) {

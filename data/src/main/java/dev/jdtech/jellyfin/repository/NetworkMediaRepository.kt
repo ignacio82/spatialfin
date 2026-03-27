@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.repository
 import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
 import dev.jdtech.jellyfin.network.DiscoveredShare
+import dev.jdtech.jellyfin.network.DiscoveredSmbServerShare
 
 interface NetworkMediaRepository {
     // Share management
@@ -22,6 +23,13 @@ interface NetworkMediaRepository {
 
     // Discovery
     suspend fun discoverShares(): List<DiscoveredShare>
+
+    suspend fun discoverSmbServerShares(
+        host: String,
+        username: String?,
+        password: String?,
+        domain: String?,
+    ): List<DiscoveredSmbServerShare>
 
     // Scanning
     suspend fun scanShare(shareId: String)

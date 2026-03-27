@@ -12,7 +12,15 @@ import com.hierynomus.smbj.share.DiskShare
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import java.io.InputStream
+import java.util.Properties
 import java.util.concurrent.TimeUnit
+import jcifs.CIFSContext
+import jcifs.DialectVersion
+import jcifs.SmbConstants
+import jcifs.config.PropertyConfiguration
+import jcifs.context.BaseContext
+import jcifs.smb.NtlmPasswordAuthenticator
+import jcifs.smb.SmbFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -123,6 +131,99 @@ class SmbFileClient : NetworkFileClient {
             Timber.e(e, "SMB connection test failed for $host/$shareName")
             false
         }
+    }
+
+    suspend fun listServerShares(
+        host: String,
+        credentials: NetworkCredentials,
+    ): List<DiscoveredSmbServerShare> = withContext(Dispatchers.IO) {
+        val normalizedHost = SmbPathNormalizer.normalizeConnectionTarget(host, "").host
+        require(normalizedHost.isNotBlank()) { "SMB host is required." }
+
+        runCatching {
+            listServerSharesWithContext(
+                host = normalizedHost,
+                context = createBrowserContext(credentials, anonymous = false),
+            )
+        }.recoverCatching { error ->
+            if (credentials.username.isNullOrBlank()) {
+                Timber.d(error, "Guest SMB share listing failed for %s, retrying anonymously", normalizedHost)
+                listServerSharesWithContext(
+                    host = normalizedHost,
+                    context = createBrowserContext(credentials, anonymous = true),
+                )
+            } else {
+                throw error
+            }
+        }.getOrElse { error ->
+            Timber.e(error, "SMB server share listing failed for %s", normalizedHost)
+            throw error
+        }
+    }
+
+    private fun listServerSharesWithContext(
+        host: String,
+        context: CIFSContext,
+    ): List<DiscoveredSmbServerShare> {
+        val server = SmbFile("smb://$host/", context)
+        return try {
+            server.listFiles()
+                .mapNotNull { file -> file.toDiscoveredServerShare() }
+                .distinctBy { it.name.lowercase() }
+                .sortedBy { it.name.lowercase() }
+        } finally {
+            try { server.close() } catch (_: Exception) {}
+            try { context.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun createBrowserContext(
+        credentials: NetworkCredentials,
+        anonymous: Boolean,
+    ): CIFSContext {
+        val properties = Properties().apply {
+            setProperty("jcifs.smb.client.minVersion", DialectVersion.SMB202.name)
+            setProperty("jcifs.smb.client.maxVersion", DialectVersion.SMB311.name)
+            setProperty("jcifs.resolveOrder", "DNS")
+            setProperty("jcifs.smb.client.responseTimeout", TimeUnit.SECONDS.toMillis(15).toString())
+            setProperty("jcifs.smb.client.soTimeout", TimeUnit.SECONDS.toMillis(15).toString())
+        }
+        val baseContext = BaseContext(PropertyConfiguration(properties))
+        if (anonymous) {
+            return baseContext.withAnonymousCredentials()
+        }
+
+        val username = credentials.username?.takeIf { it.isNotBlank() }
+        return if (username == null) {
+            baseContext.withGuestCrendentials()
+        } else {
+            baseContext.withCredentials(
+                NtlmPasswordAuthenticator(
+                    credentials.domain.orEmpty(),
+                    username,
+                    credentials.password.orEmpty(),
+                )
+            )
+        }
+    }
+
+    private fun SmbFile.toDiscoveredServerShare(): DiscoveredSmbServerShare? {
+        val type = runCatching { getType() }.getOrElse { error ->
+            Timber.w(error, "Skipping SMB server child %s because its type could not be read", path)
+            return null
+        }
+        if (type != SmbConstants.TYPE_SHARE && type != SmbConstants.TYPE_FILESYSTEM) {
+            return null
+        }
+
+        val shareName = runCatching { getShare() }
+            .getOrNull()
+            .orEmpty()
+            .ifBlank { getName().trimEnd('/', '\\') }
+            .trim()
+        if (shareName.isBlank()) return null
+
+        return DiscoveredSmbServerShare(name = shareName)
     }
 
     private inline fun <T> useShare(

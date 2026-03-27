@@ -132,6 +132,10 @@
     <string name="network_host">Host / IP address</string>
     <string name="network_share_name">Share name</string>
     <string name="network_export_path">Export path (e.g. /media)</string>
+    <string name="network_list_smb_shares">List shares</string>
+    <string name="network_listing_smb_shares">Listing SMB shares…</string>
+    <string name="network_smb_server_shares">Server shares</string>
+    <string name="network_no_smb_server_shares">No SMB shares found for this server.</string>
     <string name="network_username">Username (optional)</string>
     <string name="network_password">Password (optional)</string>
     <string name="network_domain">Domain (optional)</string>

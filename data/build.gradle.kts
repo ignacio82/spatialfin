@@ -46,6 +46,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.smbj)
+    implementation(libs.jcifs.ng) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+    }
+    implementation(libs.bcprov.jdk18on)
     implementation(libs.nfs4j)
     implementation(libs.jmdns)
     implementation(libs.timber)

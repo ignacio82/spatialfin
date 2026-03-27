@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.network.DiscoveredShare
+import dev.jdtech.jellyfin.network.DiscoveredSmbServerShare
 import dev.jdtech.jellyfin.network.NetworkCredentials
 import dev.jdtech.jellyfin.network.NetworkFileClientFactory
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
@@ -14,7 +15,10 @@ import kotlinx.coroutines.launch
 
 data class AddShareState(
     val discoveredShares: List<DiscoveredShare> = emptyList(),
+    val discoveredSmbServerShares: List<DiscoveredSmbServerShare> = emptyList(),
     val isDiscovering: Boolean = false,
+    val isListingSmbServerShares: Boolean = false,
+    val hasListedSmbServerShares: Boolean = false,
     val isTesting: Boolean = false,
     val isSaving: Boolean = false,
     val testResult: Boolean? = null,
@@ -52,6 +56,52 @@ class AddShareViewModel @Inject constructor(
         }
     }
 
+    fun discoverSmbServerShares(
+        host: String,
+        username: String?,
+        password: String?,
+        domain: String?,
+    ) {
+        viewModelScope.launch {
+            _state.emit(
+                _state.value.copy(
+                    isListingSmbServerShares = true,
+                    hasListedSmbServerShares = false,
+                    discoveredSmbServerShares = emptyList(),
+                    error = null,
+                )
+            )
+            try {
+                val shares = repository.discoverSmbServerShares(host, username, password, domain)
+                _state.emit(
+                    _state.value.copy(
+                        discoveredSmbServerShares = shares,
+                        isListingSmbServerShares = false,
+                        hasListedSmbServerShares = true,
+                    )
+                )
+            } catch (e: Exception) {
+                _state.emit(
+                    _state.value.copy(
+                        discoveredSmbServerShares = emptyList(),
+                        isListingSmbServerShares = false,
+                        hasListedSmbServerShares = true,
+                        error = e.message,
+                    )
+                )
+            }
+        }
+    }
+
+    fun clearDiscoveredSmbServerShares() {
+        _state.value = _state.value.copy(
+            discoveredSmbServerShares = emptyList(),
+            hasListedSmbServerShares = false,
+            isListingSmbServerShares = false,
+            error = null,
+        )
+    }
+
     fun testConnection(
         protocol: String,
         host: String,
@@ -61,7 +111,7 @@ class AddShareViewModel @Inject constructor(
         domain: String?,
     ) {
         viewModelScope.launch {
-            _state.emit(_state.value.copy(isTesting = true, testResult = null))
+            _state.emit(_state.value.copy(isTesting = true, testResult = null, error = null))
             val success = clientFactory.clientFor(protocol).testConnection(
                 host = host,
                 shareName = shareName,
@@ -85,7 +135,7 @@ class AddShareViewModel @Inject constructor(
         displayName: String?,
     ) {
         viewModelScope.launch {
-            _state.emit(_state.value.copy(isSaving = true))
+            _state.emit(_state.value.copy(isSaving = true, error = null))
             try {
                 val share = repository.addShare(
                     protocol = protocol,
