@@ -148,6 +148,9 @@ constructor(
     private val eventsChannel = Channel<PlayerEvents>()
     val eventsChannelFlow = eventsChannel.receiveAsFlow()
 
+    private val _currentFrameRate = MutableStateFlow(-1f)
+    val currentFrameRate = _currentFrameRate.asStateFlow()
+
     data class UiState(
         val currentItemTitle: String,
         val currentItemId: String? = null,
@@ -1241,6 +1244,19 @@ constructor(
             "type=${group.type} selected=${group.isSelected} supported=${group.isSupported} tracks=[$formats]"
         }
         Timber.i("Player tracks changed: %s", summary.ifBlank { "<none>" })
+
+        // Detect frame rate from the active video track for display refresh rate matching.
+        val videoGroup = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+        val detectedFrameRate = videoGroup?.let { group ->
+            (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let { idx ->
+                group.getTrackFormat(idx).frameRate
+            }
+        } ?: -1f
+        if (detectedFrameRate > 0f) {
+            Timber.i("frame-rate: detected %.4f fps from active video track", detectedFrameRate)
+            _currentFrameRate.value = detectedFrameRate
+        }
+
         applySmartLanguagePreferences()
     }
 

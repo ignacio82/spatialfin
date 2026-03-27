@@ -889,6 +889,27 @@ fun SpatialPlayerScreen(
         entity.setPose(Pose(Vector3(0f, 0f, -5.0f), Quaternion.Identity))
     }
 
+    // Frame rate matching: apply content frame rate to the video surface and UI compositing layer.
+    val currentFrameRate by viewModel.currentFrameRate.collectAsState()
+    LaunchedEffect(currentFrameRate, videoEntity.value) {
+        val frameRate = currentFrameRate.takeIf { it > 0f } ?: return@LaunchedEffect
+        val surface = videoEntity.value?.getSurface() ?: return@LaunchedEffect
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            runCatching {
+                surface.setFrameRate(
+                    frameRate,
+                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                    android.view.Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS,
+                )
+                Timber.i("frame-rate: applied %.4f fps to video surface", frameRate)
+            }.onFailure { Timber.w(it, "frame-rate: failed to set surface frame rate") }
+        }
+        // Complementary hint for the UI compositing layer
+        (context as? Activity)?.window?.let { window ->
+            window.attributes = window.attributes.apply { preferredRefreshRate = frameRate }
+        }
+    }
+
     // --- Layout calculations ---
     val videoDepth = 5.0f
     val uiDepth = 1.25f

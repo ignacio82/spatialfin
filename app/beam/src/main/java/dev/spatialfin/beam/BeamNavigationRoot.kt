@@ -530,7 +530,10 @@ private fun BeamSidebar(
         tonalElevation = 2.dp,
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
+            modifier = Modifier
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
             horizontalAlignment = if (isExpanded) Alignment.Start else Alignment.CenterHorizontally,
         ) {
