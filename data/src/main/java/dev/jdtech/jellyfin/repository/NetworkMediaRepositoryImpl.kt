@@ -18,6 +18,8 @@ import dev.jdtech.jellyfin.network.NetworkDiscovery
 import dev.jdtech.jellyfin.network.NetworkFileClient
 import dev.jdtech.jellyfin.network.NetworkFileClientFactory
 import dev.jdtech.jellyfin.network.NetworkStreamProxy
+import dev.jdtech.jellyfin.network.SmbPathNormalizer
+import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,13 +46,21 @@ class NetworkMediaRepositoryImpl(
         domain: String?,
         displayName: String?,
     ): NetworkShareDto = withContext(Dispatchers.IO) {
+        val normalizedTarget: SmbConnectionTarget? = if (protocol.equals("smb", ignoreCase = true)) {
+            SmbPathNormalizer.normalizeConnectionTarget(host, shareName)
+        } else {
+            null
+        }
+        val normalizedHost = normalizedTarget?.host?.takeIf { it.isNotBlank() } ?: host.trim()
+        val normalizedShareName = normalizedTarget?.shareName?.takeIf { it.isNotBlank() } ?: shareName.trim()
+
         val id = UUID.randomUUID().toString()
-        val path = "$protocol://$host/$shareName"
+        val path = "$protocol://$normalizedHost/$normalizedShareName"
         val share = NetworkShareDto(
             id = id,
             protocol = protocol,
-            host = host,
-            shareName = shareName,
+            host = normalizedHost,
+            shareName = normalizedShareName,
             path = path,
             displayName = displayName,
             username = username,
@@ -135,11 +145,16 @@ class NetworkMediaRepositoryImpl(
                             },
                             lastModifiedEpochMs = entry.lastModified,
                             metadataFetchedAtEpochMs = null,
+                            genres = null,
+                            director = null,
+                            writers = null,
+                            imdbId = null,
+                            imdbRating = null,
                         )
                     )
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Timber.e(e, "Error scanning directory $path on share ${share.id}")
         }
     }
@@ -229,7 +244,7 @@ class NetworkMediaRepositoryImpl(
     private fun NetworkVideoDto.toNetworkVideoItem(
         state: NetworkPlaybackStateDto?,
     ): NetworkVideoItem {
-        val durationMs = state?.durationMs ?: durationMs ?: 0L
+        val durationMs = state?.durationMs?.takeIf { it > 0L } ?: durationMs ?: 0L
         return NetworkVideoItem(
             networkVideoId = id,
             shareId = shareId,
@@ -242,6 +257,10 @@ class NetworkMediaRepositoryImpl(
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
             releaseYear = releaseYear,
+            genres = genres?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
+            director = director,
+            writers = writers?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
+            imdbId = imdbId,
             name = title,
             overview = overview ?: "",
             played = state?.watched == true,
@@ -263,12 +282,14 @@ class NetworkMediaRepositoryImpl(
             ),
             ratings = buildList {
                 voteAverage?.takeIf { it > 0 }?.let { score ->
-                    add(
-                        Rating(
-                            type = RatingType.TMDB,
-                            value = String.format("%.1f", score),
-                        )
-                    )
+                    add(Rating(type = RatingType.TMDB, value = String.format("%.1f", score)))
+                }
+                imdbRating?.takeIf { it.isNotBlank() }?.let { rating ->
+                    add(Rating(
+                        type = RatingType.IMDB,
+                        value = rating,
+                        url = imdbId?.let { "https://www.imdb.com/title/$it/" },
+                    ))
                 }
             },
         )

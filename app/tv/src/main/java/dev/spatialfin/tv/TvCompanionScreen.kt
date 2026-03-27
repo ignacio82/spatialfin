@@ -49,6 +49,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.NetworkShareDto
+import dev.jdtech.jellyfin.network.SmbPathNormalizer
+import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
@@ -367,19 +369,27 @@ constructor(
     }
 
     private fun applyNetworkShares(networkShares: List<CompanionNetworkShare>) {
-        networkShares.forEach { share ->
+        networkShares.forEach { s ->
+            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
+                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
+            } else {
+                null
+            }
+            val normalizedHost = target?.host ?: s.host
+            val normalizedShareName = target?.shareName ?: s.shareName
+
             serverDatabase.insertNetworkShare(
                 NetworkShareDto(
-                    id = share.id,
-                    protocol = share.protocol,
-                    host = share.host,
-                    shareName = share.shareName,
-                    path = share.path ?: "",
-                    displayName = share.displayName,
-                    username = share.username,
-                    password = share.password,
-                    domain = share.domain,
-                    addedAtEpochMs = share.addedAtEpochMs ?: System.currentTimeMillis(),
+                    id = s.id,
+                    protocol = s.protocol,
+                    host = normalizedHost,
+                    shareName = normalizedShareName,
+                    path = s.path ?: "$normalizedHost/$normalizedShareName",
+                    displayName = s.displayName,
+                    username = s.username,
+                    password = s.password,
+                    domain = s.domain,
+                    addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
                     lastScannedAtEpochMs = null,
                 ),
             )

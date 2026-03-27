@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
 import javax.inject.Inject
+import timber.log.Timber
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -20,6 +21,33 @@ data class NetworkShareState(
     val isScanning: Boolean = false,
     val error: Throwable? = null,
 )
+
+internal data class NetworkShareSections(
+    val movies: List<NetworkVideoItem>,
+    val tvShows: Map<String, List<NetworkVideoItem>>,
+    val uncategorized: List<NetworkVideoItem>,
+)
+
+internal fun categorizeNetworkVideos(videos: List<NetworkVideoItem>): NetworkShareSections {
+    val uniqueVideos = videos.distinctBy { it.networkVideoId }
+    val tvShows = uniqueVideos
+        .filter { !it.seriesGroupKey.isNullOrBlank() }
+        .groupBy { it.seriesGroupKey!! }
+    val tvIds = tvShows.values
+        .flatten()
+        .mapTo(mutableSetOf()) { it.networkVideoId }
+    val movies = uniqueVideos.filter { it.tmdbType == "movie" && it.networkVideoId !in tvIds }
+    val movieIds = movies.mapTo(mutableSetOf()) { it.networkVideoId }
+    val uncategorized = uniqueVideos.filter { item ->
+        item.networkVideoId !in tvIds && item.networkVideoId !in movieIds
+    }
+
+    return NetworkShareSections(
+        movies = movies,
+        tvShows = tvShows,
+        uncategorized = uncategorized,
+    )
+}
 
 @HiltViewModel
 class NetworkShareViewModel @Inject constructor(
@@ -35,18 +63,14 @@ class NetworkShareViewModel @Inject constructor(
                 val shares = repository.getShares()
                 val share = shares.find { it.id == shareId }
                 val videos = repository.getVideosByShare(shareId)
-
-                val movies = videos.filter { it.tmdbType == "movie" || (it.seasonNumber == null && it.seriesGroupKey == null) }
-                val tvGrouped = videos.filter { it.seriesGroupKey != null }
-                    .groupBy { it.seriesGroupKey!! }
-                val uncategorized = videos.filter { it.tmdbType == null && it.seasonNumber == null && it.seriesGroupKey == null }
+                val sections = categorizeNetworkVideos(videos)
 
                 _state.emit(
                     _state.value.copy(
                         share = share,
-                        movies = movies,
-                        tvShows = tvGrouped,
-                        uncategorized = uncategorized,
+                        movies = sections.movies,
+                        tvShows = sections.tvShows,
+                        uncategorized = sections.uncategorized,
                         isLoading = false,
                     )
                 )
@@ -58,13 +82,15 @@ class NetworkShareViewModel @Inject constructor(
 
     fun scanShare(shareId: String) {
         viewModelScope.launch {
-            _state.emit(_state.value.copy(isScanning = true))
-            try {
+            _state.emit(_state.value.copy(isScanning = true, error = null))
+            runCatching {
                 repository.scanShare(shareId)
                 repository.enrichMetadata(shareId)
+            }.onSuccess {
                 _state.emit(_state.value.copy(isScanning = false))
                 load(shareId)
-            } catch (e: Exception) {
+            }.onFailure { e ->
+                Timber.e(e, "Failed to scan network share $shareId")
                 _state.emit(_state.value.copy(isScanning = false, error = e))
             }
         }

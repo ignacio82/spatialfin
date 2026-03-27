@@ -590,6 +590,12 @@ class SettingsViewModel @Inject constructor(
                                                     iconDrawableId = R.drawable.ic_info,
                                                     onClick = { showTmdbApiKeyDialog() },
                                                 ),
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_omdb_api_key,
+                                                    descriptionStringRes = R.string.settings_omdb_api_key_summary,
+                                                    iconDrawableId = R.drawable.ic_info,
+                                                    onClick = { showOmdbApiKeyDialog() },
+                                                ),
                                                 PreferenceSwitch(
                                                     nameStringResource = R.string.settings_tmdb_auto_match,
                                                     descriptionStringRes = R.string.settings_tmdb_auto_match_summary,
@@ -921,6 +927,24 @@ class SettingsViewModel @Inject constructor(
     fun saveTmdbApiKey(value: String) {
         appPreferences.setValue(
             appPreferences.tmdbApiKey,
+            value.trim().takeIf { it.isNotEmpty() },
+        )
+        refreshLoadedPreferences()
+    }
+
+    fun showOmdbApiKeyDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowOmdbApiKeyDialog(
+                    appPreferences.getValue(appPreferences.omdbApiKey)
+                )
+            )
+        }
+    }
+
+    fun saveOmdbApiKey(value: String) {
+        appPreferences.setValue(
+            appPreferences.omdbApiKey,
             value.trim().takeIf { it.isNotEmpty() },
         )
         refreshLoadedPreferences()

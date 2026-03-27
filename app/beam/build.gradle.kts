@@ -150,4 +150,5 @@ dependencies {
     ksp(libs.androidx.hilt.compiler)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation(libs.junit4)
 }

@@ -240,7 +240,10 @@ fun AddShareScreen(
                             .clickable {
                                 protocol = share.protocol
                                 host = share.host
-                                shareName = share.serviceName
+                                shareName = if (share.protocol == "smb") "" else share.serviceName
+                                if (displayName.isBlank()) {
+                                    displayName = share.serviceName
+                                }
                             },
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {

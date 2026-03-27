@@ -1,5 +1,6 @@
 package dev.spatialfin.beam
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -47,12 +48,17 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.IconButton
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import coil3.compose.AsyncImage
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.background
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
 import androidx.compose.ui.text.style.TextAlign
@@ -101,6 +107,8 @@ private val primaryTabs =
         BeamTab(BeamRoute.Users, "Users", Icons.Rounded.People),
     )
 
+val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
+
 @Composable
 fun BeamNavigationRoot(
     state: MainState,
@@ -126,6 +134,7 @@ fun BeamNavigationRoot(
     var seasonBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
+    var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(
         state.isLoading,
@@ -152,16 +161,25 @@ fun BeamNavigationRoot(
     val showPrimaryNavigation =
         !state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)
 
-    Scaffold(
-        containerColor = Color.Transparent,
-    ) { innerPadding ->
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(18.dp),
-        ) {
+    CompositionLocalProvider(LocalBeamBackground provides { beamBackgroundUrl = it }) {
+        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {
+            AsyncImage(
+                model = beamBackgroundUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().blur(80.dp),
+                contentScale = ContentScale.Crop,
+                alpha = 0.35f,
+            )
+            Scaffold(
+                containerColor = Color.Transparent,
+            ) { innerPadding ->
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .padding(18.dp),
+                ) {
             if (showPrimaryNavigation) {
                 BeamSidebar(
                     currentRoute = currentRoute,
@@ -488,6 +506,8 @@ fun BeamNavigationRoot(
         }
     }
 }
+}
+}
 
 @Composable
 private fun BeamSidebar(
@@ -497,44 +517,57 @@ private fun BeamSidebar(
     voicePartial: String = "",
     onVoiceClick: () -> Unit = {},
 ) {
+    var isExpanded by rememberSaveable { mutableStateOf(false) }
+    val sidebarWidth by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (isExpanded) 200.dp else 80.dp,
+        label = "sidebarWidth"
+    )
+
     Surface(
-        modifier = Modifier.width(200.dp).fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.width(sidebarWidth).fillMaxHeight(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.7f),
         shape = RoundedCornerShape(24.dp),
         tonalElevation = 2.dp,
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
+            horizontalAlignment = if (isExpanded) Alignment.Start else Alignment.CenterHorizontally,
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = if (isExpanded) 16.dp else 0.dp, end = if (isExpanded) 4.dp else 0.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center,
             ) {
                 androidx.compose.foundation.Image(
                     painter = painterResource(id = R.drawable.ic_beam_launcher),
                     contentDescription = "SpatialFin",
-                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)),
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { isExpanded = !isExpanded },
                 )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "SpatialFin",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                )
-                IconButton(onClick = onVoiceClick) {
-                    Icon(
-                        imageVector = Icons.Rounded.Mic,
-                        contentDescription = "Voice",
-                        modifier = Modifier.size(22.dp),
-                        tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
+                if (isExpanded) {
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "SpatialFin",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
                     )
+                    IconButton(onClick = onVoiceClick) {
+                        Icon(
+                            imageVector = Icons.Rounded.Mic,
+                            contentDescription = "Voice",
+                            modifier = Modifier.size(22.dp),
+                            tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
-            if (voiceState == BeamVoiceState.LISTENING && voicePartial.isNotBlank()) {
+            if (voiceState == BeamVoiceState.LISTENING && voicePartial.isNotBlank() && isExpanded) {
                 Text(
                     text = voicePartial,
                     style = MaterialTheme.typography.bodySmall,
@@ -554,9 +587,9 @@ private fun BeamSidebar(
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = if (isExpanded) 16.dp else 0.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = if (isExpanded) Arrangement.spacedBy(12.dp) else Arrangement.Center,
                     ) {
                         Icon(
                             imageVector = tab.icon,
@@ -566,14 +599,16 @@ private fun BeamSidebar(
                                 if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Text(
-                            text = tab.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color =
-                                if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                        )
+                        if (isExpanded) {
+                            Text(
+                                text = tab.label,
+                                style = MaterialTheme.typography.labelLarge,
+                                color =
+                                    if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            )
+                        }
                     }
                 }
             }

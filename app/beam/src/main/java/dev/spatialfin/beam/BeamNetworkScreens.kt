@@ -45,6 +45,12 @@ data class BeamNetworkState(
     val error: Throwable? = null,
 )
 
+internal fun dedupeNetworkShares(shares: List<NetworkShareDto>): List<NetworkShareDto> =
+    shares.distinctBy { it.id }
+
+internal fun dedupeNetworkVideos(videos: List<NetworkVideoItem>): List<NetworkVideoItem> =
+    videos.distinctBy { it.networkVideoId }
+
 @HiltViewModel
 class BeamNetworkViewModel
 @Inject
@@ -58,9 +64,10 @@ constructor(
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null))
             runCatching {
+                val shares = dedupeNetworkShares(repository.getShares())
                 BeamNetworkState(
-                    shares = repository.getShares(),
-                    resumeItems = repository.getResumeItems(),
+                    shares = shares,
+                    resumeItems = dedupeNetworkVideos(repository.getResumeItems()),
                     isLoading = false,
                 )
             }.onSuccess { _state.emit(it) }
@@ -97,10 +104,10 @@ constructor(
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null))
             runCatching {
-                val shares = repository.getShares()
+                val shares = dedupeNetworkShares(repository.getShares())
                 BeamNetworkShareState(
                     share = shares.find { it.id == shareId },
-                    videos = repository.getVideosByShare(shareId),
+                    videos = dedupeNetworkVideos(repository.getVideosByShare(shareId)),
                     isLoading = false,
                 )
             }.onSuccess { _state.emit(it) }

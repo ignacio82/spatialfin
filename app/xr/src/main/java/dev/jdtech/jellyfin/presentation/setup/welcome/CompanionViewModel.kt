@@ -9,6 +9,8 @@ import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.models.NetworkShareDto
+import dev.jdtech.jellyfin.network.SmbPathNormalizer
+import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
@@ -307,12 +309,20 @@ class CompanionViewModel @Inject constructor(
     private fun applyNetworkShares(shares: List<CompanionNetworkShare>) {
         Timber.d("COMPANION: Applying ${shares.size} network shares")
         shares.forEach { s ->
+            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
+                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
+            } else {
+                null
+            }
+            val normalizedHost = target?.host ?: s.host
+            val normalizedShareName = target?.shareName ?: s.shareName
+
             val share = NetworkShareDto(
                 id = s.id,
                 protocol = s.protocol,
-                host = s.host,
-                shareName = s.shareName,
-                path = s.path ?: "",
+                host = normalizedHost,
+                shareName = normalizedShareName,
+                path = s.path ?: "$normalizedHost/$normalizedShareName",
                 displayName = s.displayName,
                 username = s.username,
                 password = s.password,

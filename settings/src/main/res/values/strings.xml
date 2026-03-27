@@ -219,6 +219,8 @@
     <string name="settings_tmdb_api_key_summary">API key for The Movie Database metadata enrichment</string>
     <string name="settings_tmdb_auto_match">Automatic matching</string>
     <string name="settings_tmdb_auto_match_summary">Automatically match network content with TMDB metadata</string>
+    <string name="settings_omdb_api_key">OMDb API Key</string>
+    <string name="settings_omdb_api_key_summary">API key for IMDb ratings and metadata via OMDb (omdbapi.com)</string>
     <string name="logging_enabled">Enable Logging</string>
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
     <string name="voice_controls">Voice controls</string>

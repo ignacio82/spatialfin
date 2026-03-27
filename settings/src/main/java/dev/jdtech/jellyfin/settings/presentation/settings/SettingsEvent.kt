@@ -24,6 +24,8 @@ sealed interface SettingsEvent {
 
     data class ShowTmdbApiKeyDialog(val currentValue: String?) : SettingsEvent
 
+    data class ShowOmdbApiKeyDialog(val currentValue: String?) : SettingsEvent
+
     data class ShowSmartLanguageDialog(val settings: SmartLanguageSettings) : SettingsEvent
 
     data object ShowCompanionDiscoveryDialog : SettingsEvent

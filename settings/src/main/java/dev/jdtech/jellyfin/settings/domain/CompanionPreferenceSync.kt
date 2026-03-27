@@ -78,6 +78,10 @@ fun AppPreferences.applyCompanionPreference(key: String, value: String?): Boolea
             setValue(tmdbApiKey, value)
             true
         }
+        omdbApiKey.backendName -> {
+            setValue(omdbApiKey, value)
+            true
+        }
         tmdbAutoMatch.backendName -> applyBoolean(tmdbAutoMatch, value)
         else -> false
     }

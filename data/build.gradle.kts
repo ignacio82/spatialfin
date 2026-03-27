@@ -49,4 +49,5 @@ dependencies {
     implementation(libs.nfs4j)
     implementation(libs.jmdns)
     implementation(libs.timber)
+    testImplementation(libs.junit4)
 }

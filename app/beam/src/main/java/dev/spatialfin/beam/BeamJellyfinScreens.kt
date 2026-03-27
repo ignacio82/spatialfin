@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -91,6 +93,7 @@ import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.isDownloading
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.utils.getShowDateString
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -382,6 +385,19 @@ fun BeamHomeScreen(
         viewModel.loadData()
     }
 
+    val setBackground = LocalBeamBackground.current
+
+    val featuredItem =
+        state.suggestionsSection?.items?.firstOrNull()
+            ?: state.resumeSection?.homeSection?.items?.firstOrNull()
+            ?: state.nextUpSection?.homeSection?.items?.firstOrNull()
+
+    LaunchedEffect(featuredItem?.id) {
+        if (featuredItem != null) {
+            setBackground(featuredItem.images.backdrop ?: featuredItem.images.primary)
+        }
+    }
+
     BeamScaffoldBody(contentPadding = contentPadding) {
         when {
             state.isLoading -> item { LoadingCard("Loading your media...") }
@@ -394,13 +410,9 @@ fun BeamHomeScreen(
             }
             else -> {
                 // Featured hero card
-                val featuredItem =
-                    state.suggestionsSection?.items?.firstOrNull()
-                        ?: state.resumeSection?.homeSection?.items?.firstOrNull()
-                        ?: state.nextUpSection?.homeSection?.items?.firstOrNull()
                 featuredItem?.let { featured ->
                     item {
-                        BeamMediaFeatureCard(
+                        BeamHeroCard(
                             item = featured,
                             actions = {
                                 BeamPrimaryActionButton(label = if (featured.playbackPositionTicks > 0L) "Resume" else "Play") {
@@ -712,9 +724,16 @@ fun BeamShowScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val setBackground = LocalBeamBackground.current
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
+    }
+
+    LaunchedEffect(state.show?.id) {
+        state.show?.let { show ->
+            setBackground(beamBackdropArtwork(show))
+        }
     }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
@@ -730,19 +749,46 @@ fun BeamShowScreen(
             state.show == null -> item { BeamEmptyCard("This series is no longer available.") }
             else -> {
                 val show = state.show ?: return@BeamScaffoldBody
+                val supportingLine =
+                    show.originalTitle?.takeIf { !it.isNullOrBlank() && it != show.name }
+                        ?: show.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
+                val metadata =
+                    buildList {
+                        getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add)
+                        if (state.seasons.isNotEmpty()) {
+                            add("${state.seasons.size} seasons")
+                        }
+                        show.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
+                        show.communityRating?.let { add("${"%.1f".format(it)}/10") }
+                        show.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
+                    }
                 item {
-                    BeamMediaFeatureCard(
+                    BeamDetailHeroCard(
                         item = show,
+                        eyebrow = "Series",
+                        supportingLine = supportingLine,
+                        metadata = metadata,
                         actions = {
-                            if (show.canPlay) {
+                            state.nextUp?.let { nextEpisode ->
                                 BeamPrimaryActionButton(
-                                    label = if (show.playbackPositionTicks > 0L) "Resume" else "Play",
-                                    onClick = { launchServerItem(context, show) },
+                                    label = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
+                                    onClick = { launchServerItem(context, nextEpisode) },
                                 )
                             }
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
                         },
                     )
+                }
+                if (state.seasons.isNotEmpty()) {
+                    item {
+                        Text("Seasons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    }
+                    item {
+                        BeamSeasonStrip(
+                            seasons = state.seasons,
+                            onOpenSeason = onOpenSeason,
+                        )
+                    }
                 }
                 state.nextUp?.let { nextEpisode ->
                     item {
@@ -753,17 +799,6 @@ fun BeamShowScreen(
                             item = nextEpisode,
                             onPlay = { launchServerItem(context, nextEpisode) },
                             onOpen = { onOpenItem(nextEpisode.id) },
-                        )
-                    }
-                }
-                if (state.seasons.isNotEmpty()) {
-                    item {
-                        Text("Seasons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    }
-                    item {
-                        BeamPosterCarousel(
-                            items = state.seasons,
-                            onItemClick = { onOpenSeason(it.id) },
                         )
                     }
                 }
@@ -782,9 +817,16 @@ fun BeamSeasonScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val setBackground = LocalBeamBackground.current
 
     LaunchedEffect(seasonId) {
         viewModel.load(seasonId)
+    }
+
+    LaunchedEffect(state.season?.id) {
+        state.season?.let { season ->
+            setBackground(beamBackdropArtwork(season))
+        }
     }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
@@ -847,6 +889,7 @@ fun BeamItemDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val setBackground = LocalBeamBackground.current
     var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
     var showPlaybackOptions by rememberSaveable(itemId) { mutableStateOf(false) }
 
@@ -855,7 +898,10 @@ fun BeamItemDetailScreen(
     }
 
     LaunchedEffect(state.item?.id) {
-        state.item?.let { downloaderViewModel.update(it) }
+        state.item?.let {
+            downloaderViewModel.update(it)
+            setBackground(beamBackdropArtwork(it))
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -882,9 +928,49 @@ fun BeamItemDetailScreen(
             state.item == null -> item { BeamEmptyCard("This item is no longer available.") }
             else -> {
                 val itemData = state.item ?: return@BeamScaffoldBody
+                val supportingLine =
+                    when (itemData) {
+                        is SpatialFinMovie ->
+                            itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
+                                ?: itemData.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
+                        is SpatialFinEpisode ->
+                            listOf(itemData.seriesName, itemData.seasonName, buildEpisodeLabel(itemData))
+                                .filterNotNull()
+                                .filter { it.isNotBlank() }
+                                .joinToString(" • ")
+                                .ifBlank { null }
+                        is SpatialFinSeason -> itemData.seriesName
+                        else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
+                    }
+                val metadata =
+                    buildList {
+                        when (itemData) {
+                            is SpatialFinMovie -> {
+                                itemData.productionYear?.let { add(it.toString()) }
+                                beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
+                                itemData.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
+                                itemData.communityRating?.let { add("${"%.1f".format(it)}/10") }
+                                addAll(itemData.genres.take(2))
+                            }
+                            is SpatialFinEpisode -> {
+                                add(buildEpisodeLabel(itemData))
+                                itemData.premiereDate?.year?.let { add(it.toString()) }
+                                beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
+                                itemData.communityRating?.let { add("${"%.1f".format(it)}/10") }
+                            }
+                            is SpatialFinSeason -> {
+                                add(beamSeasonLabel(itemData))
+                                itemData.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
+                            }
+                            else -> Unit
+                        }
+                    }
                 item {
-                    BeamMediaFeatureCard(
+                    BeamDetailHeroCard(
                         item = itemData,
+                        eyebrow = buildPrimaryBadge(itemData),
+                        supportingLine = supportingLine,
+                        metadata = metadata,
                         actions = {
                             if (itemData.canPlay) {
                                 BeamPrimaryActionButton(
@@ -981,6 +1067,36 @@ fun BeamItemDetailScreen(
         }
     }
 }
+
+private fun beamPrimaryArtwork(item: SpatialFinItem): Any? =
+    when (item) {
+        is SpatialFinEpisode ->
+            item.images.showPrimary ?: item.images.primary ?: item.images.showBackdrop ?: item.images.backdrop
+        else ->
+            item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
+    }
+
+private fun beamBackdropArtwork(item: SpatialFinItem): Any? =
+    when (item) {
+        is SpatialFinEpisode ->
+            item.images.showBackdrop ?: item.images.backdrop ?: item.images.showPrimary ?: item.images.primary
+        else ->
+            item.images.backdrop ?: item.images.showBackdrop ?: item.images.primary ?: item.images.showPrimary
+    }
+
+private fun beamRuntimeLabel(runtimeTicks: Long): String? =
+    runtimeTicks
+        .takeIf { it > 0L }
+        ?.div(600000000)
+        ?.takeIf { it > 0L }
+        ?.let { "$it min" }
+
+private fun beamSeasonLabel(season: SpatialFinSeason): String =
+    if (season.indexNumber > 0) {
+        "Season ${season.indexNumber}"
+    } else {
+        season.name.ifBlank { "Season" }
+    }
 
 @Composable
 private fun BeamPlaybackOptionsDialog(
@@ -1635,6 +1751,240 @@ private fun BeamDownloadedItemCard(
 }
 
 @Composable
+private fun BeamHeroCard(
+    item: SpatialFinItem,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().height(240.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = item.images.backdrop ?: item.images.primary ?: item.images.showPrimary,
+                contentDescription = item.name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                alpha = 0.6f,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            colors = listOf(Color(0xDD0F141C), Color.Transparent),
+                            startX = 0f,
+                            endX = 800f,
+                        )
+                    )
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(24.dp)
+                    .fillMaxWidth(0.7f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = buildServerItemSubtitle(item) ?: item.overview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.LightGray,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    actions()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamDetailHeroCard(
+    item: SpatialFinItem,
+    eyebrow: String,
+    supportingLine: String?,
+    metadata: List<String>,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().height(340.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = beamBackdropArtwork(item),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                alpha = 0.55f,
+            )
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                colors = listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent),
+                                startX = 0f,
+                                endX = 900f,
+                            )
+                        )
+            )
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color(0xCC0F141C)),
+                            )
+                        )
+            )
+            Row(
+                modifier = Modifier.fillMaxSize().padding(22.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                BeamPosterArtwork(
+                    item = item,
+                    modifier = Modifier.width(156.dp).aspectRatio(0.67f),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    BeamBadge(text = eyebrow)
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    supportingLine?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFFE6EBF2),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (metadata.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            metadata.forEach { token ->
+                                BeamDetailPill(text = token)
+                            }
+                        }
+                    }
+                    Text(
+                        text = item.overview.ifBlank { "No overview available." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFD7DDE6),
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), content = actions)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamDetailPill(text: String) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = Color.Black.copy(alpha = 0.25f),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+        )
+    }
+}
+
+@Composable
+private fun BeamSeasonStrip(
+    seasons: List<SpatialFinSeason>,
+    onOpenSeason: (UUID) -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(seasons, key = { it.id }) { season ->
+            BeamSeasonCard(
+                season = season,
+                onClick = { onOpenSeason(season.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun BeamSeasonCard(
+    season: SpatialFinSeason,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.width(220.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.6f)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BeamPosterArtwork(
+                item = season,
+                modifier = Modifier.width(58.dp).aspectRatio(0.67f),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = beamSeasonLabel(season),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text =
+                        season.unplayedItemCount
+                            ?.takeIf { it > 0 }
+                            ?.let { "$it unwatched" }
+                            ?: season.seriesName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun BeamMediaFeatureCard(
     item: SpatialFinItem,
     actions: @Composable RowScope.() -> Unit,
@@ -1646,14 +1996,17 @@ private fun BeamMediaFeatureCard(
         shape = RoundedCornerShape(20.dp),
         colors =
             CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f),
             ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            BeamPosterArtwork(item = item)
+            BeamPosterArtwork(
+                item = item,
+                modifier = Modifier.width(80.dp).aspectRatio(0.67f),
+            )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1702,10 +2055,13 @@ private fun BeamMediaFeatureCard(
 }
 
 @Composable
-private fun BeamPosterArtwork(item: SpatialFinItem) {
-    val imageModel = item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
+private fun BeamPosterArtwork(
+    item: SpatialFinItem,
+    modifier: Modifier,
+) {
+    val imageModel = beamPrimaryArtwork(item)
     Surface(
-        modifier = Modifier.width(80.dp).aspectRatio(0.67f),
+        modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {

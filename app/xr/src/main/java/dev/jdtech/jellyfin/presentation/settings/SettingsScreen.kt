@@ -96,6 +96,7 @@ fun SettingsScreen(
     var seerrUrlDraft by remember { mutableStateOf<String?>(null) }
     var seerrApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var tmdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
+    var omdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
@@ -152,6 +153,9 @@ fun SettingsScreen(
             }
             is SettingsEvent.ShowTmdbApiKeyDialog -> {
                 tmdbApiKeyDraft = event.currentValue.orEmpty()
+            }
+            is SettingsEvent.ShowOmdbApiKeyDialog -> {
+                omdbApiKeyDraft = event.currentValue.orEmpty()
             }
             is SettingsEvent.ShowSmartLanguageDialog -> {
                 smartLanguageDraft = event.settings
@@ -222,6 +226,21 @@ fun SettingsScreen(
                     tmdbApiKeyDraft = null
                 },
                 onDismissRequest = { tmdbApiKeyDraft = null },
+            )
+        }
+    }
+
+    omdbApiKeyDraft?.let { currentValue ->
+        SpatialDialog(onDismissRequest = { omdbApiKeyDraft = null }) {
+            SettingsTextInputDialog(
+                title = stringResource(SettingsR.string.settings_omdb_api_key),
+                description = stringResource(SettingsR.string.settings_omdb_api_key_summary),
+                initialValue = currentValue,
+                onUpdate = { value ->
+                    viewModel.saveOmdbApiKey(value)
+                    omdbApiKeyDraft = null
+                },
+                onDismissRequest = { omdbApiKeyDraft = null },
             )
         }
     }

@@ -177,7 +177,7 @@ private fun NetworkShareScreenLayout(
                                     style = MaterialTheme.typography.titleLarge,
                                 )
                             }
-                            items(state.movies, key = { it.networkVideoId }) { item ->
+                            items(state.movies, key = { "movie:${it.networkVideoId}" }) { item ->
                                 ItemCard(
                                     item = item,
                                     direction = Direction.VERTICAL,
@@ -195,7 +195,7 @@ private fun NetworkShareScreenLayout(
                                     style = MaterialTheme.typography.titleLarge,
                                 )
                             }
-                            items(episodes, key = { it.networkVideoId }) { item ->
+                            items(episodes, key = { "tv:${it.networkVideoId}" }) { item ->
                                 ItemCard(
                                     item = item,
                                     direction = Direction.VERTICAL,
@@ -212,7 +212,7 @@ private fun NetworkShareScreenLayout(
                                     style = MaterialTheme.typography.titleLarge,
                                 )
                             }
-                            items(state.uncategorized, key = { it.networkVideoId }) { item ->
+                            items(state.uncategorized, key = { "uncat:${it.networkVideoId}" }) { item ->
                                 ItemCard(
                                     item = item,
                                     direction = Direction.VERTICAL,

@@ -9,6 +9,8 @@ import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.share.DiskShare
+import dev.jdtech.jellyfin.network.SmbConnectionTarget
+import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -30,8 +32,9 @@ class SmbFileClient : NetworkFileClient {
         path: String,
         credentials: NetworkCredentials,
     ): List<NetworkFileEntry> = withContext(Dispatchers.IO) {
-        useShare(host, shareName, credentials) { share ->
-            val normalizedPath = path.trimStart('/').ifEmpty { "" }
+        val target = requireTarget(host, shareName)
+        useShare(target.host, target.shareName, credentials) { share ->
+            val normalizedPath = SmbPathNormalizer.normalizeRelativePath(path)
             share.list(normalizedPath).mapNotNull { info ->
                 val name = info.fileName
                 if (name == "." || name == "..") return@mapNotNull null
@@ -55,12 +58,13 @@ class SmbFileClient : NetworkFileClient {
         credentials: NetworkCredentials,
         offset: Long,
     ): InputStream = withContext(Dispatchers.IO) {
-        val connection = client.connect(host)
+        val target = requireTarget(host, shareName)
+        val connection = client.connect(target.host)
         val authContext = credentials.toAuthContext()
         val session = connection.authenticate(authContext)
-        val share = session.connectShare(shareName) as DiskShare
+        val share = session.connectShare(target.shareName) as DiskShare
 
-        val normalizedPath = filePath.trimStart('/')
+        val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
         val file = share.openFile(
             normalizedPath,
             setOf(AccessMask.GENERIC_READ),
@@ -72,7 +76,7 @@ class SmbFileClient : NetworkFileClient {
 
         val inputStream = file.inputStream
         if (offset > 0) {
-            inputStream.skip(offset)
+            skipFully(inputStream, offset)
         }
 
         // Wrap to close resources when stream is closed
@@ -96,8 +100,9 @@ class SmbFileClient : NetworkFileClient {
         filePath: String,
         credentials: NetworkCredentials,
     ): Long = withContext(Dispatchers.IO) {
-        useShare(host, shareName, credentials) { share ->
-            val normalizedPath = filePath.trimStart('/')
+        val target = requireTarget(host, shareName)
+        useShare(target.host, target.shareName, credentials) { share ->
+            val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
             val info = share.getFileInformation(normalizedPath)
             info.standardInformation.endOfFile
         }
@@ -109,7 +114,8 @@ class SmbFileClient : NetworkFileClient {
         credentials: NetworkCredentials,
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            useShare(host, shareName, credentials) { share ->
+            val target = requireTarget(host, shareName)
+            useShare(target.host, target.shareName, credentials) { share ->
                 share.list("").size >= 0
             }
             true
@@ -153,6 +159,29 @@ class SmbFileClient : NetworkFileClient {
                 password?.toCharArray() ?: charArrayOf(),
                 domain,
             )
+        }
+    }
+
+    private fun requireTarget(host: String, shareName: String): SmbConnectionTarget {
+        val target = SmbPathNormalizer.normalizeConnectionTarget(host, shareName)
+        require(target.host.isNotBlank()) { "SMB host is required." }
+        require(target.shareName.isNotBlank()) { "SMB share name is required." }
+        return target
+    }
+
+    private fun skipFully(inputStream: InputStream, offset: Long) {
+        var remaining = offset
+        while (remaining > 0) {
+            val skipped = inputStream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+
+            if (inputStream.read() == -1) {
+                break
+            }
+            remaining--
         }
     }
 }

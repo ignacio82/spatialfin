@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,23 +31,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
-import dev.jdtech.jellyfin.core.presentation.dummy.dummyShow
 import dev.jdtech.jellyfin.film.presentation.show.ShowAction
 import dev.jdtech.jellyfin.film.presentation.show.ShowState
 import dev.jdtech.jellyfin.film.presentation.show.ShowViewModel
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.presentation.film.components.ActorsRow
+import dev.jdtech.jellyfin.presentation.film.components.DetailMetadataRow
 import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.InfoText
 import dev.jdtech.jellyfin.presentation.film.components.ItemButtonsBar
@@ -58,7 +54,6 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
-import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.utils.getShowDateString
@@ -134,71 +129,58 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                     item = show,
                     scrollState = scrollState,
                     content = {
-                        Column(
+                        Row(
                             modifier =
                                 Modifier.align(Alignment.BottomStart)
-                                    .padding(start = paddingStart, end = paddingEnd)
+                                    .padding(start = paddingStart, end = paddingEnd),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
                         ) {
-                            Text(
-                                text = show.name,
-                                overflow = TextOverflow.Ellipsis,
-                                maxLines = 3,
-                                style = MaterialTheme.typography.headlineMedium,
+                            ItemPoster(
+                                item = show,
+                                direction = Direction.VERTICAL,
+                                modifier = Modifier.width(144.dp).clip(MaterialTheme.shapes.medium),
                             )
-                            show.originalTitle?.let { originalTitle ->
-                                if (originalTitle != show.name) {
+                            Column(
+                                modifier = Modifier.weight(1f).padding(bottom = MaterialTheme.spacings.extraSmall),
+                                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+                            ) {
+                                Text(
+                                    text = show.name,
+                                    overflow = TextOverflow.Ellipsis,
+                                    maxLines = 2,
+                                    style = MaterialTheme.typography.displaySmall,
+                                    color = Color.White,
+                                )
+                                show.originalTitle?.let { originalTitle ->
+                                    if (originalTitle != show.name) {
+                                        Text(
+                                            text = originalTitle,
+                                            overflow = TextOverflow.Ellipsis,
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = Color.White.copy(alpha = 0.86f),
+                                        )
+                                    }
+                                }
+                                DetailMetadataRow(items = buildShowHeroMetadata(show, state.seasons))
+                                if (state.displayRatings && show.ratings.isNotEmpty()) {
+                                    RatingsRow(ratings = show.ratings)
+                                }
+                                show.overview.takeIf { it.isNotBlank() }?.let { overview ->
                                     Text(
-                                        text = originalTitle,
+                                        text = overview,
                                         overflow = TextOverflow.Ellipsis,
-                                        maxLines = 1,
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 3,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = Color.White.copy(alpha = 0.9f),
                                     )
                                 }
-                            }
-                            if (state.displayRatings && show.ratings.isNotEmpty()) {
-                                Spacer(Modifier.height(MaterialTheme.spacings.small))
-                                RatingsRow(ratings = show.ratings)
                             }
                         }
                     },
                 )
                 Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
-                    Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        Text(
-                            text = getShowDateString(show),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text =
-                                stringResource(
-                                    CoreR.string.runtime_minutes,
-                                    show.runtimeTicks.div(600000000),
-                                ),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        show.officialRating?.let { officialRating ->
-                            Text(text = officialRating, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        show.communityRating?.let { communityRating ->
-                            Row(verticalAlignment = Alignment.Bottom) {
-                                Icon(
-                                    painter = painterResource(CoreR.drawable.ic_star),
-                                    contentDescription = null,
-                                    tint = Color("#F2C94C".toColorInt()),
-                                )
-                                Spacer(Modifier.width(MaterialTheme.spacings.extraSmall))
-                                Text(
-                                    text = "%.1f".format(communityRating),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    }
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
                     ItemButtonsBar(
                         item = show,
@@ -226,14 +208,33 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                         canPlay = state.seasons.isNotEmpty(),
                     )
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    OverviewText(text = show.overview, maxCollapsedLines = 3)
+                }
+
+                if (state.seasons.isNotEmpty()) {
+                    Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
+                        Text(
+                            text = stringResource(CoreR.string.seasons),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
+                    LazyRow(
+                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+                    ) {
+                        items(items = state.seasons, key = { item -> item.id }) { season ->
+                            ItemCard(
+                                item = season,
+                                direction = Direction.VERTICAL,
+                                displayRatings = state.displayRatings,
+                                onClick = { onAction(ShowAction.NavigateToItem(season)) },
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(MaterialTheme.spacings.medium))
-                    InfoText(
-                        genres = show.genres,
-                        director = state.director,
-                        writers = state.writers,
-                    )
-                    Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                }
+
+                Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
                     state.nextUp?.let { nextUp ->
                         Text(
                             text = stringResource(CoreR.string.next_up),
@@ -265,29 +266,13 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                         }
                         Spacer(Modifier.height(MaterialTheme.spacings.medium))
                     }
-                }
-
-                if (state.seasons.isNotEmpty()) {
-                    Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
-                        Text(
-                            text = stringResource(CoreR.string.seasons),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    }
-                    LazyRow(
-                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
-                    ) {
-                        items(items = state.seasons, key = { item -> item.id }) { season ->
-                            ItemCard(
-                                item = season,
-                                direction = Direction.VERTICAL,
-                                displayRatings = state.displayRatings,
-                                onClick = { onAction(ShowAction.NavigateToItem(season)) },
-                            )
-                        }
-                    }
+                    OverviewText(text = show.overview, maxCollapsedLines = 3)
+                    Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                    InfoText(
+                        genres = show.genres,
+                        director = state.director,
+                        writers = state.writers,
+                    )
                     Spacer(Modifier.height(MaterialTheme.spacings.medium))
                 }
 
@@ -312,3 +297,20 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
         )
     }
 }
+
+private fun buildShowHeroMetadata(
+    show: SpatialFinShow,
+    seasons: List<dev.jdtech.jellyfin.models.SpatialFinSeason>,
+): List<String> =
+    buildList {
+        getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add)
+        if (show.runtimeTicks > 0L) {
+            add("${show.runtimeTicks.div(600000000)} min")
+        }
+        if (seasons.isNotEmpty()) {
+            add("${seasons.size} seasons")
+        }
+        show.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
+        show.communityRating?.let { add("${"%.1f".format(it)}/10") }
+        show.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
+    }

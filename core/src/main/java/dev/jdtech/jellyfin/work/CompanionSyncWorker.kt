@@ -12,6 +12,8 @@ import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.models.NetworkShareDto
+import dev.jdtech.jellyfin.network.SmbPathNormalizer
+import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
@@ -174,10 +176,25 @@ class CompanionSyncWorker @AssistedInject constructor(
         // Apply Network Shares
         Timber.d("COMPANION SYNC: Applying ${config.networkShares.size} network shares")
         config.networkShares.forEach { s ->
+            val target: SmbConnectionTarget? = if (s.protocol.equals("smb", ignoreCase = true)) {
+                SmbPathNormalizer.normalizeConnectionTarget(s.host, s.shareName)
+            } else {
+                null
+            }
+            val normalizedHost = target?.host ?: s.host
+            val normalizedShareName = target?.shareName ?: s.shareName
+
             val share = NetworkShareDto(
-                id = s.id, protocol = s.protocol, host = s.host, shareName = s.shareName,
-                path = s.path ?: "", displayName = s.displayName, username = s.username,
-                password = s.password, domain = s.domain, addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
+                id = s.id,
+                protocol = s.protocol,
+                host = normalizedHost,
+                shareName = normalizedShareName,
+                path = s.path ?: "$normalizedHost/$normalizedShareName",
+                displayName = s.displayName,
+                username = s.username,
+                password = s.password,
+                domain = s.domain,
+                addedAtEpochMs = s.addedAtEpochMs ?: System.currentTimeMillis(),
                 lastScannedAtEpochMs = null
             )
             serverDatabase.insertNetworkShare(share)

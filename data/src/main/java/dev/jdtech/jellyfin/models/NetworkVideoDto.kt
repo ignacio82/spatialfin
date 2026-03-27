@@ -37,4 +37,9 @@ data class NetworkVideoDto(
     val seriesGroupKey: String?,
     val lastModifiedEpochMs: Long?,
     val metadataFetchedAtEpochMs: Long?,
+    val genres: String?,    // comma-separated genre names from TMDB/OMDb
+    val director: String?,  // director name from TMDB credits / OMDb
+    val writers: String?,   // comma-separated writer names from TMDB credits / OMDb
+    val imdbId: String?,    // IMDb ID from OMDb
+    val imdbRating: String?, // IMDb rating from OMDb (e.g. "7.4")
 )

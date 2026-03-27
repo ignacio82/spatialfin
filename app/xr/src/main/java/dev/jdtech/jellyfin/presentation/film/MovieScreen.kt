@@ -19,28 +19,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
-import androidx.core.graphics.toColorInt
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
-import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
@@ -50,11 +45,15 @@ import dev.jdtech.jellyfin.core.presentation.dummy.dummyVideoMetadata
 import dev.jdtech.jellyfin.film.presentation.movie.MovieAction
 import dev.jdtech.jellyfin.film.presentation.movie.MovieState
 import dev.jdtech.jellyfin.film.presentation.movie.MovieViewModel
+import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.presentation.film.components.ActorsRow
+import dev.jdtech.jellyfin.presentation.film.components.DetailMetadataRow
+import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ExtraInfoText
 import dev.jdtech.jellyfin.presentation.film.components.InfoText
 import dev.jdtech.jellyfin.presentation.film.components.ItemButtonsBar
 import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
+import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
@@ -185,104 +184,59 @@ private fun MovieScreenLayout(
                     item = movie,
                     scrollState = scrollState,
                     content = {
-                        Column(
+                        Row(
                             modifier =
                                 Modifier.align(Alignment.BottomStart)
-                                    .padding(start = paddingStart, end = paddingEnd)
+                                    .padding(start = paddingStart, end = paddingEnd),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
                         ) {
-                            Text(
-                                text = movie.name,
-                                overflow = TextOverflow.Ellipsis,
-                                maxLines = 3,
-                                style = MaterialTheme.typography.displaySmall,
+                            ItemPoster(
+                                item = movie,
+                                direction = Direction.VERTICAL,
+                                modifier = Modifier.width(150.dp),
                             )
-                            movie.originalTitle?.let { originalTitle ->
-                                if (originalTitle != movie.name) {
+                            Column(
+                                modifier = Modifier.weight(1f).padding(bottom = MaterialTheme.spacings.extraSmall),
+                                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
+                            ) {
+                                Text(
+                                    text = movie.name,
+                                    overflow = TextOverflow.Ellipsis,
+                                    maxLines = 2,
+                                    style = MaterialTheme.typography.displaySmall,
+                                    color = Color.White,
+                                )
+                                movie.originalTitle?.let { originalTitle ->
+                                    if (originalTitle != movie.name) {
+                                        Text(
+                                            text = originalTitle,
+                                            overflow = TextOverflow.Ellipsis,
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = Color.White.copy(alpha = 0.86f),
+                                        )
+                                    }
+                                }
+                                DetailMetadataRow(items = buildMovieHeroMetadata(movie))
+                                if (state.displayRatings && movie.ratings.isNotEmpty()) {
+                                    RatingsRow(ratings = movie.ratings)
+                                }
+                                movie.overview.takeIf { it.isNotBlank() }?.let { overview ->
                                     Text(
-                                        text = originalTitle,
+                                        text = overview,
                                         overflow = TextOverflow.Ellipsis,
-                                        maxLines = 1,
-                                        style = MaterialTheme.typography.titleLarge,
+                                        maxLines = 3,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = Color.White.copy(alpha = 0.9f),
                                     )
                                 }
-                            }
-                            if (state.displayRatings && movie.ratings.isNotEmpty()) {
-                                Spacer(Modifier.height(MaterialTheme.spacings.small))
-                                RatingsRow(ratings = movie.ratings)
                             }
                         }
                     },
                 )
                 Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        movie.premiereDate?.let { premiereDate ->
-                            Text(
-                                text = premiereDate.year.toString(),
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                        }
-                        Text(
-                            text =
-                                stringResource(
-                                    CoreR.string.runtime_minutes,
-                                    movie.runtimeTicks.div(600000000),
-                                ),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        movie.officialRating?.let { officialRating ->
-                            Text(text = officialRating, style = MaterialTheme.typography.titleMedium)
-                        }
-                        movie.communityRating?.let { communityRating ->
-                            Row(verticalAlignment = Alignment.Bottom) {
-                                Icon(
-                                    painter = painterResource(CoreR.drawable.ic_star),
-                                    contentDescription = null,
-                                    tint = Color("#F2C94C".toColorInt()),
-                                )
-                                Spacer(Modifier.width(MaterialTheme.spacings.extraSmall))
-                                Text(
-                                    text = "%.1f".format(communityRating),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    state.videoMetadata?.let { videoMetadata ->
-                        VideoMetadataBar(videoMetadata)
-                        Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    }
-
-                    if (state.availableVersions.size > 1) {
-                        Text(
-                            text = "Version",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(Modifier.height(MaterialTheme.spacings.extraSmall))
-                        LazyRow(
-                            horizontalArrangement =
-                                Arrangement.spacedBy(MaterialTheme.spacings.small),
-                        ) {
-                            items(state.availableVersions, key = { it.id }) { version ->
-                                FilterChip(
-                                    selected = version.id == movie.id,
-                                    onClick = {
-                                        if (version.id != movie.id) {
-                                            onAction(MovieAction.SelectVersion(version.id))
-                                        }
-                                    },
-                                    label = { Text(version.versionChipLabel()) },
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(MaterialTheme.spacings.small))
-                    }
-
                     ItemButtonsBar(
                         item = movie,
                         downloaderState = downloaderState,
@@ -341,6 +295,34 @@ private fun MovieScreenLayout(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    if (state.availableVersions.size > 1) {
+                        Text(
+                            text = "Version",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.extraSmall))
+                        LazyRow(
+                            horizontalArrangement =
+                                Arrangement.spacedBy(MaterialTheme.spacings.small),
+                        ) {
+                            items(state.availableVersions, key = { it.id }) { version ->
+                                FilterChip(
+                                    selected = version.id == movie.id,
+                                    onClick = {
+                                        if (version.id != movie.id) {
+                                            onAction(MovieAction.SelectVersion(version.id))
+                                        }
+                                    },
+                                    label = { Text(version.versionChipLabel()) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
+                    state.videoMetadata?.let { videoMetadata ->
+                        VideoMetadataBar(videoMetadata)
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
                     if (state.displayExtraInfo && state.videoMetadata != null) {
                         ExtraInfoText(videoMetadata = state.videoMetadata!!)
                         Spacer(Modifier.height(MaterialTheme.spacings.medium))
@@ -375,6 +357,17 @@ private fun MovieScreenLayout(
         )
     }
 }
+
+private fun buildMovieHeroMetadata(movie: SpatialFinMovie): List<String> =
+    buildList {
+        movie.premiereDate?.year?.let { add(it.toString()) }
+        if (movie.runtimeTicks > 0L) {
+            add("${movie.runtimeTicks.div(600000000)} min")
+        }
+        movie.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
+        movie.communityRating?.let { add("${"%.1f".format(it)}/10") }
+        addAll(movie.genres.take(2))
+    }
 
 @PreviewScreenSizes
 @Composable

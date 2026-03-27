@@ -10,7 +10,9 @@ android {
     compileSdk = Versions.COMPILE_SDK
     buildToolsVersion = Versions.BUILD_TOOLS
 
-    defaultConfig { minSdk = Versions.MIN_SDK }
+    defaultConfig {
+        minSdk = Versions.MIN_SDK
+    }
 
     buildTypes {
         named("release") { isMinifyEnabled = false }
@@ -26,11 +28,7 @@ android {
         compose = true
     }
 
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
-        }
-    }
+
 }
 
 dependencies {

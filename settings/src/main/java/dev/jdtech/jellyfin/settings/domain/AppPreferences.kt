@@ -142,6 +142,9 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val tmdbApiKey = Preference<String?>("pref_tmdb_api_key", null)
     val tmdbAutoMatch = Preference("pref_tmdb_auto_match", true)
 
+    // OMDb (IMDb-backed)
+    val omdbApiKey = Preference<String?>("pref_omdb_api_key", null)
+
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
     inline fun <reified T> getValue(preference: Preference<T>): T {

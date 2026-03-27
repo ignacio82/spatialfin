@@ -110,7 +110,9 @@ SpatialFin can browse and stream media directly from SMB and NFS shares on your 
 
 - A dedicated `Network` tab lists saved shares and continues-watching items.
 - **Autodiscovery** uses mDNS to find SMB (`_smb._tcp.local.`) and NFS (`_nfs._tcp.local.`) services automatically.
-- Add shares manually or tap a discovered share to pre-fill host, share name, and protocol.
+- Add shares manually or tap a discovered share to pre-fill connection details.
+- SMB discovery pre-fills the host and protocol; the share name still needs to be entered because mDNS advertises the SMB service, not individual shares.
+- NFS discovery pre-fills the host, export path, and protocol.
 - SMB supports guest and authenticated access (username, password, domain). NFS uses standard v4.1 mounts.
 - **Recursive scanning** walks share directories and indexes video files (mkv, mp4, avi, m4v, ts, wmv, mov).
 - **TMDB metadata enrichment** parses filenames for titles, years, and season/episode numbers, then matches against TMDB to fetch posters, backdrops, descriptions, and ratings. Provide a TMDB API key in Settings → Network to enable this.

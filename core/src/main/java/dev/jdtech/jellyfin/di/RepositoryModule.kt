@@ -17,6 +17,7 @@ import dev.jdtech.jellyfin.repository.NetworkMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepositoryImpl
 import dev.jdtech.jellyfin.repository.SmartJellyfinRepository
 import dev.jdtech.jellyfin.api.TmdbApi
+import dev.jdtech.jellyfin.api.OmdbApi
 import dev.jdtech.jellyfin.network.MetadataMatchService
 import dev.jdtech.jellyfin.network.NetworkDiscovery
 import dev.jdtech.jellyfin.network.NetworkFileClientFactory
@@ -123,10 +124,17 @@ object RepositoryModule {
 
     @Singleton
     @Provides
+    fun provideOmdbApi(
+        appPreferences: AppPreferences,
+    ): OmdbApi = OmdbApi(appPreferences)
+
+    @Singleton
+    @Provides
     fun provideMetadataMatchService(
         tmdbApi: TmdbApi,
+        omdbApi: OmdbApi,
         serverDatabase: ServerDatabaseDao,
-    ): MetadataMatchService = MetadataMatchService(tmdbApi, serverDatabase)
+    ): MetadataMatchService = MetadataMatchService(tmdbApi, omdbApi, serverDatabase)
 
     @Singleton
     @Provides
