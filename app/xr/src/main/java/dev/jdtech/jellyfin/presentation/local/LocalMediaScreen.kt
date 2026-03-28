@@ -61,12 +61,7 @@ fun LocalMediaScreen(
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, localVideoPermission()) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
+    var hasPermission by remember { mutableStateOf(hasLocalVideoAccess(context)) }
     val needsLanguageSetup =
         appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
     val hasCloudApiKey =
@@ -81,9 +76,9 @@ fun LocalMediaScreen(
     }
 
     val permissionLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            hasPermission = granted
-            if (granted) {
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            hasPermission = hasLocalVideoAccess(context)
+            if (hasPermission) {
                 viewModel.loadVideos()
             }
         }
@@ -110,7 +105,7 @@ fun LocalMediaScreen(
         needsLanguageSetup = needsLanguageSetup,
         needsAiSetup = localAiAvailable == false && !hasCloudApiKey,
         state = state,
-        onGrantPermission = { permissionLauncher.launch(localVideoPermission()) },
+        onGrantPermission = { permissionLauncher.launch(localVideoPermissions()) },
         onItemClick = onItemClick,
         onManageServersClick = onManageServersClick,
         onSettingsClick = onSettingsClick,

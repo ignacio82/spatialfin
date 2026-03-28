@@ -147,13 +147,20 @@ class LocalMediaRepositoryImpl(
     }
 
     private fun hasReadPermission(): Boolean {
-        val permission =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                android.Manifest.permission.READ_MEDIA_VIDEO
-            } else {
-                android.Manifest.permission.READ_EXTERNAL_STORAGE
-            }
-        return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+                context.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO) ==
+                    PackageManager.PERMISSION_GRANTED ||
+                    context.checkSelfPermission(
+                        android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                    ) == PackageManager.PERMISSION_GRANTED
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                context.checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO) ==
+                    PackageManager.PERMISSION_GRANTED
+            else ->
+                context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                    PackageManager.PERMISSION_GRANTED
+        }
     }
 
     private data class ParsedMetadata(

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme used by the unified activity window -->
+    <style name="Theme.SpatialFin" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <!-- Referenced by TV composable (TvTheme) -->
+    <style name="Theme.SpatialFin.Tv" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <!-- Referenced by Beam composable (BeamTheme) -->
+    <style name="Theme.SpatialFin.Beam" parent="Theme.AppCompat.DayNight.NoActionBar" />
+</resources>

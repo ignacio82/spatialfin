@@ -5,6 +5,7 @@ rootProject.name = "SpatialFin"
 include(":app:xr")
 include(":app:beam")
 include(":app:tv")
+include(":app:unified")
 include(":core")
 include(":data")
 include(":player:core")
