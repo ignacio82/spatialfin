@@ -21,11 +21,7 @@ android {
         compose = true
     }
 
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("../xr/src/main/jniLibs")
-        }
-    }
+    // jniLibs come transitively from player:xr (libass .so files)
 
     compileOptions {
         sourceCompatibility = Versions.JAVA
@@ -34,6 +30,9 @@ android {
 }
 
 dependencies {
+    // player:xr provides LibassRenderer, jniLibs, and (for app:unified) the XR voice classes
+    api(projects.player.xr)
+
     implementation(libs.jellyfin.core)
     implementation(projects.core)
     implementation(projects.player.local)

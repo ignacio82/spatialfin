@@ -360,6 +360,11 @@ class PlaylistManager @Inject internal constructor(
                 is SpatialFinShow -> productionYear
                 else -> null
             },
+            officialRating = when (this) {
+                is SpatialFinMovie -> officialRating
+                is SpatialFinShow -> officialRating
+                else -> null
+            },
             backdropImageUri = when (this) {
                 is SpatialFinEpisode -> (images.backdrop ?: images.primary)?.toString()
                 is SpatialFinMovie -> (images.backdrop ?: images.primary)?.toString()

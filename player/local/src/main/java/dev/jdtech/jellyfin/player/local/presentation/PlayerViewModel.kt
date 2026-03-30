@@ -167,6 +167,7 @@ constructor(
         val currentSeasonNumber: Int? = null,
         val currentEpisodeNumber: Int? = null,
         val currentProductionYear: Int? = null,
+        val currentOfficialRating: String? = null,
         val storySoFarContext: String? = null,
         /** Next episode in the playlist, or null for movies / last episode of a season. */
         val nextEpisode: PlayerItem?,
@@ -898,6 +899,7 @@ constructor(
                                 currentSeasonNumber = item.parentIndexNumber,
                                 currentEpisodeNumber = item.indexNumber,
                                 currentProductionYear = item.productionYear,
+                                currentOfficialRating = item.officialRating,
                                 storySoFarContext = playlistManager.getStorySoFarContext(),
                                 fileLoaded = false,
                             )

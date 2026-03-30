@@ -15,3 +15,9 @@ data class DownloadRequest(
     val subtitleStreamIndex: Int? = null,
     val subtitleDeliveryMethod: SubtitleDeliveryMethod? = null,
 )
+
+/** Settings applied uniformly when downloading multiple episodes at once. */
+data class BulkDownloadSettings(
+    val mode: DownloadMode = DownloadMode.ORIGINAL,
+    val videoBitrate: Int? = null,
+)

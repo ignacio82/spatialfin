@@ -272,7 +272,7 @@ Note: `player/xr/src/main/jniLibs/` contains intentionally checked-in prebuilt n
 ## Building
 
 ```bash
-./gradlew :app:xr:assembleLibreDebug
+./gradlew :app:unified:assembleLibreDebug
 ```
 
 ### Native Subtitle Library
@@ -288,7 +288,7 @@ The `build_native_work/` directory is not required in Git. If you need to rebuil
 The debug APK is generated at:
 
 ```text
-app/xr/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
+app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
 ```
 
 ## License

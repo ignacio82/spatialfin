@@ -461,8 +461,12 @@ private class TvCompanionPairingServer(
                     writeResponse(client, 200, json.encodeToString(info))
                 }
                 method == "POST" && path == "/api/v1/tv-pairing/config" -> {
-                    val suppliedToken = headers["x-pairing-token"]
-                    if (suppliedToken != token || System.currentTimeMillis() > expiresAtEpochMs) {
+                    val suppliedToken = headers["x-pairing-token"]?.trim().orEmpty()
+                    val pairingExpired = System.currentTimeMillis() > expiresAtEpochMs
+                    val tokenAccepted =
+                        suppliedToken == token ||
+                            suppliedToken.equals(manualCode, ignoreCase = true)
+                    if (pairingExpired || !tokenAccepted) {
                         writeResponse(client, 401, """{"error":"invalid_pairing_token"}""")
                         return
                     }

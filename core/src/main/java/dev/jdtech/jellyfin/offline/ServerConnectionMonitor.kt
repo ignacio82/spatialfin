@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.work.MetadataRefreshWorker
 import dev.jdtech.jellyfin.work.SyncWorker
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -34,9 +35,13 @@ import androidx.work.WorkManager
 data class ServerConnectionState(
     val manualOfflineMode: Boolean = false,
     val serverAccessible: Boolean = true,
+    val offlineTransitionStartedAtMs: Long? = null,
 ) {
+    val isDegradedMode: Boolean
+        get() = !manualOfflineMode && !serverAccessible && offlineTransitionStartedAtMs != null
+
     val effectiveOfflineMode: Boolean
-        get() = manualOfflineMode || !serverAccessible
+        get() = manualOfflineMode || (!serverAccessible && offlineTransitionStartedAtMs == null)
 }
 
 @Singleton
@@ -50,7 +55,9 @@ constructor(
 ) {
     companion object {
         private const val ACCESSIBLE_REFRESH_MS = 120_000L
+        private const val DEGRADED_REFRESH_MS = 5_000L
         private const val INACCESSIBLE_REFRESH_MS = 20_000L
+        private const val OFFLINE_GRACE_MS = 15_000L
         private const val PROBE_FAILURE_LOG_INTERVAL_MS = 60_000L
     }
 
@@ -108,7 +115,13 @@ constructor(
         scope.launch {
             refreshServerAccessibility()
             while (isActive) {
-                delay(if (state.value.serverAccessible) ACCESSIBLE_REFRESH_MS else INACCESSIBLE_REFRESH_MS)
+                delay(
+                    when {
+                        state.value.isDegradedMode -> DEGRADED_REFRESH_MS
+                        state.value.serverAccessible -> ACCESSIBLE_REFRESH_MS
+                        else -> INACCESSIBLE_REFRESH_MS
+                    }
+                )
                 refreshServerAccessibility()
             }
         }
@@ -138,26 +151,29 @@ constructor(
         val manualOffline = appPreferences.getValue(appPreferences.offlineMode)
         val serverId = appPreferences.getValue(appPreferences.currentServer)
         if (serverId == null) {
-            _state.update { it.copy(manualOfflineMode = manualOffline, serverAccessible = true) }
+            _state.update {
+                it.copy(
+                    manualOfflineMode = manualOffline,
+                    serverAccessible = true,
+                    offlineTransitionStartedAtMs = null,
+                )
+            }
             return
         }
 
         val address = database.getServerCurrentAddress(serverId)?.address
         if (address.isNullOrBlank()) {
-            _state.update { it.copy(manualOfflineMode = manualOffline, serverAccessible = false) }
+            updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
 
         if (!hasActiveNetwork()) {
-            _state.update { it.copy(manualOfflineMode = manualOffline, serverAccessible = false) }
+            updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
 
         val accessible = probeServer(address)
-        _state.update {
-            it.copy(manualOfflineMode = manualOffline, serverAccessible = accessible)
-        }
-        if (accessible) enqueueSync()
+        updateAccessibility(accessible = accessible, manualOfflineMode = manualOffline)
     }
 
     private fun hasActiveNetwork(): Boolean {
@@ -196,19 +212,52 @@ constructor(
         }
     }
 
-    private fun updateAccessibility(accessible: Boolean) {
-        val wasAccessible = state.value.serverAccessible
-        _state.update { it.copy(serverAccessible = accessible) }
-        if (!wasAccessible && accessible) enqueueSync()
+    private fun updateAccessibility(
+        accessible: Boolean,
+        manualOfflineMode: Boolean = appPreferences.getValue(appPreferences.offlineMode),
+    ) {
+        val current = state.value
+        if (accessible) {
+            val wasUnavailable = !current.serverAccessible || current.offlineTransitionStartedAtMs != null
+            _state.update {
+                it.copy(
+                    manualOfflineMode = manualOfflineMode,
+                    serverAccessible = true,
+                    offlineTransitionStartedAtMs = null,
+                )
+            }
+            if (wasUnavailable) enqueueSync()
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val offlineTransitionStartedAtMs =
+            when {
+                manualOfflineMode -> null
+                current.serverAccessible -> now
+                current.offlineTransitionStartedAtMs == null -> null
+                now - current.offlineTransitionStartedAtMs >= OFFLINE_GRACE_MS -> null
+                else -> current.offlineTransitionStartedAtMs
+            }
+        _state.update {
+            it.copy(
+                manualOfflineMode = manualOfflineMode,
+                serverAccessible = false,
+                offlineTransitionStartedAtMs = offlineTransitionStartedAtMs,
+            )
+        }
     }
 
     private fun enqueueSync() {
-        val request =
-            OneTimeWorkRequestBuilder<SyncWorker>()
-                .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-                )
-                .build()
-        workManager.enqueueUniqueWork("sync-on-reconnect", ExistingWorkPolicy.REPLACE, request)
+        val networkConstraints =
+            Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(networkConstraints)
+            .build()
+        workManager.enqueueUniqueWork("sync-on-reconnect", ExistingWorkPolicy.REPLACE, syncRequest)
+        val metadataRequest = OneTimeWorkRequestBuilder<MetadataRefreshWorker>()
+            .setConstraints(networkConstraints)
+            .build()
+        workManager.enqueueUniqueWork("metadata-refresh-on-reconnect", ExistingWorkPolicy.REPLACE, metadataRequest)
     }
 }

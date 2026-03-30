@@ -488,6 +488,8 @@ private fun BeamPlayerScreen(
     }
     val voiceState by voiceService.state.collectAsStateWithLifecycle()
     val partialTranscript by voiceService.partialTranscript.collectAsStateWithLifecycle()
+    val conversationHistory = remember { androidx.compose.runtime.mutableStateListOf<Pair<String, String>>() }
+    LaunchedEffect(uiState.currentItemTitle) { conversationHistory.clear() }
     val latestContext by rememberUpdatedState(context)
     val latestSyncPlayState by rememberUpdatedState(syncPlayState)
     val latestControlsVisible by rememberUpdatedState(controlsVisible)
@@ -714,12 +716,19 @@ private fun BeamPlayerScreen(
                                         val feedback =
                                             when (val action = result.action) {
                                                 is XrPlayerAction.ChatQuery -> {
-                                                    chatEngine.query(
+                                                    val reply = chatEngine.query(
                                                         question = action.query,
                                                         playerState = snapshot,
                                                         verbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity),
                                                         spoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy),
+                                                        conversationHistory = conversationHistory.toList(),
+                                                        onGetSuggestions = { viewModel.repository.getSuggestions() },
                                                     )
+                                                    if (reply != null) {
+                                                        conversationHistory.add(action.query to reply)
+                                                        if (conversationHistory.size > 6) conversationHistory.removeAt(0)
+                                                    }
+                                                    reply
                                                 }
                                                 else -> sessionController.dispatch(action)
                                             }
@@ -997,6 +1006,14 @@ private fun BeamControllerOverlay(
                     .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            uiState.currentSegment?.let { segment ->
+                Button(
+                    onClick = { viewModel.skipSegment(segment) },
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(stringResource(uiState.currentSkipButtonStringRes))
+                }
+            }
             uiState.nextEpisode?.let { nextEpisode ->
                 Button(
                     onClick = { onPlayNext(nextEpisode) },
@@ -1148,7 +1165,11 @@ private fun buildVoiceSnapshot(
         currentChapterName = currentChapterLabel(uiState.currentChapters, player.currentPosition),
         nextEpisodeTitle = uiState.nextEpisode?.name,
         currentGenres = uiState.currentGenres,
-        castNames = uiState.currentPeople.map { it.name },
+        castNames = uiState.currentPeople.filter { it.type.equals("Actor", ignoreCase = true) }.map { it.name },
+        directors = uiState.currentPeople.filter { it.type.equals("Director", ignoreCase = true) }.map { it.name },
+        writers = uiState.currentPeople.filter { it.type.equals("Writer", ignoreCase = true) }.map { it.name },
+        productionYear = uiState.currentProductionYear,
+        officialRating = uiState.currentOfficialRating,
         audioTrackNames = audioNames,
         subtitleTrackNames = subtitleNames,
         chapterNames = uiState.currentChapters.mapNotNull { it.name },

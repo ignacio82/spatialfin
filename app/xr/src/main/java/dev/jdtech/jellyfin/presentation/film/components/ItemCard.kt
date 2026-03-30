@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ElevatedCard
@@ -88,33 +89,38 @@ fun ItemCard(
                 }
             }
         }
-        if (displayRatings && item.ratings.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
-            RatingsRow(ratings = item.ratings.take(2))
-        }
-        Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
-        Text(
-            text = if (item is SpatialFinEpisode) item.seriesName else item.name,
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = if (item is SpatialFinEpisode) 1 else 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (item is SpatialFinEpisode) {
+        Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.extraSmall)) {
+            if (displayRatings) {
+                Box(modifier = Modifier.heightIn(min = 24.dp), contentAlignment = Alignment.CenterStart) {
+                    if (item.ratings.isNotEmpty()) {
+                        RatingsRow(ratings = item.ratings.take(2))
+                    }
+                }
+            }
             Text(
-                text =
-                    stringResource(
-                        id = R.string.episode_name_extended,
-                        item.parentIndexNumber,
-                        item.indexNumber,
-                        item.name,
-                    ),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                maxLines = 1,
+                text = if (item is SpatialFinEpisode) item.seriesName else item.name,
+                style = MaterialTheme.typography.titleMedium,
+                minLines = if (item is SpatialFinEpisode) 1 else 2,
+                maxLines = if (item is SpatialFinEpisode) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (item is SpatialFinEpisode) {
+                Text(
+                    text =
+                        stringResource(
+                            id = R.string.episode_name_extended,
+                            item.parentIndexNumber,
+                            item.indexNumber,
+                            item.name,
+                        ),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
         }
-        Spacer(Modifier.height(6.dp))
     }
 }
 

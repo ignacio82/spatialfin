@@ -149,8 +149,9 @@ constructor(
                 }
 
                 val responseBody = httpResponse.body ?: run {
-                    markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Empty response body")
-                    return@withContext Result.failure()
+                    val msg = "Empty response body"
+                    markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, msg)
+                    return@withContext if (runAttemptCount < MAX_AUTO_RETRIES) Result.retry() else Result.failure()
                 }
 
                 val responseContentLength = responseBody.contentLength().takeIf { it >= 0L }
@@ -241,9 +242,9 @@ constructor(
                         }
                     }
                 } catch (e: IOException) {
-                    Timber.e(e, "Resumable worker file I/O failure taskId=%s temp=%s final=%s", taskId, task.tempPath, task.finalPath)
+                    Timber.e(e, "Resumable worker file I/O failure taskId=%s temp=%s final=%s attempt=%s", taskId, task.tempPath, task.finalPath, runAttemptCount)
                     markFailed(taskId, existingBytes, totalBytes, eTag, lastModified, "File I/O failure: ${e.message}")
-                    return@withContext Result.failure()
+                    return@withContext if (runAttemptCount < MAX_AUTO_RETRIES) Result.retry() else Result.failure()
                 } catch (e: SecurityException) {
                     Timber.e(e, "Resumable worker storage security failure taskId=%s temp=%s final=%s", taskId, task.tempPath, task.finalPath)
                     markFailed(taskId, existingBytes, totalBytes, eTag, lastModified, "Storage access denied: ${e.message}")
@@ -287,6 +288,23 @@ constructor(
             progress = 100,
             errorMessage = null,
         )
+
+        if (task.kind == DownloadTaskKind.PRIMARY) {
+            showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
+        }
+    }
+
+    private fun showDownloadCompleteNotification(itemTitle: String?) {
+        ensureNotificationChannel()
+        val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val title = itemTitle?.takeIf { it.isNotBlank() } ?: "Download complete"
+        val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(CoreR.drawable.ic_download)
+            .setContentTitle(title)
+            .setContentText("Download finished successfully")
+            .setAutoCancel(true)
+            .build()
+        notificationManager.notify(("complete:$itemTitle").hashCode(), notification)
     }
 
     private fun markFailed(
@@ -343,11 +361,18 @@ constructor(
 
     private fun createForegroundInfo(progress: Int, taskId: String): ForegroundInfo {
         ensureNotificationChannel()
+        val title = params.inputData.getString(KEY_ITEM_TITLE)?.takeIf { it.isNotBlank() }
+            ?: "Downloading media"
+        val text = when {
+            progress in 1..99 -> "$progress%"
+            runAttemptCount > 0 -> "Retrying… (attempt ${runAttemptCount + 1})"
+            else -> "Preparing download"
+        }
         val notification =
             NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(CoreR.drawable.ic_download)
-                .setContentTitle("Downloading media")
-                .setContentText(if (progress in 1..99) "$progress%" else "Preparing download")
+                .setContentTitle(title)
+                .setContentText(text)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setProgress(100, progress.coerceIn(0, 100), progress <= 0)
@@ -391,8 +416,10 @@ constructor(
 
     companion object {
         const val KEY_TASK_ID = "task_id"
+        const val KEY_ITEM_TITLE = "item_title"
         private const val NOTIFICATION_CHANNEL_ID = "resumable_downloads"
         private const val PROGRESS_UPDATE_BYTES = 512L * 1024L
+        private const val MAX_AUTO_RETRIES = 5
 
         fun uniqueWorkName(taskId: String): String = "resumable-download:$taskId"
     }

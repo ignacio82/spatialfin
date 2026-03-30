@@ -55,7 +55,7 @@ import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
-import dev.jdtech.jellyfin.presentation.local.localVideoPermission
+import dev.jdtech.jellyfin.presentation.local.localVideoPermissions
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -410,6 +410,7 @@ class MainActivity : AppCompatActivity() {
                                                     onboardingCompleted = onboardingCompleted,
                                                     appPreferences = appPreferences,
                                                     initialSearchQuery = voiceSearchQuery,
+                                                    onReconnect = { viewModel.reconnect() },
                                                 )
 
                                                 VoiceControlOverlay(
@@ -432,6 +433,7 @@ class MainActivity : AppCompatActivity() {
                                 onboardingCompleted = onboardingCompleted,
                                 appPreferences = appPreferences,
                                 initialSearchQuery = initialSearchQueryExtra,
+                                onReconnect = { viewModel.reconnect() },
                             )
                         }
                     }
@@ -448,13 +450,14 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, false)) return
 
         val missingPermissions =
-            listOf(
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.CAMERA,
-                HAND_TRACKING_PERMISSION,
-                localVideoPermission(),
-            ).distinct().filter { permission ->
-                ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
+            buildList {
+                add(Manifest.permission.RECORD_AUDIO)
+                add(Manifest.permission.CAMERA)
+                add(HAND_TRACKING_PERMISSION)
+                addAll(localVideoPermissions())
+            }.distinct().filter { permission ->
+                ContextCompat.checkSelfPermission(this@MainActivity, permission) !=
+                    PackageManager.PERMISSION_GRANTED
             }
 
         prefs.edit().putBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, true).apply()

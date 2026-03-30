@@ -6,7 +6,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import dev.jdtech.jellyfin.repository.JellyfinRepository
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -22,68 +21,71 @@ class ImagesDownloaderWorker
 constructor(
     @Assisted private val appContext: Context,
     @Assisted private val params: WorkerParameters,
-    private val repository: JellyfinRepository,
 ) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result {
-        val itemId = UUID.fromString(params.inputData.getString(KEY_ITEM_ID))
-        downloadImages(itemId = itemId)
-        return Result.success()
-    }
-
-    private suspend fun downloadImages(itemId: UUID) {
+    override suspend fun doWork(): Result =
         withContext(Dispatchers.IO) {
-            val item = repository.getItem(itemId) ?: return@withContext
+            val itemId = params.inputData.getString(KEY_ITEM_ID) ?: return@withContext Result.failure()
 
-            val basePath = "images/${item.id}"
+            val urlsByName = listOf(
+                KEY_URL_PRIMARY to "primary",
+                KEY_URL_BACKDROP to "backdrop",
+                KEY_URL_LOGO to "logo",
+            ).mapNotNull { (key, name) ->
+                params.inputData.getString(key)?.let { name to it }
+            }
 
+            if (urlsByName.isEmpty()) {
+                Timber.d("ImagesDownloaderWorker: no URLs for itemId=%s, skipping", itemId)
+                return@withContext Result.success()
+            }
+
+            val basePath = "images/$itemId"
             val baseDir = File(appContext.filesDir, basePath)
-
-            // Do not download images if they are already present
-            if (baseDir.exists()) return@withContext
-
-            val client = OkHttpClient()
-            val uris = mapOf("primary" to item.images.primary, "backdrop" to item.images.backdrop)
-
             try {
                 baseDir.mkdirs()
             } catch (e: IOException) {
-                Timber.e(e)
-                return@withContext
+                Timber.e(e, "ImagesDownloaderWorker: failed to create dir %s", basePath)
+                return@withContext Result.retry()
             }
 
-            for ((name, uri) in uris) {
-                if (uri == null) {
-                    continue
-                }
+            val client = OkHttpClient()
+            var anyFailed = false
 
-                val request = Request.Builder().url(uri.toString()).build()
-
-                val imageBytes =
-                    try {
-                        client.newCall(request).execute().use { response ->
-                            if (!response.isSuccessful) {
-                                Timber.e("Failed to download image: ${response.code}")
-                                continue
-                            }
-
-                            response.body.bytes()
-                        }
-                    } catch (e: IOException) {
-                        Timber.e(e)
-                        continue
-                    }
+            for ((name, urlString) in urlsByName) {
+                val file = File(baseDir, name)
+                if (file.exists()) continue
 
                 try {
-                    val file = File(appContext.filesDir, "$basePath/$name")
-                    file.writeBytes(imageBytes)
+                    val request = Request.Builder().url(urlString).build()
+                    val bytes = client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Timber.w("ImagesDownloaderWorker: HTTP %d for %s/%s", response.code, itemId, name)
+                            null
+                        } else {
+                            response.body.bytes()
+                        }
+                    }
+                    if (bytes != null) {
+                        file.writeBytes(bytes)
+                        Timber.d("ImagesDownloaderWorker: saved %s/%s (%d bytes)", itemId, name, bytes.size)
+                    } else {
+                        anyFailed = true
+                    }
                 } catch (e: IOException) {
-                    Timber.e(e)
+                    Timber.e(e, "ImagesDownloaderWorker: failed to download %s/%s", itemId, name)
+                    anyFailed = true
                 }
             }
+
+            if (anyFailed) Result.retry() else Result.success()
         }
-    }
 
     companion object {
         const val KEY_ITEM_ID = "KEY_ITEM_ID"
+        const val KEY_URL_PRIMARY = "url_primary"
+        const val KEY_URL_BACKDROP = "url_backdrop"
+        const val KEY_URL_LOGO = "url_logo"
+
+        fun uniqueWorkName(itemId: UUID): String = "download-images:$itemId"
     }
 }

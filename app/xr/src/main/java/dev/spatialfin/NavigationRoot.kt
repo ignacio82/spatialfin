@@ -7,9 +7,21 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
@@ -19,8 +31,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.navigation.NavHostController
@@ -172,6 +186,7 @@ fun NavigationRoot(
     onboardingCompleted: Boolean,
     appPreferences: AppPreferences,
     initialSearchQuery: String? = null,
+    onReconnect: () -> Unit = {},
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -186,8 +201,18 @@ fun NavigationRoot(
 
     val navigationItems =
         when (isOfflineMode) {
-            false -> if (hasServers) listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab) else listOf(localTab, networkTab)
-            true -> if (hasServers) listOf(homeTab, localTab, networkTab, downloadsTab) else listOf(localTab, networkTab)
+            false ->
+                if (hasServers) {
+                    listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab)
+                } else {
+                    listOf(localTab, networkTab)
+                }
+            true ->
+                if (hasServers) {
+                    listOf(homeTab, localTab, networkTab, downloadsTab)
+                } else {
+                    listOf(localTab, networkTab)
+                }
         }
     val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
 
@@ -250,6 +275,37 @@ fun NavigationRoot(
                         enabled = item.enabled,
                         label = { Text(text = stringResource(item.title)) },
                     )
+                }
+                if (isOfflineMode) {
+                    Spacer(modifier = Modifier.weight(1f))
+                    Column(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.WifiOff,
+                            contentDescription = "Offline",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "Offline",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FilledTonalButton(
+                            onClick = onReconnect,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -362,6 +418,7 @@ fun NavigationRoot(
                         )
                     },
                     onManageServers = { navController.safeNavigate(ServersRoute) },
+                    onReconnectClick = onReconnect,
                     onLanguageSettingsClick = {
                         navController.safeNavigate(
                             SettingsRoute(

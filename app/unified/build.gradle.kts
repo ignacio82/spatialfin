@@ -1,0 +1,331 @@
+import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose.compiler)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.hilt)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.aboutlibraries.android)
+}
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+
+abstract class StageSourcesTask : DefaultTask() {
+    @get:InputDirectory
+    abstract val sourceDir: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Input
+    abstract val excludedPaths: ListProperty<String>
+
+    @get:Input
+    abstract val packageToPatch: Property<String>
+
+    @get:Input
+    abstract val injectedImports: ListProperty<String>
+
+    @TaskAction
+    fun stageSources() {
+        val packageToPatch = packageToPatch.orNull
+        val importsToInject = injectedImports.orNull.orEmpty()
+
+        project.delete(outputDir.get().asFile)
+        project.copy {
+            from(sourceDir)
+            into(outputDir)
+            exclude(excludedPaths.get())
+            if (!packageToPatch.isNullOrBlank() && importsToInject.isNotEmpty()) {
+                filter { line: String ->
+                    if (line.trimStart().startsWith("package $packageToPatch")) {
+                        buildString {
+                            append(line)
+                            append('\n')
+                            append(importsToInject.joinToString(separator = "\n") { "import $it" })
+                        }
+                    } else {
+                        line
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Filtered source staging
+//
+// AGP 8.x dropped file-level exclude support from AndroidSourceDirectorySet.
+// To avoid compiling the per-variant Application classes (which each carry
+// @HiltAndroidApp) alongside the unified UnifiedApplication, we copy the three
+// app module source trees into build-time staging dirs and exclude only the
+// conflicting files there. The staged dirs are then registered with AGP via
+// the Variant API so Hilt sees them as real generated sources.
+// ---------------------------------------------------------------------------
+
+val excludeFromMerge = listOf(
+    "dev/spatialfin/SpatialFinApplication.kt",
+    "dev/spatialfin/MainActivity.kt",
+    "dev/spatialfin/tv/TvApplication.kt",
+    "dev/spatialfin/beam/BeamApplication.kt",
+    // References SpatialFinApplication (excluded above) — replaced by unified/di/AppModule.kt
+    "dev/spatialfin/di/AppModule.kt",
+)
+
+val filteredXrDir = layout.buildDirectory.dir("filteredSources/xr")
+val filteredTvDir = layout.buildDirectory.dir("filteredSources/tv")
+val filteredBeamDir = layout.buildDirectory.dir("filteredSources/beam")
+
+val prepareXrSources by tasks.registering(StageSourcesTask::class) {
+    sourceDir.set(layout.projectDirectory.dir("../xr/src/main/java"))
+    outputDir.set(filteredXrDir)
+    excludedPaths.set(excludeFromMerge)
+    packageToPatch.set("")
+    injectedImports.set(emptyList())
+}
+val prepareTvSources by tasks.registering(StageSourcesTask::class) {
+    sourceDir.set(layout.projectDirectory.dir("../tv/src/main/java"))
+    outputDir.set(filteredTvDir)
+    excludedPaths.set(excludeFromMerge)
+    packageToPatch.set("dev.spatialfin.tv")
+    injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
+}
+val prepareBeamSources by tasks.registering(StageSourcesTask::class) {
+    sourceDir.set(layout.projectDirectory.dir("../beam/src/main/java"))
+    outputDir.set(filteredBeamDir)
+    excludedPaths.set(excludeFromMerge)
+    packageToPatch.set("dev.spatialfin.beam")
+    injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
+}
+
+base.archivesName = "spatialfin"
+
+android {
+    namespace = "dev.spatialfin"
+    compileSdk = Versions.COMPILE_SDK
+    buildToolsVersion = Versions.BUILD_TOOLS
+
+    defaultConfig {
+        applicationId = "dev.spatialfin"
+        minSdk = Versions.MIN_SDK
+        targetSdk = Versions.TARGET_SDK
+        versionCode = Versions.APP_CODE
+        versionName = Versions.APP_NAME
+        val xrSpatialFeatureRequired =
+            (project.findProperty("XR_SPATIAL_FEATURE_REQUIRED") as String?) ?: "false"
+        manifestPlaceholders["xrSpatialFeatureRequired"] = xrSpatialFeatureRequired
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile =
+                (project.findProperty("SPATIALFIN_KEYSTORE") as String?
+                    ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))?.let { file(it) }
+                    ?: System.getenv("SPATIALFIN_KEYSTORE")?.let { file(it) }
+            storePassword =
+                project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
+                    ?: localProperties.getProperty("SPATIALFIN_KEYSTORE_PASSWORD")
+                    ?: System.getenv("SPATIALFIN_KEYSTORE_PASSWORD")
+            keyAlias =
+                project.findProperty("SPATIALFIN_KEY_ALIAS") as String?
+                    ?: localProperties.getProperty("SPATIALFIN_KEY_ALIAS")
+                    ?: System.getenv("SPATIALFIN_KEY_ALIAS")
+            keyPassword =
+                project.findProperty("SPATIALFIN_KEY_PASSWORD") as String?
+                    ?: localProperties.getProperty("SPATIALFIN_KEY_PASSWORD")
+                    ?: System.getenv("SPATIALFIN_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+        }
+        release {
+            // XR system-extension callbacks are still crashing in optimized builds with
+            // AbstractMethodError inside com.android.extensions.xr.Consumer bridges.
+            // Keep release unminified until the androidx.xr / R8 interaction is resolved.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig =
+                if (signingConfigs.getByName("release").storeFile?.exists() == true) {
+                    signingConfigs.getByName("release")
+                } else {
+                    null
+                }
+        }
+        create("staging") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".staging"
+        }
+    }
+
+    flavorDimensions += "variant"
+    productFlavors {
+        create("libre") {
+            dimension = "variant"
+        }
+    }
+
+    splits {
+        abi {
+            // Disabled when building bundles due to AGP 8.9.0 bug:
+            // https://issuetracker.google.com/issues/402800800
+            val isBuildingBundle =
+                gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
+            isEnable = !isBuildingBundle
+            reset()
+            include("arm64-v8a")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = Versions.JAVA
+        targetCompatibility = Versions.JAVA
+    }
+
+}
+
+dependencies {
+    // Shared modules
+    implementation(project(":core"))
+    implementation(project(":data"))
+    implementation(project(":settings"))
+    implementation(project(":setup"))
+    implementation(project(":modes:film"))
+    implementation(project(":player:core"))
+    implementation(project(":player:local"))
+    implementation(project(":player:session"))
+
+    // All three player implementations
+    // player:xr is exposed transitively via player:beam's api() dep (avoids a dex-merge
+    // duplicate for LibassRenderer and keeps jniLibs flowing through one path).
+    implementation(project(":player:tv"))
+    implementation(project(":player:beam"))
+
+    // AndroidX core
+    implementation(libs.androidx.core)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.window)
+    implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.work)
+    implementation(libs.androidx.hilt.work)
+
+    // Compose
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
+
+    // TV material
+    implementation(libs.androidx.tv.material)
+
+    // XR
+    implementation(libs.androidx.xr.runtime)
+    implementation(libs.androidx.xr.scenecore)
+    implementation(libs.androidx.xr.compose)
+    implementation(libs.androidx.xr.compose.material3)
+
+    // Camera
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Barcode scanning (MLKit for XR/Phone, ZXing for TV)
+    implementation(libs.mlkit.barcode.scanning)
+    implementation("com.google.zxing:core:3.5.3")
+
+    // Navigation & paging
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.media3.ui)
+    implementation("androidx.constraintlayout:constraintlayout:2.2.1")
+
+    // Backend
+    implementation(libs.jellyfin.core)
+    implementation(libs.kotlinx.serialization.json)
+
+    // DI
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    ksp(libs.androidx.hilt.compiler)
+
+    // Image loading & UI
+    implementation(libs.aboutlibraries.compose.m3)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+    implementation(libs.coil.network.cache.control)
+    implementation(libs.coil.svg)
+    implementation(libs.timber)
+
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation(libs.junit4)
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        // Register the staged dirs through the Variant API so AGP wires the generated
+        // sources into javac/Hilt without relying on deprecated SourceSet mutation.
+        variant.sources.java?.addGeneratedSourceDirectory(
+            prepareXrSources,
+            StageSourcesTask::outputDir,
+        )
+        variant.sources.java?.addGeneratedSourceDirectory(
+            prepareTvSources,
+            StageSourcesTask::outputDir,
+        )
+        variant.sources.java?.addGeneratedSourceDirectory(
+            prepareBeamSources,
+            StageSourcesTask::outputDir,
+        )
+    }
+}
+
+afterEvaluate {
+    val prepareTasks = listOf(prepareXrSources, prepareTvSources, prepareBeamSources)
+    val extraDirs = listOf(
+        filteredXrDir.get().asFile,
+        filteredTvDir.get().asFile,
+        filteredBeamDir.get().asFile,
+    )
+
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        dependsOn(prepareTasks)
+    }
+    tasks.matching { t -> t.name.let { it.startsWith("ksp") && it.contains("Kotlin") } }
+        .configureEach {
+            dependsOn(prepareTasks)
+            (this as? org.gradle.api.tasks.SourceTask)?.source(extraDirs)
+        }
+}

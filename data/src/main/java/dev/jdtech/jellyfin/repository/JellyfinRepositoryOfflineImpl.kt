@@ -15,6 +15,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SyncPlayGroup
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.models.toSpatialFinEpisode
@@ -121,7 +122,25 @@ class JellyfinRepositoryOfflineImpl(
     }
 
     override suspend fun getFavoriteItems(): List<SpatialFinItem> {
-        TODO("Not yet implemented")
+        return withContext(Dispatchers.IO) {
+            val serverId = appPreferences.getValue(appPreferences.currentServer) ?: return@withContext emptyList()
+            val movies =
+                database
+                    .getMoviesByServerId(serverId)
+                    .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
+                    .filter { it.favorite && it.isDownloaded() }
+            val shows =
+                database
+                    .getShowsByServerId(serverId)
+                    .map { it.toSpatialFinShow(database, jellyfinApi.userId!!) }
+                    .filter { it.favorite }
+            val episodes =
+                database
+                    .getEpisodesByServerId(serverId)
+                    .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
+                    .filter { it.favorite && it.isDownloaded() }
+            movies + shows + episodes
+        }
     }
 
     override suspend fun getSearchItems(query: String): List<SpatialFinItem> {
@@ -152,12 +171,12 @@ class JellyfinRepositoryOfflineImpl(
                 database
                     .getMoviesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 }
+                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
             val episodes =
                 database
                     .getEpisodesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 }
+                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
             movies + episodes
         }
     }
@@ -184,10 +203,10 @@ class JellyfinRepositoryOfflineImpl(
                 val episodes =
                     database.getEpisodesByShowId(show.id).map {
                         it.toSpatialFinEpisode(database, jellyfinApi.userId!!)
-                    }
+                    }.filter { it.isDownloaded() }
                 val indexOfLastPlayed = episodes.indexOfLast { it.played }
                 if (indexOfLastPlayed == -1) {
-                    result.add(episodes.first())
+                    episodes.firstOrNull()?.let(result::add)
                 } else {
                     episodes.getOrNull(indexOfLastPlayed + 1)?.let { result.add(it) }
                 }
