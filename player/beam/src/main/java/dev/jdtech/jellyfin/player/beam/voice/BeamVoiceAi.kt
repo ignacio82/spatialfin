@@ -320,6 +320,12 @@ class BeamCommandCoordinator(
     }
 }
 
+private val BEAM_RECOMMENDATION_KEYWORDS = listOf(
+    "similar", "recommend", "suggestion", "what else", "what should i watch",
+    "watch after", "watch next", "anything else", "like this", "other movies",
+    "other shows", "what other", "something similar", "more like",
+)
+
 class BeamChatEngine(
     private val appContext: Context,
     private val nanoService: BeamGeminiNanoService,
@@ -331,7 +337,31 @@ class BeamChatEngine(
         recentSubtitles: String = "",
         verbosity: String = "balanced",
         spoilerPolicy: String = "cautious",
+        conversationHistory: List<Pair<String, String>> = emptyList(),
+        onGetSuggestions: (suspend () -> List<SpatialFinItem>)? = null,
     ): String? {
+        // Fast-path: answer unambiguous factual lookups without any model call
+        confidenceGatedAnswer(question, playerState)?.let { return it }
+
+        val isRecommendation = BEAM_RECOMMENDATION_KEYWORDS.any { question.lowercase().contains(it) }
+        val relatedItemsContext: String? = if (isRecommendation && onGetSuggestions != null) {
+            runCatching { onGetSuggestions() }
+                .getOrNull()
+                ?.take(6)
+                ?.joinToString("\n") { "- ${it.name}: ${it.overview.take(120)}" }
+                ?.takeIf { it.isNotBlank() }
+        } else null
+
+        val historyBlock = if (conversationHistory.isNotEmpty()) {
+            "\nConversation history:\n" + conversationHistory.joinToString("\n") { (u, a) ->
+                "User: $u\nAssistant: $a"
+            } + "\n"
+        } else ""
+
+        val relatedBlock = if (relatedItemsContext != null) {
+            "\nLibrary suggestions:\n$relatedItemsContext\n"
+        } else ""
+
         val prompt =
             """
             You are SpatialFin on Beam Pro. Answer briefly and directly.
@@ -339,12 +369,16 @@ class BeamChatEngine(
             Verbosity: $verbosity.
             Title=${playerState.currentItemTitle}
             Series=${playerState.currentSeriesName.orEmpty()}
+            Year=${playerState.productionYear ?: ""}
+            Rating=${playerState.officialRating.orEmpty()}
             Overview=${playerState.currentOverview.take(1200)}
-            StorySoFar=${playerState.currentOverview.take(1200)}
             RecentSubtitles=${recentSubtitles.takeLast(1200)}
             Cast=${playerState.castNames.joinToString(", ")}
+            Directors=${playerState.directors.joinToString(", ")}
+            Writers=${playerState.writers.joinToString(", ")}
             Genres=${playerState.currentGenres.joinToString(", ")}
-            Ratings=${playerState.currentRatings.joinToString(", ")}
+            CommunityRatings=${playerState.currentRatings.joinToString(", ")}
+            $historyBlock$relatedBlock
             Question=$question
             """.trimIndent()
         return nanoService.generateText(prompt, "voice-chat")
@@ -352,17 +386,42 @@ class BeamChatEngine(
             ?: fallback(question, playerState)
     }
 
+    private fun confidenceGatedAnswer(question: String, playerState: PlayerStateSnapshot): String? {
+        val n = question.lowercase().replace(Regex("[^a-z0-9\\s]"), " ").trim()
+
+        if (n.contains("who directed") || (n.contains("director") && !n.contains("style"))) {
+            return if (playerState.directors.isNotEmpty()) "Directed by ${playerState.directors.joinToString(", ")}." else null
+        }
+        if (n.contains("who wrote") || n.contains("written by") || n.contains("writer")) {
+            return if (playerState.writers.isNotEmpty()) "Written by ${playerState.writers.joinToString(", ")}." else null
+        }
+        if (n.contains("what year") || n.contains("year released") || (n.contains("release") && n.contains("year"))) {
+            return playerState.productionYear?.let { "Released in $it." }
+        }
+        if ((n.contains("age rating") || n.contains("content rating") || n.contains("rated")) && !n.contains("how") && !n.contains("why")) {
+            return playerState.officialRating?.let { "Rated $it." }
+        }
+        if (n.matches(Regex(".*\\bwhat (is|am) (i|this|it)\\b.*")) || (n.contains("title") && n.contains("what"))) {
+            return playerState.currentItemTitle.takeIf { it.isNotBlank() }?.let { "You're watching $it." }
+        }
+        return null
+    }
+
     private fun fallback(question: String, playerState: PlayerStateSnapshot): String {
         val normalized = question.lowercase()
         return when {
             normalized.contains("plot") || normalized.contains("about") || normalized.contains("summary") ->
                 playerState.currentOverview.ifBlank { "I don't have enough metadata to answer that." }
+            normalized.contains("director") && playerState.directors.isNotEmpty() ->
+                "Directed by ${playerState.directors.joinToString(", ")}."
+            normalized.contains("writer") && playerState.writers.isNotEmpty() ->
+                "Written by ${playerState.writers.joinToString(", ")}."
             normalized.contains("who") && playerState.castNames.isNotEmpty() ->
-                "Cast: ${playerState.castNames.take(5).joinToString(", ")}"
+                "Cast: ${playerState.castNames.take(5).joinToString(", ")}."
             normalized.contains("genre") && playerState.currentGenres.isNotEmpty() ->
-                "Genres: ${playerState.currentGenres.take(4).joinToString(", ")}"
+                "Genres: ${playerState.currentGenres.take(4).joinToString(", ")}."
             normalized.contains("rating") && playerState.currentRatings.isNotEmpty() ->
-                "Ratings: ${playerState.currentRatings.joinToString(", ")}"
+                "Ratings: ${playerState.currentRatings.joinToString(", ")}."
             else -> playerState.currentOverview.ifBlank { "I don't have enough context to answer that right now." }
         }
     }

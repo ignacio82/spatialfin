@@ -7,6 +7,7 @@ import android.content.Context
 import android.net.Uri
 import android.text.format.Formatter
 import androidx.core.net.toUri
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -14,15 +15,18 @@ import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
 import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import java.util.concurrent.TimeUnit
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.DownloadRequest
 import dev.jdtech.jellyfin.models.DownloadTaskKind
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinSource
@@ -30,9 +34,12 @@ import dev.jdtech.jellyfin.models.SpatialFinSources
 import dev.jdtech.jellyfin.models.SpatialFinTrickplayInfo
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.models.downloadTaskId
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.subtitleDownloadTaskId
 import dev.jdtech.jellyfin.models.toSpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.toSpatialFinMediaStreamDto
+import dev.jdtech.jellyfin.models.toSpatialFinEpisode
+import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.models.toSpatialFinMovieDto
 import dev.jdtech.jellyfin.models.toSpatialFinSeasonDto
 import dev.jdtech.jellyfin.models.toSpatialFinSegmentsDto
@@ -45,11 +52,14 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.ImagesDownloaderWorker
 import dev.jdtech.jellyfin.work.ResumableDownloadWorker
+import android.os.StatFs
 import java.io.File
 import java.util.UUID
 import kotlin.Exception
 import kotlin.math.ceil
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.jellyfin.sdk.model.api.EncodingContext
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
@@ -65,6 +75,8 @@ class DownloaderImpl(
     private val downloadStorageManager: DownloadStorageManager,
 ) : Downloader {
     private val downloadManager = context.getSystemService(DownloadManager::class.java)
+    // taskId -> (bytesDownloaded, timestampMs) for speed calculation
+    private val speedTracker = mutableMapOf<String, Pair<Long, Long>>()
 
     // TODO: We should probably move most (if not all) code to a worker.
     //  At this moment it is possible that some things are not downloaded due to the user leaving
@@ -178,7 +190,7 @@ class DownloaderImpl(
             }
 
             startImagesDownloader(item)
-            enqueueResumableDownload(taskId)
+            enqueueResumableDownload(taskId, itemTitle = item.name)
             return null
         } catch (e: Exception) {
             try {
@@ -191,6 +203,56 @@ class DownloaderImpl(
             return if (e.message != null) UiText.DynamicString(e.message!!)
             else UiText.StringResource(CoreR.string.unknown_error)
         }
+    }
+
+    override suspend fun downloadItems(
+        episodes: List<SpatialFinEpisode>,
+        settings: BulkDownloadSettings,
+    ): BulkDownloadResult {
+        // Pre-flight storage check
+        val storageShortfall = run {
+            val pendingEpisodes = episodes.filter { !it.isDownloaded() }
+            val estimatedBytes = pendingEpisodes.sumOf { ep ->
+                ep.sources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }?.size ?: 0L
+            }
+            if (estimatedBytes > 0L) {
+                val downloadDir = downloadStorageManager.downloadsRoot()
+                downloadDir.mkdirs()
+                val available = runCatching { StatFs(downloadDir.path).availableBytes }.getOrElse { Long.MAX_VALUE }
+                if (estimatedBytes > available) estimatedBytes - available else null
+            } else null
+        }
+
+        var queued = 0
+        var skipped = 0
+        var failed = 0
+        for (episode in episodes) {
+            if (episode.isDownloaded()) {
+                skipped++
+                continue
+            }
+            val sources = runCatching { jellyfinRepository.getMediaSources(episode.id, true) }
+                .getOrNull()
+            val source = sources?.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
+            if (source == null) {
+                Timber.w("downloadItems: no remote source found for episode %s, skipping", episode.id)
+                failed++
+                continue
+            }
+            val request = DownloadRequest(
+                sourceId = source.id,
+                mode = settings.mode,
+                videoBitrate = settings.videoBitrate,
+            )
+            val error = downloadItem(episode, request)
+            if (error != null) {
+                Timber.w("downloadItems: failed to queue episode %s: %s", episode.id, error)
+                failed++
+            } else {
+                queued++
+            }
+        }
+        return BulkDownloadResult(queued = queued, skipped = skipped, failed = failed, storageShortfallBytes = storageShortfall)
     }
 
     override suspend fun cancelDownload(item: SpatialFinItem) {
@@ -278,6 +340,93 @@ class DownloaderImpl(
         }
     }
 
+    override suspend fun cancelDownloadById(itemId: UUID) {
+        val userId = runCatching { jellyfinRepository.getUserId() }.getOrNull()
+        val item: SpatialFinItem? = userId?.let {
+            database.getMovieOrNull(itemId)?.toSpatialFinMovie(database, it)
+                ?: database.getEpisodeOrNull(itemId)?.toSpatialFinEpisode(database, it)
+        }
+        if (item != null) {
+            cancelDownload(item)
+        } else {
+            database.getDownloadTasksByItemId(itemId).forEach { task ->
+                workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
+            }
+            database.deleteDownloadTasksByItemId(itemId)
+        }
+    }
+
+    override suspend fun pauseDownload(item: SpatialFinItem) = pauseDownloadById(item.id)
+
+    override suspend fun pauseDownloadById(itemId: UUID) {
+        val tasks = database.getDownloadTasksByItemId(itemId)
+            .filter { it.status != DownloadManager.STATUS_SUCCESSFUL }
+        for (task in tasks) {
+            workManager.cancelUniqueWork(ResumableDownloadWorker.uniqueWorkName(task.id))
+            database.updateDownloadTask(
+                id = task.id,
+                downloadId = task.downloadId,
+                bytesDownloaded = task.bytesDownloaded,
+                totalBytes = task.totalBytes,
+                eTag = task.eTag,
+                lastModified = task.lastModified,
+                status = DownloadManager.STATUS_PAUSED,
+                progress = task.progress,
+                errorMessage = "Paused",
+                updatedAt = System.currentTimeMillis(),
+            )
+        }
+    }
+
+    override suspend fun resumeDownload(item: SpatialFinItem) = resumeDownloadById(item.id)
+
+    override suspend fun resumeDownloadById(itemId: UUID) {
+        val tasks = database.getDownloadTasksByItemId(itemId)
+            .filter { it.status == DownloadManager.STATUS_PAUSED || it.status == DownloadManager.STATUS_FAILED }
+        for (task in tasks) {
+            if (task.kind == DownloadTaskKind.PRIMARY) {
+                val itemName = database.getMovieOrNull(task.itemId)?.name
+                    ?: database.getEpisodeOrNull(task.itemId)?.name
+                enqueueResumableDownload(task.id, itemTitle = itemName)
+            }
+        }
+    }
+
+    override fun observeActiveDownloads(): Flow<List<ActiveDownloadEntry>> {
+        return database.observeActiveDownloadTasks().map { tasks ->
+            val now = System.currentTimeMillis()
+            // Remove stale entries for completed tasks
+            val activeIds = tasks.map { it.id }.toSet()
+            speedTracker.keys.retainAll(activeIds)
+            tasks.map { task ->
+                val name = database.getMovieOrNull(task.itemId)?.name
+                    ?: database.getEpisodeOrNull(task.itemId)?.name
+                    ?: "Unknown"
+                val speed: Long? = speedTracker[task.id]?.let { (prevBytes, prevTime) ->
+                    val elapsed = now - prevTime
+                    if (elapsed > 0L && task.bytesDownloaded > prevBytes) {
+                        ((task.bytesDownloaded - prevBytes) * 1000L) / elapsed
+                    } else null
+                }
+                speedTracker[task.id] = task.bytesDownloaded to now
+                ActiveDownloadEntry(
+                    taskId = task.id,
+                    itemId = task.itemId,
+                    itemName = name,
+                    progress = task.progress,
+                    status = task.status,
+                    errorMessage = task.errorMessage,
+                    bytesDownloaded = task.bytesDownloaded,
+                    totalBytes = task.totalBytes,
+                    downloadSpeedBytesPerSec = speed,
+                )
+            }
+        }.flowOn(Dispatchers.IO)
+    }
+
+    override suspend fun getStorageUsedBytes(): Long =
+        downloadStorageManager.computeTotalDownloadsSize()
+
     private fun downloadExternalMediaStreams(
         item: SpatialFinItem,
         source: SpatialFinSource,
@@ -319,7 +468,7 @@ class DownloaderImpl(
                 progress = existingTask?.progress ?: 0,
                 errorMessage = null,
             )
-            enqueueResumableDownload(taskId)
+            enqueueResumableDownload(taskId, itemTitle = item.name)
         }
     }
 
@@ -382,12 +531,28 @@ class DownloaderImpl(
     }
 
     private fun startImagesDownloader(item: SpatialFinItem) {
+        val images = item.images
+        val urlEntries = listOfNotNull(
+            images.primary?.toString()?.let { ImagesDownloaderWorker.KEY_URL_PRIMARY to it },
+            images.backdrop?.toString()?.let { ImagesDownloaderWorker.KEY_URL_BACKDROP to it },
+            images.logo?.toString()?.let { ImagesDownloaderWorker.KEY_URL_LOGO to it },
+        )
         val downloadImagesRequest =
             OneTimeWorkRequestBuilder<ImagesDownloaderWorker>()
-                .setInputData(workDataOf(ImagesDownloaderWorker.KEY_ITEM_ID to item.id.toString()))
+                .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+                .setInputData(
+                    workDataOf(
+                        ImagesDownloaderWorker.KEY_ITEM_ID to item.id.toString(),
+                        *urlEntries.toTypedArray(),
+                    )
+                )
                 .build()
 
-        workManager.enqueue(downloadImagesRequest)
+        workManager.enqueueUniqueWork(
+            ImagesDownloaderWorker.uniqueWorkName(item.id),
+            ExistingWorkPolicy.KEEP,
+            downloadImagesRequest,
+        )
     }
 
     private fun upsertDownloadTask(
@@ -433,7 +598,7 @@ class DownloaderImpl(
         )
     }
 
-    private fun enqueueResumableDownload(taskId: String) {
+    private fun enqueueResumableDownload(taskId: String, itemTitle: String? = null) {
         val networkType =
             if (appPreferences.getValue(appPreferences.downloadOverMobileData)) {
                 NetworkType.CONNECTED
@@ -441,14 +606,20 @@ class DownloaderImpl(
                 NetworkType.UNMETERED
             }
         Timber.i(
-            "Enqueue resumable download taskId=%s networkType=%s",
+            "Enqueue resumable download taskId=%s networkType=%s title=%s",
             taskId,
             networkType,
+            itemTitle,
+        )
+        val inputData = workDataOf(
+            ResumableDownloadWorker.KEY_TASK_ID to taskId,
+            ResumableDownloadWorker.KEY_ITEM_TITLE to (itemTitle ?: ""),
         )
         val request =
             OneTimeWorkRequestBuilder<ResumableDownloadWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(networkType).build())
-                .setInputData(workDataOf(ResumableDownloadWorker.KEY_TASK_ID to taskId))
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+                .setInputData(inputData)
                 .build()
         workManager.enqueueUniqueWork(
             ResumableDownloadWorker.uniqueWorkName(taskId),

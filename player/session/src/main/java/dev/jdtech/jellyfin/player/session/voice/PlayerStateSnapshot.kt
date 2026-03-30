@@ -14,7 +14,13 @@ data class PlayerStateSnapshot(
     val currentChapterName: String? = null,
     val nextEpisodeTitle: String? = null,
     val currentGenres: List<String> = emptyList(),
+    /** Actors only (directors/writers are in their own fields). */
     val castNames: List<String> = emptyList(),
+    val directors: List<String> = emptyList(),
+    val writers: List<String> = emptyList(),
+    val productionYear: Int? = null,
+    /** Content/age rating string (e.g. "PG-13", "TV-MA"). */
+    val officialRating: String? = null,
     val audioTrackNames: List<String> = emptyList(),
     val subtitleTrackNames: List<String> = emptyList(),
     val chapterNames: List<String> = emptyList(),

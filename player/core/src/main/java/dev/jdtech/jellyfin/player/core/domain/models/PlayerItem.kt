@@ -24,6 +24,8 @@ data class PlayerItem(
     val genres: List<String> = emptyList(),
     val ratings: List<Rating> = emptyList(),
     val productionYear: Int? = null,
+    /** Content/age rating (e.g. "PG-13", "TV-MA"). */
+    val officialRating: String? = null,
     /** Episode/movie backdrop URI string for next-up cards (null for non-visual items). */
     val backdropImageUri: String? = null,
     /** Series name for episodes, used in next-up panel display. */

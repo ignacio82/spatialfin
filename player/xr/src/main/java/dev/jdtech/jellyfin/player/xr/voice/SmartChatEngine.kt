@@ -7,6 +7,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
+private val RECOMMENDATION_KEYWORDS = listOf(
+    "similar", "recommend", "suggestion", "what else", "what should i watch",
+    "watch after", "watch next", "anything else", "like this", "other movies",
+    "other shows", "what other", "something similar", "more like",
+)
+
+private fun isRecommendationQuery(question: String): Boolean {
+    val q = question.lowercase()
+    return RECOMMENDATION_KEYWORDS.any { q.contains(it) }
+}
+
 data class AssistantPreferences(
     val verbosity: String = "balanced",
     val spoilerPolicy: String = "cautious",
@@ -32,17 +43,38 @@ class SmartChatEngine(
         question: String,
         playerState: PlayerStateSnapshot,
         storySoFarContext: String? = null,
-        recentSubtitles: String = "",
+        recentSubtitleLines: List<Pair<Long, String>> = emptyList(),
+        currentPositionMs: Long = Long.MAX_VALUE,
         assistantPreferences: AssistantPreferences = AssistantPreferences(),
         onSearchQuery: (suspend (String) -> List<SpatialFinItem>)? = null,
+        conversationHistory: List<Pair<String, String>> = emptyList(),
+        onGetSuggestions: (suspend () -> List<SpatialFinItem>)? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
+        // Fast-path: answer unambiguous factual lookups without any model call
+        confidenceGatedAnswer(question, playerState)?.let { answer ->
+            return@withContext AssistantReply(text = answer, strategy = "CONFIDENCE_GATE", debugInfo = "fast-path")
+        }
+
+        val relatedItemsContext: String? = if (isRecommendationQuery(question) && onGetSuggestions != null) {
+            runCatching { onGetSuggestions() }
+                .onFailure { Timber.w(it, "GEMINI: failed to fetch suggestions") }
+                .getOrNull()
+                ?.take(6)
+                ?.joinToString("\n") { "- ${it.name}: ${it.overview.take(120)}" }
+                ?.takeIf { it.isNotBlank() }
+        } else null
+
+        val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs)
+
         val prompt =
             buildPrompt(
                 question = question,
                 playerState = playerState,
                 storySoFarContext = storySoFarContext,
-                recentSubtitles = recentSubtitles,
+                subtitleContext = subtitleContext,
                 assistantPreferences = assistantPreferences,
+                conversationHistory = conversationHistory,
+                relatedItemsContext = relatedItemsContext,
             )
         val result = geminiNanoService.generateText(prompt = prompt, reason = "chat")
         if (result.usedModel && !result.text.isNullOrBlank()) {
@@ -70,7 +102,7 @@ class SmartChatEngine(
 
         Timber.d("GEMINI: chat fallback to heuristic answer details=%s", result.status.details)
         AssistantReply(
-            text = heuristicAnswer(question, playerState, storySoFarContext, recentSubtitles),
+            text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
             strategy = "HEURISTIC",
             debugInfo = "${result.status.details}; ${cloudResult.status.details}",
         )
@@ -80,13 +112,89 @@ class SmartChatEngine(
         geminiNanoService.destroy()
     }
 
+    private fun buildSubtitleContext(
+        question: String,
+        lines: List<Pair<Long, String>>,
+        currentPositionMs: Long,
+    ): String {
+        if (lines.isEmpty()) return ""
+        val normalized = question.lowercase()
+
+        // Extract an optional "N minutes ago" offset from the question
+        val minutesAgoMatch = Regex("(\\d+)\\s*minutes?\\s*ago").find(normalized)
+        val targetWindowMs: LongRange = when {
+            minutesAgoMatch != null -> {
+                val n = minutesAgoMatch.groupValues[1].toLongOrNull() ?: 2L
+                val center = currentPositionMs - n * 60_000L
+                (center - 30_000L)..(center + 30_000L)
+            }
+            normalized.contains("just happened") || normalized.contains("right now") || normalized.contains("what did they just") -> {
+                (currentPositionMs - 30_000L)..currentPositionMs
+            }
+            else -> (currentPositionMs - 120_000L)..currentPositionMs
+        }
+
+        val relevant = lines.filter { (ts, _) -> ts in targetWindowMs }
+            .takeLast(40)
+            .joinToString("\n") { (ts, line) ->
+                val totalSec = ts / 1000L
+                val m = totalSec / 60
+                val s = totalSec % 60
+                "[%d:%02d] %s".format(m, s, line)
+            }
+        return relevant
+    }
+
+    private fun confidenceGatedAnswer(question: String, playerState: PlayerStateSnapshot): String? {
+        val n = question.lowercase().replace(Regex("[^a-z0-9\\s]"), " ").trim()
+
+        if (n.contains("who directed") || (n.contains("director") && !n.contains("style") && !n.contains("vision"))) {
+            return if (playerState.directors.isNotEmpty()) {
+                "Directed by ${playerState.directors.joinToString(", ")}."
+            } else null
+        }
+
+        if (n.contains("who wrote") || n.contains("written by") || (n.contains("writer") && !n.contains("type writer"))) {
+            return if (playerState.writers.isNotEmpty()) {
+                "Written by ${playerState.writers.joinToString(", ")}."
+            } else null
+        }
+
+        if (n.contains("what year") || n.contains("when was it made") || n.contains("year released") || n.contains("production year") || (n.contains("release") && n.contains("year"))) {
+            return playerState.productionYear?.let { "Released in $it." }
+        }
+
+        if ((n.contains("age rating") || n.contains("content rating") || n.contains("rated")) && !n.contains("how") && !n.contains("why")) {
+            val rating = playerState.officialRating
+            return if (!rating.isNullOrBlank()) "Rated $rating." else null
+        }
+
+        if (n.matches(Regex(".*\\bwhat (is|am) (i|this|it)\\b.*")) || (n.contains("title") && n.contains("what"))) {
+            return playerState.currentItemTitle.takeIf { it.isNotBlank() }?.let { "You're watching $it." }
+        }
+
+        return null
+    }
+
     private fun buildPrompt(
         question: String,
         playerState: PlayerStateSnapshot,
         storySoFarContext: String?,
-        recentSubtitles: String,
+        subtitleContext: String,
         assistantPreferences: AssistantPreferences,
+        conversationHistory: List<Pair<String, String>>,
+        relatedItemsContext: String?,
     ): String {
+        val historyBlock = if (conversationHistory.isNotEmpty()) {
+            "\nConversation history:\n" + conversationHistory.joinToString("\n") { (u, a) ->
+                "User: $u\nAssistant: $a"
+            } + "\n"
+        } else ""
+
+        val relatedBlock = if (relatedItemsContext != null) {
+            "\nItems available in library that may be relevant:\n$relatedItemsContext\n"
+        } else ""
+
         return """
             You are SpatialFin, an on-device XR media assistant.
             Answer briefly and directly.
@@ -99,16 +207,20 @@ class SmartChatEngine(
             Series: ${playerState.currentSeriesName ?: ""}
             Season: ${playerState.currentSeasonNumber ?: ""}
             Episode: ${playerState.currentEpisodeNumber ?: ""}
+            Year: ${playerState.productionYear ?: ""}
+            Rating: ${playerState.officialRating ?: ""}
             Overview: ${playerState.currentOverview.take(1000)}
             Genres: ${playerState.currentGenres.joinToString(", ")}
-            Ratings: ${playerState.currentRatings.joinToString(", ")}
+            Community ratings: ${playerState.currentRatings.joinToString(", ")}
             Cast: ${playerState.castNames.take(12).joinToString(", ")}
+            Directors: ${playerState.directors.joinToString(", ")}
+            Writers: ${playerState.writers.joinToString(", ")}
             Current chapter: ${playerState.currentChapterName ?: ""}
             Story so far: ${(storySoFarContext ?: "").take(1200)}
-            Recent subtitles: ${recentSubtitles.takeLast(1200)}
+            Recent subtitles: ${subtitleContext.takeLast(1200)}
             Audio track: ${playerState.currentAudioTrack ?: ""}
             Subtitle track: ${playerState.currentSubtitleTrack ?: ""}
-
+            $historyBlock$relatedBlock
             User question:
             $question
         """.trimIndent()
@@ -118,7 +230,7 @@ class SmartChatEngine(
         question: String,
         playerState: PlayerStateSnapshot,
         storySoFarContext: String?,
-        recentSubtitles: String,
+        subtitleContext: String,
     ): String? {
         val normalized =
             question.lowercase()
@@ -147,10 +259,18 @@ class SmartChatEngine(
         }
 
         if (normalized.contains("director") || normalized.contains("who directed")) {
-            val directors = peopleByRole(playerState.castNames, "director")
-            return when {
-                directors.isNotEmpty() -> "Director: ${directors.joinToString(", ")}."
-                else -> "I couldn't find director metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+            return if (playerState.directors.isNotEmpty()) {
+                "Directed by ${playerState.directors.joinToString(", ")}."
+            } else {
+                "I couldn't find director metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+            }
+        }
+
+        if (normalized.contains("writer") || normalized.contains("who wrote")) {
+            return if (playerState.writers.isNotEmpty()) {
+                "Written by ${playerState.writers.joinToString(", ")}."
+            } else {
+                "I couldn't find writer metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
             }
         }
 
@@ -160,10 +280,10 @@ class SmartChatEngine(
                 normalized.contains("who is in this") ||
                 normalized.contains("actors")
         ) {
-            val actors = peopleExcludingRole(playerState.castNames, setOf("director", "writer", "producer"))
-            return when {
-                actors.isNotEmpty() -> "Cast: ${actors.take(5).joinToString(", ")}."
-                else -> "I couldn't find cast metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+            return if (playerState.castNames.isNotEmpty()) {
+                "Cast: ${playerState.castNames.take(5).joinToString(", ")}."
+            } else {
+                "I couldn't find cast metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
             }
         }
 
@@ -174,6 +294,11 @@ class SmartChatEngine(
                 ?: "I couldn't find genre metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
         }
 
+        if (normalized.contains("age rating") || normalized.contains("content rating") || normalized.contains("how old")) {
+            return playerState.officialRating?.let { "Rated $it." }
+                ?: "I don't have a content rating for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+        }
+
         if (normalized.contains("rating") || normalized.contains("score") || normalized.contains("is it good") || normalized.contains("reviews")) {
             return playerState.currentRatings
                 .takeIf { it.isNotEmpty() }
@@ -181,13 +306,18 @@ class SmartChatEngine(
                 ?: "I don't have rating information for ${playerState.currentItemTitle.ifBlank { "this title" }}."
         }
 
+        if (normalized.contains("what year") || normalized.contains("year released") || (normalized.contains("release") && normalized.contains("year"))) {
+            return playerState.productionYear?.let { "Released in $it." }
+                ?: "I don't have the release year for ${playerState.currentItemTitle.ifBlank { "this title" }}."
+        }
+
         if (normalized.contains("title") || normalized.contains("what am i watching")) {
             return playerState.currentItemTitle.takeIf { it.isNotBlank() } ?: "I don't know the current title."
         }
 
         if (normalized.contains("what happened") || normalized.contains("what did they say")) {
-            return recentSubtitles.takeIf { it.isNotBlank() }
-                ?.let { "Based on the recent subtitles, $it" }
+            return subtitleContext.takeIf { it.isNotBlank() }
+                ?.let { "Based on the recent dialogue:\n$it" }
                 ?: storySoFarContext?.takeIf { it.isNotBlank() }
                 ?: "I don't have enough recent dialogue context to answer that."
         }
@@ -196,28 +326,6 @@ class SmartChatEngine(
             playerState.currentOverview
         } else {
             "I don't have enough metadata to answer that right now."
-        }
-    }
-
-    private fun peopleByRole(people: List<String>, role: String): List<String> {
-        return people.mapNotNull { person ->
-            val trimmed = person.trim()
-            val name = trimmed.substringBeforeLast(" (", trimmed)
-            val metadata = trimmed.substringAfterLast(" (", "").removeSuffix(")")
-            if (metadata.equals(role, ignoreCase = true)) name else null
-        }
-    }
-
-    private fun peopleExcludingRole(people: List<String>, excludedRoles: Set<String>): List<String> {
-        return people.mapNotNull { person ->
-            val trimmed = person.trim()
-            val name = trimmed.substringBeforeLast(" (", trimmed)
-            val metadata = trimmed.substringAfterLast(" (", "").removeSuffix(")")
-            if (name.isBlank() || excludedRoles.any { metadata.equals(it, ignoreCase = true) }) {
-                null
-            } else {
-                name
-            }
         }
     }
 }

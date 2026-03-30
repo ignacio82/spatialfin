@@ -3,18 +3,24 @@ package dev.spatialfin.tv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.utils.BulkDownloadResult
+import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class TvItemDetailState(
@@ -75,6 +81,7 @@ data class TvShowState(
     val nextUp: SpatialFinEpisode? = null,
     val isLoading: Boolean = false,
     val error: Throwable? = null,
+    val bulkDownload: BulkDownloadState = BulkDownloadState(),
 )
 
 @HiltViewModel
@@ -82,6 +89,7 @@ class TvShowViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    private val downloader: Downloader,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvShowState())
     val state = _state.asStateFlow()
@@ -109,6 +117,23 @@ constructor(
             }
         }
     }
+
+    fun downloadShow(showId: UUID, settings: BulkDownloadSettings) {
+        viewModelScope.launch {
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
+            runCatching {
+                val seasons = repository.getSeasons(showId)
+                val episodes = seasons.flatMap { season ->
+                    repository.getEpisodes(seriesId = season.seriesId, seasonId = season.id, limit = 200)
+                }
+                downloader.downloadItems(episodes, settings)
+            }.onSuccess { result ->
+                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
+            }.onFailure {
+                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = BulkDownloadResult(0, 0, 1))) }
+            }
+        }
+    }
 }
 
 data class TvSeasonState(
@@ -116,6 +141,7 @@ data class TvSeasonState(
     val episodes: List<SpatialFinEpisode> = emptyList(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
+    val bulkDownload: BulkDownloadState = BulkDownloadState(),
 )
 
 @HiltViewModel
@@ -123,6 +149,7 @@ class TvSeasonViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    private val downloader: Downloader,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvSeasonState())
     val state = _state.asStateFlow()
@@ -144,6 +171,14 @@ constructor(
             }.onFailure { error ->
                 _state.emit(TvSeasonState(isLoading = false, error = error))
             }
+        }
+    }
+
+    fun downloadEpisodes(episodes: List<SpatialFinEpisode>, settings: BulkDownloadSettings) {
+        viewModelScope.launch {
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
+            val result = downloader.downloadItems(episodes, settings)
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
         }
     }
 }

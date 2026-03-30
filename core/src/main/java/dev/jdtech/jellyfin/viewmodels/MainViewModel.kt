@@ -66,6 +66,10 @@ constructor(
         }
     }
 
+    fun reconnect() {
+        connectionMonitor.triggerRefresh()
+    }
+
     fun loadServerAndUser() {
         viewModelScope.launch {
             val serverId = appPreferences.getValue(appPreferences.currentServer)

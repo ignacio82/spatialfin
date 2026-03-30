@@ -172,4 +172,16 @@
     <string name="download_quality_title">Compressed quality</string>
     <string name="select_audio_track">Select audio track</string>
     <string name="select_subtitle_track">Select subtitle track</string>
+    <string name="offline_status_retrying_title">Trying to reconnect</string>
+    <string name="offline_status_retrying_body">SpatialFin is retrying your Jellyfin server before switching fully offline.</string>
+    <string name="offline_status_offline_title">Offline library active</string>
+    <string name="offline_status_offline_body">The server is unavailable. Showing downloaded media and queued changes until the server comes back.</string>
+    <string name="offline_status_manual_title">Offline mode enabled</string>
+    <string name="offline_status_manual_body">Manual offline mode is enabled. Downloaded media stays available until you go back online.</string>
+    <string name="offline_sync_title">Offline sync</string>
+    <string name="offline_reconnect_action">Reconnect</string>
+    <string name="offline_sync_pending">%1$d offline changes queued</string>
+    <string name="offline_sync_running">Syncing %1$d offline changes…</string>
+    <string name="offline_sync_success">Synced %1$d offline changes</string>
+    <string name="offline_sync_failed">%1$d offline changes still need sync</string>
 </resources>

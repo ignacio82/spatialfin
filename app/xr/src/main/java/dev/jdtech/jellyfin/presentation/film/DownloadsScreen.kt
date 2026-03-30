@@ -1,8 +1,11 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.text.format.Formatter
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
@@ -42,12 +46,16 @@ fun DownloadsScreen(
     viewModel: DownloadsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
+    val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
     var pendingDeleteItem by remember { mutableStateOf<SpatialFinItem?>(null) }
 
     LaunchedEffect(true) { viewModel.loadItems() }
 
     DownloadsScreenLayout(
         state = state,
+        activeDownloadCount = activeDownloads.size,
+        storageUsedBytes = storageUsedBytes,
         onDeleteItem = { pendingDeleteItem = it },
         onAction = { action ->
             when (action) {
@@ -71,10 +79,13 @@ fun DownloadsScreen(
 @Composable
 private fun DownloadsScreenLayout(
     state: CollectionState,
+    activeDownloadCount: Int = 0,
+    storageUsedBytes: Long = 0L,
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
     onAction: (CollectionAction) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
+    val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -89,6 +100,25 @@ private fun DownloadsScreenLayout(
             XrBrowseHeader(
                 title = stringResource(CoreR.string.title_download),
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (activeDownloadCount > 0) {
+                    Text(
+                        text = "$activeDownloadCount downloading",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (storageUsedBytes > 0L) {
+                    Text(
+                        text = Formatter.formatFileSize(context, storageUsedBytes) + " used",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         if (state.sections.isEmpty()) {
@@ -128,6 +158,8 @@ private fun DownloadsScreenLayoutPreview() {
                             )
                         )
                 ),
+            activeDownloadCount = 2,
+            storageUsedBytes = 4_500_000_000L,
             onDeleteItem = {},
             onAction = {},
         )

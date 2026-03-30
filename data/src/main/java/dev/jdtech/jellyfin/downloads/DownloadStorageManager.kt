@@ -165,6 +165,12 @@ constructor(
         File(context.filesDir, "images/${item.id}").deleteRecursively()
     }
 
+    fun computeTotalDownloadsSize(): Long {
+        val root = downloadsRoot()
+        if (!root.exists()) return 0L
+        return root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
     private fun sanitizeFileName(value: String): String =
         value
             .trim()

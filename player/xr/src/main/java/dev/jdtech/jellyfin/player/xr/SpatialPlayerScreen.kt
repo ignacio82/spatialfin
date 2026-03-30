@@ -232,6 +232,7 @@ fun SpatialPlayerScreen(
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
+    val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
     var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
     var voiceGestureHint by remember { mutableStateOf<String?>(null) }
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
@@ -451,7 +452,7 @@ fun SpatialPlayerScreen(
             voiceService = voiceService,
             commandCoordinator = commandCoordinator,
             chatEngine = chatEngine,
-            recentSubtitles = recentSubtitles.map { it.second },
+            recentSubtitles = recentSubtitles.toList(),
             player = player,
             viewModel = viewModel,
             uiState = uiState,
@@ -470,11 +471,20 @@ fun SpatialPlayerScreen(
                     ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO)
                     ?: selectedTrackName(player, C.TRACK_TYPE_TEXT)
                     ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO),
+            conversationHistory = conversationHistory,
+            onConversationTurn = { q, a ->
+                conversationHistory.add(q to a)
+                if (conversationHistory.size > 6) conversationHistory.removeAt(0)
+            },
+            onGetSuggestions = { viewModel.repository.getSuggestions() },
             onResult = { voiceFeedback = it },
             onSpokenReply = { text, languageHint -> speakAssistantReply(text, languageHint) },
             scope = coroutineScope,
         )
     }
+
+    // Reset conversation history when the playing item changes
+    LaunchedEffect(uiState.currentItemTitle) { conversationHistory.clear() }
 
     // Auto-hide controls after 10 s during playback
     LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
@@ -1576,7 +1586,7 @@ private fun startVoiceCapture(
     voiceService: SpatialVoiceService,
     commandCoordinator: SpatialCommandCoordinator,
     chatEngine: SmartChatEngine,
-    recentSubtitles: List<String>,
+    recentSubtitles: List<Pair<Long, String>>,
     player: Player,
     viewModel: PlayerViewModel,
     uiState: PlayerViewModel.UiState,
@@ -1587,6 +1597,9 @@ private fun startVoiceCapture(
     assistantPreferences: AssistantPreferences,
     passthroughEnabled: Boolean,
     responseLanguageHint: String?,
+    conversationHistory: List<Pair<String, String>>,
+    onConversationTurn: (String, String) -> Unit,
+    onGetSuggestions: suspend () -> List<SpatialFinItem>,
     onResult: (String) -> Unit,
     onSpokenReply: (String, String?) -> Unit,
     scope: kotlinx.coroutines.CoroutineScope,
@@ -1611,7 +1624,18 @@ private fun startVoiceCapture(
                         nextEpisodeTitle = uiState.nextEpisode?.name,
                         currentGenres = uiState.currentGenres,
                         currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" },
-                        castNames = uiState.currentPeople.map { "${it.name} (${it.role})" },                        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
+                        castNames = uiState.currentPeople
+                            .filter { it.type.equals("Actor", ignoreCase = true) }
+                            .map { it.name },
+                        directors = uiState.currentPeople
+                            .filter { it.type.equals("Director", ignoreCase = true) }
+                            .map { it.name },
+                        writers = uiState.currentPeople
+                            .filter { it.type.equals("Writer", ignoreCase = true) }
+                            .map { it.name },
+                        productionYear = uiState.currentProductionYear,
+                        officialRating = uiState.currentOfficialRating,
+                        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
                         subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
                         chapterNames = uiState.currentChapters.mapNotNull { it.name },
                         currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
@@ -1629,12 +1653,16 @@ private fun startVoiceCapture(
                             question = action.query,
                             playerState = snapshot,
                             storySoFarContext = uiState.storySoFarContext,
-                            recentSubtitles = recentSubtitles.joinToString(" "),
+                            recentSubtitleLines = recentSubtitles,
+                            currentPositionMs = player.currentPosition,
                             assistantPreferences = assistantPreferences,
                             onSearchQuery = onSearchQuery,
-                    )
+                            conversationHistory = conversationHistory,
+                            onGetSuggestions = onGetSuggestions,
+                        )
                     if (response.text != null) {
                         onResult(response.text)
+                        onConversationTurn(action.query, response.text)
                         if (assistantPreferences.spokenRepliesEnabled) {
                             onSpokenReply(response.text, responseLanguageHint)
                         }

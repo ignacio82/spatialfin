@@ -71,6 +71,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -866,6 +867,16 @@ private fun TvControllerOverlay(
                     .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            uiState.currentSegment?.let { segment ->
+                TvOverlayTextButton(
+                    label = stringResource(uiState.currentSkipButtonStringRes),
+                    onClick = {
+                        onInteraction()
+                        viewModel.skipSegment(segment)
+                    },
+                    modifier = Modifier.align(Alignment.End),
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

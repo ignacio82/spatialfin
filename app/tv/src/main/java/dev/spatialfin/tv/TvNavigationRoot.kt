@@ -26,10 +26,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ManageSearch
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,6 +43,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.widget.Toast
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,8 +72,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
+import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
+import dev.jdtech.jellyfin.film.presentation.downloads.DownloadSortOrder
 import dev.jdtech.jellyfin.film.presentation.home.HomeState
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
@@ -79,9 +89,11 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.View
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.player.tv.TvPlayerActivity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
 import dev.jdtech.jellyfin.utils.getShowDateString
 import dev.jdtech.jellyfin.viewmodels.MainState
 import java.util.UUID
@@ -93,6 +105,7 @@ private enum class TvRoute {
     Detail,
     Show,
     Season,
+    Downloads,
     Companion,
     Settings,
 }
@@ -108,6 +121,7 @@ private val tvNavItems =
         TvNavItem(TvRoute.Home, "Home", Icons.Rounded.Home),
         TvNavItem(TvRoute.Search, "Search", Icons.AutoMirrored.Rounded.ManageSearch),
         TvNavItem(TvRoute.Library, "Libraries", Icons.Rounded.LiveTv),
+        TvNavItem(TvRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
         TvNavItem(TvRoute.Companion, "Companion", Icons.Rounded.Link),
         TvNavItem(TvRoute.Settings, "Settings", Icons.Rounded.Settings),
     )
@@ -118,6 +132,7 @@ val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 fun TvNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
+    onReconnect: () -> Unit = {},
 ) {
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
@@ -131,6 +146,17 @@ fun TvNavigationRoot(
 
     LaunchedEffect(Unit) {
         homeViewModel.loadData()
+    }
+
+    // When going offline, redirect away from Home/Search (unusable without server).
+    // When coming back online from Downloads, return to Home.
+    LaunchedEffect(state.isOfflineMode) {
+        if (state.isOfflineMode && (currentRoute == TvRoute.Home || currentRoute == TvRoute.Search)) {
+            currentRoute = TvRoute.Downloads
+        } else if (!state.isOfflineMode && currentRoute == TvRoute.Downloads) {
+            currentRoute = TvRoute.Home
+            homeViewModel.loadData()
+        }
     }
 
     fun openItem(item: SpatialFinItem) {
@@ -169,12 +195,14 @@ fun TvNavigationRoot(
                         serverName = homeState.server?.name,
                         companionConfigured = companionConfigured,
                         hasCurrentUser = state.hasCurrentUser,
+                        isOfflineMode = state.isOfflineMode,
                         onNavigate = { route ->
                             if (route == TvRoute.Library && selectedView == null) {
                                 selectedView = homeState.views.firstOrNull()?.view
                             }
                             currentRoute = route
                         },
+                        onReconnect = onReconnect,
                     )
                     Spacer(Modifier.width(22.dp))
                     Card(
@@ -236,6 +264,9 @@ fun TvNavigationRoot(
                                         selectedItemId = episodeId.toString()
                                         currentRoute = TvRoute.Detail
                                     },
+                                )
+                                TvRoute.Downloads -> TvDownloadsScreen(
+                                    onOpenItem = ::openItem,
                                 )
                                 TvRoute.Settings -> TvSettingsScreen(
                                     state = state,
@@ -302,8 +333,15 @@ private fun TvSidebar(
     serverName: String?,
     companionConfigured: Boolean,
     hasCurrentUser: Boolean,
+    isOfflineMode: Boolean = false,
     onNavigate: (TvRoute) -> Unit,
+    onReconnect: () -> Unit = {},
 ) {
+    val visibleNavItems = if (isOfflineMode) {
+        tvNavItems.filter { it.route != TvRoute.Home && it.route != TvRoute.Search }
+    } else {
+        tvNavItems
+    }
     Card(
         modifier = Modifier.width(292.dp).fillMaxHeight(),
         colors = CardDefaults.cardColors(containerColor = Color(0x5C111B28)),
@@ -345,7 +383,7 @@ private fun TvSidebar(
                 detail = if (hasCurrentUser) "Signed in and ready for playback" else "Sign in to unlock live shelves",
             )
 
-            tvNavItems.forEach { item ->
+            visibleNavItems.forEach { item ->
                 TvSidebarButton(
                     item = item,
                     selected = currentRoute == item.route,
@@ -354,6 +392,60 @@ private fun TvSidebar(
             }
 
             Spacer(Modifier.weight(1f))
+
+            if (isOfflineMode) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.WifiOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = "Offline",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        Text(
+                            text = "Server unreachable. Showing downloaded content.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                        )
+                        TextButton(
+                            onClick = onReconnect,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                containerColor = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.15f),
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                            ),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Try reconnecting", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.04f)),
@@ -1180,6 +1272,25 @@ private fun TvMediaCard(
                 TvMetadataPill(
                     text = tvItemLabel(item),
                 )
+                if (item.isDownloaded()) {
+                    Box(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .align(Alignment.TopEnd)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                                RoundedCornerShape(6.dp),
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "Downloaded",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
                 if (showProgress) {
                     buildPlaybackFraction(item)?.let { progress ->
                         LinearProgressIndicator(
@@ -1308,7 +1419,12 @@ private fun TvLibraryScreen(
         return
     }
 
-    val rows = remember(view?.items) { view?.items?.chunked(5).orEmpty() }
+    var offlineOnly by remember { mutableStateOf(false) }
+    val filteredItems = remember(view?.items, offlineOnly) {
+        val base = view?.items.orEmpty()
+        if (offlineOnly) base.filter { it.isDownloaded() } else base
+    }
+    val rows = remember(filteredItems) { filteredItems.chunked(5) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1347,6 +1463,17 @@ private fun TvLibraryScreen(
                     TextButton(onClick = { onSelectView(availableViews.first()) }) {
                         Text("Jump to first library")
                     }
+                }
+                TextButton(
+                    onClick = { offlineOnly = !offlineOnly },
+                    colors = if (offlineOnly) {
+                        ButtonDefaults.textButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else ButtonDefaults.textButtonColors(),
+                ) {
+                    Text(if (offlineOnly) "Available offline" else "All titles")
                 }
             }
         }
@@ -2226,9 +2353,30 @@ private fun TvShowScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
+    }
+
+    LaunchedEffect(state.bulkDownload.result) {
+        val result = state.bulkDownload.result ?: return@LaunchedEffect
+        result.storageShortfallBytes?.let { shortfall ->
+            val mb = shortfall / (1024 * 1024)
+            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
+        }
+        val msg = buildString {
+            if (result.queued > 0) append("${result.queued} episodes queued")
+            if (result.skipped > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.skipped} already downloaded")
+            }
+            if (result.failed > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.failed} failed")
+            }
+        }
+        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     when {
@@ -2293,6 +2441,16 @@ private fun TvShowScreen(
                                 }
                             }
                             TextButton(
+                                onClick = { showBulkDownloadDialog = true },
+                                colors =
+                                    ButtonDefaults.textButtonColors(
+                                        containerColor = Color.White.copy(alpha = 0.12f),
+                                        contentColor = Color.White,
+                                    ),
+                            ) {
+                                Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show")
+                            }
+                            TextButton(
                                 onClick = onBack,
                                 colors =
                                     ButtonDefaults.textButtonColors(
@@ -2322,6 +2480,19 @@ private fun TvShowScreen(
                     }
                 }
             }
+
+            if (showBulkDownloadDialog) {
+                TvBulkDownloadDialog(
+                    title = "Download Show",
+                    description = "All episodes across ${state.seasons.size} season(s) will be queued.",
+                    confirmLabel = "Download All",
+                    onConfirm = { settings ->
+                        viewModel.downloadShow(showId, settings)
+                        showBulkDownloadDialog = false
+                    },
+                    onDismiss = { showBulkDownloadDialog = false },
+                )
+            }
         }
     }
 }
@@ -2342,9 +2513,31 @@ private fun TvSeasonScreen(
     }
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(seasonId) {
         viewModel.load(seasonId)
+    }
+
+    LaunchedEffect(state.bulkDownload.result) {
+        val result = state.bulkDownload.result ?: return@LaunchedEffect
+        result.storageShortfallBytes?.let { shortfall ->
+            val mb = shortfall / (1024 * 1024)
+            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
+        }
+        val msg = buildString {
+            if (result.queued > 0) append("${result.queued} queued")
+            if (result.skipped > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.skipped} already downloaded")
+            }
+            if (result.failed > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.failed} failed")
+            }
+        }
+        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     when {
@@ -2363,6 +2556,7 @@ private fun TvSeasonScreen(
         else -> {
             val season = state.season ?: return
             val rows = remember(state.episodes) { state.episodes.chunked(5) }
+            val downloadableEpisodes = remember(state.episodes) { state.episodes.filter { !it.isDownloaded() } }
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -2375,8 +2569,15 @@ private fun TvSeasonScreen(
                     )
                 }
                 item {
-                    TextButton(onClick = onBack) {
-                        Text("Back")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (downloadableEpisodes.isNotEmpty()) {
+                            TextButton(onClick = { showBulkDownloadDialog = true }) {
+                                Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season")
+                            }
+                        }
+                        TextButton(onClick = onBack) {
+                            Text("Back")
+                        }
                     }
                 }
                 if (rows.isEmpty()) {
@@ -2399,6 +2600,302 @@ private fun TvSeasonScreen(
                     }
                 }
             }
+
+            if (showBulkDownloadDialog) {
+                TvBulkDownloadDialog(
+                    title = "Download Season",
+                    description = "${downloadableEpisodes.size} episodes will be queued for download.",
+                    confirmLabel = "Download ${downloadableEpisodes.size} Episodes",
+                    onConfirm = { settings ->
+                        viewModel.downloadEpisodes(downloadableEpisodes, settings)
+                        showBulkDownloadDialog = false
+                    },
+                    onDismiss = { showBulkDownloadDialog = false },
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun TvDownloadsScreen(
+    onOpenItem: (SpatialFinItem) -> Unit = {},
+    viewModel: DownloadsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
+    val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
+    val continueWatchingItems by viewModel.continueWatchingItems.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        viewModel.loadItems()
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        contentPadding = PaddingValues(bottom = 42.dp),
+    ) {
+        item {
+            val storageLabel = if (storageUsedBytes > 0L)
+                android.text.format.Formatter.formatFileSize(context, storageUsedBytes)
+            else null
+            TvPageHeaderCard(
+                title = "Downloads",
+                body = storageLabel
+                    ?.let { "Movies and shows saved for offline playback. Using $it." }
+                    ?: "Movies and shows saved for offline playback.",
+            )
+        }
+        if (activeDownloads.isNotEmpty()) {
+            item {
+                Text(
+                    text = "In Progress",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            items(activeDownloads, key = { it.taskId }) { entry ->
+                TvActiveDownloadCard(
+                    entry = entry,
+                    onPause = { viewModel.pauseDownload(entry.itemId) },
+                    onResume = { viewModel.resumeDownload(entry.itemId) },
+                    onCancel = { viewModel.cancelActiveDownload(entry.itemId) },
+                )
+            }
+        }
+        if (continueWatchingItems.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Continue Watching",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            val rows = continueWatchingItems.chunked(4)
+            items(rows) { rowItems ->
+                TvPosterGridRow(items = rowItems, onOpenItem = onOpenItem)
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = viewModel::setSearchQuery,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search downloads...") },
+                    singleLine = true,
+                )
+                TextButton(
+                    onClick = {
+                        viewModel.setSortOrder(
+                            if (sortOrder == DownloadSortOrder.NAME) DownloadSortOrder.DATE_ADDED
+                            else DownloadSortOrder.NAME
+                        )
+                    },
+                ) {
+                    Text(if (sortOrder == DownloadSortOrder.NAME) "A–Z" else "Recent")
+                }
+            }
+        }
+        when {
+            state.isLoading -> item {
+                TvPlaceholderScreen(title = "Loading", body = "Loading downloaded items…")
+            }
+            state.error != null -> item {
+                TvPlaceholderScreen(
+                    title = "Error",
+                    body = state.error?.localizedMessage ?: "Could not load downloads.",
+                )
+            }
+            state.sections.isEmpty() && activeDownloads.isEmpty() -> item {
+                TvPlaceholderScreen(
+                    title = "Nothing here yet",
+                    body = "Download movies or episodes from their detail screen to watch them offline.",
+                )
+            }
+            else -> {
+                state.sections.forEach { section ->
+                    item {
+                        Text(
+                            text = section.name.asString(),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    val rows = section.items.chunked(4)
+                    items(rows) { rowItems ->
+                        TvPosterGridRow(
+                            items = rowItems,
+                            onOpenItem = onOpenItem,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvActiveDownloadCard(
+    entry: ActiveDownloadEntry,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val context = LocalContext.current
+    val statusLabel = when (entry.status) {
+        android.app.DownloadManager.STATUS_RUNNING -> {
+            val total = entry.totalBytes
+            val sizeStr = if (total != null && total > 0) {
+                "${android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)} / ${android.text.format.Formatter.formatFileSize(context, total)}"
+            } else {
+                "${entry.progress}%"
+            }
+            val speed = entry.downloadSpeedBytesPerSec
+            if (speed != null && speed > 0) {
+                "$sizeStr · ${android.text.format.Formatter.formatFileSize(context, speed)}/s"
+            } else sizeStr
+        }
+        android.app.DownloadManager.STATUS_PAUSED -> "Paused"
+        android.app.DownloadManager.STATUS_FAILED -> "Failed"
+        else -> "Pending"
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = entry.itemName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (entry.status == android.app.DownloadManager.STATUS_RUNNING || entry.status == android.app.DownloadManager.STATUS_PAUSED) {
+                LinearProgressIndicator(
+                    progress = { entry.progress / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (entry.status == android.app.DownloadManager.STATUS_PAUSED)
+                        MaterialTheme.colorScheme.outline
+                    else
+                        MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (entry.status) {
+                    android.app.DownloadManager.STATUS_RUNNING -> {
+                        TextButton(onClick = onPause) { Text("Pause") }
+                        TextButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    android.app.DownloadManager.STATUS_PAUSED,
+                    android.app.DownloadManager.STATUS_FAILED -> {
+                        TextButton(onClick = onResume) { Text("Resume") }
+                        TextButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    else -> {
+                        TextButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private val TV_DOWNLOAD_BITRATES =
+    listOf(
+        8_000_000 to "8 Mbps",
+        5_000_000 to "5 Mbps",
+        3_000_000 to "3 Mbps",
+        2_000_000 to "2 Mbps",
+        1_000_000 to "1 Mbps",
+    )
+
+@Composable
+private fun TvBulkDownloadDialog(
+    title: String,
+    description: String,
+    confirmLabel: String,
+    onConfirm: (BulkDownloadSettings) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedMode by remember { mutableStateOf(DownloadMode.ORIGINAL) }
+    var selectedBitrate by remember { mutableStateOf(TV_DOWNLOAD_BITRATES.first().first) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        BulkDownloadSettings(
+                            mode = selectedMode,
+                            videoBitrate = if (selectedMode == DownloadMode.TRANSCODED) selectedBitrate else null,
+                        )
+                    )
+                },
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Download Mode", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { selectedMode = DownloadMode.ORIGINAL },
+                        colors = if (selectedMode == DownloadMode.ORIGINAL)
+                            ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        else ButtonDefaults.textButtonColors(),
+                    ) { Text("Original") }
+                    TextButton(
+                        onClick = { selectedMode = DownloadMode.TRANSCODED },
+                        colors = if (selectedMode == DownloadMode.TRANSCODED)
+                            ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        else ButtonDefaults.textButtonColors(),
+                    ) { Text("Transcoded") }
+                }
+                if (selectedMode == DownloadMode.TRANSCODED) {
+                    Text("Video Quality", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TV_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
+                            TextButton(
+                                onClick = { selectedBitrate = bitrate },
+                                colors = if (selectedBitrate == bitrate)
+                                    ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                else ButtonDefaults.textButtonColors(),
+                            ) { Text(label) }
+                        }
+                    }
+                }
+            }
+        },
+    )
 }

@@ -12,7 +12,7 @@ platform :android do
     gradle(task: "clean")
 
     gradle(
-      task: "app:xr:assemble",
+      task: "app:unified:assemble",
       flavor: "libre",
       build_type: "release",
       print_command: false,
@@ -25,7 +25,7 @@ platform :android do
     )
 
     gradle(
-      task: "app:xr:bundle",
+      task: "app:unified:bundle",
       flavor: "libre",
       build_type: "release",
       print_command: false,

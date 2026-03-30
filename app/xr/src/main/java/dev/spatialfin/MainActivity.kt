@@ -410,6 +410,7 @@ class MainActivity : AppCompatActivity() {
                                                     onboardingCompleted = onboardingCompleted,
                                                     appPreferences = appPreferences,
                                                     initialSearchQuery = voiceSearchQuery,
+                                                    onReconnect = { viewModel.reconnect() },
                                                 )
 
                                                 VoiceControlOverlay(
@@ -432,6 +433,7 @@ class MainActivity : AppCompatActivity() {
                                 onboardingCompleted = onboardingCompleted,
                                 appPreferences = appPreferences,
                                 initialSearchQuery = initialSearchQueryExtra,
+                                onReconnect = { viewModel.reconnect() },
                             )
                         }
                     }

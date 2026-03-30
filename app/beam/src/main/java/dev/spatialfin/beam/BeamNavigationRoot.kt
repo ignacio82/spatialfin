@@ -25,8 +25,10 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -113,6 +115,7 @@ val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> 
 fun BeamNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
+    onReconnect: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var currentRoute by rememberSaveable { mutableStateOf(BeamRoute.Welcome) }
@@ -151,11 +154,24 @@ fun BeamNavigationRoot(
         currentRoute =
             when {
                 !onboardingCompleted -> BeamRoute.Welcome
-                state.hasServers && state.hasCurrentServer && state.hasCurrentUser -> BeamRoute.Home
+                state.hasServers && state.hasCurrentServer && state.hasCurrentUser ->
+                    if (state.isOfflineMode) BeamRoute.Downloads else BeamRoute.Home
                 state.hasServers && state.hasCurrentServer -> BeamRoute.Users
                 state.hasServers -> BeamRoute.Servers
                 else -> BeamRoute.Local
             }
+    }
+
+    // When going offline, redirect away from Home/Search (unusable without server).
+    // When coming back online, return to Home.
+    LaunchedEffect(state.isOfflineMode) {
+        if (!state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)) {
+            if (state.isOfflineMode && (currentRoute == BeamRoute.Home || currentRoute == BeamRoute.Search)) {
+                currentRoute = BeamRoute.Downloads
+            } else if (!state.isOfflineMode && currentRoute == BeamRoute.Downloads) {
+                currentRoute = BeamRoute.Home
+            }
+        }
     }
 
     val showPrimaryNavigation =
@@ -183,7 +199,9 @@ fun BeamNavigationRoot(
             if (showPrimaryNavigation) {
                 BeamSidebar(
                     currentRoute = currentRoute,
+                    isOfflineMode = state.isOfflineMode,
                     onNavigate = { currentRoute = it },
+                    onReconnect = onReconnect,
                     voiceState = voiceState,
                     voicePartial = voicePartial,
                     onVoiceClick = {
@@ -512,11 +530,19 @@ fun BeamNavigationRoot(
 @Composable
 private fun BeamSidebar(
     currentRoute: BeamRoute,
+    isOfflineMode: Boolean = false,
     onNavigate: (BeamRoute) -> Unit,
+    onReconnect: () -> Unit = {},
     voiceState: BeamVoiceState = BeamVoiceState.IDLE,
     voicePartial: String = "",
     onVoiceClick: () -> Unit = {},
 ) {
+    val visibleTabs = if (isOfflineMode) {
+        primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
+    } else {
+        primaryTabs
+    }
+
     var isExpanded by rememberSaveable { mutableStateOf(false) }
     val sidebarWidth by androidx.compose.animation.core.animateDpAsState(
         targetValue = if (isExpanded) 200.dp else 80.dp,
@@ -580,7 +606,7 @@ private fun BeamSidebar(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            primaryTabs.forEach { tab ->
+            visibleTabs.forEach { tab ->
                 val selected = currentRoute == tab.route
                 Surface(
                     onClick = { onNavigate(tab.route) },
@@ -611,6 +637,64 @@ private fun BeamSidebar(
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                             )
+                        }
+                    }
+                }
+            }
+            if (isOfflineMode) {
+                Spacer(Modifier.weight(1f))
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalAlignment = if (isExpanded) Alignment.Start else Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = if (isExpanded) Arrangement.spacedBy(8.dp) else Arrangement.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.WifiOff,
+                                contentDescription = "Offline",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            if (isExpanded) {
+                                Text(
+                                    text = "Offline",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                        }
+                        Surface(
+                            onClick = onReconnect,
+                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = if (isExpanded) 10.dp else 0.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = if (isExpanded) Arrangement.spacedBy(6.dp) else Arrangement.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "Reconnect",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                if (isExpanded) {
+                                    Text(
+                                        text = "Reconnect",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                            }
                         }
                     }
                 }

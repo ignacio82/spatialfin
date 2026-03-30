@@ -48,9 +48,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -68,15 +70,21 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
+import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
 import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
+import dev.jdtech.jellyfin.film.presentation.downloads.DownloadSortOrder
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.DownloadRequest
+import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
+import dev.jdtech.jellyfin.utils.BulkDownloadResult
+import dev.jdtech.jellyfin.utils.Downloader
 import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
@@ -104,6 +112,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamType
@@ -207,6 +216,7 @@ data class BeamShowState(
     val nextUp: SpatialFinEpisode? = null,
     val isLoading: Boolean = false,
     val error: Throwable? = null,
+    val bulkDownload: BulkDownloadState = BulkDownloadState(),
 )
 
 @HiltViewModel
@@ -214,6 +224,7 @@ class BeamShowViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    private val downloader: Downloader,
 ) : ViewModel() {
     private val _state = MutableStateFlow(BeamShowState())
     val state = _state.asStateFlow()
@@ -241,6 +252,23 @@ constructor(
             }
         }
     }
+
+    fun downloadShow(showId: UUID, settings: BulkDownloadSettings) {
+        viewModelScope.launch {
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
+            runCatching {
+                val seasons = repository.getSeasons(showId)
+                val episodes = seasons.flatMap { season ->
+                    repository.getEpisodes(seriesId = season.seriesId, seasonId = season.id, limit = 200)
+                }
+                downloader.downloadItems(episodes, settings)
+            }.onSuccess { result ->
+                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
+            }.onFailure {
+                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = BulkDownloadResult(0, 0, 1))) }
+            }
+        }
+    }
 }
 
 data class BeamSeasonState(
@@ -248,6 +276,7 @@ data class BeamSeasonState(
     val episodes: List<SpatialFinEpisode> = emptyList(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
+    val bulkDownload: BulkDownloadState = BulkDownloadState(),
 )
 
 @HiltViewModel
@@ -255,6 +284,7 @@ class BeamSeasonViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    private val downloader: Downloader,
 ) : ViewModel() {
     private val _state = MutableStateFlow(BeamSeasonState())
     val state = _state.asStateFlow()
@@ -270,6 +300,14 @@ constructor(
             }.onFailure { error ->
                 _state.emit(BeamSeasonState(isLoading = false, error = error))
             }
+        }
+    }
+
+    fun downloadEpisodes(episodes: List<SpatialFinEpisode>, settings: BulkDownloadSettings) {
+        viewModelScope.launch {
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
+            val result = downloader.downloadItems(episodes, settings)
+            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
         }
     }
 }
@@ -729,6 +767,7 @@ fun BeamShowScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val setBackground = LocalBeamBackground.current
+    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
@@ -738,6 +777,26 @@ fun BeamShowScreen(
         state.show?.let { show ->
             setBackground(beamBackdropArtwork(show))
         }
+    }
+
+    LaunchedEffect(state.bulkDownload.result) {
+        val result = state.bulkDownload.result ?: return@LaunchedEffect
+        result.storageShortfallBytes?.let { shortfall ->
+            val mb = shortfall / (1024 * 1024)
+            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
+        }
+        val msg = buildString {
+            if (result.queued > 0) append("${result.queued} episodes queued")
+            if (result.skipped > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.skipped} already downloaded")
+            }
+            if (result.failed > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.failed} failed")
+            }
+        }
+        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
@@ -779,6 +838,10 @@ fun BeamShowScreen(
                                     onClick = { launchServerItem(context, nextEpisode) },
                                 )
                             }
+                            BeamSecondaryActionButton(
+                                label = if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show",
+                                onClick = { showBulkDownloadDialog = true },
+                            )
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
                         },
                     )
@@ -809,6 +872,19 @@ fun BeamShowScreen(
             }
         }
     }
+
+    if (showBulkDownloadDialog) {
+        BeamBulkDownloadDialog(
+            title = "Download Show",
+            description = "All episodes across ${state.seasons.size} season(s) will be queued for download.",
+            confirmLabel = "Download All",
+            onConfirm = { settings ->
+                viewModel.downloadShow(showId, settings)
+                showBulkDownloadDialog = false
+            },
+            onDismiss = { showBulkDownloadDialog = false },
+        )
+    }
 }
 
 @Composable
@@ -822,6 +898,7 @@ fun BeamSeasonScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val setBackground = LocalBeamBackground.current
+    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(seasonId) {
         viewModel.load(seasonId)
@@ -831,6 +908,26 @@ fun BeamSeasonScreen(
         state.season?.let { season ->
             setBackground(beamBackdropArtwork(season))
         }
+    }
+
+    LaunchedEffect(state.bulkDownload.result) {
+        val result = state.bulkDownload.result ?: return@LaunchedEffect
+        result.storageShortfallBytes?.let { shortfall ->
+            val mb = shortfall / (1024 * 1024)
+            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
+        }
+        val msg = buildString {
+            if (result.queued > 0) append("${result.queued} queued")
+            if (result.skipped > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.skipped} already downloaded")
+            }
+            if (result.failed > 0) {
+                if (isNotEmpty()) append(", ")
+                append("${result.failed} failed")
+            }
+        }
+        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
@@ -846,6 +943,7 @@ fun BeamSeasonScreen(
             state.season == null -> item { BeamEmptyCard("This season is no longer available.") }
             else -> {
                 val season = state.season ?: return@BeamScaffoldBody
+                val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
                 item {
                     BeamMediaFeatureCard(
                         item = season,
@@ -854,6 +952,12 @@ fun BeamSeasonScreen(
                                 BeamPrimaryActionButton(
                                     label = if (season.playbackPositionTicks > 0L) "Resume" else "Play",
                                     onClick = { launchServerItem(context, season) },
+                                )
+                            }
+                            if (downloadableEpisodes.isNotEmpty()) {
+                                BeamSecondaryActionButton(
+                                    label = if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season",
+                                    onClick = { showBulkDownloadDialog = true },
                                 )
                             }
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
@@ -876,6 +980,20 @@ fun BeamSeasonScreen(
                 }
             }
         }
+    }
+
+    if (showBulkDownloadDialog) {
+        val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
+        BeamBulkDownloadDialog(
+            title = "Download Season",
+            description = "${downloadableEpisodes.size} episodes will be queued for download.",
+            confirmLabel = "Download ${downloadableEpisodes.size} Episodes",
+            onConfirm = { settings ->
+                viewModel.downloadEpisodes(downloadableEpisodes, settings)
+                showBulkDownloadDialog = false
+            },
+            onDismiss = { showBulkDownloadDialog = false },
+        )
     }
 }
 
@@ -1017,6 +1135,12 @@ fun BeamItemDetailScreen(
                                 onOpenOptions = { showDownloadDialog = true },
                                 onCancelDownload = {
                                     downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
+                                },
+                                onPauseDownload = {
+                                    downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
+                                },
+                                onResumeDownload = {
+                                    downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
                                 },
                                 onDeleteDownload = {
                                     downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
@@ -1188,12 +1312,16 @@ private fun BeamDownloadActions(
     downloaderState: dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState,
     onOpenOptions: () -> Unit,
     onCancelDownload: () -> Unit,
+    onPauseDownload: () -> Unit,
+    onResumeDownload: () -> Unit,
     onDeleteDownload: () -> Unit,
 ) {
     if (!item.canDownload) return
 
     val isDownloaded = item.isDownloaded()
     val isDownloading = item.isDownloading() || downloaderState.isDownloading
+    val isPaused = downloaderState.status == DownloadManager.STATUS_PAUSED
+    val isFailed = downloaderState.status == DownloadManager.STATUS_FAILED
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
@@ -1202,15 +1330,25 @@ private fun BeamDownloadActions(
                     Text("Delete Download")
                 }
             }
+            isPaused || isFailed -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onResumeDownload) {
+                        Text("Resume Download")
+                    }
+                    FilledTonalButton(onClick = onCancelDownload) {
+                        Text("Cancel")
+                    }
+                }
+            }
             isDownloading -> {
-                FilledTonalButton(onClick = onCancelDownload) {
-                    val label =
-                        if (downloaderState.status == DownloadManager.STATUS_RUNNING) {
-                            "Cancel Download ${(downloaderState.progress * 100).toInt()}%"
-                        } else {
-                            "Cancel Download"
-                        }
-                    Text(label)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onPauseDownload) {
+                        val pct = (downloaderState.progress * 100).toInt()
+                        Text(if (pct > 0) "Pause ($pct%)" else "Pause")
+                    }
+                    FilledTonalButton(onClick = onCancelDownload) {
+                        Text("Cancel")
+                    }
                 }
             }
             else -> {
@@ -1412,6 +1550,74 @@ private val DEFAULT_DOWNLOAD_BITRATES =
         2_000_000 to "2 Mbps",
         1_000_000 to "1 Mbps",
     )
+
+@Composable
+private fun BeamBulkDownloadDialog(
+    title: String,
+    description: String,
+    confirmLabel: String,
+    onConfirm: (BulkDownloadSettings) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedMode by remember { mutableStateOf(DownloadMode.ORIGINAL) }
+    var selectedBitrate by remember { mutableStateOf(DEFAULT_DOWNLOAD_BITRATES.first().first) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        BulkDownloadSettings(
+                            mode = selectedMode,
+                            videoBitrate = if (selectedMode == DownloadMode.TRANSCODED) selectedBitrate else null,
+                        )
+                    )
+                },
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        title = { Text(title) },
+        text = {
+            BeamScrollableDialogBody {
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                BeamChoiceSection(title = "Download Mode") {
+                    BeamChoiceRow(
+                        selected = selectedMode == DownloadMode.ORIGINAL,
+                        title = "Original",
+                        subtitle = "Download the original files for best quality.",
+                        onClick = { selectedMode = DownloadMode.ORIGINAL },
+                    )
+                    BeamChoiceRow(
+                        selected = selectedMode == DownloadMode.TRANSCODED,
+                        title = "Transcoded",
+                        subtitle = "Smaller files with embedded audio and subtitles.",
+                        onClick = { selectedMode = DownloadMode.TRANSCODED },
+                    )
+                }
+                if (selectedMode == DownloadMode.TRANSCODED) {
+                    BeamChoiceSection(title = "Video Quality") {
+                        DEFAULT_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
+                            BeamChoiceRow(
+                                selected = selectedBitrate == bitrate,
+                                title = label,
+                                onClick = { selectedBitrate = bitrate },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
 
 private fun streamLabel(stream: SpatialFinMediaStream): String {
     val language = stream.language.ifBlank { "Unknown" }
@@ -1644,6 +1850,11 @@ fun BeamDownloadsScreen(
     viewModel: DownloadsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
+    val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
+    val continueWatchingItems by viewModel.continueWatchingItems.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var pendingDeleteItem by remember { mutableStateOf<SpatialFinItem?>(null) }
 
@@ -1676,10 +1887,80 @@ fun BeamDownloadsScreen(
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         item {
+            val storageLabel = if (storageUsedBytes > 0L) {
+                android.text.format.Formatter.formatFileSize(context, storageUsedBytes)
+            } else null
             BeamScreenHeader(
                 title = "Downloads",
-                body = "Movies and shows saved for offline playback.",
+                body = storageLabel
+                    ?.let { "Movies and shows saved for offline playback. Using $it." }
+                    ?: "Movies and shows saved for offline playback.",
             )
+        }
+        if (activeDownloads.isNotEmpty()) {
+            item {
+                Text(
+                    text = "In Progress",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            items(activeDownloads, key = { it.taskId }) { entry ->
+                BeamActiveDownloadCard(
+                    entry = entry,
+                    onPause = { viewModel.pauseDownload(entry.itemId) },
+                    onResume = { viewModel.resumeDownload(entry.itemId) },
+                    onCancel = { viewModel.cancelActiveDownload(entry.itemId) },
+                )
+            }
+        }
+        if (continueWatchingItems.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Continue Watching",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            items(continueWatchingItems, key = { it.id }) { item ->
+                BeamDownloadedItemCard(
+                    item = item,
+                    onPlay = { launchServerItem(context, item) },
+                    onOpen = {
+                        when (item) {
+                            is SpatialFinShow -> onOpenShow(item.id)
+                            is SpatialFinSeason -> onOpenSeason(item.id)
+                            else -> onOpenItem(item.id)
+                        }
+                    },
+                    onDelete = { pendingDeleteItem = item },
+                )
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = viewModel::setSearchQuery,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Search downloads...") },
+                    singleLine = true,
+                )
+                TextButton(
+                    onClick = {
+                        viewModel.setSortOrder(
+                            if (sortOrder == DownloadSortOrder.NAME) DownloadSortOrder.DATE_ADDED
+                            else DownloadSortOrder.NAME
+                        )
+                    },
+                ) {
+                    Text(if (sortOrder == DownloadSortOrder.NAME) "A–Z" else "Recent")
+                }
+            }
         }
         when {
             state.isLoading -> item { LoadingCard("Loading downloads...") }
@@ -1690,7 +1971,8 @@ fun BeamDownloadsScreen(
                     onRetry = viewModel::loadItems,
                 )
             }
-            state.sections.isEmpty() -> item { BeamEmptyCard("No downloaded media found.") }
+            state.sections.isEmpty() && activeDownloads.isEmpty() ->
+                item { BeamEmptyCard("No downloaded media found.") }
             else -> {
                 state.sections.forEach { section ->
                     item {
@@ -1713,6 +1995,92 @@ fun BeamDownloadsScreen(
                             },
                             onDelete = { pendingDeleteItem = item },
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamActiveDownloadCard(
+    entry: ActiveDownloadEntry,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val context = LocalContext.current
+    val statusLabel = when (entry.status) {
+        android.app.DownloadManager.STATUS_RUNNING -> {
+            val total = entry.totalBytes
+            val sizeStr = if (total != null && total > 0) {
+                "${android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)} / ${android.text.format.Formatter.formatFileSize(context, total)}"
+            } else {
+                "${entry.progress}%"
+            }
+            val speed = entry.downloadSpeedBytesPerSec
+            if (speed != null && speed > 0) {
+                "$sizeStr · ${android.text.format.Formatter.formatFileSize(context, speed)}/s"
+            } else sizeStr
+        }
+        android.app.DownloadManager.STATUS_PAUSED -> "Paused"
+        android.app.DownloadManager.STATUS_FAILED -> "Failed"
+        else -> "Pending"
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f),
+        ),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = entry.itemName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = statusLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (entry.status == android.app.DownloadManager.STATUS_RUNNING || entry.status == android.app.DownloadManager.STATUS_PAUSED) {
+                LinearProgressIndicator(
+                    progress = { entry.progress / 100f },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = if (entry.status == android.app.DownloadManager.STATUS_PAUSED)
+                        MaterialTheme.colorScheme.outline
+                    else
+                        MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            }
+            entry.errorMessage?.takeIf { it.isNotBlank() && it != "Paused" }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (entry.status) {
+                    android.app.DownloadManager.STATUS_RUNNING -> {
+                        FilledTonalButton(onClick = onPause) { Text("Pause") }
+                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    android.app.DownloadManager.STATUS_PAUSED,
+                    android.app.DownloadManager.STATUS_FAILED -> {
+                        FilledTonalButton(onClick = onResume) { Text("Resume") }
+                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    else -> {
+                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
                     }
                 }
             }
@@ -2030,7 +2398,12 @@ private fun BeamMediaFeatureCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                BeamBadge(text = badge)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BeamBadge(text = badge)
+                    if (item.isDownloaded()) {
+                        BeamBadge(text = "Downloaded")
+                    }
+                }
                 Text(
                     text = item.name,
                     style = MaterialTheme.typography.titleMedium,

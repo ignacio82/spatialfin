@@ -4,8 +4,11 @@ import android.app.DownloadManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
+import dev.jdtech.jellyfin.utils.BulkDownloadResult
 import dev.jdtech.jellyfin.utils.Downloader
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -16,10 +19,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
+data class BulkDownloadState(
+    val isQueuing: Boolean = false,
+    val result: BulkDownloadResult? = null,
+)
+
 @HiltViewModel
 class DownloaderViewModel @Inject constructor(private val downloader: Downloader) : ViewModel() {
     private val _state = MutableStateFlow(DownloaderState())
     val state = _state.asStateFlow()
+
+    private val _bulkState = MutableStateFlow(BulkDownloadState())
+    val bulkState = _bulkState.asStateFlow()
 
     private val eventsChannel = Channel<DownloaderEvent>()
     val events = eventsChannel.receiveAsFlow()
@@ -76,6 +87,18 @@ class DownloaderViewModel @Inject constructor(private val downloader: Downloader
         }
     }
 
+    private fun pauseDownload(item: SpatialFinItem) {
+        viewModelScope.launch {
+            downloader.pauseDownload(item = item)
+        }
+    }
+
+    private fun resumeDownload(item: SpatialFinItem) {
+        viewModelScope.launch {
+            downloader.resumeDownload(item = item)
+        }
+    }
+
     private fun deleteDownload(item: SpatialFinItem) {
         viewModelScope.launch {
             downloader.deleteItem(
@@ -86,11 +109,22 @@ class DownloaderViewModel @Inject constructor(private val downloader: Downloader
         }
     }
 
+    private fun downloadEpisodes(episodes: List<SpatialFinEpisode>, settings: BulkDownloadSettings) {
+        viewModelScope.launch {
+            _bulkState.emit(BulkDownloadState(isQueuing = true))
+            val result = downloader.downloadItems(episodes, settings)
+            _bulkState.emit(BulkDownloadState(isQueuing = false, result = result))
+        }
+    }
+
     fun onAction(action: DownloaderAction) {
         when (action) {
             is DownloaderAction.Download -> download(action.item, action.request)
+            is DownloaderAction.DownloadEpisodes -> downloadEpisodes(action.episodes, action.settings)
             is DownloaderAction.DeleteDownload -> deleteDownload(action.item)
             is DownloaderAction.CancelDownload -> cancelDownload(action.item)
+            is DownloaderAction.PauseDownload -> pauseDownload(action.item)
+            is DownloaderAction.ResumeDownload -> resumeDownload(action.item)
         }
     }
 

@@ -131,14 +131,22 @@ class UnifiedMainActivity : AppCompatActivity() {
             when (deviceClass) {
                 DeviceClass.TV -> {
                     TvTheme {
-                        TvNavigationRoot(state = state, appPreferences = appPreferences)
+                        TvNavigationRoot(
+                            state = state,
+                            appPreferences = appPreferences,
+                            onReconnect = viewModel::reconnect,
+                        )
                     }
                 }
 
                 DeviceClass.PHONE -> {
                     BeamTheme {
                         Surface(modifier = Modifier, color = Color.Transparent) {
-                            BeamNavigationRoot(state = state, appPreferences = appPreferences)
+                            BeamNavigationRoot(
+                                state = state,
+                                appPreferences = appPreferences,
+                                onReconnect = viewModel::reconnect,
+                            )
                         }
                     }
                 }
@@ -509,6 +517,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                                                 onboardingCompleted,
                                                             appPreferences = appPreferences,
                                                             initialSearchQuery = voiceSearchQuery,
+                                                            onReconnect = viewModel::reconnect,
                                                         )
                                                         VoiceControlOverlay(
                                                             state = voiceState,
@@ -531,6 +540,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                         onboardingCompleted = onboardingCompleted,
                                         appPreferences = appPreferences,
                                         initialSearchQuery = initialSearchQueryExtra,
+                                        onReconnect = viewModel::reconnect,
                                     )
                                 }
                             }

@@ -97,6 +97,8 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertMovie(movie: SpatialFinMovieDto)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertMovie(movie: SpatialFinMovieDto)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun insertSource(source: SpatialFinSourceDto)
 
     @Query("SELECT * FROM movies WHERE id = :id") fun getMovie(id: UUID): SpatialFinMovieDto
@@ -205,6 +207,9 @@ interface ServerDatabaseDao {
     @Query("DELETE FROM downloadtasks WHERE mediaStreamId = :mediaStreamId")
     fun deleteDownloadTaskByMediaStreamId(mediaStreamId: UUID)
 
+    @Query("SELECT * FROM downloadtasks WHERE kind = 'PRIMARY' AND status != 8 ORDER BY updatedAt DESC")
+    fun observeActiveDownloadTasks(): Flow<List<DownloadTaskDto>>
+
     @Query("UPDATE userdata SET played = :played WHERE userId = :userId AND itemId = :itemId")
     fun setPlayed(userId: UUID, itemId: UUID, played: Boolean)
 
@@ -218,6 +223,8 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertShow(show: SpatialFinShowDto)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertShow(show: SpatialFinShowDto)
+
     @Query("SELECT * FROM shows WHERE id = :id") fun getShow(id: UUID): SpatialFinShowDto
 
     @Query("SELECT * FROM shows ORDER BY name ASC") fun getShows(): List<SpatialFinShowDto>
@@ -229,6 +236,8 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertSeason(show: SpatialFinSeasonDto)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertSeason(season: SpatialFinSeasonDto)
+
     @Query("SELECT * FROM seasons WHERE id = :id") fun getSeason(id: UUID): SpatialFinSeasonDto
 
     @Query("SELECT * FROM seasons WHERE seriesId = :seriesId ORDER BY indexNumber ASC")
@@ -237,6 +246,8 @@ interface ServerDatabaseDao {
     @Query("DELETE FROM seasons WHERE id = :id") fun deleteSeason(id: UUID)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertEpisode(episode: SpatialFinEpisodeDto)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertEpisode(episode: SpatialFinEpisodeDto)
 
     @Query("SELECT * FROM episodes WHERE id = :id") fun getEpisode(id: UUID): SpatialFinEpisodeDto
 
@@ -304,6 +315,12 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM userdata WHERE userId = :userId AND itemId = :itemId AND toBeSynced = 1")
     fun getUserDataToBeSynced(userId: UUID, itemId: UUID): SpatialFinUserDataDto?
+
+    @Query("SELECT COUNT(*) FROM userdata WHERE toBeSynced = 1")
+    fun getPendingUserDataSyncCount(): Int
+
+    @Query("SELECT COUNT(*) FROM userdata WHERE toBeSynced = 1")
+    fun observePendingUserDataSyncCount(): Flow<Int>
 
     @Query(
         "UPDATE userdata SET toBeSynced = :toBeSynced WHERE itemId = :itemId AND userId = :userId"

@@ -8,7 +8,12 @@ import dev.jdtech.jellyfin.film.R as FilmR
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.HomeSection
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.UiText
+import dev.jdtech.jellyfin.models.isDownloaded
+import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
+import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.toView
@@ -17,6 +22,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -27,6 +33,8 @@ constructor(
     val repository: JellyfinRepository,
     val appPreferences: AppPreferences,
     val database: ServerDatabaseDao,
+    private val connectionMonitor: ServerConnectionMonitor,
+    private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state = _state.asStateFlow()
@@ -36,9 +44,26 @@ constructor(
         UUID(4937169328197226115, -4704919157662094443) // 44845958-8326-4e83-beb4-c4f42e9eeb95
     private val uuidNextUp =
         UUID(1783371395749072194, -6164625418200444295) // 18bfced5-f237-4d42-aa72-d9d7fed19279
+    private val uuidOfflineFavorites =
+        UUID.fromString("efad1d86-fc13-4d17-8204-44f6b35456ce")
+    private val uuidOfflineMovies =
+        UUID.fromString("4dd2d857-5917-4c97-8886-68dff8dd8452")
+    private val uuidOfflineShows =
+        UUID.fromString("78482034-8cc1-47a9-9ff1-0ecb1da759f4")
 
     private val uiTextContinueWatching = UiText.StringResource(FilmR.string.continue_watching)
     private val uiTextNextUp = UiText.StringResource(FilmR.string.next_up)
+    private val uiTextOfflineFavorites =
+        UiText.StringResource(FilmR.string.offline_favorites)
+    private val uiTextOfflineMovies =
+        UiText.StringResource(FilmR.string.offline_downloaded_movies)
+    private val uiTextOfflineShows =
+        UiText.StringResource(FilmR.string.offline_downloaded_shows)
+
+    init {
+        observeConnectionState()
+        observeSyncStatus()
+    }
 
     fun loadData() {
         Timber.i("Loading data")
@@ -49,10 +74,16 @@ constructor(
                     loadServerName(serverId)
                 }
 
-                loadSuggestions()
                 loadResumeItems()
                 loadNextUpItems()
-                loadViews()
+                if (connectionMonitor.shouldUseOfflineRepository()) {
+                    _state.update { it.copy(suggestionsSection = null, views = emptyList()) }
+                    loadOfflineLibrarySections()
+                } else {
+                    _state.update { it.copy(offlineLibrarySections = emptyList()) }
+                    loadSuggestions()
+                    loadViews()
+                }
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
@@ -145,6 +176,68 @@ constructor(
             }
 
         _state.emit(_state.value.copy(views = items))
+    }
+
+    private suspend fun loadOfflineLibrarySections() {
+        Timber.i("Loading offline library sections")
+        val downloadedItems = repository.getDownloads()
+        val favoriteItems =
+            repository
+                .getFavoriteItems()
+                .filter { it is SpatialFinShow || it.isDownloaded() }
+        val sections = buildList {
+            if (favoriteItems.isNotEmpty()) {
+                add(
+                    HomeItem.Section(
+                        HomeSection(uuidOfflineFavorites, uiTextOfflineFavorites, favoriteItems)
+                    )
+                )
+            }
+            downloadedItems
+                .filterIsInstance<SpatialFinMovie>()
+                .filter { it.isDownloaded() }
+                .takeIf { it.isNotEmpty() }
+                ?.let {
+                    add(HomeItem.Section(HomeSection(uuidOfflineMovies, uiTextOfflineMovies, it)))
+                }
+            downloadedItems
+                .filterIsInstance<SpatialFinShow>()
+                .takeIf { it.isNotEmpty() }
+                ?.let {
+                    add(HomeItem.Section(HomeSection(uuidOfflineShows, uiTextOfflineShows, it)))
+                }
+        }
+        _state.update { it.copy(offlineLibrarySections = sections) }
+    }
+
+    private fun observeConnectionState() {
+        viewModelScope.launch {
+            var previousState = connectionMonitor.state.value
+            connectionMonitor.state.collect { connectionState ->
+                _state.update {
+                    it.copy(
+                        isOfflineMode = connectionState.effectiveOfflineMode,
+                        isConnectionDegraded = connectionState.isDegradedMode,
+                        manualOfflineMode = connectionState.manualOfflineMode,
+                    )
+                }
+                val shouldReload =
+                    previousState.effectiveOfflineMode != connectionState.effectiveOfflineMode ||
+                        (!previousState.serverAccessible && connectionState.serverAccessible)
+                previousState = connectionState
+                if (shouldReload) {
+                    loadData()
+                }
+            }
+        }
+    }
+
+    private fun observeSyncStatus() {
+        viewModelScope.launch {
+            offlineSyncStatusMonitor.state.collect { syncStatus ->
+                _state.update { it.copy(syncStatus = syncStatus) }
+            }
+        }
     }
 
     fun onAction(action: HomeAction) {
