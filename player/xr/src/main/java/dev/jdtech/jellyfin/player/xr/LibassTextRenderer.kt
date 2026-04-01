@@ -44,12 +44,10 @@ class LibassTextRenderer(
     override fun supportsFormat(format: Format): Int {
         val mimeType = format.sampleMimeType ?: return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         if (usagePref == "never") {
-            Timber.i("subtitle: LibassTextRenderer skip mime=%s pref=never", mimeType)
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         }
         return if (mimeType == MimeTypes.TEXT_SSA || mimeType == "text/x-ssa" ||
             mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT) {
-            Timber.i("subtitle: LibassTextRenderer CLAIMED mime=%s lang=%s", mimeType, format.language)
             RendererCapabilities.create(C.FORMAT_HANDLED)
         } else {
             if (mimeType == "application/x-media3-cues") {
@@ -57,8 +55,6 @@ class LibassTextRenderer(
                 // Raw ASS bytes were decoded before reaching us — libass cannot process them.
                 // Fix: ensure experimentalParseSubtitlesDuringExtraction(false) is set on MediaSourceFactory.
                 Timber.e("subtitle: LibassTextRenderer got application/x-media3-cues — subtitle transcoding is active! libass will NOT work. Check MediaSourceFactory setup.")
-            } else {
-                Timber.d("subtitle: LibassTextRenderer skip mime=%s lang=%s (not ASS/SSA)", mimeType, format.language)
             }
             RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         }
@@ -147,30 +143,6 @@ class LibassTextRenderer(
             val durationMs = parsedDuration
                 ?: if (isKaraoke) 300_000L   // karaoke lines span entire song sections
                 else 10_000L                 // regular dialogue — generous to handle long pauses
-
-            val preview = String(bytes, Charsets.UTF_8)
-                .take(140)
-                .replace('\n', ' ')
-                .replace('\r', ' ')
-            val normalizedPreview = String(normalizedBytes, Charsets.UTF_8)
-                .take(140)
-                .replace('\n', ' ')
-                .replace('\r', ' ')
-            val prefix = bytes.take(24).joinToString(" ") { "%02x".format(it) }
-            val hasDialoguePrefix = preview.startsWith("Dialogue:")
-            Timber.d(
-                "chunk: start=%dms dur=%dms size=%d→%d karaoke=%b parsed=%b dialoguePrefix=%b hex=%s | raw=%s | normalized=%s",
-                startMs,
-                durationMs,
-                bytes.size,
-                normalizedBytes.size,
-                isKaraoke,
-                parsedDuration != null,
-                hasDialoguePrefix,
-                prefix,
-                preview,
-                normalizedPreview
-            )
 
             libassRenderer.processChunk(normalizedBytes, startMs, durationMs)
             buffer.clear()

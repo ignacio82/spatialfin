@@ -359,21 +359,14 @@ class XrPlayerActivity : AppCompatActivity() {
                 isFontAttachment(attachment.fileName, attachment.mimeType, attachment.codec)
             }
             Timber.i("subtitle: candidate embedded ASS fonts=%d itemId=%s", fontAttachments.size, itemId)
-            fontAttachments.mapNotNull { (source, attachment) ->
+            val loadedFonts = fontAttachments.mapNotNull { (source, attachment) ->
                 val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
                 repository.getMediaAttachment(itemId, source.id, attachment.index)?.let { bytes ->
-                    Timber.i(
-                        "subtitle: loaded embedded font name=%s source=%s index=%d bytes=%d mime=%s codec=%s",
-                        fileName,
-                        source.id,
-                        attachment.index,
-                        bytes.size,
-                        attachment.mimeType,
-                        attachment.codec,
-                    )
                     fileName to bytes
                 }
             }
+            Timber.i("subtitle: loaded embedded ASS fonts=%d itemId=%s", loadedFonts.size, itemId)
+            loadedFonts
         }
     }
 

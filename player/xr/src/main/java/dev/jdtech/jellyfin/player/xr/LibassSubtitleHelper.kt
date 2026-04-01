@@ -34,15 +34,6 @@ object LibassSubtitleHelper {
             return false
         }
 
-        // Log all text tracks for diagnosis
-        textGroups.forEachIndexed { gi, group ->
-            (0 until group.length).forEach { i ->
-                val fmt = group.getTrackFormat(i)
-                Timber.i("subtitle: track[%d/%d] mime=%s lang=%s supported=%b selected=%b",
-                    gi, i, fmt.sampleMimeType, fmt.language, group.isSupported, group.isSelected)
-            }
-        }
-
         // Check for any text tracks that we can handle via libass
         val hasCompatibleTrack = textGroups.any { group ->
             group.isSupported &&
@@ -76,7 +67,12 @@ object LibassSubtitleHelper {
         } else {
             true // "always"
         }
-        Timber.i("subtitle: useLibass=%b — compatible track found, pref=%s", result, preference)
+        Timber.i(
+            "subtitle: useLibass=%b — compatible text track found groups=%d pref=%s",
+            result,
+            textGroups.size,
+            preference,
+        )
         return result
     }
 }

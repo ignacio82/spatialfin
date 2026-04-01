@@ -121,7 +121,7 @@ class LibassRenderer(
      * @param storageH pixel height of the original video.
      */
     fun resize(newWidth: Int, newHeight: Int, storageW: Int = 0, storageH: Int = 0) {
-        Timber.i("resize: %dx%d → %dx%d  storage=%dx%d", width, height, newWidth, newHeight, storageW, storageH)
+        Timber.d("subtitle: resize %dx%d → %dx%d storage=%dx%d", width, height, newWidth, newHeight, storageW, storageH)
         width = newWidth
         height = newHeight
         handler.post {
@@ -163,13 +163,10 @@ class LibassRenderer(
                             ).also {
                                 it.setHasAlpha(true)
                                 cachedBitmap = it
-                                Timber.d("renderFrame: created bitmap %dx%d", width, height)
                             }
                             bitmap.copyPixelsFromBuffer(buffer)
                             val dirtyW = nativeResult[3]
                             val dirtyH = nativeResult[4]
-                            Timber.d("renderFrame: dirty=(%d,%d) %dx%d",
-                                nativeResult[1], nativeResult[2], dirtyW, dirtyH)
                             result = RenderResult(
                                 hasContent = true,
                                 bitmap = bitmap,

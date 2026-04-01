@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.ui.CaptionStyleCompat
@@ -150,6 +151,11 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
+import dev.jdtech.jellyfin.player.xr.mcp.EntityInfo
+import dev.jdtech.jellyfin.player.xr.mcp.LibassState
+import dev.jdtech.jellyfin.player.xr.mcp.McpBridge
+import dev.jdtech.jellyfin.player.xr.mcp.PlaybackState
+import dev.jdtech.jellyfin.player.xr.mcp.SceneState
 
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.local.R as LocalR
@@ -277,6 +283,8 @@ fun SpatialPlayerScreen(
     var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var hasLibassContent by remember { mutableStateOf(false) }
     var libassFrameVersion by remember { mutableIntStateOf(0) }
+    var videoOverlayAttachmentVersion by remember { mutableIntStateOf(0) }
+    var lastLoggedMoveFrameVersion by remember { mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     // Build caption style from user preferences so the selected colours / background
     // are honoured instead of the system default (which renders a black background box).
@@ -314,11 +322,13 @@ fun SpatialPlayerScreen(
     var videoWidth by remember { mutableFloatStateOf(10.0f) }
     var videoHeight by remember { mutableFloatStateOf(5.625f) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    var subtitleTrackVersion by remember { mutableIntStateOf(0) }
     val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
     var resumePlaybackAfterAssistantSpeech by remember { mutableStateOf(false) }
     var assistantSpeechPendingStart by remember { mutableStateOf(false) }
     var assistantSpeechStarted by remember { mutableStateOf(false) }
 
+    // --- MCP Bridge integration ---
     var showPausedMascot by remember { mutableStateOf(false) }
     val isActuallyPaused = playbackState == Player.STATE_READY && !isPlaying
     LaunchedEffect(isActuallyPaused) {
@@ -360,6 +370,52 @@ fun SpatialPlayerScreen(
 
     fun resetAutoHide() {
         hideTimestamp = System.currentTimeMillis()
+    }
+
+    DisposableEffect(context) {
+        McpBridge.register(context)
+        McpBridge.onActionTriggered = { action ->
+            coroutineScope.launch {
+                when (action) {
+                    "play" -> player.play()
+                    "pause" -> player.pause()
+                    "skip_forward" -> player.seekForward()
+                    "skip_backward" -> player.seekBack()
+                    "next_episode" -> viewModel.skipToNextItem()
+                    "toggle_controls" -> controlsVisible = !controlsVisible
+                    "toggle_passthrough" -> passthroughOverrideEnabled = !(passthroughOverrideEnabled ?: !isPlaying)
+                }
+            }
+        }
+        onDispose {
+            McpBridge.onActionTriggered = null
+            McpBridge.unregister(context)
+        }
+    }
+
+    LaunchedEffect(uiState.currentItemTitle, currentPosition, duration, isPlaying, playbackState, videoWidth, videoHeight) {
+        McpBridge.updatePlayback(
+            PlaybackState(
+                title = uiState.currentItemTitle,
+                positionMs = currentPosition,
+                durationMs = duration,
+                isPlaying = isPlaying,
+                playbackState = playbackState,
+                videoWidth = videoWidth.toInt(),
+                videoHeight = videoHeight.toInt(),
+            ),
+        )
+    }
+
+    LaunchedEffect(useLibass, hasLibassContent, libassFrameVersion, libassBitmap) {
+        McpBridge.updateLibass(
+            LibassState(
+                renderWidth = libassBitmap?.width ?: 0,
+                renderHeight = libassBitmap?.height ?: 0,
+                hasContent = hasLibassContent,
+                frameVersion = libassFrameVersion,
+            ),
+        )
     }
 
     LaunchedEffect(openSyncPlayDialogOnStart) {
@@ -634,13 +690,6 @@ fun SpatialPlayerScreen(
                         recentSubtitles.add(now to first)
                         recentSubtitles.removeAll { now - it.first > 60_000L }
                     }
-                    val firstPreview = first?.take(60)
-                    Timber.d("subtitle: fallback onCues count=%d first='%s'", cueGroup.cues.size, firstPreview)
-                    cueGroup.cues.take(3).forEachIndexed { index, cue ->
-                        Timber.d("subtitle: fallback cue[%d] %s", index, cue.debugSummary())
-                    }
-                } else {
-                    Timber.d("subtitle: fallback onCues cleared")
                 }
             }
             override fun onPositionDiscontinuity(
@@ -652,23 +701,37 @@ fun SpatialPlayerScreen(
                     libassRenderer?.clearCache()
                 }
             }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                subtitleTrackVersion++
+                Timber.i(
+                    "subtitle: XR track snapshot updated version=%d textGroups=%d",
+                    subtitleTrackVersion,
+                    tracks.groups.count { it.type == C.TRACK_TYPE_TEXT },
+                )
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
 
     // Initialize libass when track info becomes available
-    LaunchedEffect(viewModel.player.currentTracks, currentStereoMode) {
+    LaunchedEffect(player, subtitleTrackVersion, currentStereoMode, libassUsagePref) {
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
         useLibass = !stereoPlayback &&
             libassRenderer != null &&
-            LibassSubtitleHelper.shouldUseLibass(viewModel.player, emptyList(), libassUsagePref)
+            LibassSubtitleHelper.shouldUseLibass(player, emptyList(), libassUsagePref)
+        if (!useLibass) {
+            hasLibassContent = false
+            libassBitmap = null
+        }
         Timber.i(
-            "subtitle: useLibass=%b (renderer=%b pref=%s stereoMode=%s)",
+            "subtitle: useLibass=%b (renderer=%b pref=%s stereoMode=%s trackVersion=%d)",
             useLibass,
             libassRenderer != null,
             libassUsagePref,
             currentStereoMode,
+            subtitleTrackVersion,
         )
     }
 
@@ -684,6 +747,21 @@ fun SpatialPlayerScreen(
                 if (result.bitmap != null) {
                     libassBitmap = result.bitmap
                     libassFrameVersion++
+                }
+                if (
+                    videoOverlayAttachmentVersion > 0 &&
+                    videoOverlayAttachmentVersion > lastLoggedMoveFrameVersion &&
+                    (result.bitmap != null || result.hasContent)
+                ) {
+                    lastLoggedMoveFrameVersion = videoOverlayAttachmentVersion
+                    Timber.i(
+                        "subtitle: first frame after move overlayVersion=%d hasContent=%b bitmap=%b frameVersion=%d posMs=%d",
+                        videoOverlayAttachmentVersion,
+                        result.hasContent,
+                        result.bitmap != null,
+                        libassFrameVersion,
+                        pos,
+                    )
                 }
             }
             delay(33) // ~30fps for subtitle updates (smooth for \move, \fad)
@@ -711,8 +789,14 @@ fun SpatialPlayerScreen(
         }
     }
 
+    val videoDepth = 5.0f
+    val uiDepth = 1.25f
+    val overlayProjectionScale = uiDepth / videoDepth
+
     // --- SceneCore video entity ---
-    val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val videoRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val subtitleRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
     val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
     val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
@@ -720,44 +804,22 @@ fun SpatialPlayerScreen(
     // scroll gestures inside the panel are never intercepted by the video's grab handle.
     val castPanelEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
-
-    LaunchedEffect(controlsVisible, rootEntity.value) {
-        val root = rootEntity.value ?: return@LaunchedEffect
-        if (!controlsVisible) {
-            if (movableComponent.value == null) {
-                val movable = androidx.xr.scenecore.MovableComponent.createSystemMovable(session, false)
-                root.addComponent(movable)
-                movableComponent.value = movable
-                Timber.d("VOICE: Player movable enabled controlsVisible=%b", controlsVisible)
-            }
-        } else {
-            movableComponent.value?.let {
-                val latestPose = safeGetEntityPose(root)
-                latestPose?.let { pose ->
-                    savePlayerRootPose(viewModel, pose)
-                }
-                root.removeComponent(it)
-                latestPose?.let { pose ->
-                    runCatching { root.setPose(pose) }
-                }
-                movableComponent.value = null
-                Timber.d(
-                    "VOICE: Player movable disabled controlsVisible=%b",
-                    controlsVisible,
-                )
-            }
-        }
-    }
+    // Cache the video root pose reported by move callbacks so the UI root can mirror it
+    // and the pose can be persisted without relying on SceneCore's internal drag overlay.
+    val lastReportedMovePose = remember { mutableStateOf<androidx.xr.runtime.math.Pose?>(null) }
 
     DisposableEffect(session) {
         val savedPose = loadSavedPlayerRootPose(viewModel)
+        val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(10.0f, 5.625f))
         try {
-            // Place root at the origin. UIs will be offset manually relative to the root.
-            val root = GroupEntity.create(session, "PlayerRoot", savedPose)
-            rootEntity.value = root
+            val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose)
+            val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose)
+            val subtitleRoot = GroupEntity.create(session, "PlayerSubtitleRoot", projectedOverlayPose)
+            videoRootEntity.value = videoRoot
+            uiRootEntity.value = uiRoot
+            subtitleRootEntity.value = subtitleRoot
 
-            // Place the video at -5.0f relative to the root.
             val entity = SurfaceEntity.create(
                 session = session,
                 pose = Pose(Vector3(0f, 0f, -5.0f), Quaternion.Identity),
@@ -766,8 +828,78 @@ fun SpatialPlayerScreen(
             ).apply {
                 mediaBlendingMode = SurfaceEntity.MediaBlendingMode.OPAQUE
             }
-            root.addChild(entity)
+            videoRoot.addChild(entity)
             videoEntity.value = entity
+            lastReportedMovePose.value = savedPose
+
+            val movable = androidx.xr.scenecore.MovableComponent.createCustomMovable(
+                session,
+                false,
+                ContextCompat.getMainExecutor(context),
+                object : androidx.xr.scenecore.EntityMoveListener {
+                    override fun onMoveStart(
+                        entity: androidx.xr.scenecore.Entity,
+                        initialInputRay: androidx.xr.runtime.math.Ray,
+                        initialPose: androidx.xr.runtime.math.Pose,
+                        initialScale: Float,
+                        initialParent: androidx.xr.scenecore.Entity,
+                    ) {
+                        runCatching {
+                            videoRoot.setPose(initialPose)
+                            videoRoot.setScale(initialScale)
+                        }
+                        syncProjectedOverlayRoots(initialPose, initialScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        lastReportedMovePose.value = initialPose
+                        Timber.i(
+                            "subtitle: move start targetIsVideoRoot=%b targetClass=%s",
+                            entity == videoRoot,
+                            entity.javaClass.simpleName,
+                        )
+                    }
+
+                    override fun onMoveUpdate(
+                        entity: androidx.xr.scenecore.Entity,
+                        currentInputRay: androidx.xr.runtime.math.Ray,
+                        currentPose: androidx.xr.runtime.math.Pose,
+                        currentScale: Float,
+                    ) {
+                        runCatching {
+                            videoRoot.setPose(currentPose)
+                            videoRoot.setScale(currentScale)
+                        }
+                        syncProjectedOverlayRoots(currentPose, currentScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        lastReportedMovePose.value = currentPose
+                    }
+
+                    override fun onMoveEnd(
+                        entity: androidx.xr.scenecore.Entity,
+                        finalInputRay: androidx.xr.runtime.math.Ray,
+                        finalPose: androidx.xr.runtime.math.Pose,
+                        finalScale: Float,
+                        updatedParent: androidx.xr.scenecore.Entity?,
+                    ) {
+                        runCatching {
+                            videoRoot.setPose(finalPose)
+                            videoRoot.setScale(finalScale)
+                        }
+                        syncProjectedOverlayRoots(finalPose, finalScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        lastReportedMovePose.value = finalPose
+                        videoOverlayAttachmentVersion++
+                        savePlayerRootPose(viewModel, finalPose)
+                        Timber.i(
+                            "subtitle: move end targetIsVideoRoot=%b targetClass=%s overlayVersion=%d useLibass=%b hasContent=%b frameVersion=%d",
+                            entity == videoRoot,
+                            entity.javaClass.simpleName,
+                            videoOverlayAttachmentVersion,
+                            useLibass,
+                            hasLibassContent,
+                            libassFrameVersion,
+                        )
+                    }
+                },
+            )
+            videoRoot.addComponent(movable)
+            movableComponent.value = movable
 
             // Cast panel root: centered, 3.5 m in front, no movable component.
             val castRoot = GroupEntity.create(session, "CastPanelRoot", Pose(Vector3(0f, 0f, -3.5f), Quaternion.Identity))
@@ -775,8 +907,9 @@ fun SpatialPlayerScreen(
         } catch (_: Exception) {}
 
         onDispose {
-            rootEntity.value?.let { root ->
-                safeGetEntityPose(root)?.let { savePlayerRootPose(viewModel, it) }
+            videoRootEntity.value?.let { root ->
+                val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
+                finalPose?.let { savePlayerRootPose(viewModel, it) }
             }
             voiceService.destroy()
             commandCoordinator.destroy()
@@ -785,19 +918,24 @@ fun SpatialPlayerScreen(
             videoEntity.value?.dispose()
             videoEntity.value = null
             mascotEntity.value?.dispose()
-            rootEntity.value?.dispose()
-            rootEntity.value = null
+            videoRootEntity.value?.dispose()
+            videoRootEntity.value = null
+            uiRootEntity.value?.dispose()
+            uiRootEntity.value = null
+            subtitleRootEntity.value?.dispose()
+            subtitleRootEntity.value = null
             mascotEntity.value = null
             mascotModel.value?.close()
             mascotModel.value = null
+            movableComponent.value = null
             castPanelEntity.value?.dispose()
             castPanelEntity.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
         }
     }
 
-    LaunchedEffect(session, rootEntity.value) {
-        rootEntity.value ?: return@LaunchedEffect
+    LaunchedEffect(session, videoRootEntity.value) {
+        videoRootEntity.value ?: return@LaunchedEffect
         if (mascotEntity.value != null) return@LaunchedEffect
         if (!session.scene.spatialCapabilities.contains(SpatialCapability.SPATIAL_3D_CONTENT)) {
             Timber.i("Skipping paused mascot: SPATIAL_3D_CONTENT not available")
@@ -825,10 +963,67 @@ fun SpatialPlayerScreen(
         safelyToggleMascotEntity(mascot, showPausedMascot)
     }
 
-    LaunchedEffect(rootEntity.value) {
-        val root = rootEntity.value ?: return@LaunchedEffect
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, videoEntity.value, mascotEntity.value) {
         while (true) {
-            safeGetEntityPose(root)?.let { savePlayerRootPose(viewModel, it) }
+            val entities = mutableListOf<EntityInfo>()
+            videoRootEntity.value?.let { e ->
+                val p = safeGetEntityPose(e)
+                entities.add(EntityInfo("VideoRoot", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            }
+            uiRootEntity.value?.let { e ->
+                val p = safeGetEntityPose(e)
+                entities.add(EntityInfo("UiRoot", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            }
+            subtitleRootEntity.value?.let { e ->
+                val p = safeGetEntityPose(e)
+                entities.add(EntityInfo("SubtitleRoot", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            }
+            videoEntity.value?.let { e ->
+                val p = safeGetEntityPose(e)
+                entities.add(EntityInfo("VideoSurface", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            }
+            mascotEntity.value?.let { e ->
+                val p = safeGetEntityPose(e)
+                entities.add(EntityInfo("Mascot", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            }
+            McpBridge.updateScene(SceneState(entities))
+            delay(1000L)
+        }
+    }
+
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
+        val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
+        val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
+        val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
+        while (true) {
+            val poseToMirror = safeGetEntityPose(videoRoot) ?: lastReportedMovePose.value
+            val scaleToMirror = runCatching { videoRoot.getScale() }.getOrDefault(1f)
+            poseToMirror?.let { pose ->
+                lastReportedMovePose.value = pose
+                syncProjectedOverlayRoots(pose, scaleToMirror, uiRoot, subtitleRoot, overlayProjectionScale)
+            }
+            delay(100L)
+        }
+    }
+
+    LaunchedEffect(videoOverlayAttachmentVersion) {
+        if (videoOverlayAttachmentVersion <= 0) return@LaunchedEffect
+        delay(750L)
+        Timber.i(
+            "subtitle: post-move state overlayVersion=%d useLibass=%b hasContent=%b frameVersion=%d bitmap=%b",
+            videoOverlayAttachmentVersion,
+            useLibass,
+            hasLibassContent,
+            libassFrameVersion,
+            libassBitmap != null,
+        )
+    }
+
+    LaunchedEffect(videoRootEntity.value) {
+        val root = videoRootEntity.value ?: return@LaunchedEffect
+        while (true) {
+            val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
+            poseToSave?.let { savePlayerRootPose(viewModel, it) }
             delay(1_000L)
         }
     }
@@ -881,7 +1076,7 @@ fun SpatialPlayerScreen(
             videoWidth = 10.0f
             videoHeight = videoWidth / (16f / 9f)
         }
-        Timber.i(
+        Timber.d(
             "subtitle: video geometry source=%dx%d ratio=%.4f stereo=%s world=%.3fm x %.3fm",
             videoSize.width,
             videoSize.height,
@@ -921,8 +1116,6 @@ fun SpatialPlayerScreen(
     }
 
     // --- Layout calculations ---
-    val videoDepth = 5.0f
-    val uiDepth = 1.25f
     val uiScaleFactor = uiDepth / videoDepth
     val subtitleScaleFactor = uiDepth / videoDepth
     val scaledVideoWidthDp = videoWidth * subtitleScaleFactor * 1000f
@@ -945,7 +1138,7 @@ fun SpatialPlayerScreen(
         val renderHeight = (subtitlePanelHeightDp * density.density).toInt().coerceIn(720, 4320)
         val videoW = player.videoSize.width
         val videoH = player.videoSize.height
-        Timber.i(
+        Timber.d(
             "subtitle: panel geometry mode=%s useLibass=%b panel=%.1fdp x %.1fdp density=%.3f render=%dx%d video=%dx%d finalTextSp=%.1f z=%.1fdp",
             currentStereoMode,
             useLibass,
@@ -970,86 +1163,82 @@ fun SpatialPlayerScreen(
     val controlsZDp = -uiDepth * 1000f
 
     Subspace {
-        val root = rootEntity.value
-        if (root != null) {
-            SceneCoreEntity(factory = { root }, modifier = SubspaceModifier) {
-                // ── Subtitle Panel ──────────────────────────────────────────────────────────
-        // Spans the full projected video area so PGS cue positions map correctly.
-        // In curved mode the panel sits at the front of the cylinder (uiAnchorZDp already
-        // incorporates the depth; uiExtraZDp is 0).
-        if (useLibass) {
-            val currentBitmap = libassBitmap
-            if (hasLibassContent && currentBitmap != null) {
-                SpatialPanel(
-                    modifier = SubspaceModifier
-                        .width(subtitlePanelWidthDp.dp)
-                        .height(subtitlePanelHeightDp.dp)
-                        .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
-                ) {
-                    key(libassFrameVersion) {
-                        Image(
-                            painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
+        val subtitleRoot = subtitleRootEntity.value
+        if (subtitleRoot != null) {
+            SceneCoreEntity(factory = { subtitleRoot }, modifier = SubspaceModifier) {
+                key(videoOverlayAttachmentVersion) {
+                    // ── Subtitle Panel ──────────────────────────────────────────────────
+                    // Keep subtitles on their own projected near-plane root so they remain
+                    // visually aligned with the moved video surface after lateral movement.
+                    if (useLibass) {
+                        val currentBitmap = libassBitmap
+                        if (hasLibassContent && currentBitmap != null) {
+                            SpatialPanel(
+                                modifier = SubspaceModifier
+                                    .width(subtitlePanelWidthDp.dp)
+                                    .height(subtitlePanelHeightDp.dp)
+                                    .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
+                            ) {
+                                key(videoOverlayAttachmentVersion, libassFrameVersion) {
+                                    Image(
+                                        painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Fit,
+                                    )
+                                }
+                            }
+                        }
+                    } else if (currentCues.isNotEmpty()) {
+                        SpatialPanel(
+                            modifier = SubspaceModifier
+                                .width(subtitlePanelWidthDp.dp)
+                                .height(subtitlePanelHeightDp.dp)
+                                .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
+                        ) {
+                            AndroidView(
+                                factory = { context ->
+                                    SubtitleView(context).apply {
+                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        setBottomPaddingFraction(0.04f)
+                                        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                                        setStyle(captionStyle)
+                                    }
+                                },
+                                update = { view ->
+                                    view.setStyle(captionStyle)
+                                    view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                                    view.setCues(currentCues)
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+
+                    if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
+                        SpatialPanel(
+                            modifier = SubspaceModifier
+                                .width(subtitlePanelWidthDp.dp)
+                                .height(subtitlePanelHeightDp.dp)
+                                .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                VoiceControlOverlay(
+                                    state = voiceState,
+                                    partialTranscript = partialTranscript,
+                                    gestureArmingProgress = voiceGestureArmingProgress,
+                                    gestureHint = voiceGestureHint,
+                                )
+                            }
+                        }
                     }
                 }
             }
-        } else {
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(subtitlePanelWidthDp.dp)
-                    .height(subtitlePanelHeightDp.dp)
-                    .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
-            ) {
-                AndroidView(
-                    factory = { context ->
-                        SubtitleView(context).apply {
-                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            // 4 % bottom padding keeps text off the very edge of the panel,
-                            // matching the TV / cinema convention without pushing it to the middle.
-                            setBottomPaddingFraction(0.04f)
-                            setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                            // Apply user-selected style — do NOT call setUserDefaultStyle() here:
-                            // that method overrides our fixed text size with a fractional one and
-                            // forces the OS system caption style (black background box).
-                            setStyle(captionStyle)
-                        }
-                    },
-                    update = { view ->
-                        // Re-apply style and size on every update to prevent the OS from
-                        // silently re-applying the system caption style (GEMINI.md guidance).
-                        view.setStyle(captionStyle)
-                        view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                        // Respect authored cue placement. Rewriting fractional line positions
-                        // makes some anime subtitle tracks appear offset even when the subtitle
-                        // panel already matches the projected video surface.
-                        view.setCues(currentCues)
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
         }
 
-        if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(subtitlePanelWidthDp.dp)
-                    .height(subtitlePanelHeightDp.dp)
-                    .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    VoiceControlOverlay(
-                        state = voiceState,
-                        partialTranscript = partialTranscript,
-                        gestureArmingProgress = voiceGestureArmingProgress,
-                        gestureHint = voiceGestureHint,
-                    )
-                }
-            }
-        }
-
+        val uiRoot = uiRootEntity.value
+        if (uiRoot != null) {
+            SceneCoreEntity(factory = { uiRoot }, modifier = SubspaceModifier) {
         // ── Control Panel ────────────────────────────────────────────────────────────
         // Floats below the video.  Secondary controls are in an Orbiter on the right
         // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
@@ -1129,7 +1318,7 @@ fun SpatialPlayerScreen(
                                 awaitPointerEventScope {
                                     while (true) {
                                         val event = awaitPointerEvent()
-                                        if (event.type == PointerEventType.Enter || 
+                                        if (event.type == PointerEventType.Enter ||
                                             event.type == PointerEventType.Move) {
                                             controlsVisible = true
                                             resetAutoHide()
@@ -1140,7 +1329,10 @@ fun SpatialPlayerScreen(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                                onClick = { controlsVisible = true; resetAutoHide() },
+                                onClick = {
+                                    controlsVisible = true
+                                    resetAutoHide()
+                                },
                             ),
                     )
                 }
@@ -2869,7 +3061,37 @@ private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
 }
 
-private fun safeGetEntityPose(entity: GroupEntity): Pose? {
+private fun projectPoseFromOrigin(sourcePose: Pose, depthScale: Float): Pose {
+    val translation = sourcePose.translation
+    return Pose(
+        Vector3(
+            translation.x * depthScale,
+            translation.y * depthScale,
+            translation.z * depthScale,
+        ),
+        sourcePose.rotation,
+    )
+}
+
+private fun syncProjectedOverlayRoots(
+    videoPose: Pose,
+    videoScale: Float,
+    uiRoot: GroupEntity,
+    subtitleRoot: GroupEntity,
+    depthScale: Float,
+) {
+    val projectedPose = projectPoseFromOrigin(videoPose, depthScale)
+    runCatching {
+        uiRoot.setScale(videoScale)
+        uiRoot.setPose(projectedPose)
+    }
+    runCatching {
+        subtitleRoot.setScale(videoScale)
+        subtitleRoot.setPose(projectedPose)
+    }
+}
+
+private fun safeGetEntityPose(entity: androidx.xr.scenecore.Entity): Pose? {
     return runCatching { entity.getPose() }
         .onFailure { Timber.d("Skipping disposed XR player entity pose save") }
         .getOrNull()
