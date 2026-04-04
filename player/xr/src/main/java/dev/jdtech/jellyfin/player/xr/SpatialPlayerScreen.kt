@@ -1166,70 +1166,70 @@ fun SpatialPlayerScreen(
         val subtitleRoot = subtitleRootEntity.value
         if (subtitleRoot != null) {
             SceneCoreEntity(factory = { subtitleRoot }, modifier = SubspaceModifier) {
-                key(videoOverlayAttachmentVersion) {
-                    // ── Subtitle Panel ──────────────────────────────────────────────────
-                    // Keep subtitles on their own projected near-plane root so they remain
-                    // visually aligned with the moved video surface after lateral movement.
-                    if (useLibass) {
-                        val currentBitmap = libassBitmap
-                        if (hasLibassContent && currentBitmap != null) {
-                            SpatialPanel(
-                                modifier = SubspaceModifier
-                                    .width(subtitlePanelWidthDp.dp)
-                                    .height(subtitlePanelHeightDp.dp)
-                                    .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
-                            ) {
-                                key(videoOverlayAttachmentVersion, libassFrameVersion) {
-                                    Image(
-                                        painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
-                                        contentDescription = null,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Fit,
-                                    )
-                                }
-                            }
-                        }
-                    } else if (currentCues.isNotEmpty()) {
-                        SpatialPanel(
-                            modifier = SubspaceModifier
-                                .width(subtitlePanelWidthDp.dp)
-                                .height(subtitlePanelHeightDp.dp)
-                                .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
-                        ) {
-                            AndroidView(
-                                factory = { context ->
-                                    SubtitleView(context).apply {
-                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                                        setBottomPaddingFraction(0.04f)
-                                        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                                        setStyle(captionStyle)
-                                    }
-                                },
-                                update = { view ->
-                                    view.setStyle(captionStyle)
-                                    view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                                    view.setCues(currentCues)
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-
-                    if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
-                        SpatialPanel(
-                            modifier = SubspaceModifier
-                                .width(subtitlePanelWidthDp.dp)
-                                .height(subtitlePanelHeightDp.dp)
-                                .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                VoiceControlOverlay(
-                                    state = voiceState,
-                                    partialTranscript = partialTranscript,
-                                    gestureArmingProgress = voiceGestureArmingProgress,
-                                    gestureHint = voiceGestureHint,
+                // Keep the subtitle panel entity alive even when there is no subtitle content.
+                // Recreating the SpatialPanel when a new line appears causes SceneCore to
+                // briefly render it at the subtitle root origin before the panel offset lands,
+                // which shows up as a flash below the screen.
+                if (useLibass) {
+                    val currentBitmap = libassBitmap
+                    val showLibassContent = hasLibassContent && currentBitmap != null
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(subtitlePanelWidthDp.dp)
+                            .height(subtitlePanelHeightDp.dp)
+                            .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
+                    ) {
+                        if (showLibassContent) {
+                            key(videoOverlayAttachmentVersion, libassFrameVersion) {
+                                Image(
+                                    painter = BitmapPainter(currentBitmap!!.asImageBitmap(), filterQuality = FilterQuality.High),
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Fit,
                                 )
                             }
+                        }
+                    }
+                } else {
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(subtitlePanelWidthDp.dp)
+                            .height(subtitlePanelHeightDp.dp)
+                            .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
+                    ) {
+                        AndroidView(
+                            factory = { context ->
+                                SubtitleView(context).apply {
+                                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    setBottomPaddingFraction(0.04f)
+                                    setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                                    setStyle(captionStyle)
+                                }
+                            },
+                            update = { view ->
+                                view.setStyle(captionStyle)
+                                view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
+                                view.setCues(currentCues)
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+
+                if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(subtitlePanelWidthDp.dp)
+                            .height(subtitlePanelHeightDp.dp)
+                            .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            VoiceControlOverlay(
+                                state = voiceState,
+                                partialTranscript = partialTranscript,
+                                gestureArmingProgress = voiceGestureArmingProgress,
+                                gestureHint = voiceGestureHint,
+                            )
                         }
                     }
                 }

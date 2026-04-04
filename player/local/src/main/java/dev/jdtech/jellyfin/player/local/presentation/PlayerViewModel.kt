@@ -205,6 +205,7 @@ constructor(
     private var currentSyncPlaylistItemId: UUID? = null
     private var suppressSyncUntilMs: Long = 0L
     private var isSocketConnected = false
+    private var pendingAutoAdvanceMediaId: String? = null
 
     init {
         // Log HDR capabilities
@@ -867,6 +868,7 @@ constructor(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
+        pendingAutoAdvanceMediaId = null
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
         viewModelScope.launch {
             try {
@@ -929,25 +931,37 @@ constructor(
                                 it.copy(nextEpisode = items.getOrNull(player.currentMediaItemIndex + 1))
                             }
                         } else if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            val currentQueueIndex =
+                                items.indexOfFirst { queuedItem -> queuedItem.itemId == item.itemId }
+                                    .takeIf { it >= 0 } ?: player.currentMediaItemIndex.coerceAtLeast(0)
+                            val currentPlayerIndex = player.currentMediaItemIndex.coerceAtLeast(0)
+                            val nextItem = playlistManager.getNextPlayerItem()
+                            _uiState.update { it.copy(nextEpisode = nextItem) }
+                            if (nextItem != null) {
+                                items.add((currentQueueIndex + 1).coerceAtMost(items.size), nextItem)
+                                player.addMediaItem(
+                                    (currentPlayerIndex + 1).coerceAtMost(player.mediaItemCount),
+                                    nextItem.toMediaItem(),
+                                )
+                            }
+
                             val previousItem = playlistManager.getPreviousPlayerItem()
                             if (previousItem != null) {
-                                items.add(player.currentMediaItemIndex, previousItem)
+                                items.add(currentQueueIndex.coerceAtMost(items.size), previousItem)
                                 player.addMediaItem(
-                                    player.currentMediaItemIndex,
+                                    currentPlayerIndex.coerceAtMost(player.mediaItemCount),
                                     previousItem.toMediaItem(),
                                 )
                             }
 
-                            val nextItem = playlistManager.getNextPlayerItem()
-                            // Expose the next episode (if any) so the XR next-up panel can display it.
-                            _uiState.update { it.copy(nextEpisode = nextItem) }
-                            if (nextItem != null) {
-                                items.add(player.currentMediaItemIndex + 1, nextItem)
-                                player.addMediaItem(
-                                    player.currentMediaItemIndex + 1,
-                                    nextItem.toMediaItem(),
-                                )
-                            }
+                            Timber.i(
+                                "Queue around current item current=%s prevAdded=%b nextAdded=%b playerIndex=%d queue=%s",
+                                item.itemId,
+                                previousItem != null,
+                                nextItem != null,
+                                player.currentMediaItemIndex,
+                                playerQueueDebugString(),
+                            )
                         } else {
                             _uiState.update { it.copy(nextEpisode = null) }
                         }
@@ -1212,7 +1226,34 @@ constructor(
             }
             ExoPlayer.STATE_ENDED -> {
                 stateString = "ExoPlayer.STATE_ENDED     -"
-                eventsChannel.trySend(PlayerEvents.NavigateBack)
+                val currentMediaId = player.currentMediaItem?.mediaId
+                val nextEpisode = _uiState.value.nextEpisode
+                val shouldAutoAdvance =
+                    if (isSyncPlayActive()) {
+                        currentSyncPlaylistItemId != null && nextEpisode != null
+                    } else {
+                        player.hasNextMediaItem() || nextEpisode != null
+                    }
+
+                if (shouldAutoAdvance && pendingAutoAdvanceMediaId != currentMediaId) {
+                    pendingAutoAdvanceMediaId = currentMediaId
+                    Timber.i(
+                        "Playback ended; auto advancing current=%s hasNextMediaItem=%b nextEpisode=%s queue=%s",
+                        currentMediaId,
+                        player.hasNextMediaItem(),
+                        nextEpisode?.itemId,
+                        playerQueueDebugString(),
+                    )
+                    skipToNextItem()
+                } else if (!shouldAutoAdvance) {
+                    pendingAutoAdvanceMediaId = null
+                    Timber.i(
+                        "Playback ended with no next item; navigating back current=%s queue=%s",
+                        currentMediaId,
+                        playerQueueDebugString(),
+                    )
+                    eventsChannel.trySend(PlayerEvents.NavigateBack)
+                }
             }
         }
         Timber.d(
@@ -1553,9 +1594,37 @@ constructor(
                     runCatching { repository.nextSyncPlayItem(playlistItemId) }
                         .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
                 }
-            } else if (player.hasNextMediaItem()) {
-                player.seekToNextMediaItem()
-                player.play()
+            } else {
+                val nextEpisode = _uiState.value.nextEpisode
+                if (!player.hasNextMediaItem() && nextEpisode != null) {
+                    ensureNextEpisodeQueued(nextEpisode)
+                }
+
+                when {
+                    player.hasNextMediaItem() -> {
+                        Timber.i(
+                            "Advancing to queued next item current=%s nextIndex=%d queue=%s",
+                            player.currentMediaItem?.mediaId,
+                            player.currentMediaItemIndex + 1,
+                            playerQueueDebugString(),
+                        )
+                        player.seekToNextMediaItem()
+                        player.play()
+                    }
+                    nextEpisode != null -> {
+                        Timber.w(
+                            "Next episode %s was available but not queued; replacing queue to continue autoplay",
+                            nextEpisode.itemId,
+                        )
+                        items = mutableListOf(nextEpisode)
+                        player.setMediaItems(listOf(nextEpisode.toMediaItem()), 0, 0L)
+                        player.prepare()
+                        player.play()
+                    }
+                    else -> {
+                        Timber.i("skipToNextItem ignored: no next episode available")
+                    }
+                }
             }
         }
     }
@@ -1642,6 +1711,40 @@ constructor(
 
     private fun currentPlayerItem(): PlayerItem? {
         return items.firstOrNull { it.itemId.toString() == player.currentMediaItem?.mediaId }
+    }
+
+    private fun ensureNextEpisodeQueued(nextEpisode: PlayerItem) {
+        val currentMediaId = player.currentMediaItem?.mediaId
+        val currentQueueIndex =
+            items.indexOfFirst { it.itemId.toString() == currentMediaId }
+                .takeIf { it >= 0 } ?: items.lastIndex.coerceAtLeast(0)
+
+        if (items.none { it.itemId == nextEpisode.itemId }) {
+            items.add((currentQueueIndex + 1).coerceAtMost(items.size), nextEpisode)
+        }
+
+        val alreadyQueued =
+            (0 until player.mediaItemCount).any { index ->
+                player.getMediaItemAt(index).mediaId == nextEpisode.itemId.toString()
+            }
+        if (!alreadyQueued) {
+            val insertIndex = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
+            player.addMediaItem(insertIndex, nextEpisode.toMediaItem())
+            Timber.i(
+                "Queued next episode on demand next=%s insertIndex=%d queue=%s",
+                nextEpisode.itemId,
+                insertIndex,
+                playerQueueDebugString(),
+            )
+        }
+    }
+
+    private fun playerQueueDebugString(): String {
+        if (player.mediaItemCount == 0) return "[]"
+        return (0 until player.mediaItemCount).joinToString(prefix = "[", postfix = "]") { index ->
+            val marker = if (index == player.currentMediaItemIndex) "*" else ""
+            "$marker${player.getMediaItemAt(index).mediaId}"
+        }
     }
 
     private fun inferOriginalAudioLanguage(
