@@ -25,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,7 +64,6 @@ import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
 import dev.jdtech.jellyfin.presentation.film.components.HomeSection
 import dev.jdtech.jellyfin.presentation.film.components.HomeView
 import dev.jdtech.jellyfin.presentation.film.components.ServerSelectionBottomSheet
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -84,7 +82,6 @@ fun HomeScreen(
     onManageServers: () -> Unit,
     onReconnectClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
-    onVoiceSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -92,35 +89,15 @@ fun HomeScreen(
     val context = LocalContext.current
     val needsLanguageSetup =
         appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
-    val hasCloudApiKey =
-        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
     val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
-    val shouldCheckLocalAi = !hasCloudApiKey
-    val geminiNanoService =
-        remember(context, shouldCheckLocalAi) {
-            if (shouldCheckLocalAi) GeminiNanoService(context.applicationContext) else null
-        }
-    var localAiAvailable by remember(shouldCheckLocalAi) {
-        mutableStateOf<Boolean?>(if (shouldCheckLocalAi) null else true)
-    }
 
     LaunchedEffect(true) { viewModel.loadData() }
-    LaunchedEffect(geminiNanoService) {
-        if (geminiNanoService != null) {
-            localAiAvailable = runCatching { geminiNanoService.status().supported }.getOrNull()
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose { geminiNanoService?.destroy() }
-    }
 
     HomeScreenLayout(
         state = state,
         displayRatings = displayRatings,
         needsLanguageSetup = needsLanguageSetup,
-        needsAiSetup = localAiAvailable == false && !hasCloudApiKey,
         onLanguageSettingsClick = onLanguageSettingsClick,
-        onVoiceSettingsClick = onVoiceSettingsClick,
         onAction = { action ->
             when (action) {
                 is HomeAction.OnItemClick -> onItemClick(action.item)
@@ -143,9 +120,7 @@ private fun HomeScreenLayout(
     state: HomeState,
     displayRatings: Boolean,
     needsLanguageSetup: Boolean,
-    needsAiSetup: Boolean,
     onLanguageSettingsClick: () -> Unit,
-    onVoiceSettingsClick: () -> Unit,
     onAction: (HomeAction) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -168,16 +143,6 @@ private fun HomeScreenLayout(
                         bodyRes = CoreR.string.finish_setup_languages_body,
                         actionRes = CoreR.string.finish_setup_languages_action,
                         onClick = onLanguageSettingsClick,
-                    )
-                )
-            }
-            if (needsAiSetup) {
-                add(
-                    FinishSetupItem(
-                        titleRes = CoreR.string.finish_setup_ai_title,
-                        bodyRes = CoreR.string.finish_setup_ai_body,
-                        actionRes = CoreR.string.finish_setup_ai_action,
-                        onClick = onVoiceSettingsClick,
                     )
                 )
             }
@@ -334,9 +299,7 @@ private fun HomeScreenLayoutPreview() {
                 ),
             displayRatings = true,
             needsLanguageSetup = false,
-            needsAiSetup = false,
             onLanguageSettingsClick = {},
-            onVoiceSettingsClick = {},
             onAction = {},
         )
     }

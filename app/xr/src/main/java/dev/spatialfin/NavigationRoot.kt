@@ -429,17 +429,6 @@ fun NavigationRoot(
                             )
                         )
                     },
-                    onVoiceSettingsClick = {
-                        navController.safeNavigate(
-                            SettingsRoute(
-                                indexes =
-                                    intArrayOf(
-                                        SettingsR.string.settings_category_player,
-                                        SettingsR.string.voice_controls,
-                                    )
-                            )
-                        )
-                    },
                     onItemClick = { item ->
                         navigateToItem(navController = navController, item = item)
                     },
