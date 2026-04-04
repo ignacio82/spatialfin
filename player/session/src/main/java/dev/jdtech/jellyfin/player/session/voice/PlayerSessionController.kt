@@ -348,7 +348,15 @@ class PlayerSessionController(
     ): String {
         val segment =
             viewModel.skipActiveSegmentForVoice(*preferredSegmentNames)
-                ?: return "No skippable $defaultSegmentName right now"
+                ?: run {
+                    Timber.i(
+                        "VOICE: no skippable %s segment right now requested=%s posMs=%d",
+                        defaultSegmentName,
+                        preferredSegmentNames.joinToString(),
+                        player.currentPosition,
+                    )
+                    return "No skippable $defaultSegmentName right now"
+                }
         val segmentName =
             when (segment.type.toString().lowercase()) {
                 "recap", "previously_on", "previouslyon" -> "recap"
@@ -357,6 +365,13 @@ class PlayerSessionController(
                 "credits" -> "credits"
                 else -> segment.type.toString().lowercase().replace('_', ' ')
             }
+        Timber.i(
+            "VOICE: skipped %s segment actualType=%s rangeMs=%d-%d",
+            defaultSegmentName,
+            segment.type,
+            segment.startTicks,
+            segment.endTicks,
+        )
         return "Skipping $segmentName"
     }
 

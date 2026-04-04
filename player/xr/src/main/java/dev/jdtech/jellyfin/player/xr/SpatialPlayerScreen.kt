@@ -1302,7 +1302,6 @@ fun SpatialPlayerScreen(
                             activeDialog = "chapters"
                             resetAutoHide()
                         },
-                        onHideClick = { controlsVisible = false },
                         onBackClick = onBackClick,
                         resetAutoHide = { resetAutoHide() },
                     )
@@ -2069,7 +2068,6 @@ private fun ControlPanelUI(
     spatialAudioAvailable: Boolean,
     onLockToggle: () -> Unit,
     onChaptersClick: () -> Unit,
-    onHideClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
 ) {
@@ -2080,7 +2078,7 @@ private fun ControlPanelUI(
         modifier = Modifier.fillMaxSize(),
     ) {
         Column(modifier = Modifier.padding(60.dp)) {
-            // ── Top row: back / title / indicator / lock / hide ──
+            // ── Top row: back / title / indicator / lock ──
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
@@ -2114,16 +2112,6 @@ private fun ControlPanelUI(
                         else
                             Color.White.copy(alpha = 0.6f),
                     )
-                }
-                if (!isLocked) {
-                    IconButton(onClick = { onHideClick() }, modifier = Modifier.size(100.dp)) {
-                        Icon(
-                            painterResource(CoreR.drawable.ic_eye_off),
-                            contentDescription = "Hide Controls",
-                            tint = Color.White,
-                            modifier = Modifier.size(64.dp),
-                        )
-                    }
                 }
                 IconButton(
                     onClick = { onLockToggle(); resetAutoHide() },

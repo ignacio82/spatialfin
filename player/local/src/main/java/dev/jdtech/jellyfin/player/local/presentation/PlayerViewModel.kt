@@ -845,23 +845,43 @@ constructor(
     }
 
     fun skipActiveSegmentForVoice(vararg preferredNames: String): SpatialFinSegment? {
+        val currentPositionMs = player.currentPosition
         val activeSegment = currentMediaItemSegments.firstOrNull { segment ->
-            player.currentPosition in segment.startTicks..<(segment.endTicks - 100L)
-        } ?: return null
+            currentPositionMs in segment.startTicks..<(segment.endTicks - 100L)
+        }
+        if (activeSegment == null) {
+            Timber.i(
+                "VOICE: no active segment at posMs=%d availableSegments=%s",
+                currentPositionMs,
+                currentMediaItemSegments.joinToString { "${it.type}:${it.startTicks}-${it.endTicks}" },
+            )
+            return null
+        }
 
-        val normalizedType = activeSegment.type.toString().lowercase()
         val normalizedRequestedNames = preferredNames.map { it.lowercase() }
         val matchesRequestedType =
             normalizedRequestedNames.isEmpty() ||
                 normalizedRequestedNames.any { preferredName ->
-                    normalizedType.contains(preferredName.replace(' ', '_')) ||
-                        normalizedType.contains(preferredName.replace(" ", ""))
+                    activeSegment.type.matchesVoiceSegmentName(preferredName)
                 }
 
         if (!matchesRequestedType) {
+            Timber.i(
+                "VOICE: active segment type=%s did not match requested=%s posMs=%d",
+                activeSegment.type,
+                normalizedRequestedNames,
+                currentPositionMs,
+            )
             return null
         }
 
+        Timber.i(
+            "VOICE: skipping segment type=%s rangeMs=%d-%d requested=%s",
+            activeSegment.type,
+            activeSegment.startTicks,
+            activeSegment.endTicks,
+            normalizedRequestedNames,
+        )
         skipSegment(activeSegment)
         return activeSegment
     }
@@ -1711,6 +1731,18 @@ constructor(
 
     private fun currentPlayerItem(): PlayerItem? {
         return items.firstOrNull { it.itemId.toString() == player.currentMediaItem?.mediaId }
+    }
+
+    private fun SpatialFinSegmentType.matchesVoiceSegmentName(requestedName: String): Boolean {
+        val normalized = requestedName.lowercase().trim()
+        return when (this) {
+            SpatialFinSegmentType.INTRO -> normalized in setOf("intro", "opening", "opening credits")
+            SpatialFinSegmentType.RECAP -> normalized in setOf("recap", "previously on")
+            SpatialFinSegmentType.PREVIEW -> normalized in setOf("preview", "next preview")
+            SpatialFinSegmentType.OUTRO -> normalized in setOf("outro", "ending", "credits")
+            SpatialFinSegmentType.COMMERCIAL -> normalized in setOf("commercial", "ad", "ads")
+            SpatialFinSegmentType.UNKNOWN -> false
+        }
     }
 
     private fun ensureNextEpisodeQueued(nextEpisode: PlayerItem) {

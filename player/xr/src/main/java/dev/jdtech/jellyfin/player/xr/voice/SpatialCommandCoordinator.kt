@@ -25,6 +25,50 @@ class SpatialCommandCoordinator(
     private val geminiNanoService: GeminiNanoService,
     private val geminiCloudService: GeminiCloudService,
 ) {
+    private val introSkipPhrases = listOf(
+        "skip intro",
+        "skip the intro",
+        "skip opening",
+        "skip the opening",
+        "skip recap",
+        "skip the recap",
+        "skip previously on",
+        "skip preview",
+        "skip the preview",
+    )
+    private val outroSkipPhrases = listOf(
+        "skip outro",
+        "skip the outro",
+        "skip ending",
+        "skip the ending",
+        "skip credits",
+        "skip the credits",
+    )
+    private val volumeUpPhrases = listOf(
+        "volume up",
+        "turn it up",
+        "turn the volume up",
+        "increase volume",
+        "increase the volume",
+        "raise volume",
+        "raise the volume",
+        "make it louder",
+        "get louder",
+        "sound up",
+    )
+    private val volumeDownPhrases = listOf(
+        "volume down",
+        "turn it down",
+        "turn the volume down",
+        "decrease volume",
+        "decrease the volume",
+        "lower volume",
+        "lower the volume",
+        "make it quieter",
+        "make it softer",
+        "sound down",
+    )
+
     suspend fun initialize() {
         geminiNanoService.initialize()
     }
@@ -203,8 +247,8 @@ class SpatialCommandCoordinator(
                     .takeIf { it.isNotEmpty() }
                     ?.let { XrPlayerAction.SeekForward(60) }
             }
-            text.matches(Regex(".*(skip intro|skip opening).*")) -> XrPlayerAction.SkipIntro
-            text.matches(Regex(".*(skip outro|skip ending|skip credits).*")) -> XrPlayerAction.SkipOutro
+            introSkipPhrases.any(text::contains) -> XrPlayerAction.SkipIntro
+            outroSkipPhrases.any(text::contains) -> XrPlayerAction.SkipOutro
             text.matches(Regex("^(play |go to |start )?(the )?(next episode|next one)$")) -> XrPlayerAction.NextEpisode
             text.matches(Regex("^(play |go to |start )?(the )?(previous episode|last episode|go back one)$")) -> {
                 XrPlayerAction.PreviousEpisode
@@ -456,16 +500,34 @@ class SpatialCommandCoordinator(
     }
 
     private fun extractVolumeAdjustment(text: String): XrPlayerAction? {
-        if (text.contains("volume")) {
+        val mentionsVolumeIntent =
+            text.contains("volume") ||
+                text.contains("sound") ||
+                volumeUpPhrases.any(text::contains) ||
+                volumeDownPhrases.any(text::contains)
+        if (mentionsVolumeIntent) {
             val percentageMatch = Regex("(\\d+)\\s*(?:percent|%)").find(text)
             if (percentageMatch != null) {
                 val value = percentageMatch.groupValues[1].toFloatOrNull()
                 if (value != null) return XrPlayerAction.AdjustVolume(percentage = value / 100f)
             }
-            if (text.contains("up") || text.contains("increase") || text.contains("louder")) {
+            if (
+                text.contains("up") ||
+                    text.contains("increase") ||
+                    text.contains("raise") ||
+                    text.contains("louder") ||
+                    volumeUpPhrases.any(text::contains)
+            ) {
                 return XrPlayerAction.AdjustVolume(delta = 0.1f)
             }
-            if (text.contains("down") || text.contains("decrease") || text.contains("quieter")) {
+            if (
+                text.contains("down") ||
+                    text.contains("decrease") ||
+                    text.contains("lower") ||
+                    text.contains("quieter") ||
+                    text.contains("softer") ||
+                    volumeDownPhrases.any(text::contains)
+            ) {
                 return XrPlayerAction.AdjustVolume(delta = -0.1f)
             }
         }
