@@ -8,6 +8,7 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 
 ## Features
 
+- **Instant Playback** — Smarter Media3 preloading fetches the next likely items while you browse, making streaming playback from Next Up, search, and detail screens feel instantaneous.
 - **Multitask Mode (Home Space)** — SpatialFin launches in Android XR Home Space by default, so you can keep it open side-by-side with other apps while browsing your library, adjusting settings, or searching for content. A clear in-app toggle switches between Home Space and Full Space at any time.
 - **Immersive Mode (Full Space)** — Switch to Full Space for a premium theater-like XR experience with massive spatial panels, movable root entity, orbiters, and spatial audio. Optionally auto-enter Full Space whenever you start playback, and optionally return to Home Space when playback ends.
 - **Immersive Experience** — Native Full Space Mode (FSM) with massive, spatial panels that fill your field of view for a cinematic theater feel.

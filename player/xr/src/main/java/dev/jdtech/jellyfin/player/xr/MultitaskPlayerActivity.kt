@@ -79,10 +79,14 @@ import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import java.util.UUID
+import dev.jdtech.jellyfin.player.core.preload.PlaybackPreloadCoordinator
+import javax.inject.Inject
 import kotlinx.coroutines.delay
 
 @AndroidEntryPoint
 class MultitaskPlayerActivity : ComponentActivity() {
+
+    @Inject lateinit var preloadCoordinator: PlaybackPreloadCoordinator
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
@@ -155,12 +159,11 @@ class MultitaskPlayerActivity : ComponentActivity() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        val player = ExoPlayer.Builder(this)
+        val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
             .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
-            .setPauseAtEndOfMediaItems(true)
-            .build()
+            .setPauseAtEndOfMediaItems(true))
 
         viewModel.replacePlayer(player)
         
