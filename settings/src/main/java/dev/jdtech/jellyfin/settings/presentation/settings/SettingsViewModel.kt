@@ -451,6 +451,54 @@ class SettingsViewModel @Inject constructor(
                 preferences =
                     listOf(
                         PreferenceCategory(
+                            nameStringResource = R.string.settings_category_xr_space,
+                            descriptionStringRes = R.string.settings_category_xr_space_summary,
+                            iconDrawableId = R.drawable.ic_layout_dashboard,
+                            supportedDeviceTypes = listOf(DeviceType.XR),
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups =
+                                listOf(
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOf(
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.xr_launch_mode,
+                                                    descriptionStringRes = R.string.xr_launch_mode_summary,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    backendPreference = appPreferences.xrLaunchMode,
+                                                    options = R.array.xr_launch_mode_options,
+                                                    optionValues = R.array.xr_launch_mode_values,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.xr_auto_enter_full_space_on_playback,
+                                                    descriptionStringRes = R.string.xr_auto_enter_full_space_on_playback_summary,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    backendPreference = appPreferences.xrAutoEnterFullSpaceOnPlayback,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.xr_return_home_space_after_playback,
+                                                    descriptionStringRes = R.string.xr_return_home_space_after_playback_summary,
+                                                    supportedDeviceTypes = listOf(DeviceType.XR),
+                                                    backendPreference = appPreferences.xrReturnHomeSpaceAfterPlayback,
+                                                ),
+                                            )
+                                    )
+                                ),
+                        )
+                    )
+            ),
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
                             nameStringResource = R.string.users,
                             iconDrawableId = R.drawable.ic_user,
                             onClick = {

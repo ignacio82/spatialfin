@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -85,6 +86,7 @@ import dev.jdtech.jellyfin.presentation.setup.welcome.WelcomeScreen
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.unified.XrSpaceMode
 import java.util.UUID
 import kotlinx.serialization.Serializable
 
@@ -187,6 +189,12 @@ fun NavigationRoot(
     appPreferences: AppPreferences,
     initialSearchQuery: String? = null,
     onReconnect: () -> Unit = {},
+    /** Non-null on XR devices; null on TV/phone. */
+    xrSpaceMode: XrSpaceMode? = null,
+    /** Called to enter Full Space (Immersive) mode. Only relevant in Home Space. */
+    onEnterFullSpace: (() -> Unit)? = null,
+    /** Called to enter Home Space (Multitask) mode. Only relevant in Full Space. */
+    onEnterHomeSpace: (() -> Unit)? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -306,6 +314,25 @@ fun NavigationRoot(
                             )
                         }
                     }
+                }
+                // XR space-mode toggle: shown in the nav rail on XR devices.
+                if (xrSpaceMode != null) {
+                    if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
+                    val (toggleLabel, toggleAction) = when (xrSpaceMode) {
+                        XrSpaceMode.HOME -> "Immersive" to onEnterFullSpace
+                        XrSpaceMode.FULL -> "Multitask" to onEnterHomeSpace
+                    }
+                    NavigationRailItem(
+                        selected = false,
+                        onClick = { toggleAction?.invoke() },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Rounded.ViewInAr,
+                                contentDescription = toggleLabel,
+                            )
+                        },
+                        label = { Text(text = toggleLabel) },
+                    )
                 }
             }
         }

@@ -118,6 +118,13 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrAppPanelRotY = Preference("pref_xr_app_panel_rot_y", 0f)
     val xrAppPanelRotZ = Preference("pref_xr_app_panel_rot_z", 0f)
     val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
+
+    // XR Space Mode
+    val xrLaunchMode = Preference("pref_xr_launch_mode", "last_used")
+    val xrLastUsedMode = Preference("pref_xr_last_used_mode", "home")
+    val xrAutoEnterFullSpaceOnPlayback = Preference("pref_xr_auto_enter_full_space_on_playback", true)
+    val xrReturnHomeSpaceAfterPlayback = Preference("pref_xr_return_home_space_after_playback", false)
+
     val subtitleTextColor = Preference("pref_subtitle_text_color", android.graphics.Color.WHITE)
     val subtitleBackgroundColor = Preference("pref_subtitle_background_color", android.graphics.Color.TRANSPARENT)
     val libassSubtitleUsage = Preference("pref_libass_subtitle_usage", "auto")

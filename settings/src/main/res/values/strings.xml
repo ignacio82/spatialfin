@@ -282,6 +282,26 @@
         <item>system</item>
     </string-array>
 
+    <!-- XR Space Mode -->
+    <string name="settings_category_xr_space">XR Space Mode</string>
+    <string name="settings_category_xr_space_summary">Configure when SpatialFin uses Home Space (multitask) or Full Space (immersive)</string>
+    <string name="xr_launch_mode">Launch mode</string>
+    <string name="xr_launch_mode_summary">Choose the default XR space when SpatialFin starts</string>
+    <string name="xr_auto_enter_full_space_on_playback">Auto-enter Full Space on playback</string>
+    <string name="xr_auto_enter_full_space_on_playback_summary">Automatically switch to the immersive Full Space experience when you start playback from Home Space</string>
+    <string name="xr_return_home_space_after_playback">Return to Home Space after playback</string>
+    <string name="xr_return_home_space_after_playback_summary">Return to the Home Space multitasking view when immersive playback ends</string>
+    <string-array name="xr_launch_mode_options">
+        <item>Home Space (Multitask)</item>
+        <item>Full Space (Immersive)</item>
+        <item>Last used</item>
+    </string-array>
+    <string-array name="xr_launch_mode_values">
+        <item>home</item>
+        <item>full</item>
+        <item>last_used</item>
+    </string-array>
+
     <string name="welcome_companion_title">SpatialFin Companion</string>
     <string name="welcome_companion_body">Do you have the SpatialFin Companion app running on your network? You can automatically configure your headset by scanning the QR code.</string>
     <string name="welcome_companion_scan">Scan QR Code</string>

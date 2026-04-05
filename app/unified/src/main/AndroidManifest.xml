@@ -66,7 +66,6 @@
             android:name=".unified.UnifiedMainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:screenOrientation="landscape"
             android:theme="@style/Theme.SpatialFin"
             android:windowSoftInputMode="adjustResize">
 
@@ -88,10 +87,10 @@
                 <category android:name="android.intent.category.XR_LAUNCHER" />
             </intent-filter>
 
-            <!-- Sets the default mode to Full Space at launch on XR devices; ignored elsewhere -->
+            <!-- Launch in Home Space by default; user can switch to Full Space in-app -->
             <property
                 android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
-                android:value="XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED" />
+                android:value="XR_ACTIVITY_START_MODE_HOME_SPACE_MANAGED" />
         </activity>
 
         <receiver

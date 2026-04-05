@@ -331,7 +331,12 @@ class XrPlayerActivity : AppCompatActivity() {
         viewModel.playWhenReady = viewModel.player.playWhenReady
         viewModel.player.playWhenReady = false
         try {
-            if (!isFinishing) {
+            val returnOnFinish = viewModel.appPreferences.getValue(
+                viewModel.appPreferences.xrReturnHomeSpaceAfterPlayback
+            )
+            // Always return home when backgrounded (not finishing).
+            // Also return home when finishing if the preference requests it.
+            if (!isFinishing || returnOnFinish) {
                 xrSession?.scene?.requestHomeSpaceMode()
             }
         } catch (e: Exception) {

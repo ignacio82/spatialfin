@@ -119,10 +119,12 @@ fun EpisodeScreen(
                     } else {
                         StereoModeDetector.StereoMode.MONO
                     }
-                    val targetActivity = if (action.multitask) {
-                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
-                    } else {
+                    val autoFullSpace = appPreferences.getValue(appPreferences.xrAutoEnterFullSpaceOnPlayback)
+                    val useImmersivePlayer = !action.multitask && autoFullSpace
+                    val targetActivity = if (useImmersivePlayer) {
                         XrPlayerActivity::class.java
+                    } else {
+                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
                     }
                     val intent = Intent(context, targetActivity)
                     intent.putExtra("itemId", episodeId.toString())
@@ -130,7 +132,7 @@ fun EpisodeScreen(
                     intent.putExtra("startFromBeginning", action.startFromBeginning)
                     action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
                     action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                    if (!action.multitask) {
+                    if (useImmersivePlayer) {
                         val stereoModeStr = when (stereoMode) {
                             StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
                             StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"

@@ -1,6 +1,7 @@
 package dev.spatialfin.unified
 
 import android.Manifest
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -10,7 +11,6 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -25,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -59,7 +58,6 @@ import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.GroupEntity
 import androidx.xr.scenecore.MovableComponent
-import androidx.xr.scenecore.SpatialCapability
 import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
@@ -74,6 +72,7 @@ import dev.jdtech.jellyfin.presentation.local.localVideoPermissions
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.viewmodels.MainState
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
 import dev.spatialfin.HomeRoute
@@ -111,6 +110,13 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Lock landscape for TV and phone; XR adapts to the window freely.
+        when (deviceClass) {
+            DeviceClass.TV, DeviceClass.PHONE ->
+                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            DeviceClass.XR -> Unit
+        }
 
         if (deviceClass == DeviceClass.XR) {
             window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
@@ -164,21 +170,13 @@ class UnifiedMainActivity : AppCompatActivity() {
                             requestStartupPermissionsIfNeeded()
                         }
 
+                        // Create XR session (no space mode requested yet).
                         LaunchedEffect(Unit) {
                             if (xrSessionState.value == null) {
                                 try {
                                     val result = Session.create(this@UnifiedMainActivity)
                                     if (result is SessionCreateSuccess) {
                                         xrSessionState.value = result.session
-                                        try {
-                                            val capabilities =
-                                                xrSessionState.value?.scene?.spatialCapabilities
-                                            if (capabilities?.contains(SpatialCapability.SPATIAL_3D_CONTENT) == true) {
-                                                xrSessionState.value?.scene?.requestFullSpaceMode()
-                                            }
-                                        } catch (e: Exception) {
-                                            Timber.w(e, "Failed to request full space mode")
-                                        }
                                     }
                                 } catch (e: Exception) {
                                     Timber.w(e, "XR session not available")
@@ -190,348 +188,22 @@ class UnifiedMainActivity : AppCompatActivity() {
                             CompositionLocalProvider(LocalOfflineMode provides state.isOfflineMode) {
                                 val session = xrSessionState.value
                                 if (session != null) {
-                                    val voiceService = remember(context) {
-                                        SpatialVoiceService(context.applicationContext)
-                                    }
-                                    var geminiNanoService by remember {
-                                        mutableStateOf<GeminiNanoService?>(null)
-                                    }
-                                    var geminiCloudService by remember {
-                                        mutableStateOf<GeminiCloudService?>(null)
-                                    }
-                                    var commandCoordinator by remember {
-                                        mutableStateOf<SpatialCommandCoordinator?>(null)
-                                    }
-                                    val voiceState by voiceService.state.collectAsState()
-                                    val partialTranscript by voiceService.partialTranscript.collectAsState()
-                                    var voiceFeedback by remember { mutableStateOf<String?>(null) }
-                                    var voiceGestureHint by remember { mutableStateOf<String?>(null) }
-                                    var voiceGestureArmingProgress by remember {
-                                        mutableFloatStateOf(0f)
-                                    }
-                                    var voiceSearchQuery by remember {
-                                        mutableStateOf(initialSearchQueryExtra)
-                                    }
-                                    val voiceControlEnabled =
-                                        appPreferences.getValue(appPreferences.voiceControlEnabled)
-                                    val voiceGestureHand =
-                                        appPreferences.getValue(appPreferences.voiceGestureHand)
-                                            ?: "left"
-
-                                    val pinchDetector =
-                                        remember(session, voiceGestureHand) {
-                                            SecondaryHandPinchDetector(
-                                                session,
-                                                this@UnifiedMainActivity,
-                                                voiceGestureHand,
-                                            )
-                                        }
-                                    var hasAudioPermission by remember {
-                                        mutableStateOf(
-                                            ContextCompat.checkSelfPermission(
-                                                context,
-                                                Manifest.permission.RECORD_AUDIO,
-                                            ) == PackageManager.PERMISSION_GRANTED
-                                        )
-                                    }
-                                    var hasHandTrackingPermission by remember {
-                                        mutableStateOf(
-                                            ContextCompat.checkSelfPermission(
-                                                context,
-                                                HAND_TRACKING_PERMISSION,
-                                            ) == PackageManager.PERMISSION_GRANTED
-                                        )
-                                    }
-
-                                    val audioPermissionLauncher =
-                                        androidx.activity.compose.rememberLauncherForActivityResult(
-                                            ActivityResultContracts.RequestPermission()
-                                        ) { granted -> hasAudioPermission = granted }
-                                    val handTrackingPermissionLauncher =
-                                        androidx.activity.compose.rememberLauncherForActivityResult(
-                                            ActivityResultContracts.RequestPermission()
-                                        ) { granted -> hasHandTrackingPermission = granted }
-
-                                    fun handleVoiceAction(action: XrPlayerAction): String {
-                                        return when (action) {
-                                            is XrPlayerAction.Search -> {
-                                                voiceSearchQuery = action.query
-                                                "Searching for ${action.query}"
-                                            }
-                                            is XrPlayerAction.CloseApp -> {
-                                                finishAffinity()
-                                                "Closing SpatialFin"
-                                            }
-                                            is XrPlayerAction.GoBack -> {
-                                                if (!navController.popBackStack()) finish()
-                                                "Going back"
-                                            }
-                                            is XrPlayerAction.GoHome -> {
-                                                navController.navigate(HomeRoute) {
-                                                    popUpTo(navController.graph.startDestinationId)
-                                                    launchSingleTop = true
-                                                }
-                                                "Returning home"
-                                            }
-                                            is XrPlayerAction.Unrecognized ->
-                                                "I didn't catch that: ${action.transcript}"
-                                            else -> "Command not available on home screen"
-                                        }
-                                    }
-
-                                    fun requestVoiceCommand() {
-                                        if (!voiceService.isAvailable()) {
-                                            voiceFeedback = "Speech recognition unavailable"
-                                            return
-                                        }
-                                        if (!hasAudioPermission) {
-                                            audioPermissionLauncher.launch(
-                                                Manifest.permission.RECORD_AUDIO
-                                            )
-                                            return
-                                        }
-                                        voiceService.startListening { transcript ->
-                                            coroutineScope.launch {
-                                                val nanoService =
-                                                    geminiNanoService
-                                                        ?: GeminiNanoService(
-                                                                context.applicationContext
-                                                            )
-                                                            .also { geminiNanoService = it }
-                                                val cloudService =
-                                                    geminiCloudService
-                                                        ?: GeminiCloudService(
-                                                                context.applicationContext,
-                                                                appPreferences,
-                                                                repository,
-                                                            )
-                                                            .also { geminiCloudService = it }
-                                                val coordinator =
-                                                    commandCoordinator
-                                                        ?: SpatialCommandCoordinator(
-                                                                context.applicationContext,
-                                                                nanoService,
-                                                                cloudService,
-                                                            )
-                                                            .also {
-                                                                it.initialize()
-                                                                commandCoordinator = it
-                                                            }
-                                                voiceFeedback =
-                                                    handleVoiceAction(
-                                                        coordinator.parse(transcript).action
-                                                    )
-                                            }
-                                        }
-                                    }
-
-                                    LaunchedEffect(session, hasHandTrackingPermission) {
-                                        if (hasHandTrackingPermission) {
-                                            runCatching {
-                                                session.configure(
-                                                    session.config.copy(
-                                                        handTracking = HandTrackingMode.BOTH
-                                                    )
-                                                )
-                                            }.onFailure {
-                                                Timber.w(it, "VOICE: Hand tracking not available")
-                                            }
-                                        }
-                                    }
-
-                                    LaunchedEffect(
-                                        pinchDetector,
-                                        hasHandTrackingPermission,
-                                        lifecycleOwner,
-                                    ) {
-                                        if (!hasHandTrackingPermission) return@LaunchedEffect
-                                        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                                            pinchDetector.gestureStates.collect { event ->
-                                                when (event) {
-                                                    is SecondaryHandPinchDetector.GestureState.Arming -> {
-                                                        voiceGestureArmingProgress = event.progress
-                                                        voiceGestureHint = "Hold to talk"
-                                                    }
-                                                    SecondaryHandPinchDetector.GestureState.Started -> {
-                                                        voiceGestureArmingProgress = 1f
-                                                        voiceGestureHint = null
-                                                        if (voiceState == VoiceState.IDLE) {
-                                                            requestVoiceCommand()
-                                                        }
-                                                    }
-                                                    SecondaryHandPinchDetector.GestureState.Ended -> {
-                                                        voiceGestureArmingProgress = 0f
-                                                        voiceGestureHint = null
-                                                        voiceService.stopListening()
-                                                    }
-                                                    SecondaryHandPinchDetector.GestureState.Idle -> {
-                                                        voiceGestureArmingProgress = 0f
-                                                        if (voiceState != VoiceState.LISTENING) {
-                                                            voiceGestureHint = null
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    LaunchedEffect(voiceFeedback) {
-                                        if (voiceFeedback != null) {
-                                            delay(2000L)
-                                            voiceFeedback = null
-                                            voiceService.resetState()
-                                        }
-                                    }
-
-                                    val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
-                                    val movableComponent =
-                                        remember { mutableStateOf<MovableComponent?>(null) }
-                                    var controlsVisible by remember { mutableStateOf(true) }
-                                    var hideTimestamp by remember {
-                                        mutableLongStateOf(System.currentTimeMillis())
-                                    }
-                                    val defaultRootPose = remember {
-                                        Pose(Vector3(0f, 0f, -3f), Quaternion.Identity)
-                                    }
-                                    val latestRootEntity = rememberUpdatedState(rootEntity.value)
-
-                                    LaunchedEffect(controlsVisible, rootEntity.value) {
-                                        val root = rootEntity.value ?: return@LaunchedEffect
-                                        if (controlsVisible) {
-                                            if (movableComponent.value == null) {
-                                                val m =
-                                                    MovableComponent.createSystemMovable(
-                                                        session,
-                                                        false,
-                                                    )
-                                                root.addComponent(m)
-                                                movableComponent.value = m
-                                                Timber.d(
-                                                    "VOICE: Home movable enabled controlsVisible=%b",
-                                                    controlsVisible,
-                                                )
-                                            }
-                                        } else {
-                                            movableComponent.value?.let {
-                                                val latestPose = safeGetAppRootPose(root)
-                                                latestPose?.let(::saveAppRootPose)
-                                                root.removeComponent(it)
-                                                latestPose?.let { pose ->
-                                                    runCatching { root.setPose(pose) }
-                                                }
-                                                movableComponent.value = null
-                                                Timber.d(
-                                                    "VOICE: Home movable disabled controlsVisible=%b",
-                                                    controlsVisible,
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    LaunchedEffect(controlsVisible, hideTimestamp) {
-                                        if (controlsVisible) {
-                                            delay(5000L)
-                                            controlsVisible = false
-                                        }
-                                    }
-
-                                    LaunchedEffect(rootEntity.value) {
-                                        val root = rootEntity.value ?: return@LaunchedEffect
-                                        while (true) {
-                                            safeGetAppRootPose(root)?.let(::saveAppRootPose)
-                                            delay(1_000L)
-                                        }
-                                    }
-
-                                    DisposableEffect(session) {
-                                        try {
-                                            val root =
-                                                GroupEntity.create(
-                                                    session,
-                                                    "MainScreenRoot",
-                                                    loadAppRootPose(),
-                                                )
-                                            rootEntity.value = root
-                                        } catch (e: Exception) {
-                                            Timber.w(
-                                                e,
-                                                "Failed to create movable root for main screen",
-                                            )
-                                        }
-                                        onDispose {
-                                            latestRootEntity.value?.let { root ->
-                                                safeGetAppRootPose(root)?.let(::saveAppRootPose)
-                                            }
-                                            voiceService.destroy()
-                                            commandCoordinator?.destroy()
-                                            rootEntity.value?.dispose()
-                                            rootEntity.value = null
-                                        }
-                                    }
-
-                                    Subspace {
-                                        val root = rootEntity.value
-                                        if (root != null) {
-                                            SceneCoreEntity(
-                                                factory = { root },
-                                                modifier = SubspaceModifier,
-                                            ) {
-                                                SpatialPanel(
-                                                    modifier =
-                                                        SubspaceModifier
-                                                            .width(1800.dp)
-                                                            .height(1200.dp)
-                                                            .offset(x = 0.dp, y = 0.dp, z = 0.dp)
-                                                ) {
-                                                    Box(
-                                                        modifier =
-                                                            Modifier
-                                                                .fillMaxSize()
-                                                                .pointerInput(Unit) {
-                                                                    awaitPointerEventScope {
-                                                                        while (true) {
-                                                                            val event =
-                                                                                awaitPointerEvent()
-                                                                            if (
-                                                                                event.type ==
-                                                                                    PointerEventType.Enter ||
-                                                                                    event.type ==
-                                                                                        PointerEventType.Move
-                                                                            ) {
-                                                                                controlsVisible =
-                                                                                    true
-                                                                                hideTimestamp =
-                                                                                    System.currentTimeMillis()
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                    ) {
-                                                        NavigationRoot(
-                                                            navController = navController,
-                                                            hasServers = state.hasServers,
-                                                            hasCurrentServer =
-                                                                state.hasCurrentServer,
-                                                            hasCurrentUser = state.hasCurrentUser,
-                                                            onboardingCompleted =
-                                                                onboardingCompleted,
-                                                            appPreferences = appPreferences,
-                                                            initialSearchQuery = voiceSearchQuery,
-                                                            onReconnect = viewModel::reconnect,
-                                                        )
-                                                        VoiceControlOverlay(
-                                                            state = voiceState,
-                                                            partialTranscript = partialTranscript,
-                                                            gestureArmingProgress =
-                                                                voiceGestureArmingProgress,
-                                                            gestureHint = voiceGestureHint,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    XrContent(
+                                        session = session,
+                                        navController = navController,
+                                        lifecycleOwner = lifecycleOwner,
+                                        coroutineScope = coroutineScope,
+                                        context = context,
+                                        state = state,
+                                        appPreferences = appPreferences,
+                                        repository = repository,
+                                        initialSearchQueryExtra = initialSearchQueryExtra,
+                                        onboardingCompleted = onboardingCompleted,
+                                        onFinishAffinity = { finishAffinity() },
+                                        onFinish = { finish() },
+                                    )
                                 } else {
+                                    // Session not yet available: render standard Compose UI.
                                     NavigationRoot(
                                         navController = navController,
                                         hasServers = state.hasServers,
@@ -553,22 +225,414 @@ class UnifiedMainActivity : AppCompatActivity() {
         scheduleUserDataSync()
     }
 
+    // ---------------------------------------------------------------------------
+    // XrContent — the full XR branch once a Session is available
+    // ---------------------------------------------------------------------------
+
+    @Composable
+    private fun XrContent(
+        session: Session,
+        navController: androidx.navigation.NavHostController,
+        lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+        coroutineScope: kotlinx.coroutines.CoroutineScope,
+        context: android.content.Context,
+        state: MainState,
+        appPreferences: AppPreferences,
+        repository: JellyfinRepository,
+        initialSearchQueryExtra: String?,
+        onboardingCompleted: Boolean,
+        onFinishAffinity: () -> Unit,
+        onFinish: () -> Unit,
+    ) {
+        // ------------------------------------------------------------------
+        // Space controller — single source of truth for HOME / FULL
+        // ------------------------------------------------------------------
+        val spaceController = remember(session) {
+            XrSpaceController(session, appPreferences)
+        }
+        val spaceUiState by spaceController.uiState.collectAsState()
+
+        LaunchedEffect(session) {
+            spaceController.applyLaunchPreference()
+        }
+
+        // ------------------------------------------------------------------
+        // Voice setup (shared across both space modes)
+        // ------------------------------------------------------------------
+        val voiceService = remember(context) {
+            SpatialVoiceService(context.applicationContext)
+        }
+        var geminiNanoService by remember { mutableStateOf<GeminiNanoService?>(null) }
+        var geminiCloudService by remember { mutableStateOf<GeminiCloudService?>(null) }
+        var commandCoordinator by remember { mutableStateOf<SpatialCommandCoordinator?>(null) }
+        val voiceState by voiceService.state.collectAsState()
+        val partialTranscript by voiceService.partialTranscript.collectAsState()
+        var voiceFeedback by remember { mutableStateOf<String?>(null) }
+        var voiceGestureHint by remember { mutableStateOf<String?>(null) }
+        var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
+        var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
+        val voiceControlEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
+        val voiceGestureHand =
+            appPreferences.getValue(appPreferences.voiceGestureHand) ?: "left"
+
+        val pinchDetector = remember(session, voiceGestureHand) {
+            SecondaryHandPinchDetector(session, this@UnifiedMainActivity, voiceGestureHand)
+        }
+        var hasAudioPermission by remember {
+            mutableStateOf(
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+            )
+        }
+        var hasHandTrackingPermission by remember {
+            mutableStateOf(
+                ContextCompat.checkSelfPermission(
+                    context, HAND_TRACKING_PERMISSION
+                ) == PackageManager.PERMISSION_GRANTED
+            )
+        }
+
+        val audioPermissionLauncher =
+            androidx.activity.compose.rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted -> hasAudioPermission = granted }
+        val handTrackingPermissionLauncher =
+            androidx.activity.compose.rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted -> hasHandTrackingPermission = granted }
+
+        fun handleVoiceAction(action: XrPlayerAction): String {
+            return when (action) {
+                is XrPlayerAction.Search -> {
+                    voiceSearchQuery = action.query
+                    "Searching for ${action.query}"
+                }
+                is XrPlayerAction.CloseApp -> {
+                    onFinishAffinity()
+                    "Closing SpatialFin"
+                }
+                is XrPlayerAction.GoBack -> {
+                    if (!navController.popBackStack()) onFinish()
+                    "Going back"
+                }
+                is XrPlayerAction.GoHome -> {
+                    navController.navigate(HomeRoute) {
+                        popUpTo(navController.graph.startDestinationId)
+                        launchSingleTop = true
+                    }
+                    "Returning home"
+                }
+                is XrPlayerAction.Unrecognized -> "I didn't catch that: ${action.transcript}"
+                else -> "Command not available on home screen"
+            }
+        }
+
+        fun requestVoiceCommand() {
+            if (!voiceService.isAvailable()) {
+                voiceFeedback = "Speech recognition unavailable"
+                return
+            }
+            if (!hasAudioPermission) {
+                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                return
+            }
+            voiceService.startListening { transcript ->
+                coroutineScope.launch {
+                    val nano = geminiNanoService
+                        ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
+                    val cloud = geminiCloudService
+                        ?: GeminiCloudService(context.applicationContext, appPreferences, repository)
+                            .also { geminiCloudService = it }
+                    val coordinator = commandCoordinator
+                        ?: SpatialCommandCoordinator(context.applicationContext, nano, cloud)
+                            .also { it.initialize(); commandCoordinator = it }
+                    voiceFeedback = handleVoiceAction(coordinator.parse(transcript).action)
+                }
+            }
+        }
+
+        LaunchedEffect(session, hasHandTrackingPermission) {
+            if (hasHandTrackingPermission) {
+                runCatching {
+                    session.configure(
+                        session.config.copy(handTracking = HandTrackingMode.BOTH)
+                    )
+                }.onFailure { Timber.w(it, "VOICE: Hand tracking not available") }
+            }
+        }
+
+        LaunchedEffect(pinchDetector, hasHandTrackingPermission, lifecycleOwner) {
+            if (!hasHandTrackingPermission) return@LaunchedEffect
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                pinchDetector.gestureStates.collect { event ->
+                    when (event) {
+                        is SecondaryHandPinchDetector.GestureState.Arming -> {
+                            voiceGestureArmingProgress = event.progress
+                            voiceGestureHint = "Hold to talk"
+                        }
+                        SecondaryHandPinchDetector.GestureState.Started -> {
+                            voiceGestureArmingProgress = 1f
+                            voiceGestureHint = null
+                            if (voiceState == VoiceState.IDLE) requestVoiceCommand()
+                        }
+                        SecondaryHandPinchDetector.GestureState.Ended -> {
+                            voiceGestureArmingProgress = 0f
+                            voiceGestureHint = null
+                            voiceService.stopListening()
+                        }
+                        SecondaryHandPinchDetector.GestureState.Idle -> {
+                            voiceGestureArmingProgress = 0f
+                            if (voiceState != VoiceState.LISTENING) voiceGestureHint = null
+                        }
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(voiceFeedback) {
+            if (voiceFeedback != null) {
+                delay(2000L)
+                voiceFeedback = null
+                voiceService.resetState()
+            }
+        }
+
+        DisposableEffect(session) {
+            onDispose {
+                voiceService.destroy()
+                commandCoordinator?.destroy()
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Mode-specific rendering
+        // ------------------------------------------------------------------
+        if (spaceUiState.mode == XrSpaceMode.FULL && spaceUiState.spatialUiAvailable) {
+            FullSpaceContent(
+                session = session,
+                navController = navController,
+                state = state,
+                appPreferences = appPreferences,
+                onboardingCompleted = onboardingCompleted,
+                voiceSearchQuery = voiceSearchQuery,
+                voiceState = voiceState,
+                partialTranscript = partialTranscript,
+                voiceGestureArmingProgress = voiceGestureArmingProgress,
+                voiceGestureHint = voiceGestureHint,
+                onReconnect = viewModel::reconnect,
+                onEnterHomeSpace = { spaceController.enterHomeSpace() },
+            )
+        } else {
+            HomeSpaceContent(
+                navController = navController,
+                state = state,
+                appPreferences = appPreferences,
+                onboardingCompleted = onboardingCompleted,
+                voiceSearchQuery = voiceSearchQuery,
+                voiceState = voiceState,
+                partialTranscript = partialTranscript,
+                voiceGestureArmingProgress = voiceGestureArmingProgress,
+                voiceGestureHint = voiceGestureHint,
+                onReconnect = viewModel::reconnect,
+                onEnterFullSpace = { spaceController.enterFullSpace() },
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Home Space path — standard adaptive Compose, no Subspace/SpatialPanel
+    // ---------------------------------------------------------------------------
+
+    @Composable
+    private fun HomeSpaceContent(
+        navController: androidx.navigation.NavHostController,
+        state: MainState,
+        appPreferences: AppPreferences,
+        onboardingCompleted: Boolean,
+        voiceSearchQuery: String?,
+        voiceState: VoiceState,
+        partialTranscript: String,
+        voiceGestureArmingProgress: Float,
+        voiceGestureHint: String?,
+        onReconnect: () -> Unit,
+        onEnterFullSpace: () -> Unit,
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            NavigationRoot(
+                navController = navController,
+                hasServers = state.hasServers,
+                hasCurrentServer = state.hasCurrentServer,
+                hasCurrentUser = state.hasCurrentUser,
+                onboardingCompleted = onboardingCompleted,
+                appPreferences = appPreferences,
+                initialSearchQuery = voiceSearchQuery,
+                onReconnect = onReconnect,
+                xrSpaceMode = XrSpaceMode.HOME,
+                onEnterFullSpace = onEnterFullSpace,
+            )
+            VoiceControlOverlay(
+                state = voiceState,
+                partialTranscript = partialTranscript,
+                gestureArmingProgress = voiceGestureArmingProgress,
+                gestureHint = voiceGestureHint,
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Full Space path — existing spatialized XR UI with movable SpatialPanel
+    // ---------------------------------------------------------------------------
+
+    @Composable
+    private fun FullSpaceContent(
+        session: Session,
+        navController: androidx.navigation.NavHostController,
+        state: MainState,
+        appPreferences: AppPreferences,
+        onboardingCompleted: Boolean,
+        voiceSearchQuery: String?,
+        voiceState: VoiceState,
+        partialTranscript: String,
+        voiceGestureArmingProgress: Float,
+        voiceGestureHint: String?,
+        onReconnect: () -> Unit,
+        onEnterHomeSpace: () -> Unit,
+    ) {
+        val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+        val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
+        var controlsVisible by remember { mutableStateOf(true) }
+        var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        val latestRootEntity = rememberUpdatedState(rootEntity.value)
+
+        LaunchedEffect(controlsVisible, rootEntity.value) {
+            val root = rootEntity.value ?: return@LaunchedEffect
+            if (controlsVisible) {
+                if (movableComponent.value == null) {
+                    val m = MovableComponent.createSystemMovable(session, false)
+                    root.addComponent(m)
+                    movableComponent.value = m
+                    Timber.d("VOICE: Home movable enabled controlsVisible=%b", controlsVisible)
+                }
+            } else {
+                movableComponent.value?.let {
+                    val latestPose = safeGetAppRootPose(root)
+                    latestPose?.let(::saveAppRootPose)
+                    root.removeComponent(it)
+                    latestPose?.let { pose -> runCatching { root.setPose(pose) } }
+                    movableComponent.value = null
+                    Timber.d("VOICE: Home movable disabled controlsVisible=%b", controlsVisible)
+                }
+            }
+        }
+
+        LaunchedEffect(controlsVisible, hideTimestamp) {
+            if (controlsVisible) {
+                delay(5000L)
+                controlsVisible = false
+            }
+        }
+
+        LaunchedEffect(rootEntity.value) {
+            val root = rootEntity.value ?: return@LaunchedEffect
+            while (true) {
+                safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                delay(1_000L)
+            }
+        }
+
+        DisposableEffect(session) {
+            try {
+                val root = GroupEntity.create(session, "MainScreenRoot", loadAppRootPose())
+                rootEntity.value = root
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to create movable root for main screen")
+            }
+            onDispose {
+                latestRootEntity.value?.let { root ->
+                    safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                }
+                rootEntity.value?.dispose()
+                rootEntity.value = null
+            }
+        }
+
+        Subspace {
+            val root = rootEntity.value
+            if (root != null) {
+                SceneCoreEntity(
+                    factory = { root },
+                    modifier = SubspaceModifier,
+                ) {
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(1800.dp)
+                            .height(1200.dp)
+                            .offset(x = 0.dp, y = 0.dp, z = 0.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (
+                                                event.type == PointerEventType.Enter ||
+                                                event.type == PointerEventType.Move
+                                            ) {
+                                                controlsVisible = true
+                                                hideTimestamp = System.currentTimeMillis()
+                                            }
+                                        }
+                                    }
+                                }
+                        ) {
+                            NavigationRoot(
+                                navController = navController,
+                                hasServers = state.hasServers,
+                                hasCurrentServer = state.hasCurrentServer,
+                                hasCurrentUser = state.hasCurrentUser,
+                                onboardingCompleted = onboardingCompleted,
+                                appPreferences = appPreferences,
+                                initialSearchQuery = voiceSearchQuery,
+                                onReconnect = onReconnect,
+                                xrSpaceMode = XrSpaceMode.FULL,
+                                onEnterHomeSpace = onEnterHomeSpace,
+                            )
+                            VoiceControlOverlay(
+                                state = voiceState,
+                                partialTranscript = partialTranscript,
+                                gestureArmingProgress = voiceGestureArmingProgress,
+                                gestureHint = voiceGestureHint,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
     private fun requestStartupPermissionsIfNeeded() {
         val prefs = getSharedPreferences(PERMISSIONS_PREFS, MODE_PRIVATE)
         if (prefs.getBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, false)) return
 
         val missingPermissions =
             buildList {
-                    add(Manifest.permission.RECORD_AUDIO)
-                    add(Manifest.permission.CAMERA)
-                    add(HAND_TRACKING_PERMISSION)
-                    addAll(localVideoPermissions())
-                }
-                .distinct()
-                .filter { permission ->
-                    ContextCompat.checkSelfPermission(this@UnifiedMainActivity, permission) !=
-                        PackageManager.PERMISSION_GRANTED
-                }
+                add(Manifest.permission.RECORD_AUDIO)
+                add(Manifest.permission.CAMERA)
+                add(HAND_TRACKING_PERMISSION)
+                addAll(localVideoPermissions())
+            }
+            .distinct()
+            .filter { permission ->
+                ContextCompat.checkSelfPermission(this@UnifiedMainActivity, permission) !=
+                    PackageManager.PERMISSION_GRANTED
+            }
 
         prefs.edit().putBoolean(STARTUP_PERMISSIONS_REQUESTED_KEY, true).apply()
         if (missingPermissions.isNotEmpty()) {
