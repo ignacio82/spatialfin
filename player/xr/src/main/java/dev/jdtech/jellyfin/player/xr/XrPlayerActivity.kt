@@ -244,7 +244,6 @@ class XrPlayerActivity : AppCompatActivity() {
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
             .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
-            .setPauseAtEndOfMediaItems(true)
             .build()
         
         viewModel.replacePlayer(player)

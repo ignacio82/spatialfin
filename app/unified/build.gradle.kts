@@ -31,9 +31,6 @@ abstract class StageSourcesTask : DefaultTask() {
     abstract val outputDir: DirectoryProperty
 
     @get:Input
-    abstract val excludedPaths: ListProperty<String>
-
-    @get:Input
     abstract val packageToPatch: Property<String>
 
     @get:Input
@@ -48,7 +45,6 @@ abstract class StageSourcesTask : DefaultTask() {
         project.copy {
             from(sourceDir)
             into(outputDir)
-            exclude(excludedPaths.get())
             if (!packageToPatch.isNullOrBlank() && importsToInject.isNotEmpty()) {
                 filter { line: String ->
                     if (line.trimStart().startsWith("package $packageToPatch")) {
@@ -67,24 +63,14 @@ abstract class StageSourcesTask : DefaultTask() {
 }
 
 // ---------------------------------------------------------------------------
-// Filtered source staging
+// Source staging
 //
-// AGP 8.x dropped file-level exclude support from AndroidSourceDirectorySet.
-// To avoid compiling the per-variant Application classes (which each carry
-// @HiltAndroidApp) alongside the unified UnifiedApplication, we copy the three
-// app module source trees into build-time staging dirs and exclude only the
-// conflicting files there. The staged dirs are then registered with AGP via
-// the Variant API so Hilt sees them as real generated sources.
+// app:unified is the only application module, but we still keep the XR, TV,
+// and Beam source trees under their legacy directories. Copy them into build-
+// time staging dirs and register them through the Variant API so AGP/Hilt sees
+// them as generated sources. TV and Beam sources also need unified R and
+// BuildConfig imports injected while staging.
 // ---------------------------------------------------------------------------
-
-val excludeFromMerge = listOf(
-    "dev/spatialfin/SpatialFinApplication.kt",
-    "dev/spatialfin/MainActivity.kt",
-    "dev/spatialfin/tv/TvApplication.kt",
-    "dev/spatialfin/beam/BeamApplication.kt",
-    // References SpatialFinApplication (excluded above) — replaced by unified/di/AppModule.kt
-    "dev/spatialfin/di/AppModule.kt",
-)
 
 val filteredXrDir = layout.buildDirectory.dir("filteredSources/xr")
 val filteredTvDir = layout.buildDirectory.dir("filteredSources/tv")
@@ -93,21 +79,18 @@ val filteredBeamDir = layout.buildDirectory.dir("filteredSources/beam")
 val prepareXrSources by tasks.registering(StageSourcesTask::class) {
     sourceDir.set(layout.projectDirectory.dir("../xr/src/main/java"))
     outputDir.set(filteredXrDir)
-    excludedPaths.set(excludeFromMerge)
     packageToPatch.set("")
     injectedImports.set(emptyList())
 }
 val prepareTvSources by tasks.registering(StageSourcesTask::class) {
     sourceDir.set(layout.projectDirectory.dir("../tv/src/main/java"))
     outputDir.set(filteredTvDir)
-    excludedPaths.set(excludeFromMerge)
     packageToPatch.set("dev.spatialfin.tv")
     injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
 }
 val prepareBeamSources by tasks.registering(StageSourcesTask::class) {
     sourceDir.set(layout.projectDirectory.dir("../beam/src/main/java"))
     outputDir.set(filteredBeamDir)
-    excludedPaths.set(excludeFromMerge)
     packageToPatch.set("dev.spatialfin.beam")
     injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
 }
@@ -194,7 +177,7 @@ android {
                 gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
             isEnable = !isBuildingBundle
             reset()
-            include("arm64-v8a")
+            include("arm64-v8a", "armeabi-v7a")
         }
     }
 

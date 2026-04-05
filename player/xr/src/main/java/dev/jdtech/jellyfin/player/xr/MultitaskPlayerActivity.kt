@@ -162,8 +162,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
         val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
-            .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
-            .setPauseAtEndOfMediaItems(true))
+            .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc)))
 
         viewModel.replacePlayer(player)
         

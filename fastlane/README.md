@@ -1,56 +1,27 @@
-fastlane documentation
-----
+# Fastlane
 
-# Installation
+This directory contains the Google Play release automation for SpatialFin.
 
-Make sure you have the latest version of the Xcode command line tools installed:
+Current scope:
+- Build the signed `libreRelease` bundle from `:app:unified`
+- Upload the bundle, text metadata, and changelogs to Google Play
 
-```sh
-xcode-select --install
-```
+Intentionally excluded for now:
+- Image and screenshot sync
 
-For _fastlane_ installation instructions, see [Installing _fastlane_](https://docs.fastlane.tools/#installing-fastlane)
+The old legacy store art was removed from the repo during the SpatialFin
+migration. Add new SpatialFin-specific Play Store assets before re-enabling image
+uploads in `fastlane/Fastfile`.
 
-# Available Actions
+Required environment variables:
+- `SPATIALFIN_KEYSTORE`
+- `SPATIALFIN_KEYSTORE_PASSWORD`
+- `SPATIALFIN_KEY_ALIAS`
+- `SPATIALFIN_KEY_PASSWORD`
+- `SPATIALFIN_PLAY_API_CREDENTIALS`
 
-## Android
-
-### android test
-
-```sh
-[bundle exec] fastlane android test
-```
-
-Runs all the tests
-
-### android beta
+Usage:
 
 ```sh
-[bundle exec] fastlane android beta
+bundle exec fastlane android publish
 ```
-
-Submit a new Beta Build to Crashlytics Beta
-
-### android deploy
-
-```sh
-[bundle exec] fastlane android deploy
-```
-
-Deploy a new version to the Google Play
-
-### android build
-
-```sh
-[bundle exec] fastlane android build
-```
-
-build
-
-----
-
-This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
-
-More information about _fastlane_ can be found on [fastlane.tools](https://fastlane.tools).
-
-The documentation of _fastlane_ can be found on [docs.fastlane.tools](https://docs.fastlane.tools).

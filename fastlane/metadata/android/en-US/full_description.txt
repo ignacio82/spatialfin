@@ -1,7 +1,15 @@
-Findroid is a third-party Android application for Jellyfin that provides a native user interface to browse and play movies and series.
+SpatialFin is a Jellyfin client built for Android XR and adapted for phones, tablets, TV, and other Android form factors.
 
-To use this app you must have a Jellyfin server.
+Enjoy an immersive theater experience on Android XR with Home Space and Full Space playback modes, or use SpatialFin as a native Jellyfin client on the rest of your Android devices.
 
-You can also download movies and TV shows for offline playback while on the road.
+Features:
+- Immersive Android XR playback with spatial theater controls
+- Native Jellyfin browsing for movies, shows, seasons, and episodes
+- ASS/SSA anime subtitle support, subtitle search, and track selection
+- Downloads and offline playback
+- Local media and network share playback
+- Companion setup and cross-device playback features
 
-Thanks for using Findroid!
+You need your own Jellyfin server to use most app features.
+
+SpatialFin is a third-party Jellyfin client and is not affiliated with the Jellyfin project.

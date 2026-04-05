@@ -111,6 +111,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrPlayerPanelRotY = Preference("pref_xr_player_panel_rot_y", 0f)
     val xrPlayerPanelRotZ = Preference("pref_xr_player_panel_rot_z", 0f)
     val xrPlayerPanelRotW = Preference("pref_xr_player_panel_rot_w", 1f)
+    val xrPlayerPanelPoseVersion = Preference("pref_xr_player_panel_pose_version", 0)
     val xrAppPanelX = Preference("pref_xr_app_panel_x", 0f)
     val xrAppPanelY = Preference("pref_xr_app_panel_y", 0f)
     val xrAppPanelZ = Preference("pref_xr_app_panel_z", -3f)

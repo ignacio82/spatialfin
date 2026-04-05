@@ -1,28 +1,15 @@
 default_platform(:android)
 
 platform :android do
-  desc "Build and publish"
+  desc "Build and publish SpatialFin to Google Play"
   lane :publish do
-    keystore = ENV["SPATIALFIN_KEYSTORE"] || ENV["FINDROID_KEYSTORE"]
-    keystore_password = ENV["SPATIALFIN_KEYSTORE_PASSWORD"] || ENV["FINDROID_KEYSTORE_PASSWORD"]
-    key_alias = ENV["SPATIALFIN_KEY_ALIAS"] || ENV["FINDROID_KEY_ALIAS"]
-    key_password = ENV["SPATIALFIN_KEY_PASSWORD"] || ENV["FINDROID_KEY_PASSWORD"]
-    play_credentials = ENV["SPATIALFIN_PLAY_API_CREDENTIALS"] || ENV["FINDROID_PLAY_API_CREDENTIALS"]
+    keystore = ENV.fetch("SPATIALFIN_KEYSTORE")
+    keystore_password = ENV.fetch("SPATIALFIN_KEYSTORE_PASSWORD")
+    key_alias = ENV.fetch("SPATIALFIN_KEY_ALIAS")
+    key_password = ENV.fetch("SPATIALFIN_KEY_PASSWORD")
+    play_credentials = ENV.fetch("SPATIALFIN_PLAY_API_CREDENTIALS")
 
     gradle(task: "clean")
-
-    gradle(
-      task: "app:unified:assemble",
-      flavor: "libre",
-      build_type: "release",
-      print_command: false,
-      properties: {
-        "android.injected.signing.store.file" => keystore,
-        "android.injected.signing.store.password" => keystore_password,
-        "android.injected.signing.key.alias" => key_alias,
-        "android.injected.signing.key.password" => key_password,
-      }
-    )
 
     gradle(
       task: "app:unified:bundle",
@@ -41,7 +28,7 @@ platform :android do
       track: "production",
       json_key: play_credentials,
       skip_upload_apk: true,
-      sync_image_upload: true
+      skip_upload_images: true
     )
   end
 end

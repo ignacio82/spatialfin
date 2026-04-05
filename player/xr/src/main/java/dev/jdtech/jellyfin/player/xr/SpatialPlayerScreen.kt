@@ -102,6 +102,7 @@ import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.math.FloatSize2d
+import androidx.xr.runtime.math.FloatSize3d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
@@ -165,11 +166,24 @@ private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2
 private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
 private const val MIN_VOICE_LISTEN_MS_AFTER_GESTURE = 900L
+private const val VIDEO_DEPTH_METERS = 5.0f
+private const val DEFAULT_VIDEO_WIDTH_METERS = 10.0f
+private const val DEFAULT_VIDEO_HEIGHT_METERS = 5.625f
+private const val VIDEO_MOVE_HANDLE_MARGIN_METERS = 0.35f
+private const val VIDEO_MOVE_HANDLE_DEPTH_METERS = 0.5f
+private const val XR_PLAYER_POSE_VERSION_VIDEO_CENTER = 1
 
 private val PausedMascotPose =
     Pose(
         Vector3(-2.15f, -0.98f, 0.95f),
         Quaternion(0f, 0.9914f, 0f, 0.1305f),
+    )
+
+private fun movableVideoBounds(videoWidth: Float, videoHeight: Float): FloatSize3d =
+    FloatSize3d(
+        width = (videoWidth + VIDEO_MOVE_HANDLE_MARGIN_METERS * 2f).coerceAtLeast(1f),
+        height = (videoHeight + VIDEO_MOVE_HANDLE_MARGIN_METERS * 2f).coerceAtLeast(1f),
+        depth = VIDEO_MOVE_HANDLE_DEPTH_METERS,
     )
 
 private fun Cue.debugSummary(): String {
@@ -319,8 +333,8 @@ fun SpatialPlayerScreen(
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var passthroughOverrideEnabled by remember { mutableStateOf<Boolean?>(null) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
-    var videoWidth by remember { mutableFloatStateOf(10.0f) }
-    var videoHeight by remember { mutableFloatStateOf(5.625f) }
+    var videoWidth by remember { mutableFloatStateOf(DEFAULT_VIDEO_WIDTH_METERS) }
+    var videoHeight by remember { mutableFloatStateOf(DEFAULT_VIDEO_HEIGHT_METERS) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
     var subtitleTrackVersion by remember { mutableIntStateOf(0) }
     val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
@@ -789,7 +803,7 @@ fun SpatialPlayerScreen(
         }
     }
 
-    val videoDepth = 5.0f
+    val videoDepth = VIDEO_DEPTH_METERS
     val uiDepth = 1.25f
     val overlayProjectionScale = uiDepth / videoDepth
 
@@ -811,7 +825,7 @@ fun SpatialPlayerScreen(
     DisposableEffect(session) {
         val savedPose = loadSavedPlayerRootPose(viewModel)
         val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
-        val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(10.0f, 5.625f))
+        val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS))
         try {
             val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose)
             val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose)
@@ -822,7 +836,7 @@ fun SpatialPlayerScreen(
 
             val entity = SurfaceEntity.create(
                 session = session,
-                pose = Pose(Vector3(0f, 0f, -5.0f), Quaternion.Identity),
+                pose = Pose.Identity,
                 shape = initialShape,
                 stereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO,
             ).apply {
@@ -899,6 +913,7 @@ fun SpatialPlayerScreen(
                 },
             )
             videoRoot.addComponent(movable)
+            movable.size = movableVideoBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
             movableComponent.value = movable
 
             // Cast panel root: centered, 3.5 m in front, no movable component.
@@ -1070,10 +1085,10 @@ fun SpatialPlayerScreen(
             var aspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
             if (currentStereoMode == "sbs" && aspectRatio > 3.0f) aspectRatio /= 2f
             else if (currentStereoMode == "top_bottom" && videoSize.height > videoSize.width) aspectRatio *= 2f
-            videoWidth = 10.0f
+            videoWidth = DEFAULT_VIDEO_WIDTH_METERS
             videoHeight = videoWidth / aspectRatio
         } else {
-            videoWidth = 10.0f
+            videoWidth = DEFAULT_VIDEO_WIDTH_METERS
             videoHeight = videoWidth / (16f / 9f)
         }
         Timber.d(
@@ -1091,7 +1106,8 @@ fun SpatialPlayerScreen(
         // Flat mode — simple quad with entity-level stereo mode.
         entity.shape = SurfaceEntity.Shape.Quad(FloatSize2d(videoWidth, videoHeight))
         entity.stereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
-        entity.setPose(Pose(Vector3(0f, 0f, -5.0f), Quaternion.Identity))
+        entity.setPose(Pose.Identity)
+        movableComponent.value?.size = movableVideoBounds(videoWidth, videoHeight)
     }
 
     // Frame rate matching: apply content frame rate to the video surface and UI compositing layer.
@@ -1161,6 +1177,17 @@ fun SpatialPlayerScreen(
 
     // Controls at same depth as UI anchor.
     val controlsZDp = -uiDepth * 1000f
+
+    // Enable the subtitle root entity only when there is actual subtitle content.
+    // The SpatialPanel must stay alive in composition at all times (to prevent a flash on first
+    // appearance), but a disabled GroupEntity does not participate in SceneCore raycast
+    // hit-testing.  When disabled, grab gestures pass straight through to the video entity's
+    // MovableComponent so the user can move the video even when subtitles are present.
+    val hasSubtitleContent = (useLibass && hasLibassContent && libassBitmap != null) ||
+        (!useLibass && currentCues.isNotEmpty())
+    LaunchedEffect(hasSubtitleContent, subtitleRootEntity.value) {
+        subtitleRootEntity.value?.setEnabled(hasSubtitleContent)
+    }
 
     Subspace {
         val subtitleRoot = subtitleRootEntity.value
@@ -3021,7 +3048,7 @@ private fun formatTime(ms: Long): String {
 
 private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
     val prefs = viewModel.appPreferences
-    return Pose(
+    val savedPose = Pose(
         Vector3(
             prefs.getValue(prefs.xrPlayerPanelX),
             prefs.getValue(prefs.xrPlayerPanelY),
@@ -3034,6 +3061,16 @@ private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
             prefs.getValue(prefs.xrPlayerPanelRotW),
         ),
     )
+    return if (prefs.getValue(prefs.xrPlayerPanelPoseVersion) >= XR_PLAYER_POSE_VERSION_VIDEO_CENTER) {
+        savedPose
+    } else {
+        // Legacy saves stored the invisible parent node at the user origin and placed the
+        // visible video 5 m forward as a child. Convert that persisted root pose into the
+        // actual video-center pose so the movable affordance lands on the screen border.
+        val migratedPose = savedPose.compose(Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity))
+        savePlayerRootPose(viewModel, migratedPose)
+        migratedPose
+    }
 }
 
 private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
@@ -3047,6 +3084,7 @@ private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     prefs.setValue(prefs.xrPlayerPanelRotY, rotation.y)
     prefs.setValue(prefs.xrPlayerPanelRotZ, rotation.z)
     prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
+    prefs.setValue(prefs.xrPlayerPanelPoseVersion, XR_PLAYER_POSE_VERSION_VIDEO_CENTER)
 }
 
 private fun projectPoseFromOrigin(sourcePose: Pose, depthScale: Float): Pose {

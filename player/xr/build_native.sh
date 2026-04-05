@@ -8,7 +8,7 @@ if [ "$#" -lt 1 ]; then
 fi
 
 NDK_PATH=$1
-ABIS="arm64-v8a"
+ABIS="arm64-v8a armeabi-v7a"
 MIN_SDK=26 # Typical minSdk for modern apps
 
 HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -31,10 +31,23 @@ LIBASS_VER="0.17.3"
 
 for ABI in $ABIS; do
     echo "Building for $ABI..."
-    
-    TARGET="aarch64-linux-android"
-    CPU_FAMILY="aarch64"
-    CPU="armv8-a"
+
+    case "$ABI" in
+        arm64-v8a)
+            TARGET="aarch64-linux-android"
+            CPU_FAMILY="aarch64"
+            CPU="armv8-a"
+            ;;
+        armeabi-v7a)
+            TARGET="armv7a-linux-androideabi"
+            CPU_FAMILY="arm"
+            CPU="armv7-a"
+            ;;
+        *)
+            echo "Unsupported ABI: $ABI" >&2
+            exit 1
+            ;;
+    esac
 
     PREFIX="$BUILD_DIR/prefix_$ABI"
     mkdir -p "$PREFIX"

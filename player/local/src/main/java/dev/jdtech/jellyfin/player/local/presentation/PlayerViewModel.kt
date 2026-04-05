@@ -308,6 +308,7 @@ constructor(
         player.removeListener(this)
         player.release()
         player = newPlayer
+        player.addListener(this)
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
     }
 
@@ -723,7 +724,7 @@ constructor(
                                 repository.postPlaybackStop(
                                     UUID.fromString(mediaId),
                                     position.times(10000),
-                                    position.div(duration.toFloat()).times(100).toInt(),
+                                    if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
                                 )
                             }
                         }
@@ -768,7 +769,7 @@ constructor(
                 try {
                     when (currentItem.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
-                            val itemId = UUID.fromString(player.currentMediaItem!!.mediaId)
+                            val itemId = UUID.fromString(player.currentMediaItem?.mediaId ?: return@let)
                             repository.postPlaybackProgress(
                                 itemId,
                                 player.currentPosition.times(10000),
@@ -953,27 +954,45 @@ constructor(
                                 it.copy(nextEpisode = items.getOrNull(player.currentMediaItemIndex + 1))
                             }
                         } else if (item.contentSource == PlayerContentSource.JELLYFIN) {
-                            val currentQueueIndex =
-                                items.indexOfFirst { queuedItem -> queuedItem.itemId == item.itemId }
-                                    .takeIf { it >= 0 } ?: player.currentMediaItemIndex.coerceAtLeast(0)
-                            val currentPlayerIndex = player.currentMediaItemIndex.coerceAtLeast(0)
                             val nextItem = playlistManager.getNextPlayerItem()
                             _uiState.update { it.copy(nextEpisode = nextItem) }
+                            // Re-query indices after the suspend to get up-to-date queue state.
                             if (nextItem != null) {
-                                items.add((currentQueueIndex + 1).coerceAtMost(items.size), nextItem)
-                                player.addMediaItem(
-                                    (currentPlayerIndex + 1).coerceAtMost(player.mediaItemCount),
-                                    nextItem.toMediaItem(),
-                                )
+                                val queueIndex =
+                                    items.indexOfFirst { queuedItem -> queuedItem.itemId == item.itemId }
+                                        .takeIf { it >= 0 } ?: player.currentMediaItemIndex.coerceAtLeast(0)
+                                if (items.none { it.itemId == nextItem.itemId }) {
+                                    items.add((queueIndex + 1).coerceAtMost(items.size), nextItem)
+                                }
+                                val alreadyQueued = (0 until player.mediaItemCount).any {
+                                    player.getMediaItemAt(it).mediaId == nextItem.itemId.toString()
+                                }
+                                if (!alreadyQueued) {
+                                    player.addMediaItem(
+                                        (player.currentMediaItemIndex + 1).coerceAtMost(player.mediaItemCount),
+                                        nextItem.toMediaItem(),
+                                    )
+                                }
                             }
 
                             val previousItem = playlistManager.getPreviousPlayerItem()
                             if (previousItem != null) {
-                                items.add(currentQueueIndex.coerceAtMost(items.size), previousItem)
-                                player.addMediaItem(
-                                    currentPlayerIndex.coerceAtMost(player.mediaItemCount),
-                                    previousItem.toMediaItem(),
-                                )
+                                // Re-query again after second suspend.
+                                val queueIndex =
+                                    items.indexOfFirst { queuedItem -> queuedItem.itemId == item.itemId }
+                                        .takeIf { it >= 0 } ?: player.currentMediaItemIndex.coerceAtLeast(0)
+                                if (items.none { it.itemId == previousItem.itemId }) {
+                                    items.add(queueIndex.coerceAtMost(items.size), previousItem)
+                                }
+                                val alreadyQueued = (0 until player.mediaItemCount).any {
+                                    player.getMediaItemAt(it).mediaId == previousItem.itemId.toString()
+                                }
+                                if (!alreadyQueued) {
+                                    player.addMediaItem(
+                                        player.currentMediaItemIndex.coerceAtMost(player.mediaItemCount),
+                                        previousItem.toMediaItem(),
+                                    )
+                                }
                             }
 
                             Timber.i(
@@ -1168,10 +1187,11 @@ constructor(
                 try {
                     when (currentPlayerItem()?.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
+                            if (mediaId == null) return@launch
                             repository.postPlaybackStop(
                                 UUID.fromString(mediaId),
                                 position.times(10000),
-                                position.div(duration.toFloat()).times(100).toInt(),
+                                if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
                             )
                         }
                         PlayerContentSource.LOCAL -> {
@@ -1328,8 +1348,11 @@ constructor(
     override fun onCleared() {
         super.onCleared()
         Timber.d("Clearing Player ViewModel")
+        // viewModelScope is cancelled before onCleared() is called, so use a detached scope.
         if (isSyncPlayActive()) {
-            viewModelScope.launch { runCatching { repository.leaveSyncPlayGroup() } }
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
+                runCatching { repository.leaveSyncPlayGroup() }
+            }
         }
         releasePlayer()
     }
@@ -1693,6 +1716,14 @@ constructor(
         Timber.d("Trickplay Resolution: ${trickplayInfo.width}")
 
         withContext(Dispatchers.Default) {
+            if (trickplayInfo.width <= 0 || trickplayInfo.height <= 0 ||
+                trickplayInfo.tileWidth <= 0 || trickplayInfo.tileHeight <= 0
+            ) {
+                Timber.w("Trickplay: skipping — invalid dimensions w=%d h=%d tw=%d th=%d",
+                    trickplayInfo.width, trickplayInfo.height,
+                    trickplayInfo.tileWidth, trickplayInfo.tileHeight)
+                return@withContext
+            }
             val maxIndex =
                 ceil(
                         trickplayInfo.thumbnailCount
@@ -1705,22 +1736,26 @@ constructor(
             for (i in 0..maxIndex) {
                 repository.getTrickplayData(item.itemId, trickplayInfo.width, i)?.let { byteArray ->
                     val fullBitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
-                    for (offsetY in
-                        0..<trickplayInfo.height * trickplayInfo.tileHeight step
-                            trickplayInfo.height) {
-                        for (offsetX in
-                            0..<trickplayInfo.width * trickplayInfo.tileWidth step
-                                trickplayInfo.width) {
-                            val bitmap =
-                                Bitmap.createBitmap(
-                                    fullBitmap,
-                                    offsetX,
-                                    offsetY,
-                                    trickplayInfo.width,
-                                    trickplayInfo.height,
-                                )
-                            bitmaps.add(bitmap)
+                    try {
+                        for (offsetY in
+                            0..<trickplayInfo.height * trickplayInfo.tileHeight step
+                                trickplayInfo.height) {
+                            for (offsetX in
+                                0..<trickplayInfo.width * trickplayInfo.tileWidth step
+                                    trickplayInfo.width) {
+                                val bitmap =
+                                    Bitmap.createBitmap(
+                                        fullBitmap,
+                                        offsetX,
+                                        offsetY,
+                                        trickplayInfo.width,
+                                        trickplayInfo.height,
+                                    )
+                                bitmaps.add(bitmap)
+                            }
                         }
+                    } finally {
+                        fullBitmap.recycle()
                     }
                 }
             }

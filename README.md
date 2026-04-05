@@ -129,36 +129,15 @@ SpatialFin can browse and stream media directly from SMB and NFS shares on your 
 - Android 12 (API 31) or higher
 - Optional: a running [Jellyfin](https://jellyfin.org) server
 
-## Fin Player Packaging
+## Android Packaging
 
-Beam Pro and Google TV now converge on a single consumer Play package:
+SpatialFin now ships as a single unified Android app:
 
-- Package name: `dev.spatialfin.player`
-- App name: `Fin Player`
+- Gradle app module: `app/unified`
+- Application ID: `dev.spatialfin`
+- App name: `SpatialFin`
 
-XR remains a separate app/package for now.
-
-### Play Console Release Strategy
-
-For Google Play, Beam Pro and TV should share the same Play listing and package name, but be released through different form-factor tracks:
-
-- Beam Pro / handheld build: mobile release track
-- Google TV build: dedicated Android TV track
-
-This matches Google's recommendation to keep the same package name for mobile and TV, while using a dedicated TV track to control the TV release separately.
-
-### Release Signing
-
-Beam and TV release builds use a shared signing configuration so they can be published under the same Play listing.
-
-Preferred signing variables:
-
-- `FIN_PLAYER_KEYSTORE`
-- `FIN_PLAYER_KEYSTORE_PASSWORD`
-- `FIN_PLAYER_KEY_ALIAS`
-- `FIN_PLAYER_KEY_PASSWORD`
-
-For migration convenience, Beam and TV also fall back to the existing XR signing variables if the `FIN_PLAYER_*` values are not set:
+Release signing uses the standard SpatialFin variables:
 
 - `SPATIALFIN_KEYSTORE`
 - `SPATIALFIN_KEYSTORE_PASSWORD`
@@ -166,6 +145,8 @@ For migration convenience, Beam and TV also fall back to the existing XR signing
 - `SPATIALFIN_KEY_PASSWORD`
 
 These values can be provided through Gradle properties, `local.properties`, or environment variables.
+
+The legacy per-device packaging shells under `app/xr`, `app/beam`, and `app/tv` have been consolidated into `app/unified`. Their remaining Kotlin sources are still staged into the unified app at build time, but separate manifests, launcher assets, and per-form-factor `Application` / `MainActivity` entrypoints are no longer used.
 
 ## Local Library
 
@@ -247,7 +228,7 @@ SpatialFin is a multi-module Android project:
 
 | Module | Description |
 |--------|-------------|
-| `app/xr` | Android XR application entry point |
+| `app/unified` | Unified Android application entry point, manifest, and packaging layer |
 | `player/xr` | Immersive XR player with spatial UI |
 | `player/local` | Local playback engine (ExoPlayer) |
 | `player/session` | Player/session command layer for voice, SyncPlay, and XR session orchestration |
@@ -257,6 +238,8 @@ SpatialFin is a multi-module Android project:
 | `core` | Shared UI components and utilities |
 | `settings` | User preferences |
 | `setup` | Server onboarding flow |
+
+The device-specific UI/navigation sources still live under `app/xr`, `app/beam`, and `app/tv`, and are staged into `app/unified` during the build.
 
 ## AI Usage
 
