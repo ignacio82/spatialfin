@@ -66,6 +66,7 @@ import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.jdtech.jellyfin.models.versionChipLabel
 import java.util.UUID
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.MediaStreamType
 
 @Composable
 fun MovieScreen(
@@ -114,8 +115,19 @@ fun MovieScreen(
                 is MovieAction.Play -> {
                     val movie = state.movie
                     val sourceNames = movie?.sources?.flatMap { listOf(it.name, it.path) } ?: emptyList()
+                    val sourceVideoCodecs =
+                        movie?.sources?.flatMap { source ->
+                            source.mediaStreams
+                                .filter { it.type == MediaStreamType.VIDEO }
+                                .map { it.codec }
+                        } ?: emptyList()
                     val stereoMode = if (movie != null) {
-                        StereoModeDetector.detect(movie.name, movie.video3DFormat, sourceNames)
+                        StereoModeDetector.detect(
+                            movie.name,
+                            movie.video3DFormat,
+                            sourceNames,
+                            sourceVideoCodecs,
+                        )
                     } else {
                         StereoModeDetector.StereoMode.MONO
                     }
@@ -248,7 +260,19 @@ private fun MovieScreenLayout(
                         initialMaxBitrate = initialMaxBitrate,
                         onSyncPlayClick = {
                             val sourceNames = movie.sources.flatMap { listOf(it.name, it.path) }
-                            val stereoMode = StereoModeDetector.detect(movie.name, movie.video3DFormat, sourceNames)
+                            val sourceVideoCodecs =
+                                movie.sources.flatMap { source ->
+                                    source.mediaStreams
+                                        .filter { it.type == MediaStreamType.VIDEO }
+                                        .map { it.codec }
+                                }
+                            val stereoMode =
+                                StereoModeDetector.detect(
+                                    movie.name,
+                                    movie.video3DFormat,
+                                    sourceNames,
+                                    sourceVideoCodecs,
+                                )
                             val intent = XrPlayerActivity.createIntent(
                                 context = context,
                                 itemId = movie.id,
