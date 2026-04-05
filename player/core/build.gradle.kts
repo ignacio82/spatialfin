@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.hilt)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -24,4 +26,12 @@ android {
 dependencies {
     implementation(projects.data)
     implementation(libs.timber)
+    
+    // Media3
+    implementation(libs.androidx.media3.exoplayer)
+    
+    // Hilt
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
 }
+dependencies { testImplementation("junit:junit:4.13.2") }

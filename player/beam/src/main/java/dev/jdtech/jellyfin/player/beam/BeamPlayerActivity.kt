@@ -407,7 +407,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 .build()
         Timber.i(
             "Beam player replacement ready player=%s libassEnabled=%b seekBackMs=%d seekForwardMs=%d",
-            player.javaClass.simpleName,
+            player::class.java.simpleName,
             libassRenderer != null,
             viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc),
             viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc),

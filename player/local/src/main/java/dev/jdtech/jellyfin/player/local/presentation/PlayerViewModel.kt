@@ -668,7 +668,9 @@ constructor(
                     playbackPosition
                 }
 
-            player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
+            val mediaItem = startItem.toMediaItem()
+            player.setMediaItem(mediaItem, startPosition)
+
             Timber.i("initializeNetworkPlayer prepared startPosition=%d", startPosition)
             player.prepare()
             player.play()
