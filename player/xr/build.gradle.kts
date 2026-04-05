@@ -75,4 +75,6 @@ dependencies {
     implementation(libs.mlkit.genai.prompt)
     implementation(libs.okhttp)
     implementation(libs.timber)
+
+    testImplementation(libs.junit4)
 }

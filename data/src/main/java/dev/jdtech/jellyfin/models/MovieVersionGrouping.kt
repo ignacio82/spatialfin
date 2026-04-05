@@ -158,7 +158,7 @@ private fun detectMovieStereoMode(
 }
 
 private val MULTIVIEW_REGEX =
-    Regex("""\b(mv-hevc|mvhevc|spatial|spatial[\s.-]?video|mvc)\b""")
+    Regex("""\b(mv-hevc|mvhevc|spatial|spatial[\s.-]?video)\b""")
 private val SIDE_BY_SIDE_REGEX =
     Regex("""\b(hsbs|half[\s.-]?sbs|fsbs|full[\s.-]?sbs|sbs|side[\s.-]?by[\s.-]?side|3d[\s.-]?h?sbs)\b""")
 private val TOP_BOTTOM_REGEX =
