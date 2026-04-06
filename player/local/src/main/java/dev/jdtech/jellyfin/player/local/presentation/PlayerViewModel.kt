@@ -260,8 +260,6 @@ constructor(
                 .setEnableDecoderFallback(true)
 
         val initialPlayer = ExoPlayer.Builder(application, renderersFactory)
-            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(application)
-                .experimentalParseSubtitlesDuringExtraction(true))
             .setAudioAttributes(audioAttributes, false)
             .setTrackSelector(trackSelector)
             .setSeekBackIncrementMs(
