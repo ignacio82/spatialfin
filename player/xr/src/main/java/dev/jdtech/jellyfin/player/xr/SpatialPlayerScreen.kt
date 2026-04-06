@@ -166,9 +166,9 @@ private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2
 private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
 private const val MIN_VOICE_LISTEN_MS_AFTER_GESTURE = 900L
-private const val VIDEO_DEPTH_METERS = 5.0f
-private const val DEFAULT_VIDEO_WIDTH_METERS = 10.0f
-private const val DEFAULT_VIDEO_HEIGHT_METERS = 5.625f
+private const val VIDEO_DEPTH_METERS = 6.0f
+private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
+private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
 private const val VIDEO_MOVE_HANDLE_MARGIN_METERS = 0.35f
 private const val VIDEO_MOVE_HANDLE_DEPTH_METERS = 0.5f
 private const val XR_PLAYER_POSE_VERSION_VIDEO_CENTER = 1
@@ -804,7 +804,7 @@ fun SpatialPlayerScreen(
     }
 
     val videoDepth = VIDEO_DEPTH_METERS
-    val uiDepth = 1.25f
+    val uiDepth = 2.0f
     val overlayProjectionScale = uiDepth / videoDepth
 
     // --- SceneCore video entity ---
@@ -1141,13 +1141,13 @@ fun SpatialPlayerScreen(
     val finalSubtitleSize = xrSubtitleSize * (subtitlePanelHeightDp / 600f).coerceAtLeast(1f)
     val controlsReferenceHeightDp = videoHeight * uiScaleFactor * 1000f
     // Controls sit further below the video surface to prevent overlap.
-    // Reduced offset from 1400f to 1100f to bring them slightly higher/closer to video bottom.
-    val controlsPanelY = -(controlsReferenceHeightDp / 2f + 1100f)
+    // Reduced offset from 1100f to 800f to bring them slightly higher/closer to video bottom.
+    val controlsPanelY = -(controlsReferenceHeightDp / 2f + 800f)
 
-    val subtitlePanelZDp = -uiDepth * 1000f
+    val subtitlePanelZDp = 0f
     // XR guide recommended spawn depth: 1.75 m (-1750 dp) from user.
-    // We are bringing it closer to 1.25 m for a more reachable, "IMAX" feel for controls.
-    val uiAnchorZDp = -uiDepth * 1000f
+    // We are bringing it closer to 1.75 m (sweet spot).
+    val uiAnchorZDp = 0f
 
     LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
         val renderWidth = (subtitlePanelWidthDp * density.density).toInt().coerceIn(1280, 7680)
@@ -1176,7 +1176,7 @@ fun SpatialPlayerScreen(
     }
 
     // Controls at same depth as UI anchor.
-    val controlsZDp = -uiDepth * 1000f
+    val controlsZDp = 0f
 
     // Enable the subtitle root entity only when there is actual subtitle content.
     // The SpatialPanel must stay alive in composition at all times (to prevent a flash on first
