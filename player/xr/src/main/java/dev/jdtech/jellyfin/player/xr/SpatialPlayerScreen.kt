@@ -803,10 +803,6 @@ fun SpatialPlayerScreen(
         }
     }
 
-    val videoDepth = VIDEO_DEPTH_METERS
-    val uiDepth = 2.0f
-    val overlayProjectionScale = uiDepth / videoDepth
-
     // --- SceneCore video entity ---
     val videoRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
@@ -821,6 +817,47 @@ fun SpatialPlayerScreen(
     // Cache the video root pose reported by move callbacks so the UI root can mirror it
     // and the pose can be persisted without relying on SceneCore's internal drag overlay.
     val lastReportedMovePose = remember { mutableStateOf<androidx.xr.runtime.math.Pose?>(null) }
+
+    var videoDepth by remember { mutableFloatStateOf(VIDEO_DEPTH_METERS) }
+    val uiDepth = 2.0f
+    val overlayProjectionScale = uiDepth / videoDepth
+
+    // Update root poses when depth changes.
+    // This allows the + and - buttons to dynamically adjust the spatial layout.
+    LaunchedEffect(videoDepth, videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
+        val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
+        val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
+        val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
+
+        // Calculate the new pose by preserving direction but scaling distance.
+        // We assume the user is at the origin (0,0,0) and the initial pose defines the view vector.
+        val currentVideoPose = videoRoot.getPose()
+        val t = currentVideoPose.translation
+        val length = kotlin.math.sqrt(t.x * t.x + t.y * t.y + t.z * t.z)
+        val viewDirection = if (length > 0f) {
+            Vector3(t.x / length, t.y / length, t.z / length)
+        } else {
+            Vector3(0f, 0f, -1f) // Default forward
+        }
+        
+        val newVideoPose = Pose(
+            Vector3(viewDirection.x * videoDepth, viewDirection.y * videoDepth, viewDirection.z * videoDepth),
+            currentVideoPose.rotation
+        )
+
+        // UI and subtitles stay projected at uiDepth along the same vector.
+        val newUiPose = Pose(
+            Vector3(viewDirection.x * uiDepth, viewDirection.y * uiDepth, viewDirection.z * uiDepth),
+            currentVideoPose.rotation
+        )
+
+        videoRoot.setPose(newVideoPose)
+        uiRoot.setPose(newUiPose)
+        subtitleRoot.setPose(newUiPose)
+
+        // Persist the new base position.
+        savePlayerRootPose(viewModel, newVideoPose)
+    }
 
     DisposableEffect(session) {
         val savedPose = loadSavedPlayerRootPose(viewModel)
@@ -1325,6 +1362,14 @@ fun SpatialPlayerScreen(
                         isLocked = isLocked,
                         spatialAudioAvailable = spatialAudioAvailable,
                         onLockToggle = { isLocked = !isLocked },
+                        onMoveCloser = {
+                            videoDepth = (videoDepth - 0.5f).coerceAtLeast(2.0f)
+                            resetAutoHide()
+                        },
+                        onMoveFurther = {
+                            videoDepth = (videoDepth + 0.5f).coerceAtMost(15.0f)
+                            resetAutoHide()
+                        },
                         onChaptersClick = {
                             activeDialog = "chapters"
                             resetAutoHide()
@@ -2094,6 +2139,8 @@ private fun ControlPanelUI(
     isLocked: Boolean,
     spatialAudioAvailable: Boolean,
     onLockToggle: () -> Unit,
+    onMoveCloser: () -> Unit,
+    onMoveFurther: () -> Unit,
     onChaptersClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
@@ -2139,6 +2186,30 @@ private fun ControlPanelUI(
                         else
                             Color.White.copy(alpha = 0.6f),
                     )
+                }
+                if (!isLocked) {
+                    IconButton(
+                        onClick = { onMoveCloser(); resetAutoHide() },
+                        modifier = Modifier.size(100.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_plus),
+                            contentDescription = "Closer",
+                            tint = Color.White,
+                            modifier = Modifier.size(64.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = { onMoveFurther(); resetAutoHide() },
+                        modifier = Modifier.size(100.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_minus_fat),
+                            contentDescription = "Further Away",
+                            tint = Color.White,
+                            modifier = Modifier.size(64.dp),
+                        )
+                    }
                 }
                 IconButton(
                     onClick = { onLockToggle(); resetAutoHide() },
