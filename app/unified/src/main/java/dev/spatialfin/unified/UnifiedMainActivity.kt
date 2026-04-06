@@ -505,24 +505,13 @@ class UnifiedMainActivity : AppCompatActivity() {
         var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
         val latestRootEntity = rememberUpdatedState(rootEntity.value)
 
-        LaunchedEffect(controlsVisible, rootEntity.value) {
+        LaunchedEffect(rootEntity.value) {
             val root = rootEntity.value ?: return@LaunchedEffect
-            if (controlsVisible) {
-                if (movableComponent.value == null) {
-                    val m = MovableComponent.createSystemMovable(session, false)
-                    root.addComponent(m)
-                    movableComponent.value = m
-                    Timber.d("VOICE: Home movable enabled controlsVisible=%b", controlsVisible)
-                }
-            } else {
-                movableComponent.value?.let {
-                    val latestPose = safeGetAppRootPose(root)
-                    latestPose?.let(::saveAppRootPose)
-                    root.removeComponent(it)
-                    latestPose?.let { pose -> runCatching { root.setPose(pose) } }
-                    movableComponent.value = null
-                    Timber.d("VOICE: Home movable disabled controlsVisible=%b", controlsVisible)
-                }
+            if (movableComponent.value == null) {
+                val m = MovableComponent.createSystemMovable(session, false)
+                root.addComponent(m)
+                movableComponent.value = m
+                Timber.d("VOICE: Home movable permanently enabled")
             }
         }
 
