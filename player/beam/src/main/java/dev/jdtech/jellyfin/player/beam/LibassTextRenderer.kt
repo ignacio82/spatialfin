@@ -68,8 +68,8 @@ class LibassTextRenderer(
         }
     }
 
-    override fun onPositionReset(positionUs: Long, joining: Boolean, offsetUs: Boolean) {
-        super.onPositionReset(positionUs, joining, offsetUs)
+    override fun onPositionReset(positionUs: Long, joining: Boolean, isReset: Boolean) {
+        super.onPositionReset(positionUs, joining, isReset)
         libassRenderer.clearCache()
         srtReadOrder = 0
     }
