@@ -345,17 +345,6 @@ fun SpatialPlayerScreen(
     // --- MCP Bridge integration ---
     var showPausedMascot by remember { mutableStateOf(false) }
     val isActuallyPaused = playbackState == Player.STATE_READY && !isPlaying
-    LaunchedEffect(isActuallyPaused) {
-        if (isActuallyPaused) {
-            delay(PAUSED_MASCOT_DELAY_MS)
-            showPausedMascot = true
-            Timber.i("Paused mascot requested after pause delay")
-        } else {
-            showPausedMascot = false
-            Timber.d("Paused mascot hidden because playback resumed")
-        }
-    }
-
     // --- Controls UI state ---
     var controlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
@@ -373,8 +362,17 @@ fun SpatialPlayerScreen(
         duration > NEXT_EPISODE_THRESHOLD_MS &&
         (duration - currentPosition) in 0L..NEXT_EPISODE_THRESHOLD_MS
 
+    LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
+        if (controlsVisible && isPlaying && !isLocked) {
+            val wait = (hideTimestamp + 5000L) - System.currentTimeMillis()
+            if (wait > 0) delay(wait)
+            controlsVisible = false
+        }
+    }
+
     // --- Dialog state (lifted here so SpatialDialog lives inside the control SpatialPanel) ---
     var activeDialog by remember { mutableStateOf<String?>(null) }
+    val showCastCrewPanel = isActuallyPaused || activeDialog == "cast_crew"
     var voiceSearchQuery by remember { mutableStateOf("") }
     var voiceSearchResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
     var voiceSearchLoading by remember { mutableStateOf(false) }
@@ -1534,6 +1532,23 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
+            }
+        }
+
+        if (showCastCrewPanel && (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())) {
+            SpatialPanel(
+                modifier = SubspaceModifier
+                    .width(1400.dp)
+                    .height(1600.dp)
+                    .offset(x = 1500.dp, y = 0.dp, z = 0.dp),
+            ) {
+                CastCrewPanelContent(
+                    title = uiState.currentItemTitle,
+                    overview = uiState.currentOverview,
+                    people = uiState.currentPeople,
+                    onResume = { player.play() },
+                )
+            }
         }
 
         // ── Contextual Skip Panel ────────────────────────────────────────────────
@@ -1591,40 +1606,12 @@ fun SpatialPlayerScreen(
                         nextEpisodePanelDismissed = true
                     },
                     onDismiss = { nextEpisodePanelDismissed = true },
-                )
-            }
-        }
-
-            }
-        }
-
-        // ── Cast & Info Panel (auto-visible when paused) ──────────────────────────
-        // Uses its own GroupEntity (castPanelEntity) which has NO MovableComponent so
-        // scroll gestures inside the panel are not intercepted by the video's grab handle.
-        // The SceneCoreEntity is only added to Subspace when the panel should be visible —
-        // an invisible (empty) SpatialPanel still intercepts raycasts and would block the
-        // user from grabbing and moving the video entity.
-        val castRoot = castPanelEntity.value
-        val shouldShowCastPanel = false
-        if (castRoot != null && shouldShowCastPanel) {
-            SceneCoreEntity(factory = { castRoot }, modifier = SubspaceModifier) {
-                SpatialPanel(
-                    modifier = SubspaceModifier
-                        .width(1400.dp)
-                        .height(1600.dp)
-                        .offset(x = 0.dp, y = 0.dp, z = 0.dp),
-                ) {
-                    CastCrewPanelContent(
-                        title = uiState.currentItemTitle,
-                        overview = uiState.currentOverview,
-                        people = uiState.currentPeople,
-                        onResume = { player.play() },
                     )
-                }
-            }
-        }
-    }
-}
+                    }
+                    }
+                    }
+                    }
+                    }
 
 // ── Secondary Controls Orbiter ────────────────────────────────────────────────────
 // Floats to the right of the control panel. Keeps the main panel clean while still
