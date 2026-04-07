@@ -398,7 +398,6 @@ fun SpatialPlayerScreen(
 
     // --- Dialog state (lifted here so SpatialDialog lives inside the control SpatialPanel) ---
     var activeDialog by remember { mutableStateOf<String?>(null) }
-    val showCastCrewPanel = isActuallyPaused || activeDialog == "cast_crew"
     var voiceSearchQuery by remember { mutableStateOf("") }
     var voiceSearchResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
     var voiceSearchLoading by remember { mutableStateOf(false) }
@@ -834,9 +833,6 @@ fun SpatialPlayerScreen(
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
     val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
     val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
-    // Separate entity for the cast panel — deliberately has NO MovableComponent so
-    // scroll gestures inside the panel are never intercepted by the video's grab handle.
-    val castPanelEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
     // Cache the video root pose reported by move callbacks so the UI root can mirror it
     // and the pose can be persisted without relying on SceneCore's internal drag overlay.
@@ -977,9 +973,6 @@ fun SpatialPlayerScreen(
             movable.size = movableVideoBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
             movableComponent.value = movable
 
-            // Cast panel root: centered, 3.5 m in front, no movable component.
-            val castRoot = GroupEntity.create(session, "CastPanelRoot", Pose(Vector3(0f, 0f, -3.5f), Quaternion.Identity))
-            castPanelEntity.value = castRoot
         } catch (_: Exception) {}
 
         onDispose {
@@ -1004,8 +997,6 @@ fun SpatialPlayerScreen(
             mascotModel.value?.close()
             mascotModel.value = null
             movableComponent.value = null
-            castPanelEntity.value?.dispose()
-            castPanelEntity.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
         }
     }
@@ -1558,22 +1549,6 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
-            }
-        }
-
-        if (showCastCrewPanel && (uiState.currentPeople.isNotEmpty() || uiState.currentOverview.isNotBlank())) {
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(1400.dp)
-                    .height(1600.dp)
-                    .offset(x = 1500.dp, y = 0.dp, z = 0.dp),
-            ) {
-                CastCrewPanelContent(
-                    title = uiState.currentItemTitle,
-                    overview = uiState.currentOverview,
-                    people = uiState.currentPeople,
-                    onResume = { player.play() },
-                )
             }
         }
 
@@ -2720,110 +2695,6 @@ private fun ActorCard(person: PlayerPerson, modifier: Modifier = Modifier) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
-        }
-    }
-}
-
-// ── Full-size info panel shown beside the video when paused ───────────────────────
-@Composable
-private fun CastCrewPanelContent(
-    title: String,
-    overview: String,
-    people: List<PlayerPerson>,
-    onResume: () -> Unit,
-) {
-    val directors = people.filter { it.type == "Director" }
-    val writers   = people.filter { it.type == "Writer" }
-    val cast      = people.filter { it.type == "Actor" }
-    val crew      = people.filter { it.type !in listOf("Director", "Writer", "Actor") }
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        shape = RoundedCornerShape(32.dp),
-        color = Color(0xFF1C1C26),
-        tonalElevation = 16.dp,
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 36.dp, vertical = 28.dp)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            // Header row: title + resume button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.displayMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(24.dp))
-                Button(onClick = onResume) {
-                    Text("▶  Resume", style = MaterialTheme.typography.headlineSmall)
-                }
-            }
-
-            // Overview
-            if (overview.isNotBlank()) {
-                Spacer(Modifier.height(28.dp))
-                Text(
-                    text = overview,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White.copy(alpha = 0.85f),
-                    lineHeight = MaterialTheme.typography.headlineSmall.fontSize * 1.55f,
-                )
-            }
-
-            // Crew sections (Director, Writer, other)
-            if (directors.isNotEmpty()) {
-                SectionHeader("Direction")
-                directors.forEach { CrewRow(it) }
-            }
-            if (writers.isNotEmpty()) {
-                SectionHeader("Writing")
-                writers.forEach { CrewRow(it) }
-            }
-            if (crew.isNotEmpty()) {
-                SectionHeader("Crew")
-                crew.forEach { CrewRow(it) }
-            }
-
-            // Cast grid — two cards per row
-            if (cast.isNotEmpty()) {
-                SectionHeader("Cast")
-                cast.chunked(2).forEach { pair ->
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        ActorCard(
-                            person = pair[0],
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (pair.size > 1) {
-                            ActorCard(
-                                person = pair[1],
-                                modifier = Modifier.weight(1f),
-                            )
-                        } else {
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
-
-            if (people.isEmpty() && overview.isBlank()) {
-                Spacer(Modifier.height(32.dp))
-                Text(
-                    text = "No information available.",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White.copy(alpha = 0.5f),
-                )
-            }
-            Spacer(Modifier.height(16.dp))
         }
     }
 }
