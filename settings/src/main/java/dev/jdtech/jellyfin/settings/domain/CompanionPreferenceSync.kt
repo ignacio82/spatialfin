@@ -65,6 +65,8 @@ fun AppPreferences.applyCompanionPreference(key: String, value: String?): Boolea
             setValue(voiceAssistantCloudApiKey, value)
             true
         }
+        voiceAssistantGemmaEnabled.backendName -> applyBoolean(voiceAssistantGemmaEnabled, value)
+        voiceAssistantGemmaBackend.backendName -> applyString(voiceAssistantGemmaBackend, value)
         seerrEnabled.backendName -> applyBoolean(seerrEnabled, value)
         seerrUrl.backendName -> {
             setValue(seerrUrl, value)

@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr.voice
 import android.content.Context
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -24,7 +25,46 @@ class SpatialCommandCoordinator(
     @Suppress("UNUSED_PARAMETER") private val appContext: Context,
     private val geminiNanoService: GeminiNanoService,
     private val geminiCloudService: GeminiCloudService,
+    private val appPreferences: AppPreferences,
 ) {
+    private val chatQuestionPhrases = listOf(
+        "what happened",
+        "what s happened",
+        "what just happened",
+        "what did they say",
+        "what are they saying",
+        "what did i miss",
+        "what s going on",
+        "what is going on",
+        "what s happening",
+        "what is happening",
+        "what is this about",
+        "what s this about",
+        "tell me about",
+        "explain this",
+        "can you explain",
+        "plot",
+        "summarize",
+        "summary",
+        "story so far",
+        "recap",
+        "who stars",
+        "who are the actors",
+        "who directed",
+        "who wrote",
+        "director",
+        "genre",
+        "what kind of",
+        "what year",
+        "when did this come out",
+        "when was this made",
+        "recommend",
+        "suggest",
+        "what should i watch",
+        "what else should i watch",
+        "something similar",
+        "more like this",
+    )
     private val introSkipPhrases = listOf(
         "skip intro",
         "skip the intro",
@@ -70,7 +110,9 @@ class SpatialCommandCoordinator(
     )
 
     suspend fun initialize() {
-        geminiNanoService.initialize()
+        if (shouldAttemptGemini()) {
+            geminiNanoService.initialize()
+        }
     }
 
     suspend fun parse(
@@ -126,6 +168,17 @@ class SpatialCommandCoordinator(
         normalized: String,
         playerState: PlayerStateSnapshot,
     ): ParseAttemptOutcome {
+        if (!shouldAttemptGemini()) {
+            return ParseAttemptOutcome(
+                debugInfo =
+                    if (shouldUseGemma()) {
+                        "Gemma enabled; Gemini command parsing disabled"
+                    } else {
+                        "Gemini disabled: cloud API key missing"
+                    },
+            )
+        }
+
         val prompt = buildModelPrompt(transcript, playerState)
         val onDeviceResult = geminiNanoService.generateText(prompt = prompt, reason = "voice-parse")
         if (onDeviceResult.usedModel && !onDeviceResult.text.isNullOrBlank()) {
@@ -204,19 +257,7 @@ class SpatialCommandCoordinator(
         }
 
         // Prioritize Chat Queries to avoid greedy navigation matches (e.g. "previous episode about")
-        if (text.contains("what happened") || text.contains("what did they say") || text.contains("what's happened")) {
-            return XrPlayerAction.ChatQuery(transcript)
-        }
-        if (text.contains("who is") || text.contains("who stars") || text.contains("who are the actors")) {
-            return XrPlayerAction.ChatQuery(transcript)
-        }
-        if (text.contains("plot") || text.contains("summarize") || text.contains("story so far") || text.contains("recap") || text.contains("about")) {
-            return XrPlayerAction.ChatQuery(transcript)
-        }
-        if (text.contains("director") || text.contains("who directed")) {
-            return XrPlayerAction.ChatQuery(transcript)
-        }
-        if (text.contains("genre") || text.contains("what kind of") || text.contains("when did this come out")) {
+        if (isLikelyChatQuery(text)) {
             return XrPlayerAction.ChatQuery(transcript)
         }
 
@@ -426,6 +467,35 @@ class SpatialCommandCoordinator(
             else -> null
         }
     }
+
+    private fun isLikelyChatQuery(text: String): Boolean {
+        if (chatQuestionPhrases.any(text::contains)) return true
+
+        return listOf(
+            "who ",
+            "who s ",
+            "who is ",
+            "who are ",
+            "who was ",
+            "what ",
+            "what s ",
+            "what is ",
+            "why ",
+            "why s ",
+            "why is ",
+            "how ",
+            "how s ",
+            "how is ",
+        ).any(text::startsWith)
+    }
+
+    private fun shouldUseGemma(): Boolean =
+        appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
+
+    private fun hasGeminiApiKey(): Boolean =
+        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim().isBlank()
+
+    private fun shouldAttemptGemini(): Boolean = hasGeminiApiKey() && !shouldUseGemma()
 
     private fun extractSelectionAction(text: String): XrPlayerAction? {
         val selectionIndex = extractOrdinalIndex(text) ?: return null

@@ -29,7 +29,7 @@ data class GeminiCloudTextResult(
 class GeminiCloudService(
     @Suppress("UNUSED_PARAMETER") private val appContext: Context,
     private val appPreferences: AppPreferences,
-    private val repository: JellyfinRepository,
+    @Suppress("UNUSED_PARAMETER") private val repository: JellyfinRepository,
 ) {
     private val httpClient = OkHttpClient()
 
@@ -40,7 +40,18 @@ class GeminiCloudService(
         maxOutputTokens: Int = 256,
     ): GeminiCloudTextResult = withContext(Dispatchers.IO) {
         val apiKey = appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim()
-        val useProxy = apiKey.isBlank()
+        if (apiKey.isBlank()) {
+            return@withContext GeminiCloudTextResult(
+                text = null,
+                status =
+                    GeminiCloudStatus(
+                        configured = false,
+                        usedModel = false,
+                        model = MODEL,
+                        details = "Gemini disabled: cloud API key missing",
+                    ),
+            )
+        }
         
         val startedAtMs = System.currentTimeMillis()
         val requestJson =
@@ -60,29 +71,17 @@ class GeminiCloudService(
                         .put("maxOutputTokens", maxOutputTokens),
                 )
 
-        val request = if (useProxy) {
-            val baseUrl = repository.getBaseUrl().trimEnd('/')
-            Request.Builder()
-                .url("$baseUrl/SpatialFin/AI/Proxy")
-                .addHeader("Content-Type", "application/json")
-                // Jellyfin authentication is usually handled by headers added by the repository or a separate interceptor.
-                // If we need to manually add it, we'd need the access token. 
-                // Assuming the repository's underlying client or a global interceptor handles auth.
-                .post(requestJson.toString().toRequestBody(JSON.toMediaType()))
-                .build()
-        } else {
+        val request =
             Request.Builder()
                 .url("$BASE_URL/$MODEL:generateContent")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("x-goog-api-key", apiKey)
                 .post(requestJson.toString().toRequestBody(JSON.toMediaType()))
                 .build()
-        }
 
         try {
             Timber.d(
-                "GEMINI: %s %s start model=%s promptChars=%s",
-                if (useProxy) "proxy" else "cloud",
+                "GEMINI: cloud %s start model=%s promptChars=%s",
                 reason,
                 MODEL,
                 prompt.length,
@@ -93,8 +92,8 @@ class GeminiCloudService(
 
                 if (!response.isSuccessful) {
                     val details =
-                        "${if (useProxy) "Proxy" else "Cloud"} request failed http=${response.code}; model=$MODEL; latency=${latencyMs}ms; body=${responseBody.take(400)}"
-                    Timber.w("GEMINI: %s %s failed %s", if (useProxy) "proxy" else "cloud", reason, details)
+                        "Cloud request failed http=${response.code}; model=$MODEL; latency=${latencyMs}ms; body=${responseBody.take(400)}"
+                    Timber.w("GEMINI: cloud %s failed %s", reason, details)
                     return@withContext GeminiCloudTextResult(
                         text = null,
                         status =
@@ -108,11 +107,10 @@ class GeminiCloudService(
                 }
 
                 val text = extractText(responseBody)
-                val details = "${if (useProxy) "Proxy" else "Cloud"} request succeeded model=$MODEL; latency=${latencyMs}ms"
+                val details = "Cloud request succeeded model=$MODEL; latency=${latencyMs}ms"
                 if (text.isNullOrBlank()) {
                     Timber.w(
-                        "GEMINI: %s %s empty response model=%s body=%s",
-                        if (useProxy) "proxy" else "cloud",
+                        "GEMINI: cloud %s empty response model=%s body=%s",
                         reason,
                         MODEL,
                         responseBody.take(400),
@@ -130,8 +128,7 @@ class GeminiCloudService(
                 }
 
                 Timber.i(
-                    "GEMINI: %s %s success model=%s latencyMs=%s chars=%s response=%s",
-                    if (useProxy) "proxy" else "cloud",
+                    "GEMINI: cloud %s success model=%s latencyMs=%s chars=%s response=%s",
                     reason,
                     MODEL,
                     latencyMs,
@@ -152,8 +149,8 @@ class GeminiCloudService(
         } catch (t: Throwable) {
             val latencyMs = System.currentTimeMillis() - startedAtMs
             val details =
-                "${if (useProxy) "Proxy" else "Cloud"} request exception model=$MODEL; latency=${latencyMs}ms; ${t.javaClass.simpleName}: ${t.message}"
-            Timber.w(t, "GEMINI: %s %s exception", if (useProxy) "proxy" else "cloud", reason)
+                "Cloud request exception model=$MODEL; latency=${latencyMs}ms; ${t.javaClass.simpleName}: ${t.message}"
+            Timber.w(t, "GEMINI: cloud %s exception", reason)
             GeminiCloudTextResult(
                 text = null,
                 status =

@@ -16,6 +16,7 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import dagger.hilt.android.HiltAndroidApp
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.CompanionLogUploader
@@ -31,6 +32,9 @@ import timber.log.Timber
 class UnifiedApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var workerFactory: HiltWorkerFactory
+    // Injected to trigger eager singleton creation so the LLM engine starts
+    // initializing as soon as the app launches (not only when the player opens).
+    @Inject lateinit var llmModelManager: LlmModelManager
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()

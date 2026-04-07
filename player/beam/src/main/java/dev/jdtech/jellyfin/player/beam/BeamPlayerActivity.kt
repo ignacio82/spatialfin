@@ -484,7 +484,7 @@ private fun BeamPlayerScreen(
         BeamCommandCoordinator(context.applicationContext, nanoService, cloudService)
     }
     val chatEngine = remember(context) {
-        BeamChatEngine(context.applicationContext, nanoService, cloudService)
+        BeamChatEngine(context.applicationContext, nanoService, cloudService, viewModel.appPreferences)
     }
     val voiceState by voiceService.state.collectAsStateWithLifecycle()
     val partialTranscript by voiceService.partialTranscript.collectAsStateWithLifecycle()

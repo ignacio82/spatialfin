@@ -101,6 +101,15 @@ To ensure low-latency movement of complex UIs (e.g., a video player with control
 - **Extraction Path:** Keep `experimentalParseSubtitlesDuringExtraction(false)` for libass playback. If subtitle extraction/transcoding is left enabled, Media3 converts ASS into `application/x-media3-cues`, which bypasses raw ASS delivery and makes libass unusable.
 - **Panel-to-Video Geometry:** The subtitle panel must cover the same projected video frame as the playback surface. Do not independently clamp the subtitle panel width/height after projecting the video size to subtitle depth, or ASS signs / positioned subtitles will drift out of place even if the bitmap render itself is correct.
 
+### On-Device AI (LiteRT Gemma)
+- **Inference Engine:** Uses `LiteRT LM` (formerly MediaPipe LLM Inference) for low-latency, private, on-device chat.
+- **Hardware Acceleration:** Uses a tiered initialization strategy: **NPU (Tensor)** > **GPU (Adreno/Mali)** > **CPU**. 
+- **CPU Restriction:** CPU-only inference is extremely slow. Gemma is **disabled by default** on CPU-only devices. Users must explicitly enable it in settings and are warned about high latency.
+- **Lifecycle Management:** The `LlmChatModelHelper` handles the `Engine` and `Conversation` lifecycle. You MUST call `close()` in the `destroy()` block of any engine/viewmodel using it to prevent memory leaks and hardware lockup.
+- **Model Provisioning:** The app auto-downloads the Gemma 4 `.task` model from HuggingFace to `context.filesDir/models/gemma-4.task` during the first initialization of `SmartChatEngine`.
+- **Multimodal Context:** The engine supports `visualContext: Bitmap`. During media playback, this allows the AI to "see" the current frame (or a low-res snapshot) to answer questions about specific visual elements in a scene.
+- **Prompt Composition:** Prompts are dynamically built by `SmartChatEngine` using `PlayerStateSnapshot` (metadata), `SubtitleContext` (recent dialogue), and `storySoFarContext`.
+
 ## Stability & Performance Mandates
 
 ### JNI & Native Safety

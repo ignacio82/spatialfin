@@ -345,7 +345,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                         ?: GeminiCloudService(context.applicationContext, appPreferences, repository)
                             .also { geminiCloudService = it }
                     val coordinator = commandCoordinator
-                        ?: SpatialCommandCoordinator(context.applicationContext, nano, cloud)
+                        ?: SpatialCommandCoordinator(
+                            context.applicationContext,
+                            nano,
+                            cloud,
+                            appPreferences,
+                        )
                             .also { it.initialize(); commandCoordinator = it }
                     voiceFeedback = handleVoiceAction(coordinator.parse(transcript).action)
                 }

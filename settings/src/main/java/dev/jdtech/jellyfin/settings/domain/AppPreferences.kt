@@ -136,6 +136,8 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantSpokenReplies = Preference("pref_voice_assistant_spoken_replies", true)
     val voiceAssistantVoice = Preference<String?>("pref_voice_assistant_voice", "male")
     val voiceAssistantCloudApiKey = Preference<String?>("pref_voice_assistant_cloud_api_key", null)
+    val voiceAssistantGemmaEnabled = Preference("pref_voice_assistant_gemma_enabled", false)
+    val voiceAssistantGemmaBackend = Preference("pref_voice_assistant_gemma_backend", "Requires Model")
     val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
     val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
     val onboardingCompleted = Preference("pref_onboarding_completed", false)

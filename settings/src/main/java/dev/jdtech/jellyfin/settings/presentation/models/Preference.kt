@@ -6,6 +6,8 @@ import dev.jdtech.jellyfin.settings.presentation.enums.DeviceType
 interface Preference {
     val nameStringResource: Int
     val descriptionStringRes: Int?
+    val description: String?
+        get() = null
     val iconDrawableId: Int?
     val enabled: Boolean
     val dependencies: List<PreferenceBackend<Boolean>>

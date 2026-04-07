@@ -14,6 +14,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.settings.R
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
+import dev.jdtech.jellyfin.settings.domain.llm.ModelState
+import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.settings.domain.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.enums.DeviceType
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceAppLanguage
@@ -42,6 +45,7 @@ class SettingsViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     @ApplicationContext private val context: Context,
     private val voiceTelemetryStore: VoiceTelemetryStore,
+    private val downloadManager: LlmDownloadManager,
 ) :
     ViewModel() {
     private val _state = MutableStateFlow(SettingsState())
@@ -751,6 +755,24 @@ class SettingsViewModel @Inject constructor(
             ),
         )
 
+    init {
+        // Resume download if the user had Gemma enabled but the model isn't ready yet
+        if (appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled) &&
+            downloadManager.downloadState.value.let { it is DownloadState.Idle || it is DownloadState.Error }) {
+            viewModelScope.launch { downloadManager.downloadModel() }
+        }
+        viewModelScope.launch {
+            downloadManager.downloadState.collect {
+                refreshLoadedPreferences()
+            }
+        }
+        viewModelScope.launch {
+            downloadManager.modelState.collect {
+                refreshLoadedPreferences()
+            }
+        }
+    }
+
     fun loadPreferences(indexes: IntArray = intArrayOf(), deviceType: DeviceType) {
         currentIndexes = indexes
         currentDeviceType = deviceType
@@ -812,9 +834,22 @@ class SettingsViewModel @Inject constructor(
                                                                 appPreferences.getValue(it)
                                                             },
                                                     value =
-                                                        appPreferences.getValue(
-                                                            preference.backendPreference
-                                                        ).toString(),
+                                                        // Cast through Preference<*> first to read
+                                                        // defaultValue as Any? (avoids bytecode
+                                                        // checkcast that throws ClassCastException
+                                                        // when backendPreference is a Long pref
+                                                        // unsafely cast to Preference<String?>).
+                                                        @Suppress("UNCHECKED_CAST")
+                                                        if ((preference.backendPreference as Preference<*>).defaultValue is Long) {
+                                                            appPreferences.getValue(
+                                                                preference.backendPreference
+                                                                    as Preference<Long>
+                                                            ).toString()
+                                                        } else {
+                                                            appPreferences.getValue(
+                                                                preference.backendPreference
+                                                            ).toString()
+                                                        },
                                                 )
                                             }
                                             is PreferenceMultiSelect -> {
@@ -903,11 +938,18 @@ class SettingsViewModel @Inject constructor(
             }
             is SettingsAction.OnUpdate -> {
                 when (action.preference) {
-                    is PreferenceSwitch ->
+                    is PreferenceSwitch -> {
                         appPreferences.setValue(
                             action.preference.backendPreference,
                             action.preference.value,
                         )
+                        if (action.preference.backendPreference.backendName ==
+                            appPreferences.voiceAssistantGemmaEnabled.backendName &&
+                            action.preference.value &&
+                            downloadManager.downloadState.value.let { it is DownloadState.Idle || it is DownloadState.Error }) {
+                            viewModelScope.launch { downloadManager.downloadModel() }
+                        }
+                    }
                     is PreferenceSelect -> {
                         @Suppress("UNCHECKED_CAST")
                         if (action.preference.backendPreference.defaultValue?.let { it::class } == Long::class) {
@@ -1082,6 +1124,19 @@ class SettingsViewModel @Inject constructor(
         val cloudApiKeyConfigured =
             !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
         val telemetry = voiceTelemetryStore.summary()
+
+        val gemmaStatusDescription = when (val s = downloadManager.downloadState.value) {
+            is DownloadState.Downloading -> "Downloading: ${(s.progress * 100).toInt()}%"
+            is DownloadState.Ready -> when (downloadManager.modelState.value) {
+                is ModelState.Initializing -> "Initializing engine…"
+                is ModelState.Ready -> context.getString(R.string.voice_assistant_gemma_enabled_summary)
+                is ModelState.Error -> "Engine error — see backend status below"
+                else -> "Model ready — initializing…"
+            }
+            is DownloadState.Error -> "Download failed: ${s.message}. Toggle to retry."
+            else -> "Enable to download model for on-device AI"
+        }
+
         val recentEntries =
             telemetry.recentEntries.joinToString("\n") { entry ->
                 buildString {
@@ -1154,6 +1209,30 @@ class SettingsViewModel @Inject constructor(
                             descriptionStringRes = R.string.voice_cloud_api_key_summary,
                             iconDrawableId = R.drawable.ic_info,
                             onClick = { showCloudApiKeyDialog() },
+                        ),
+                        PreferenceSwitch(
+                            nameStringResource = R.string.voice_assistant_gemma_enabled,
+                            description = gemmaStatusDescription,
+                            iconDrawableId = R.drawable.ic_download,
+                            backendPreference = appPreferences.voiceAssistantGemmaEnabled,
+                        ),
+                        PreferenceInfo(
+                            title = context.getString(R.string.voice_assistant_gemma_backend),
+                            description = when (val ms = downloadManager.modelState.value) {
+                                is ModelState.Initializing -> "Detecting backend…"
+                                is ModelState.Ready -> ms.backendName
+                                is ModelState.Error -> "Error: ${ms.message}"
+                                else -> appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend)
+                                    .let { stored ->
+                                        if (stored == "Requires Model" &&
+                                            downloadManager.downloadState.value is DownloadState.Ready) {
+                                            "Model downloaded — initializing…"
+                                        } else {
+                                            stored
+                                        }
+                                    }
+                            },
+                            iconDrawableId = R.drawable.ic_info,
                         ),
                         PreferenceCategory(
                             nameStringResource = R.string.voice_permissions,

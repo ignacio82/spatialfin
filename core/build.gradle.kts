@@ -46,6 +46,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+    implementation(libs.litertlm.android)
+    implementation(libs.tflite.gpu)
     implementation(libs.jellyfin.core)
     implementation(libs.material)
     implementation(libs.okhttp)

@@ -1,11 +1,17 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
-import android.content.Context
+import android.graphics.Bitmap
+import dev.jdtech.jellyfin.core.llm.LlmChatModelHelper
+import dev.jdtech.jellyfin.core.llm.LlmModelInstance
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 private val RECOMMENDATION_KEYWORDS = listOf(
     "similar", "recommend", "suggestion", "what else", "what should i watch",
@@ -31,12 +37,23 @@ data class AssistantReply(
 )
 
 class SmartChatEngine(
-    @Suppress("UNUSED_PARAMETER") private val appContext: Context,
     private val geminiNanoService: GeminiNanoService,
     private val geminiCloudService: GeminiCloudService,
+    private val appPreferences: AppPreferences,
+    private val modelManager: LlmModelManager,
 ) {
+    private val llmInstance: LlmModelInstance?
+        get() = modelManager.instance
+
     suspend fun initialize() = withContext(Dispatchers.IO) {
-        geminiNanoService.initialize()
+        if (shouldUseGemma()) {
+            modelManager.ensureInitialized()
+            return@withContext
+        }
+
+        if (shouldAttemptGemini()) {
+            geminiNanoService.initialize()
+        }
     }
 
     suspend fun query(
@@ -49,6 +66,7 @@ class SmartChatEngine(
         onSearchQuery: (suspend (String) -> List<SpatialFinItem>)? = null,
         conversationHistory: List<Pair<String, String>> = emptyList(),
         onGetSuggestions: (suspend () -> List<SpatialFinItem>)? = null,
+        visualContext: Bitmap? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
         // Fast-path: answer unambiguous factual lookups without any model call
         confidenceGatedAnswer(question, playerState)?.let { answer ->
@@ -76,6 +94,60 @@ class SmartChatEngine(
                 conversationHistory = conversationHistory,
                 relatedItemsContext = relatedItemsContext,
             )
+
+        val gemmaEnabled = shouldUseGemma()
+
+        if (gemmaEnabled) {
+            modelManager.ensureInitialized()
+        }
+
+        if (gemmaEnabled && llmInstance != null) {
+            try {
+                val responseText = suspendCoroutine<String> { continuation ->
+                    val sb = StringBuilder()
+                    val images = if (visualContext != null) listOf(visualContext) else emptyList()
+                    LlmChatModelHelper.runInference(llmInstance!!, prompt, images) { text, isDone ->
+                        if (isDone) {
+                            continuation.resume(sb.toString())
+                        } else {
+                            sb.append(text)
+                        }
+                    }
+                }
+                if (responseText.isNotBlank()) {
+                    val prefixToRemove = "Model: "
+                    val cleanedResponse = if (responseText.startsWith(prefixToRemove)) {
+                        responseText.substring(prefixToRemove.length)
+                    } else {
+                        responseText
+                    }
+                    return@withContext AssistantReply(
+                        text = cleanedResponse.trim(),
+                        strategy = "GEMMA_LITERT",
+                        debugInfo = "LiteRT LM Engine"
+                    )
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "LiteRT inference failed")
+            }
+        }
+
+        if (gemmaEnabled) {
+            return@withContext AssistantReply(
+                text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
+                strategy = "HEURISTIC",
+                debugInfo = "Gemma enabled; Gemini disabled; using heuristic fallback",
+            )
+        }
+
+        if (!shouldAttemptGemini()) {
+            return@withContext AssistantReply(
+                text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
+                strategy = "HEURISTIC",
+                debugInfo = "Gemini disabled: cloud API key missing",
+            )
+        }
+
         val result = geminiNanoService.generateText(prompt = prompt, reason = "chat")
         if (result.usedModel && !result.text.isNullOrBlank()) {
             return@withContext AssistantReply(
@@ -110,7 +182,16 @@ class SmartChatEngine(
 
     fun destroy() {
         geminiNanoService.destroy()
+        // LlmModelManager owns the engine lifecycle; do not close it here.
     }
+
+    private fun shouldUseGemma(): Boolean =
+        appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
+
+    private fun hasGeminiApiKey(): Boolean =
+        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim().isBlank()
+
+    private fun shouldAttemptGemini(): Boolean = hasGeminiApiKey() && !shouldUseGemma()
 
     private fun buildSubtitleContext(
         question: String,

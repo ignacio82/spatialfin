@@ -126,7 +126,12 @@ import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
+import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.InstallIn
+import dagger.hilt.EntryPoint
+import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
@@ -166,6 +171,13 @@ private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2
 private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
 private const val MIN_VOICE_LISTEN_MS_AFTER_GESTURE = 900L
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface LlmEntryPoint {
+    fun downloadManager(): LlmDownloadManager
+    fun modelManager(): dev.jdtech.jellyfin.core.llm.LlmModelManager
+}
 private const val VIDEO_DEPTH_METERS = 6.0f
 private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
 private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
@@ -240,11 +252,21 @@ fun SpatialPlayerScreen(
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
     val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences, viewModel.repository) }
+    val llmEntryPoint = remember(context) {
+        EntryPointAccessors.fromApplication(context.applicationContext, LlmEntryPoint::class.java)
+    }
+    val downloadManager = remember(context) { llmEntryPoint.downloadManager() }
+    val modelManager = remember(context) { llmEntryPoint.modelManager() }
     val commandCoordinator = remember(context) {
-        SpatialCommandCoordinator(context.applicationContext, geminiNanoService, geminiCloudService)
+        SpatialCommandCoordinator(
+            context.applicationContext,
+            geminiNanoService,
+            geminiCloudService,
+            viewModel.appPreferences,
+        )
     }
     val chatEngine = remember(context) {
-        SmartChatEngine(context.applicationContext, geminiNanoService, geminiCloudService)
+        SmartChatEngine(geminiNanoService, geminiCloudService, viewModel.appPreferences, modelManager)
     }
     val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
@@ -258,6 +280,10 @@ fun SpatialPlayerScreen(
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
     var gestureVoiceSessionActive by remember { mutableStateOf(false) }
     var voiceCaptureStartedAtMs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        downloadManager.downloadModel()
+    }
     var hasAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==

@@ -45,10 +45,11 @@ fun SettingsSwitchCard(
                     text = stringResource(preference.nameStringResource),
                     style = MaterialTheme.typography.titleLarge,
                 )
-                preference.descriptionStringRes?.let {
+                val description = preference.description ?: preference.descriptionStringRes?.let { stringResource(it) }
+                if (description != null) {
                     Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
                     Text(
-                        text = stringResource(id = it),
+                        text = description,
                         style = MaterialTheme.typography.bodyLarge,
                     )
                 }

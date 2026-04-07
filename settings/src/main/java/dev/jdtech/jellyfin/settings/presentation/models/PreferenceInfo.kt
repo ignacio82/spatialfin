@@ -6,7 +6,7 @@ import dev.jdtech.jellyfin.settings.presentation.enums.DeviceType
 
 data class PreferenceInfo(
     val title: String,
-    val description: String,
+    override val description: String,
     @param:DrawableRes override val iconDrawableId: Int? = null,
     override val enabled: Boolean = true,
     override val dependencies: List<PreferenceBackend<Boolean>> = emptyList(),

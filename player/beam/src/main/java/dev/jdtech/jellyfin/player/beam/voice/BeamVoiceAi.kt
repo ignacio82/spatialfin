@@ -36,9 +36,12 @@ class BeamGeminiNanoService(private val appContext: Context) {
 class BeamGeminiCloudService(
     private val appContext: Context,
     private val appPreferences: AppPreferences,
-    private val repository: JellyfinRepository,
+    @Suppress("UNUSED_PARAMETER") private val repository: JellyfinRepository,
 ) {
     private val client = OkHttpClient()
+
+    fun isConfigured(): Boolean =
+        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim().isBlank()
 
     suspend fun generateText(
         prompt: String,
@@ -47,7 +50,9 @@ class BeamGeminiCloudService(
         maxOutputTokens: Int = 256,
     ): String? = withContext(Dispatchers.IO) {
         val apiKey = appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim()
-        val useProxy = apiKey.isBlank()
+        if (apiKey.isBlank()) {
+            return@withContext null
+        }
         val body =
             JSONObject()
                 .put(
@@ -66,21 +71,12 @@ class BeamGeminiCloudService(
                 )
 
         val request =
-            if (useProxy) {
-                val baseUrl = repository.getBaseUrl().trimEnd('/')
-                Request.Builder()
-                    .url("$baseUrl/SpatialFin/AI/Proxy")
-                    .addHeader("Content-Type", JSON)
-                    .post(body.toString().toRequestBody(JSON.toMediaType()))
-                    .build()
-            } else {
-                Request.Builder()
-                    .url("$BASE_URL/$MODEL:generateContent")
-                    .addHeader("Content-Type", JSON)
-                    .addHeader("x-goog-api-key", apiKey)
-                    .post(body.toString().toRequestBody(JSON.toMediaType()))
-                    .build()
-            }
+            Request.Builder()
+                .url("$BASE_URL/$MODEL:generateContent")
+                .addHeader("Content-Type", JSON)
+                .addHeader("x-goog-api-key", apiKey)
+                .post(body.toString().toRequestBody(JSON.toMediaType()))
+                .build()
 
         runCatching {
             client.newCall(request).execute().use { response ->
@@ -135,6 +131,13 @@ class BeamCommandCoordinator(
 
         keywordMatch(normalized, transcript)?.let {
             return BeamVoiceParseResult(it, "keyword")
+        }
+
+        if (!cloudService.isConfigured()) {
+            return BeamVoiceParseResult(
+                XrPlayerAction.Unrecognized(transcript),
+                "gemini disabled: cloud API key missing",
+            )
         }
 
         val prompt =
@@ -330,6 +333,7 @@ class BeamChatEngine(
     private val appContext: Context,
     private val nanoService: BeamGeminiNanoService,
     private val cloudService: BeamGeminiCloudService,
+    private val appPreferences: AppPreferences,
 ) {
     suspend fun query(
         question: String,
@@ -381,10 +385,16 @@ class BeamChatEngine(
             $historyBlock$relatedBlock
             Question=$question
             """.trimIndent()
+        if (!hasGeminiApiKey()) {
+            return fallback(question, playerState)
+        }
         return nanoService.generateText(prompt, "voice-chat")
             ?: cloudService.generateText(prompt, "voice-chat", temperature = 0.3, maxOutputTokens = 320)
             ?: fallback(question, playerState)
     }
+
+    private fun hasGeminiApiKey(): Boolean =
+        !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim().isBlank()
 
     private fun confidenceGatedAnswer(question: String, playerState: PlayerStateSnapshot): String? {
         val n = question.lowercase().replace(Regex("[^a-z0-9\\s]"), " ").trim()
