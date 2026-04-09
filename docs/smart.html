@@ -116,7 +116,7 @@
                             <h4>Voice And AI</h4>
                             <ul class="explorer-list">
                                 <li><strong>Deterministic first:</strong> Core playback commands are handled directly for reliability.</li>
-                                <li><strong>On-device path:</strong> Uses AICore / Gemini Nano where available for private, fast inference.</li>
+                                <li><strong>On-device path:</strong> Uses LiteRT Gemma or AICore / Gemini Nano where available for private, fast inference.</li>
                                 <li><strong>Cloud fallback:</strong> Optional Gemini API key support for devices where AICore is absent.</li>
                             </ul>
                         </div>
@@ -125,8 +125,8 @@
 
                 <div class="section-heading reveal" style="margin-top: 72px;">
                     <p class="eyebrow">Current reality</p>
-                    <h2>Galaxy XR still needs cloud fallback for Gemini features.</h2>
-                    <p>Current testing on Galaxy XR firmware shows that the system image does not expose <code>com.google.android.aicore</code> to third-party apps, so on-device Gemini features are currently unavailable there. SpatialFin’s voice stack still works through deterministic handling and optional cloud fallback.</p>
+                    <h2>Galaxy XR can use on-device Gemma or cloud fallback.</h2>
+                    <p>Current testing on Galaxy XR firmware shows that the system image does not expose <code>com.google.android.aicore</code> to third-party apps. To provide local AI features, SpatialFin downloads and runs the LiteRT Gemma model directly on-device. SpatialFin’s voice stack also supports deterministic handling and optional cloud fallback.</p>
                 </div>
             </div>
         </section>

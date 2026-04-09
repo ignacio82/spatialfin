@@ -163,7 +163,7 @@ SpatialFin can now operate as a local-first XR player, even without a Jellyfin s
 SpatialFin now supports hands-free voice control in the XR player.
 
 - **Unified Smart Assistant:** Hold an open palm near your face on your configured voice hand to start voice capture, then speak. You can issue direct player commands or ask natural language questions about the movie.
-- **AI Chat And Parsing:** SpatialFin includes an Android AICore (Gemini Nano) integration path for compatible devices, and falls back to cloud Gemini (`gemini-3.1-flash-lite-preview`) when the user provides an API key in settings.
+- **AI Chat And Parsing:** SpatialFin includes an on-device LiteRT Gemma integration for private local inference, an Android AICore (Gemini Nano) integration path, and falls back to cloud Gemini (`gemini-3.1-flash-lite-preview`) when the user provides an API key in settings.
 - **Contextual Awareness:** The assistant maintains a 60-second rolling buffer of recent subtitles, allowing you to ask "What just happened?" or clarify confusing dialogue.
 - **Spatial Voice Feedback:** The AI responds out loud using Android's native Text-To-Speech engine. Media volume is automatically ducked while the assistant is speaking, and its text response remains visible until the speech finishes.
 - Use the mic button in the player orbiter as a fallback.
@@ -173,8 +173,8 @@ SpatialFin now supports hands-free voice control in the XR player.
 - Voice search results are shown in a spatial in-player overlay, and follow-up commands like "play the first one" now resolve against the active result set.
 - SyncPlay voice commands support opening the panel, creating a group, joining a named or indexed group, refreshing groups, and leaving the current watch party.
 - Voice parsing uses deterministic command handling first, then attempts richer AI parsing on compatible runtimes.
-- Current Galaxy XR testing found that the shipped firmware does not expose `com.google.android.aicore` to third-party apps, so on-device Gemini features currently fall back to deterministic handling unless the user configures a cloud Gemini API key.
-- Voice settings now show whether AICore is installed on the device and include a bring-your-own Gemini API key field for cloud fallback features.
+- Current Galaxy XR testing found that the shipped firmware does not expose `com.google.android.aicore` to third-party apps, so SpatialFin uses a locally downloaded LiteRT Gemma model for on-device AI. It also supports deterministic handling and cloud Gemini fallback.
+- Voice settings now show the status of the Gemma model, whether AICore is installed on the device, and include a bring-your-own Gemini API key field for cloud fallback features.
 - On first app launch, SpatialFin requests the microphone, hand-tracking, and local video permissions needed for voice input and the on-device library.
 - Voice settings include status, command examples, configurable gesture handedness, and a local telemetry dashboard for iteration and debugging.
 
