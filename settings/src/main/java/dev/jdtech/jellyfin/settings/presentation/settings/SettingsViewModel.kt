@@ -944,10 +944,13 @@ class SettingsViewModel @Inject constructor(
                             action.preference.value,
                         )
                         if (action.preference.backendPreference.backendName ==
-                            appPreferences.voiceAssistantGemmaEnabled.backendName &&
-                            action.preference.value &&
-                            downloadManager.downloadState.value.let { it is DownloadState.Idle || it is DownloadState.Error }) {
-                            viewModelScope.launch { downloadManager.downloadModel() }
+                            appPreferences.voiceAssistantGemmaEnabled.backendName) {
+                            if (action.preference.value &&
+                                downloadManager.downloadState.value.let { it is DownloadState.Idle || it is DownloadState.Error }) {
+                                viewModelScope.launch { downloadManager.downloadModel() }
+                            } else if (!action.preference.value) {
+                                downloadManager.deleteModel()
+                            }
                         }
                     }
                     is PreferenceSelect -> {

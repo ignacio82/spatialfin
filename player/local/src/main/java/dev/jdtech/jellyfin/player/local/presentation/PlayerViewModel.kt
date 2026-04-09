@@ -11,7 +11,6 @@ import android.widget.Toast
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -19,7 +18,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
@@ -194,13 +192,6 @@ constructor(
 
     var isInPictureInPictureMode: Boolean = false
 
-    private val audioAttributes =
-        AudioAttributes.Builder()
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .setUsage(C.USAGE_MEDIA)
-            .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
-            .build()
-
     private var activeSyncPlayGroupId: UUID? = null
     private var currentSyncPlaylistItemId: UUID? = null
     private var suppressSyncUntilMs: Long = 0L
@@ -231,6 +222,7 @@ constructor(
             Timber.i("HDR: Max Luminance: %.2f, Min Luminance: %.2f", caps.desiredMaxLuminance, caps.desiredMinLuminance)
         } ?: Timber.w("HDR: No HDR capabilities found for default display")
 
+        Timber.d("PlayerViewModel init: loading segment preferences")
         segmentsSkipButton = appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)
         segmentsSkipButtonTypes =
             appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButtonType)
@@ -241,35 +233,16 @@ constructor(
             appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkipType)
         segmentsAutoSkipMode =
             appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkipMode)
+        Timber.d("PlayerViewModel init: segment preferences loaded")
 
-        trackSelector.setParameters(
-            trackSelector
-                .buildUponParameters()
-                .setTunnelingEnabled(true)
-                .setPreferredAudioLanguage(
-                    appPreferences.getSmartSpokenLanguageCodes(application).firstOrNull()
-                )
-                .setPreferredTextLanguage(null)
-        )
-
-        val renderersFactory =
-            DefaultRenderersFactory(application)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                // Allow fallback to the HDR10 base-layer decoder when the primary Dolby Vision
-                // decoder fails, rather than surfacing an error to the user.
-                .setEnableDecoderFallback(true)
-
-        val initialPlayer = ExoPlayer.Builder(application, renderersFactory)
-            .setAudioAttributes(audioAttributes, false)
-            .setTrackSelector(trackSelector)
-            .setSeekBackIncrementMs(
-                appPreferences.getValue(appPreferences.playerSeekBackInc)
-            )
-            .setSeekForwardIncrementMs(
-                appPreferences.getValue(appPreferences.playerSeekForwardInc)
-            )
+        // All current player activities replace this constructor-time player instance with
+        // an activity-specific ExoPlayer almost immediately. Keep the placeholder minimal so
+        // XR launch does not allocate advanced renderer / spatialization resources twice.
+        Timber.d("PlayerViewModel init: building placeholder player")
+        val initialPlayer = ExoPlayer.Builder(application)
             .setPauseAtEndOfMediaItems(true)
             .build()
+        Timber.d("PlayerViewModel init: placeholder player built")
         _playerFlow = MutableStateFlow(initialPlayer)
         playerFlow = _playerFlow.asStateFlow()
         

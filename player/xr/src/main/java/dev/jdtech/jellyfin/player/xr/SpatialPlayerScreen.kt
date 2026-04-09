@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -100,7 +101,6 @@ import androidx.xr.compose.subspace.layout.offset
 import androidx.xr.compose.subspace.layout.rotate
 import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.Session
-import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.FloatSize3d
 import androidx.xr.runtime.math.Pose
@@ -123,9 +123,11 @@ import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
 import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
+import dev.jdtech.jellyfin.player.xr.capture.PlayerFrameCapture
+import dev.jdtech.jellyfin.player.xr.voice.CharacterScanOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
-import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dagger.hilt.android.EntryPointAccessors
@@ -168,9 +170,7 @@ import dev.jdtech.jellyfin.player.local.R as LocalR
 
 // ── Next-episode panel threshold ───────────────────────────────────────────────────
 private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2 minutes
-private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
-private const val MIN_VOICE_LISTEN_MS_AFTER_GESTURE = 900L
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -241,10 +241,14 @@ fun SpatialPlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val syncPlayState by viewModel.syncPlayState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
+
+    val videoRootEntity = remember { mutableStateOf<androidx.xr.scenecore.GroupEntity?>(null) }
+    var videoDepth by remember { mutableFloatStateOf(VIDEO_DEPTH_METERS) }
+    var lastPointerPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
     val voiceControlEnabled = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceControlEnabled)
-    val voiceGestureHand = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceGestureHand) ?: "left"
     val assistantVerbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity)
     val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
     val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
@@ -256,18 +260,8 @@ fun SpatialPlayerScreen(
         EntryPointAccessors.fromApplication(context.applicationContext, LlmEntryPoint::class.java)
     }
     val downloadManager = remember(context) { llmEntryPoint.downloadManager() }
-    val modelManager = remember(context) { llmEntryPoint.modelManager() }
-    val commandCoordinator = remember(context) {
-        SpatialCommandCoordinator(
-            context.applicationContext,
-            geminiNanoService,
-            geminiCloudService,
-            viewModel.appPreferences,
-        )
-    }
-    val chatEngine = remember(context) {
-        SmartChatEngine(geminiNanoService, geminiCloudService, viewModel.appPreferences, modelManager)
-    }
+    var commandCoordinator by remember(context) { mutableStateOf<SpatialCommandCoordinator?>(null) }
+    var chatEngine by remember(context) { mutableStateOf<SmartChatEngine?>(null) }
     val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
     val recentSubtitles = remember { mutableStateListOf<Pair<Long, String>>() }
@@ -275,31 +269,44 @@ fun SpatialPlayerScreen(
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
     val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
+    var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
     var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
     var voiceGestureHint by remember { mutableStateOf<String?>(null) }
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
-    var gestureVoiceSessionActive by remember { mutableStateOf(false) }
-    var voiceCaptureStartedAtMs by remember { mutableLongStateOf(0L) }
+    var followUpPending by remember { mutableStateOf(false) }
+    var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
+    var characterScanActive by remember { mutableStateOf(false) }
+    var voiceAssetsRequested by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        downloadManager.downloadModel()
+        Timber.i("VOICE: deferring XR voice startup work until explicit activation")
     }
+
+    fun requireCommandCoordinator(): SpatialCommandCoordinator =
+        commandCoordinator
+            ?: SpatialCommandCoordinator(
+                context.applicationContext,
+                geminiNanoService,
+                geminiCloudService,
+                viewModel.appPreferences,
+                llmEntryPoint.modelManager(),
+            ).also { commandCoordinator = it }
+
+    fun requireChatEngine(): SmartChatEngine =
+        chatEngine
+            ?: SmartChatEngine(
+                geminiNanoService,
+                geminiCloudService,
+                viewModel.appPreferences,
+                llmEntryPoint.modelManager(),
+                viewModel.repository,
+            ).also { chatEngine = it }
     var hasAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
         )
     }
-    var hasHandTrackingPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, HAND_TRACKING_PERMISSION) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val pinchDetector =
-        remember(session, activity, voiceGestureHand) {
-            activity?.let { SecondaryHandPinchDetector(session, it, voiceGestureHand) }
-        }
 
     val audioPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -308,13 +315,6 @@ fun SpatialPlayerScreen(
                 shouldStartVoiceCapture = false
                 voiceFeedback = "Microphone permission required"
                 voiceService.resetState()
-            }
-        }
-    val handTrackingPermissionLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            hasHandTrackingPermission = granted
-            if (!granted) {
-                voiceFeedback = "Hand tracking permission denied"
             }
         }
     
@@ -475,6 +475,51 @@ fun SpatialPlayerScreen(
         activeDialog = "voice_search"
     }
 
+    fun updateVoiceSearchItem(updatedItem: SpatialFinItem) {
+        voiceSearchResults =
+            voiceSearchResults.map { item ->
+                if (item.id == updatedItem.id) updatedItem else item
+            }
+    }
+
+    fun currentRecommendationSnapshot(): PlayerStateSnapshot =
+        PlayerStateSnapshot(
+            screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.PLAYER,
+            isPlaying = player.isPlaying,
+            positionSeconds = player.currentPosition / 1_000L,
+            durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
+            controlsVisible = controlsVisible,
+            currentItemTitle = uiState.currentItemTitle,
+            currentOverview = uiState.currentOverview,
+            currentSeriesName = uiState.currentSeriesName,
+            currentSeasonNumber = uiState.currentSeasonNumber,
+            currentEpisodeNumber = uiState.currentEpisodeNumber,
+            currentSegmentType = uiState.currentSegment?.type?.toString(),
+            currentChapterName = currentChapterName(uiState, player.currentPosition),
+            nextEpisodeTitle = uiState.nextEpisode?.name,
+            currentGenres = uiState.currentGenres,
+            currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" },
+            castNames = uiState.currentPeople.filter { it.type.equals("Actor", ignoreCase = true) }.map { it.name },
+            directors = uiState.currentPeople.filter { it.type.equals("Director", ignoreCase = true) }.map { it.name },
+            writers = uiState.currentPeople.filter { it.type.equals("Writer", ignoreCase = true) }.map { it.name },
+            castWithCharacters = uiState.currentPeople
+                .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
+                .map { it.name to it.role },
+            productionYear = uiState.currentProductionYear,
+            officialRating = uiState.currentOfficialRating,
+            currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
+            currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
+            currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
+            currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
+            inVoiceSearch = voiceSearchOpen,
+            voiceSearchQuery = voiceSearchQuery.ifBlank { null },
+            voiceSearchResultsCount = voiceSearchResults.size,
+            lastRecommendationQuery = recommendationContext?.query,
+            lastRecommendationCount = recommendationContext?.items?.size ?: 0,
+            lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
+            passthroughEnabled = passthroughEnabled,
+        )
+
     val sessionController =
         remember(player, viewModel, activity) {
             PlayerSessionController(
@@ -506,6 +551,26 @@ fun SpatialPlayerScreen(
                 getAvailableSyncPlayGroups = { latestSyncPlayGroups.value },
                 setPassthroughEnabled = { enabled -> passthroughOverrideEnabled = enabled },
                 getPassthroughEnabled = { passthroughEnabled },
+                onAdjustScale = { delta, reset ->
+                    val root = videoRootEntity.value
+                    if (root != null) {
+                        runCatching {
+                            if (reset) {
+                                root.setScale(1f)
+                            } else if (delta != null) {
+                                val current = root.getScale()
+                                root.setScale((current + delta).coerceIn(0.2f, 5.0f))
+                            }
+                        }
+                    }
+                },
+                onAdjustDistance = { delta, reset ->
+                    if (reset) {
+                        videoDepth = VIDEO_DEPTH_METERS
+                    } else if (delta != null) {
+                        videoDepth = (videoDepth + delta).coerceIn(2.0f, 15.0f)
+                    }
+                },
             )
         }
 
@@ -520,14 +585,33 @@ fun SpatialPlayerScreen(
         tts.speak(text, languageHint, assistantVoicePreference)
     }
 
+    fun requestVoiceAssetsWarmup() {
+        if (voiceAssetsRequested) return
+        voiceAssetsRequested = true
+        if (viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantGemmaEnabled)) {
+            coroutineScope.launch {
+                Timber.i("VOICE: requesting XR voice assets on demand")
+                downloadManager.downloadModel()
+            }
+        }
+    }
+
     fun requestVoiceCommand() {
         if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
             return
         }
+        if (isTtsSpeaking) {
+            tts.stop()
+            assistantSpeechPendingStart = false
+            assistantSpeechStarted = false
+            resumePlaybackAfterAssistantSpeech = false
+        }
+        followUpPending = false
         if (!voiceControlEnabled) {
             voiceFeedback = "Voice control disabled"
             return
         }
+        requestVoiceAssetsWarmup()
         if (!voiceService.isAvailable()) {
             voiceFeedback = "On-device speech unavailable"
             return
@@ -540,11 +624,10 @@ fun SpatialPlayerScreen(
         shouldStartVoiceCapture = false
         controlsVisible = true
         resetAutoHide()
-        voiceCaptureStartedAtMs = System.currentTimeMillis()
         startVoiceCapture(
             voiceService = voiceService,
-            commandCoordinator = commandCoordinator,
-            chatEngine = chatEngine,
+            commandCoordinatorProvider = ::requireCommandCoordinator,
+            chatEngineProvider = ::requireChatEngine,
             recentSubtitles = recentSubtitles.toList(),
             player = player,
             viewModel = viewModel,
@@ -569,15 +652,30 @@ fun SpatialPlayerScreen(
                 conversationHistory.add(q to a)
                 if (conversationHistory.size > 6) conversationHistory.removeAt(0)
             },
+            voiceSearchOpen = voiceSearchOpen,
+            voiceSearchQuery = voiceSearchQuery,
+            voiceSearchResults = voiceSearchResults,
+            recommendationContext = recommendationContext,
+            onRecommendationContextUpdated = { recommendationContext = it },
+            onScheduleFollowUp = {
+                followUpPending = true
+                followUpDeadlineMs = System.currentTimeMillis() + 8_000L
+                voiceGestureHint = "Ask a follow-up"
+            },
             onGetSuggestions = { viewModel.repository.getSuggestions() },
             onResult = { voiceFeedback = it },
-            onSpokenReply = { text, languageHint -> speakAssistantReply(text, languageHint) },
+            onSpokenReply = { text, lang -> speakAssistantReply(text, lang) },
+            onCharacterScanActiveChanged = { characterScanActive = it },
             scope = coroutineScope,
-        )
-    }
+            lastPointerPosition = lastPointerPosition,
+            )
+            }
 
     // Reset conversation history when the playing item changes
-    LaunchedEffect(uiState.currentItemTitle) { conversationHistory.clear() }
+    LaunchedEffect(uiState.currentItemTitle) {
+        conversationHistory.clear()
+        recommendationContext = null
+    }
 
     // Auto-hide controls after 10 s during playback
     LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
@@ -604,71 +702,10 @@ fun SpatialPlayerScreen(
         } catch (_: Exception) {}
     }
 
-    LaunchedEffect(voiceControlEnabled) {
-        if (voiceControlEnabled) {
-            commandCoordinator.initialize()
-            chatEngine.initialize()
-        }
-    }
-
-    LaunchedEffect(session, voiceControlEnabled, hasHandTrackingPermission) {
-        if (!voiceControlEnabled || !hasHandTrackingPermission) return@LaunchedEffect
-        runCatching {
-            session.configure(session.config.copy(handTracking = HandTrackingMode.BOTH))
-        }.onFailure { Timber.w(it, "VOICE: Hand tracking not available") }
-    }
-
-    LaunchedEffect(voiceControlEnabled) {
-        if (voiceControlEnabled && !hasHandTrackingPermission && activity != null) {
-            handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
-        }
-    }
-
     LaunchedEffect(hasAudioPermission, shouldStartVoiceCapture) {
         if (hasAudioPermission && shouldStartVoiceCapture) {
             shouldStartVoiceCapture = false
             requestVoiceCommand()
-        }
-    }
-
-    LaunchedEffect(pinchDetector, voiceControlEnabled, hasHandTrackingPermission) {
-        if (!voiceControlEnabled || !hasHandTrackingPermission) return@LaunchedEffect
-        pinchDetector?.gestureStates?.collect { event ->
-            when (event) {
-                is SecondaryHandPinchDetector.GestureState.Arming -> {
-                    voiceGestureArmingProgress = event.progress
-                    voiceGestureHint = event.hint
-                }
-                SecondaryHandPinchDetector.GestureState.Started -> {
-                    voiceGestureArmingProgress = 1f
-                    voiceGestureHint = null
-                    if (!gestureVoiceSessionActive && voiceState == VoiceState.IDLE) {
-                        gestureVoiceSessionActive = true
-                        requestVoiceCommand()
-                    }
-                }
-                SecondaryHandPinchDetector.GestureState.Ended -> {
-                    voiceGestureArmingProgress = 0f
-                    voiceGestureHint = null
-                    gestureVoiceSessionActive = false
-                    val listeningDurationMs = System.currentTimeMillis() - voiceCaptureStartedAtMs
-                    if (
-                        voiceState == VoiceState.LISTENING &&
-                        listeningDurationMs >= MIN_VOICE_LISTEN_MS_AFTER_GESTURE
-                    ) {
-                        voiceService.stopListening()
-                    } else {
-                        Timber.d("VOICE: Ignoring early gesture release durationMs=%d state=%s", listeningDurationMs, voiceState)
-                    }
-                }
-                SecondaryHandPinchDetector.GestureState.Idle -> {
-                    voiceGestureArmingProgress = 0f
-                    gestureVoiceSessionActive = false
-                    if (voiceState != VoiceState.LISTENING) {
-                        voiceGestureHint = null
-                    }
-                }
-            }
         }
     }
 
@@ -689,6 +726,29 @@ fun SpatialPlayerScreen(
             if (!isTtsSpeaking) {
                 voiceFeedback = null
             }
+        }
+    }
+
+    LaunchedEffect(voiceState) {
+        if (voiceState == VoiceState.ERROR) {
+            delay(2_000L)
+            if (voiceState == VoiceState.ERROR) {
+                voiceService.resetState()
+            }
+        }
+    }
+
+    LaunchedEffect(followUpPending, isTtsSpeaking, voiceState) {
+        if (!followUpPending || isTtsSpeaking || voiceState != VoiceState.IDLE) return@LaunchedEffect
+        val remaining = followUpDeadlineMs - System.currentTimeMillis()
+        if (remaining <= 0L) {
+            followUpPending = false
+            voiceGestureHint = null
+            return@LaunchedEffect
+        }
+        delay(600L)
+        if (followUpPending && !isTtsSpeaking && voiceState == VoiceState.IDLE) {
+            requestVoiceCommand()
         }
     }
 
@@ -723,9 +783,9 @@ fun SpatialPlayerScreen(
                 if (cueGroup.cues.isNotEmpty()) {
                     val first = cueGroup.cues[0].text?.toString()
                     if (first != null) {
-                        val now = System.currentTimeMillis()
-                        recentSubtitles.add(now to first)
-                        recentSubtitles.removeAll { now - it.first > 60_000L }
+                        val pos = player.currentPosition
+                        recentSubtitles.add(pos to first)
+                        recentSubtitles.removeAll { pos - it.first > 60_000L }
                     }
                 }
             }
@@ -827,7 +887,6 @@ fun SpatialPlayerScreen(
     }
 
     // --- SceneCore video entity ---
-    val videoRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val subtitleRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
@@ -838,7 +897,6 @@ fun SpatialPlayerScreen(
     // and the pose can be persisted without relying on SceneCore's internal drag overlay.
     val lastReportedMovePose = remember { mutableStateOf<androidx.xr.runtime.math.Pose?>(null) }
 
-    var videoDepth by remember { mutableFloatStateOf(VIDEO_DEPTH_METERS) }
     val uiDepth = 2.0f
     val overlayProjectionScale = uiDepth / videoDepth
 
@@ -981,8 +1039,8 @@ fun SpatialPlayerScreen(
                 finalPose?.let { savePlayerRootPose(viewModel, it) }
             }
             voiceService.destroy()
-            commandCoordinator.destroy()
-            chatEngine.destroy()
+            commandCoordinator?.destroy()
+            chatEngine?.destroy()
             tts.destroy()
             videoEntity.value?.dispose()
             videoEntity.value = null
@@ -1261,10 +1319,9 @@ fun SpatialPlayerScreen(
                         if (showLibassContent) {
                             key(videoOverlayAttachmentVersion, libassFrameVersion) {
                                 Image(
-                                    painter = BitmapPainter(currentBitmap!!.asImageBitmap(), filterQuality = FilterQuality.High),
+                                    painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
                                     contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize(),                                    contentScale = ContentScale.Fit,
                                 )
                             }
                         }
@@ -1295,20 +1352,44 @@ fun SpatialPlayerScreen(
                     }
                 }
 
-                if (voiceState == VoiceState.LISTENING || voiceGestureHint != null) {
+                if (
+                    voiceState == VoiceState.LISTENING ||
+                    voiceState == VoiceState.PROCESSING ||
+                    voiceGestureHint != null ||
+                    !voiceFeedback.isNullOrBlank()
+                ) {
                     SpatialPanel(
                         modifier = SubspaceModifier
                             .width(subtitlePanelWidthDp.dp)
                             .height(subtitlePanelHeightDp.dp)
                             .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
                     ) {
-                        Box(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (event.type == PointerEventType.Move || event.type == PointerEventType.Enter) {
+                                                val position = event.changes.first().position
+                                                lastPointerPosition = androidx.compose.ui.geometry.Offset(
+                                                    x = (position.x / size.width).coerceIn(0f, 1f),
+                                                    y = (position.y / size.height).coerceIn(0f, 1f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                        ) {
                             VoiceControlOverlay(
                                 state = voiceState,
                                 partialTranscript = partialTranscript,
+                                feedbackText = if (characterScanActive) null else voiceFeedback,
                                 gestureArmingProgress = voiceGestureArmingProgress,
                                 gestureHint = voiceGestureHint,
                             )
+                            CharacterScanOverlay(visible = characterScanActive)
                         }
                     }
                 }
@@ -1540,6 +1621,94 @@ fun SpatialPlayerScreen(
                         error = voiceSearchError,
                         results = voiceSearchResults,
                         currentItemTitle = uiState.currentItemTitle,
+                        onWatchTrailer = { item ->
+                            itemTrailerUrl(item)?.let { trailerUrl ->
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(trailerUrl)).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        },
+                                    )
+                                }.onSuccess {
+                                    voiceFeedback = "Opening trailer for ${item.name}"
+                                }.onFailure {
+                                    voiceFeedback = "Couldn't open trailer for ${item.name}"
+                                }
+                            } ?: run {
+                                voiceFeedback = "No trailer found for ${item.name}"
+                            }
+                        },
+                        onMoreLikeThis = { item ->
+                            coroutineScope.launch {
+                                voiceSearchLoading = true
+                                voiceSearchError = null
+                                voiceSearchQuery = "More like ${item.name}"
+                                val chatEngine = requireChatEngine()
+                                val response =
+                                    chatEngine.query(
+                                        question = "more like this",
+                                        playerState = currentRecommendationSnapshot(),
+                                        storySoFarContext = uiState.storySoFarContext,
+                                        recentSubtitleLines = recentSubtitles.toList(),
+                                        currentPositionMs = player.currentPosition,
+                                        assistantPreferences =
+                                            AssistantPreferences(
+                                                verbosity = assistantVerbosity,
+                                                spoilerPolicy = assistantSpoilerPolicy,
+                                                spokenRepliesEnabled = assistantSpokenReplies,
+                                            ),
+                                        onSearchQuery = onSearchQuery,
+                                        conversationHistory = conversationHistory,
+                                        onGetSuggestions = { viewModel.repository.getSuggestions() },
+                                        recommendationContext = RecommendationContext(item.name, listOf(item)),
+                                    )
+                                voiceSearchLoading = false
+                                response.recommendedItems
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.let {
+                                        recommendationContext = RecommendationContext(item.name, it)
+                                        voiceSearchResults = it
+                                    }
+                                    ?: run {
+                                        voiceSearchError = "No similar titles found"
+                                    }
+                                voiceFeedback = response.text
+                            }
+                        },
+                        onToggleFavorite = { item ->
+                            coroutineScope.launch {
+                                runCatching {
+                                    if (item.favorite) {
+                                        viewModel.repository.unmarkAsFavorite(item.id)
+                                    } else {
+                                        viewModel.repository.markAsFavorite(item.id)
+                                    }
+                                }.onSuccess {
+                                    val updated = item.withFavorite(!item.favorite)
+                                    updateVoiceSearchItem(updated)
+                                    recommendationContext =
+                                        recommendationContext?.let { context ->
+                                            if (context.items.any { it.id == updated.id }) {
+                                                context.copy(
+                                                    items = context.items.map { existing ->
+                                                        if (existing.id == updated.id) updated else existing
+                                                    },
+                                                )
+                                            } else {
+                                                context
+                                            }
+                                        }
+                                    voiceFeedback =
+                                        if (updated.favorite) {
+                                            "Saved ${updated.name}"
+                                        } else {
+                                            "Removed ${updated.name} from favorites"
+                                        }
+                                }.onFailure {
+                                    voiceFeedback = "Couldn't update favorite for ${item.name}"
+                                }
+                            }
+                        },
                         onPlayResult = {
                             sessionController.clearPendingSelection()
                             onLaunchSearchResult(it)
@@ -1835,8 +2004,8 @@ private fun SyncPlayDialogContent(
 
 private fun startVoiceCapture(
     voiceService: SpatialVoiceService,
-    commandCoordinator: SpatialCommandCoordinator,
-    chatEngine: SmartChatEngine,
+    commandCoordinatorProvider: () -> SpatialCommandCoordinator,
+    chatEngineProvider: () -> SmartChatEngine,
     recentSubtitles: List<Pair<Long, String>>,
     player: Player,
     viewModel: PlayerViewModel,
@@ -1850,10 +2019,18 @@ private fun startVoiceCapture(
     responseLanguageHint: String?,
     conversationHistory: List<Pair<String, String>>,
     onConversationTurn: (String, String) -> Unit,
+    voiceSearchOpen: Boolean,
+    voiceSearchQuery: String,
+    voiceSearchResults: List<SpatialFinItem>,
+    recommendationContext: RecommendationContext?,
+    onRecommendationContextUpdated: (RecommendationContext) -> Unit,
+    onScheduleFollowUp: () -> Unit,
     onGetSuggestions: suspend () -> List<SpatialFinItem>,
     onResult: (String) -> Unit,
     onSpokenReply: (String, String?) -> Unit,
+    onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
     scope: kotlinx.coroutines.CoroutineScope,
+    lastPointerPosition: androidx.compose.ui.geometry.Offset?,
 ) {
     val startedAtMs = System.currentTimeMillis()
     voiceService.startListening { transcript ->
@@ -1861,6 +2038,7 @@ private fun startVoiceCapture(
             try {
                 val snapshot =
                     PlayerStateSnapshot(
+                        screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.PLAYER,
                         isPlaying = player.isPlaying,
                         positionSeconds = player.currentPosition / 1_000L,
                         durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
@@ -1893,13 +2071,76 @@ private fun startVoiceCapture(
                         currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
                         currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
                         currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
+                        inVoiceSearch = voiceSearchOpen,
+                        voiceSearchQuery = voiceSearchQuery.ifBlank { null },
+                        voiceSearchResultsCount = voiceSearchResults.size,
+                        lastRecommendationQuery = recommendationContext?.query,
+                        lastRecommendationCount = recommendationContext?.items?.size ?: 0,
+                        lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
                         passthroughEnabled = passthroughEnabled,
+                        castWithCharacters = uiState.currentPeople
+                            .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
+                            .map { it.name to it.role },
                     )
+                val commandCoordinator = commandCoordinatorProvider()
                 val parseResult = commandCoordinator.parse(transcript, snapshot)
                 val action = parseResult.action
                 if (action is XrPlayerAction.ChatQuery) {
                     onResult("Thinking...")
-                    val response =
+                    val chatEngine = chatEngineProvider()
+                    
+                    val visualContexts = mutableListOf<android.graphics.Bitmap>()
+                    val ownedBitmaps = mutableListOf<android.graphics.Bitmap>()
+                    val trickplay = uiState.currentTrickplay
+
+                    // Detect "who is this/him/her/the character" style queries.
+                    val normalizedQuery = action.query.lowercase()
+                    val isCharacterIDQuery = (normalizedQuery.startsWith("who is") || normalizedQuery.startsWith("who was")) &&
+                        run {
+                            val afterWho = normalizedQuery.removePrefix("who is ").removePrefix("who was ").trim()
+                            afterWho in setOf(
+                                "this", "that", "him", "her", "he", "she", "they",
+                                "this character", "this person", "this actor", "this actress",
+                                "the character", "this guy", "this man", "this woman",
+                                "this girl", "this boy",
+                            ) || afterWho.startsWith("this ") || afterWho.startsWith("the ")
+                        }
+
+                    if (isCharacterIDQuery) {
+                        // Single high-res frame via MediaMetadataRetriever; falls back to trickplay.
+                        val streamUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
+                        val frame = PlayerFrameCapture.bestFrameForCharacterID(
+                            streamUri = streamUri,
+                            positionMs = player.currentPosition,
+                            trickplayImages = trickplay?.images.orEmpty(),
+                            trickplayIntervalSeconds = trickplay?.interval?.toLong() ?: 0L,
+                            ownedBitmapOut = ownedBitmaps,
+                        )
+                        if (frame != null) visualContexts.add(frame)
+                        onCharacterScanActiveChanged?.invoke(true)
+                    } else if (trickplay != null && trickplay.images.isNotEmpty() && trickplay.interval > 0) {
+                        // Temporal sequence of trickplay frames for general queries.
+                        val currentIdx = (player.currentPosition / 1000 / trickplay.interval).toInt()
+                            .coerceIn(0, trickplay.images.size - 1)
+                        val indices = listOf(
+                            (currentIdx - 3).coerceAtLeast(0),
+                            (currentIdx - 1).coerceAtLeast(0),
+                            currentIdx,
+                        ).distinct()
+                        indices.forEach { idx -> visualContexts.add(trickplay.images[idx]) }
+                    }
+
+                    val isGpu = chatEngine.modelManager.instance?.backendName == "GPU"
+                    val shouldPauseForGemma = isGpu && chatEngine.shouldUseGemma()
+                    var wasPlaying = false
+                    if (shouldPauseForGemma) {
+                        wasPlaying = player.isPlaying
+                        if (wasPlaying) {
+                            player.pause()
+                        }
+                    }
+
+                    val response = try {
                         chatEngine.query(
                             question = action.query,
                             playerState = snapshot,
@@ -1909,13 +2150,36 @@ private fun startVoiceCapture(
                             assistantPreferences = assistantPreferences,
                             onSearchQuery = onSearchQuery,
                             conversationHistory = conversationHistory,
+                            recommendationContext = recommendationContext,
                             onGetSuggestions = onGetSuggestions,
+                            visualContexts = visualContexts,
+                            lastPointerPosition = lastPointerPosition,
                         )
+                    } finally {
+                        if (isCharacterIDQuery) onCharacterScanActiveChanged?.invoke(false)
+                        ownedBitmaps.forEach { it.recycle() }
+                        ownedBitmaps.clear()
+                    }
+
+                    if (wasPlaying) {
+                        player.play()
+                    }
+
                     if (response.text != null) {
                         onResult(response.text)
                         onConversationTurn(action.query, response.text)
+                        onScheduleFollowUp()
                         if (assistantPreferences.spokenRepliesEnabled) {
                             onSpokenReply(response.text, responseLanguageHint)
+                        }
+                        if (response.recommendedItems.isNotEmpty()) {
+                            onRecommendationContextUpdated(
+                                RecommendationContext(
+                                    query = action.query,
+                                    items = response.recommendedItems,
+                                ),
+                            )
+                            controller.showRecommendations(action.query, response.recommendedItems)
                         }
                     } else {
                         onResult("Sorry, I couldn't process that.")
@@ -1923,11 +2187,15 @@ private fun startVoiceCapture(
                     telemetryStore.record(
                         VoiceTelemetryEntry(
                             transcript = transcript,
+                            normalizedTranscript = parseResult.normalizedTranscript,
                             action = "ChatQuery",
                             strategy = response.strategy,
                             latencyMs = System.currentTimeMillis() - startedAtMs,
                             success = response.text != null,
-                            details = response.debugInfo,
+                            selectedSkill = response.selectedSkill,
+                            validatedInput = response.validatedInput,
+                            resultDisposition = response.resultDisposition,
+                            details = "parse=${parseResult.debugInfo}; reply=${response.debugInfo}",
                         )
                     )
                 } else {
@@ -1939,6 +2207,7 @@ private fun startVoiceCapture(
                     telemetryStore.record(
                         VoiceTelemetryEntry(
                             transcript = transcript,
+                            normalizedTranscript = parseResult.normalizedTranscript,
                             action = parseResult.action::class.simpleName ?: "Unknown",
                             strategy = parseResult.strategy.name,
                             latencyMs = System.currentTimeMillis() - startedAtMs,
@@ -2017,6 +2286,9 @@ private fun VoiceSearchDialogContent(
     error: String?,
     results: List<SpatialFinItem>,
     currentItemTitle: String,
+    onWatchTrailer: (SpatialFinItem) -> Unit,
+    onMoreLikeThis: (SpatialFinItem) -> Unit,
+    onToggleFavorite: (SpatialFinItem) -> Unit,
     onPlayResult: (SpatialFinItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2051,6 +2323,13 @@ private fun VoiceSearchDialogContent(
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White.copy(alpha = 0.7f),
             )
+            if (results.isNotEmpty()) {
+                Text(
+                    text = "Say “play the first one” or “more like the second one.”",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFB3E5FC),
+                )
+            }
             when {
                 loading -> Text("Searching...", color = Color.White)
                 error != null -> Text(error, color = Color(0xFFEF5350))
@@ -2060,16 +2339,28 @@ private fun VoiceSearchDialogContent(
                         modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        results.forEach { item ->
+                        results.forEachIndexed { index, item ->
                             Surface(
                                 shape = RoundedCornerShape(24.dp),
                                 color = Color.White.copy(alpha = 0.08f),
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(18.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalAlignment = Alignment.Top,
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = Color(0xFF4FC3F7).copy(alpha = 0.2f),
+                                    ) {
+                                        Text(
+                                            text = "${index + 1}",
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                    }
+                                    SearchResultPoster(item = item)
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = item.name,
@@ -2081,10 +2372,40 @@ private fun VoiceSearchDialogContent(
                                             color = Color.White.copy(alpha = 0.7f),
                                             style = MaterialTheme.typography.bodyMedium,
                                         )
-                                    }
-                                    if (canPlayFromVoiceSearch(item)) {
-                                        Button(onClick = { onPlayResult(item) }) {
-                                            Text("Play")
+                                        item.overview.take(120).takeIf { it.isNotBlank() }?.let { overview ->
+                                            Text(
+                                                text = overview,
+                                                color = Color.White.copy(alpha = 0.7f),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(top = 4.dp),
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.padding(top = 12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            if (canPlayFromVoiceSearch(item)) {
+                                                Button(onClick = { onPlayResult(item) }) {
+                                                    Text("Play")
+                                                }
+                                            }
+                                            TextButton(
+                                                onClick = { onMoreLikeThis(item) },
+                                            ) {
+                                                Text("More Like This")
+                                            }
+                                            if (itemTrailerUrl(item) != null) {
+                                                TextButton(
+                                                    onClick = { onWatchTrailer(item) },
+                                                ) {
+                                                    Text("Trailer")
+                                                }
+                                            }
+                                            TextButton(
+                                                onClick = { onToggleFavorite(item) },
+                                            ) {
+                                                Text(if (item.favorite) "Saved" else "Save")
+                                            }
                                         }
                                     }
                                 }
@@ -2107,6 +2428,61 @@ private fun searchResultTypeLabel(item: SpatialFinItem): String =
         is SpatialFinSeason -> "Season"
         is SpatialFinShow -> "Series"
         else -> "Item"
+    }
+
+@Composable
+private fun SearchResultPoster(item: SpatialFinItem) {
+    val imageModel = itemPosterUri(item)
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White.copy(alpha = 0.08f),
+        modifier = Modifier.width(92.dp).height(138.dp),
+    ) {
+        if (imageModel != null) {
+            AsyncImage(
+                model = imageModel,
+                contentDescription = item.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = item.name.take(1).ifBlank { "?" },
+                    color = Color.White.copy(alpha = 0.75f),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+        }
+    }
+}
+
+private fun itemPosterUri(item: SpatialFinItem): Any? =
+    item.images.primary
+        ?: item.images.showPrimary
+        ?: item.images.backdrop
+        ?: item.images.showBackdrop
+
+private fun itemTrailerUrl(item: SpatialFinItem): String? =
+    when (item) {
+        is SpatialFinMovie -> item.trailer
+        is SpatialFinShow -> item.trailer
+        else -> null
+    }
+
+private fun SpatialFinItem.withFavorite(value: Boolean): SpatialFinItem =
+    when (this) {
+        is SpatialFinMovie -> copy(favorite = value)
+        is SpatialFinShow -> copy(favorite = value)
+        is SpatialFinEpisode -> copy(favorite = value)
+        is SpatialFinSeason -> copy(favorite = value)
+        is dev.jdtech.jellyfin.models.SpatialFinFolder -> copy(favorite = value)
+        is dev.jdtech.jellyfin.models.SpatialFinCollection -> copy(favorite = value)
+        is dev.jdtech.jellyfin.models.SpatialFinBoxSet -> copy(favorite = value)
+        else -> this
     }
 
 private fun canPlayFromVoiceSearch(item: SpatialFinItem): Boolean {

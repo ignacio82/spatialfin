@@ -1,6 +1,12 @@
 package dev.jdtech.jellyfin.player.session.voice
 
+enum class VoiceScreenContext {
+    HOME,
+    PLAYER,
+}
+
 data class PlayerStateSnapshot(
+    val screenContext: VoiceScreenContext = VoiceScreenContext.PLAYER,
     val isPlaying: Boolean = false,
     val positionSeconds: Long = 0,
     val durationSeconds: Long = 0,
@@ -34,6 +40,16 @@ data class PlayerStateSnapshot(
     val syncPlayActive: Boolean = false,
     val syncPlayGroupName: String? = null,
     val syncPlayParticipantNames: List<String> = emptyList(),
+    val lastRecommendationQuery: String? = null,
+    val lastRecommendationCount: Int = 0,
+    val lastRecommendationTitles: List<String> = emptyList(),
     val currentRatings: List<String> = emptyList(),
     val passthroughEnabled: Boolean = false,
+    /**
+     * Actor→character pairs extracted from Jellyfin's People metadata.
+     * first = actor name (e.g. "Pedro Pascal")
+     * second = character name (e.g. "Joel Miller")
+     * Empty when metadata is unavailable.
+     */
+    val castWithCharacters: List<Pair<String, String>> = emptyList(),
 )

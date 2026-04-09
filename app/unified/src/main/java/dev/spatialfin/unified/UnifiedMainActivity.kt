@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,19 +60,29 @@ import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.GroupEntity
 import androidx.xr.scenecore.MovableComponent
 import androidx.xr.scenecore.scene
+import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
+import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
+import dev.jdtech.jellyfin.player.xr.voice.AssistantReply
 import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
+import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
+import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.presentation.local.localVideoPermissions
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import dev.jdtech.jellyfin.viewmodels.MainState
 import dev.jdtech.jellyfin.viewmodels.MainViewModel
 import dev.jdtech.jellyfin.work.SyncWorker
@@ -100,8 +111,22 @@ class UnifiedMainActivity : AppCompatActivity() {
     private val deviceClass by lazy { detectDeviceClass() }
     private val viewModel: MainViewModel by viewModels()
 
-    @Inject lateinit var appPreferences: AppPreferences
-    @Inject lateinit var repository: JellyfinRepository
+    @Inject
+    lateinit var appPreferences: AppPreferences
+
+    @Inject
+    lateinit var modelManager: Lazy<LlmModelManager>
+
+    @Inject
+    lateinit var repository: JellyfinRepository
+
+    @Inject
+    lateinit var voiceTelemetryStore: VoiceTelemetryStore
+
+    private val llmModelManager: LlmModelManager by lazy(LazyThreadSafetyMode.NONE) {
+        modelManager.get()
+    }
+
 
     private val xrSessionState = mutableStateOf<Session?>(null)
     private val startupPermissionsLauncher =
@@ -262,18 +287,27 @@ class UnifiedMainActivity : AppCompatActivity() {
         val voiceService = remember(context) {
             SpatialVoiceService(context.applicationContext)
         }
+        val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
+        val isTtsSpeaking by tts.isSpeaking.collectAsState()
         var geminiNanoService by remember { mutableStateOf<GeminiNanoService?>(null) }
         var geminiCloudService by remember { mutableStateOf<GeminiCloudService?>(null) }
         var commandCoordinator by remember { mutableStateOf<SpatialCommandCoordinator?>(null) }
+        var chatEngine by remember { mutableStateOf<SmartChatEngine?>(null) }
         val voiceState by voiceService.state.collectAsState()
         val partialTranscript by voiceService.partialTranscript.collectAsState()
         var voiceFeedback by remember { mutableStateOf<String?>(null) }
+        val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
+        var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
         var voiceGestureHint by remember { mutableStateOf<String?>(null) }
         var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
         var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
+        var followUpPending by remember { mutableStateOf(false) }
+        var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
         val voiceControlEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
         val voiceGestureHand =
             appPreferences.getValue(appPreferences.voiceGestureHand) ?: "left"
+        val assistantSpokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
+        val assistantVoicePreference = appPreferences.getValue(appPreferences.voiceAssistantVoice) ?: "male"
 
         val pinchDetector = remember(session, voiceGestureHand) {
             SecondaryHandPinchDetector(session, this@UnifiedMainActivity, voiceGestureHand)
@@ -302,29 +336,81 @@ class UnifiedMainActivity : AppCompatActivity() {
                 ActivityResultContracts.RequestPermission()
             ) { granted -> hasHandTrackingPermission = granted }
 
-        fun handleVoiceAction(action: XrPlayerAction): String {
+        data class HomeVoiceActionOutcome(
+            val feedback: String,
+            val assistantReply: AssistantReply? = null,
+        )
+
+        suspend fun handleVoiceAction(action: XrPlayerAction): HomeVoiceActionOutcome {
             return when (action) {
                 is XrPlayerAction.Search -> {
                     voiceSearchQuery = action.query
-                    "Searching for ${action.query}"
+                    HomeVoiceActionOutcome("Searching for ${action.query}")
+                }
+                is XrPlayerAction.ChatQuery -> {
+                    voiceFeedback = "Thinking..."
+                    val nano = geminiNanoService
+                        ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
+                    val cloud = geminiCloudService
+                        ?: GeminiCloudService(context.applicationContext, appPreferences, repository)
+                            .also { geminiCloudService = it }
+                    val assistant = chatEngine
+                        ?: SmartChatEngine(nano, cloud, appPreferences, llmModelManager, repository)
+                            .also { it.initialize(); chatEngine = it }
+                    val response =
+                        assistant.query(
+                            question = action.query,
+                            playerState =
+                                PlayerStateSnapshot(
+                                    screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.HOME,
+                                    lastRecommendationQuery = recommendationContext?.query,
+                                    lastRecommendationCount = recommendationContext?.items?.size ?: 0,
+                                    lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
+                                ),
+                            assistantPreferences =
+                                AssistantPreferences(
+                                    verbosity = appPreferences.getValue(appPreferences.voiceAssistantVerbosity),
+                                    spoilerPolicy = appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy),
+                                    spokenRepliesEnabled = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies),
+                                ),
+                            onSearchQuery = { query -> repository.getSearchItems(query) },
+                            conversationHistory = conversationHistory,
+                            recommendationContext = recommendationContext,
+                            onGetSuggestions = { repository.getSuggestions() },
+                        )
+                    response.recommendedItems
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { recommendationContext = RecommendationContext(action.query, it) }
+                    val feedback =
+                        response.text?.also { reply ->
+                            conversationHistory.add(action.query to reply)
+                            if (conversationHistory.size > 6) conversationHistory.removeAt(0)
+                            followUpPending = true
+                            followUpDeadlineMs = System.currentTimeMillis() + 8_000L
+                            voiceGestureHint = "Ask a follow-up"
+                            if (assistantSpokenReplies && tts.canSpeak()) {
+                                tts.speak(reply, null, assistantVoicePreference)
+                            }
+                        } ?: "Sorry, I couldn't process that."
+                    HomeVoiceActionOutcome(feedback, response)
                 }
                 is XrPlayerAction.CloseApp -> {
                     onFinishAffinity()
-                    "Closing SpatialFin"
+                    HomeVoiceActionOutcome("Closing SpatialFin")
                 }
                 is XrPlayerAction.GoBack -> {
                     if (!navController.popBackStack()) onFinish()
-                    "Going back"
+                    HomeVoiceActionOutcome("Going back")
                 }
                 is XrPlayerAction.GoHome -> {
                     navController.navigate(HomeRoute) {
                         popUpTo(navController.graph.startDestinationId)
                         launchSingleTop = true
                     }
-                    "Returning home"
+                    HomeVoiceActionOutcome("Returning home")
                 }
-                is XrPlayerAction.Unrecognized -> "I didn't catch that: ${action.transcript}"
-                else -> "Command not available on home screen"
+                is XrPlayerAction.Unrecognized -> HomeVoiceActionOutcome("I didn't catch that: ${action.transcript}")
+                else -> HomeVoiceActionOutcome("Command not available on home screen")
             }
         }
 
@@ -333,12 +419,17 @@ class UnifiedMainActivity : AppCompatActivity() {
                 voiceFeedback = "Speech recognition unavailable"
                 return
             }
+            if (isTtsSpeaking) {
+                tts.stop()
+            }
+            followUpPending = false
             if (!hasAudioPermission) {
                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 return
             }
             voiceService.startListening { transcript ->
                 coroutineScope.launch {
+                    val startedAtMs = System.currentTimeMillis()
                     val nano = geminiNanoService
                         ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
                     val cloud = geminiCloudService
@@ -350,9 +441,46 @@ class UnifiedMainActivity : AppCompatActivity() {
                             nano,
                             cloud,
                             appPreferences,
+                            llmModelManager,
                         )
                             .also { it.initialize(); commandCoordinator = it }
-                    voiceFeedback = handleVoiceAction(coordinator.parse(transcript).action)
+                    val snapshot =
+                        PlayerStateSnapshot(
+                            screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.HOME,
+                            lastRecommendationQuery = recommendationContext?.query,
+                            lastRecommendationCount = recommendationContext?.items?.size ?: 0,
+                            lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
+                        )
+                    val parseResult = coordinator.parse(transcript, snapshot)
+                    val outcome = handleVoiceAction(parseResult.action)
+                    voiceFeedback = outcome.feedback
+                    voiceTelemetryStore.record(
+                        VoiceTelemetryEntry(
+                            transcript = transcript,
+                            normalizedTranscript = parseResult.normalizedTranscript,
+                            action = parseResult.action::class.simpleName ?: "Unknown",
+                            strategy = parseResult.strategy.name,
+                            latencyMs = System.currentTimeMillis() - startedAtMs,
+                            success = parseResult.action !is XrPlayerAction.Unrecognized,
+                            details = parseResult.debugInfo,
+                        )
+                    )
+                    if (parseResult.action is XrPlayerAction.ChatQuery && outcome.assistantReply != null) {
+                        voiceTelemetryStore.record(
+                            VoiceTelemetryEntry(
+                                transcript = transcript,
+                                normalizedTranscript = parseResult.normalizedTranscript,
+                                action = "ChatQuery",
+                                strategy = outcome.assistantReply.strategy,
+                                latencyMs = System.currentTimeMillis() - startedAtMs,
+                                success = outcome.assistantReply.text != null,
+                                selectedSkill = outcome.assistantReply.selectedSkill,
+                                validatedInput = outcome.assistantReply.validatedInput,
+                                resultDisposition = outcome.assistantReply.resultDisposition,
+                                details = "parse=${parseResult.debugInfo}; reply=${outcome.assistantReply.debugInfo}",
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -395,18 +523,46 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
         }
 
-        LaunchedEffect(voiceFeedback) {
-            if (voiceFeedback != null) {
-                delay(2000L)
-                voiceFeedback = null
-                voiceService.resetState()
+        LaunchedEffect(voiceFeedback, isTtsSpeaking) {
+            val feedback = voiceFeedback ?: return@LaunchedEffect
+            if (feedback != "Thinking..." && !isTtsSpeaking) {
+                delay((feedback.length * 55L).coerceIn(4_000L, 10_000L))
+                if (voiceFeedback == feedback && !isTtsSpeaking) {
+                    voiceFeedback = null
+                    voiceService.resetState()
+                }
+            }
+        }
+
+        LaunchedEffect(voiceState) {
+            if (voiceState == VoiceState.ERROR) {
+                delay(2_000L)
+                if (voiceState == VoiceState.ERROR) {
+                    voiceService.resetState()
+                }
+            }
+        }
+
+        LaunchedEffect(followUpPending, isTtsSpeaking, voiceState) {
+            if (!followUpPending || isTtsSpeaking || voiceState != VoiceState.IDLE) return@LaunchedEffect
+            val remaining = followUpDeadlineMs - System.currentTimeMillis()
+            if (remaining <= 0L) {
+                followUpPending = false
+                voiceGestureHint = null
+                return@LaunchedEffect
+            }
+            delay(600L)
+            if (followUpPending && !isTtsSpeaking && voiceState == VoiceState.IDLE) {
+                requestVoiceCommand()
             }
         }
 
         DisposableEffect(session) {
             onDispose {
                 voiceService.destroy()
+                tts.destroy()
                 commandCoordinator?.destroy()
+                chatEngine?.destroy()
             }
         }
 
@@ -423,6 +579,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 voiceSearchQuery = voiceSearchQuery,
                 voiceState = voiceState,
                 partialTranscript = partialTranscript,
+                voiceFeedback = voiceFeedback,
                 voiceGestureArmingProgress = voiceGestureArmingProgress,
                 voiceGestureHint = voiceGestureHint,
                 onReconnect = viewModel::reconnect,
@@ -437,6 +594,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 voiceSearchQuery = voiceSearchQuery,
                 voiceState = voiceState,
                 partialTranscript = partialTranscript,
+                voiceFeedback = voiceFeedback,
                 voiceGestureArmingProgress = voiceGestureArmingProgress,
                 voiceGestureHint = voiceGestureHint,
                 onReconnect = viewModel::reconnect,
@@ -458,6 +616,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         voiceSearchQuery: String?,
         voiceState: VoiceState,
         partialTranscript: String,
+        voiceFeedback: String?,
         voiceGestureArmingProgress: Float,
         voiceGestureHint: String?,
         onReconnect: () -> Unit,
@@ -479,6 +638,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             VoiceControlOverlay(
                 state = voiceState,
                 partialTranscript = partialTranscript,
+                feedbackText = voiceFeedback,
                 gestureArmingProgress = voiceGestureArmingProgress,
                 gestureHint = voiceGestureHint,
             )
@@ -499,6 +659,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         voiceSearchQuery: String?,
         voiceState: VoiceState,
         partialTranscript: String,
+        voiceFeedback: String?,
         voiceGestureArmingProgress: Float,
         voiceGestureHint: String?,
         onReconnect: () -> Unit,
@@ -561,7 +722,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                     SpatialPanel(
                         modifier = SubspaceModifier
                             .width(1800.dp)
-                            .height(1200.dp)
+                            .height(1800.dp)
                             .offset(x = 0.dp, y = 0.dp, z = 0.dp)
                     ) {
                         Box(
@@ -597,6 +758,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                             VoiceControlOverlay(
                                 state = voiceState,
                                 partialTranscript = partialTranscript,
+                                feedbackText = voiceFeedback,
                                 gestureArmingProgress = voiceGestureArmingProgress,
                                 gestureHint = voiceGestureHint,
                             )

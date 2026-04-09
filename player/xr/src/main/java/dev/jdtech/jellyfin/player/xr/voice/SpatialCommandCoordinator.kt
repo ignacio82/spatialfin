@@ -2,8 +2,10 @@ package dev.jdtech.jellyfin.player.xr.voice
 
 import android.content.Context
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -11,6 +13,7 @@ enum class VoiceParseStrategy {
     KEYWORD,
     MODEL,
     CLOUD,
+    GEMMA,
     FALLBACK,
 }
 
@@ -21,12 +24,56 @@ data class VoiceParseResult(
     val debugInfo: String = "",
 )
 
+internal object VoiceReplayCommandLibrary {
+    fun match(
+        transcript: String,
+        normalized: String,
+        playerState: PlayerStateSnapshot,
+    ): XrPlayerAction? {
+        val recommendationFollowUp =
+            playerState.lastRecommendationCount > 0 &&
+                (
+                    normalized in setOf(
+                        "shorter",
+                        "movie only",
+                        "show only",
+                        "funny",
+                        "not anime",
+                        "something new",
+                        "with english audio",
+                    ) ||
+                        normalized.contains("more like the ") ||
+                        normalized.contains("more like option ") ||
+                        normalized.contains("similar to the ")
+                )
+        if (recommendationFollowUp) {
+            return XrPlayerAction.ChatQuery(transcript)
+        }
+
+        return when {
+            normalized == "recommend something for me to watch" -> XrPlayerAction.ChatQuery(transcript)
+            normalized == "what can i watch next" -> XrPlayerAction.ChatQuery(transcript)
+            normalized == "what should i watch next" -> XrPlayerAction.ChatQuery(transcript)
+            normalized.startsWith("play the first") || normalized.startsWith("play first") ->
+                XrPlayerAction.SelectOption(0)
+            normalized.startsWith("play the second") || normalized.startsWith("play second") ->
+                XrPlayerAction.SelectOption(1)
+            playerState.screenContext == VoiceScreenContext.HOME &&
+                normalized in setOf("library", "home library", "go to the library") ->
+                XrPlayerAction.GoHome
+            else -> null
+        }
+    }
+}
+
 class SpatialCommandCoordinator(
     @Suppress("UNUSED_PARAMETER") private val appContext: Context,
     private val geminiNanoService: GeminiNanoService,
     private val geminiCloudService: GeminiCloudService,
     private val appPreferences: AppPreferences,
+    private val modelManager: LlmModelManager,
 ) {
+    private var gemmaParser: GemmaCommandParser? = null
     private val chatQuestionPhrases = listOf(
         "what happened",
         "what s happened",
@@ -134,6 +181,43 @@ class SpatialCommandCoordinator(
             )
         }
 
+        exactKeywordMatch(normalized, playerState)?.let {
+            return VoiceParseResult(
+                action = it,
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "exact keyword matched before model",
+            )
+        }
+
+        VoiceReplayCommandLibrary.match(transcript, normalized, playerState)?.let {
+            return VoiceParseResult(
+                action = it,
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "replay library matched",
+            )
+        }
+
+        if (shouldUseGemma()) {
+            modelManager.ensureInitialized()
+            val instance = modelManager.instance
+            if (instance != null) {
+                if (gemmaParser == null) {
+                    gemmaParser = GemmaCommandParser(instance)
+                }
+                val gemmaAction = gemmaParser!!.parse(transcript, playerState)
+                if (gemmaAction !is XrPlayerAction.Unrecognized) {
+                    return VoiceParseResult(
+                        action = gemmaAction,
+                        strategy = VoiceParseStrategy.GEMMA,
+                        normalizedTranscript = normalized,
+                        debugInfo = "Gemma command parser matched (${instance.backendName})",
+                    )
+                }
+            }
+        }
+
         keywordMatch(normalized, playerState, transcript)?.let {
             return VoiceParseResult(
                 action = it,
@@ -179,65 +263,127 @@ class SpatialCommandCoordinator(
             )
         }
 
-        val prompt = buildModelPrompt(transcript, playerState)
-        val onDeviceResult = geminiNanoService.generateText(prompt = prompt, reason = "voice-parse")
-        if (onDeviceResult.usedModel && !onDeviceResult.text.isNullOrBlank()) {
-            val json = extractJson(onDeviceResult.text) ?: return ParseAttemptOutcome(
-                debugInfo = onDeviceResult.status.details,
+        val prompts =
+            listOf(
+                buildModelPrompt(transcript, playerState, strictRetry = false),
+                buildModelPrompt(transcript, playerState, strictRetry = true),
             )
-            return runCatching {
-                val payload = JSONObject(json)
-                val action = mapModelAction(payload, transcript)
-                ParseAttemptOutcome(
-                    result =
-                        VoiceParseResult(
-                            action = action,
-                            strategy = VoiceParseStrategy.MODEL,
-                            normalizedTranscript = normalized,
-                            debugInfo = onDeviceResult.status.details,
-                        ),
-                    debugInfo = onDeviceResult.status.details,
+
+        var onDeviceDebugInfo = ""
+        prompts.forEachIndexed { attemptIndex, prompt ->
+            val onDeviceResult =
+                geminiNanoService.generateText(
+                    prompt = prompt,
+                    reason = if (attemptIndex == 0) "voice-parse" else "voice-parse-retry",
                 )
-            }.onFailure {
-                Timber.w(it, "GEMINI: failed to parse on-device model response as JSON: %s", onDeviceResult.text)
-            }.getOrElse { ParseAttemptOutcome(debugInfo = onDeviceResult.status.details) }
+            onDeviceDebugInfo = onDeviceResult.status.details
+            if (onDeviceResult.usedModel && !onDeviceResult.text.isNullOrBlank()) {
+                val json = extractJson(onDeviceResult.text)
+                if (json != null) {
+                    return runCatching {
+                        val payload = JSONObject(json)
+                        val action = mapModelAction(payload, transcript)
+                        ParseAttemptOutcome(
+                            result =
+                                VoiceParseResult(
+                                    action = action,
+                                    strategy = VoiceParseStrategy.MODEL,
+                                    normalizedTranscript = normalized,
+                                    debugInfo = onDeviceResult.status.details,
+                                ),
+                            debugInfo = onDeviceResult.status.details,
+                        )
+                    }.onFailure {
+                        Timber.w(
+                            it,
+                            "GEMINI: failed to parse on-device model response as JSON retry=%s: %s",
+                            attemptIndex > 0,
+                            onDeviceResult.text,
+                        )
+                    }.getOrElse { ParseAttemptOutcome(debugInfo = onDeviceResult.status.details) }
+                }
+            }
         }
 
-        val cloudResult =
-            geminiCloudService.generateText(
-                prompt = prompt,
-                reason = "voice-parse",
-                temperature = 0.0,
-                maxOutputTokens = 220,
-            )
-        if (!cloudResult.status.usedModel || cloudResult.text.isNullOrBlank()) {
-            return ParseAttemptOutcome(
-                debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
-            )
+        var cloudDebugInfo = ""
+        prompts.forEachIndexed { attemptIndex, prompt ->
+            val cloudResult =
+                geminiCloudService.generateText(
+                    prompt = prompt,
+                    reason = if (attemptIndex == 0) "voice-parse" else "voice-parse-retry",
+                    temperature = 0.0,
+                    maxOutputTokens = 220,
+                )
+            cloudDebugInfo = cloudResult.status.details
+            if (cloudResult.status.usedModel && !cloudResult.text.isNullOrBlank()) {
+                val cloudJson = extractJson(cloudResult.text)
+                if (cloudJson != null) {
+                    return runCatching {
+                        val payload = JSONObject(cloudJson)
+                        val action = mapModelAction(payload, transcript)
+                        ParseAttemptOutcome(
+                            result =
+                                VoiceParseResult(
+                                    action = action,
+                                    strategy = VoiceParseStrategy.CLOUD,
+                                    normalizedTranscript = normalized,
+                                    debugInfo = cloudResult.status.details,
+                                ),
+                            debugInfo = cloudResult.status.details,
+                        )
+                    }.onFailure {
+                        Timber.w(
+                            it,
+                            "GEMINI: failed to parse cloud model response as JSON retry=%s: %s",
+                            attemptIndex > 0,
+                            cloudResult.text,
+                        )
+                    }.getOrElse {
+                        ParseAttemptOutcome(
+                            debugInfo = "${onDeviceDebugInfo}; ${cloudResult.status.details}",
+                        )
+                    }
+                }
+            }
         }
 
-        val cloudJson = extractJson(cloudResult.text) ?: return ParseAttemptOutcome(
-            debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
-        )
-        return runCatching {
-            val payload = JSONObject(cloudJson)
-            val action = mapModelAction(payload, transcript)
-            ParseAttemptOutcome(
-                result =
-                    VoiceParseResult(
-                        action = action,
-                        strategy = VoiceParseStrategy.CLOUD,
-                        normalizedTranscript = normalized,
-                        debugInfo = cloudResult.status.details,
-                    ),
-                debugInfo = cloudResult.status.details,
-            )
-        }.onFailure {
-            Timber.w(it, "GEMINI: failed to parse cloud model response as JSON: %s", cloudResult.text)
-        }.getOrElse {
-            ParseAttemptOutcome(
-                debugInfo = "${onDeviceResult.status.details}; ${cloudResult.status.details}",
-            )
+        return ParseAttemptOutcome(debugInfo = "${onDeviceDebugInfo}; ${cloudDebugInfo}")
+    }
+
+    private fun exactKeywordMatch(
+        text: String,
+        playerState: PlayerStateSnapshot,
+    ): XrPlayerAction? {
+        val playbackActionsAllowed = playerState.screenContext == VoiceScreenContext.PLAYER
+        extractVolumeAdjustment(text)?.let { return it }
+        extractPassthroughAction(text)?.let { return it }
+        extractSizeAdjustment(text)?.let { return it }
+        extractStatusAction(text)?.let { return it }
+
+        if (isSubtitleEnableCommand(text)) return XrPlayerAction.SelectSubtitleTrack()
+        if (isSubtitleDisableCommand(text)) return XrPlayerAction.DisableSubtitles
+        if (isGenericAudioSwitchCommand(text)) return XrPlayerAction.SelectAudioTrack()
+
+        val subtitleLanguage = extractLanguageTarget(text, "subtitles?|subs?")
+        if (subtitleLanguage != null) return XrPlayerAction.SelectSubtitleTrack(language = subtitleLanguage)
+
+        val audioLanguage = extractLanguageTarget(text, "audio|dub|track")
+        if (audioLanguage != null) return XrPlayerAction.SelectAudioTrack(language = audioLanguage)
+
+        return when {
+            playbackActionsAllowed && text.matches(Regex("^(play|resume|start|unpause)$")) -> XrPlayerAction.Play
+            playbackActionsAllowed && text.matches(Regex("^(pause|stop|hold)$")) -> XrPlayerAction.Pause
+            playbackActionsAllowed && text.matches(Regex("^(toggle|play pause)$")) -> XrPlayerAction.TogglePlayPause
+            playbackActionsAllowed && text.matches(Regex("^(skip intro|skip the intro|skip opening|skip the opening|skip recap|skip the recap|skip previously on|skip preview|skip the preview)$")) -> XrPlayerAction.SkipIntro
+            playbackActionsAllowed && text.matches(Regex("^(skip outro|skip the outro|skip ending|skip the ending|skip credits|skip the credits)$")) -> XrPlayerAction.SkipOutro
+            playbackActionsAllowed && text.matches(Regex("^(play |go to |start )?(the )?(next episode|next one)$")) -> XrPlayerAction.NextEpisode
+            playbackActionsAllowed && text.matches(Regex("^(play |go to |start )?(the )?(previous episode|last episode|go back one)$")) -> XrPlayerAction.PreviousEpisode
+            playbackActionsAllowed && text.matches(Regex("^(show controls|open controls)$")) -> XrPlayerAction.ShowControls
+            playbackActionsAllowed && text.matches(Regex("^(hide controls|close controls)$")) -> XrPlayerAction.HideControls
+            text.matches(Regex("^(go home|home screen|library|back to home)$")) -> XrPlayerAction.GoHome
+            text.matches(Regex("^(close (the )?app|exit (the )?app|quit (the )?app|shut down|close spatial ?fin|exit spatial ?fin|close (the )?application|exit (the )?application)$")) -> XrPlayerAction.CloseApp
+            text.matches(Regex("^(exit|quit|back|go back)$")) -> if (text.matches(Regex("^(back|go back)$"))) XrPlayerAction.GoBack else XrPlayerAction.CloseApp
+            else -> null
         }
     }
 
@@ -246,6 +392,7 @@ class SpatialCommandCoordinator(
         playerState: PlayerStateSnapshot,
         transcript: String,
     ): XrPlayerAction? {
+        val playbackActionsAllowed = playerState.screenContext == VoiceScreenContext.PLAYER
         extractSyncPlayAction(text)?.let { return it }
         extractSelectionAction(text)?.let { return it }
 
@@ -254,6 +401,10 @@ class SpatialCommandCoordinator(
 
         if (text.matches(Regex(".*(skip (the )?(recap|previously on|previously)).*"))) {
             return XrPlayerAction.SkipIntro
+        }
+
+        if (playerState.lastRecommendationCount > 0 && isRecommendationFollowUp(text)) {
+            return XrPlayerAction.ChatQuery(transcript)
         }
 
         // Prioritize Chat Queries to avoid greedy navigation matches (e.g. "previous episode about")
@@ -280,22 +431,22 @@ class SpatialCommandCoordinator(
         if (isSubtitleDisableCommand(text)) return XrPlayerAction.DisableSubtitles
 
         return when {
-            text.matches(Regex("^(play|resume|start|unpause)$")) -> XrPlayerAction.Play
-            text.matches(Regex("^(pause|stop|hold)$")) -> XrPlayerAction.Pause
-            text.matches(Regex("^(toggle|play pause)$")) -> XrPlayerAction.TogglePlayPause
-            text.matches(Regex(".*(next chapter|skip chapter).*")) -> {
+            playbackActionsAllowed && text.matches(Regex("^(play|resume|start|unpause)$")) -> XrPlayerAction.Play
+            playbackActionsAllowed && text.matches(Regex("^(pause|stop|hold)$")) -> XrPlayerAction.Pause
+            playbackActionsAllowed && text.matches(Regex("^(toggle|play pause)$")) -> XrPlayerAction.TogglePlayPause
+            playbackActionsAllowed && text.matches(Regex(".*(next chapter|skip chapter).*")) -> {
                 playerState.chapterNames
                     .takeIf { it.isNotEmpty() }
                     ?.let { XrPlayerAction.SeekForward(60) }
             }
-            introSkipPhrases.any(text::contains) -> XrPlayerAction.SkipIntro
-            outroSkipPhrases.any(text::contains) -> XrPlayerAction.SkipOutro
-            text.matches(Regex("^(play |go to |start )?(the )?(next episode|next one)$")) -> XrPlayerAction.NextEpisode
-            text.matches(Regex("^(play |go to |start )?(the )?(previous episode|last episode|go back one)$")) -> {
+            playbackActionsAllowed && introSkipPhrases.any(text::contains) -> XrPlayerAction.SkipIntro
+            playbackActionsAllowed && outroSkipPhrases.any(text::contains) -> XrPlayerAction.SkipOutro
+            playbackActionsAllowed && text.matches(Regex("^(play |go to |start )?(the )?(next episode|next one)$")) -> XrPlayerAction.NextEpisode
+            playbackActionsAllowed && text.matches(Regex("^(play |go to |start )?(the )?(previous episode|last episode|go back one)$")) -> {
                 XrPlayerAction.PreviousEpisode
             }
-            text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
-            text.matches(Regex(".*(hide controls|close controls).*")) -> XrPlayerAction.HideControls
+            playbackActionsAllowed && text.matches(Regex(".*(show controls|open controls).*")) -> XrPlayerAction.ShowControls
+            playbackActionsAllowed && text.matches(Regex(".*(hide controls|close controls).*")) -> XrPlayerAction.HideControls
             text.matches(Regex(".*(go home|home screen|library|back to home).*")) -> XrPlayerAction.GoHome
             text.matches(
                 Regex(
@@ -306,20 +457,20 @@ class SpatialCommandCoordinator(
             text.matches(Regex("^(back|go back)$")) -> XrPlayerAction.GoBack
             extractVolumeAdjustment(text) != null -> extractVolumeAdjustment(text)
             extractQualityAdjustment(text) != null -> extractQualityAdjustment(text)
-            extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
-            text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
+            playbackActionsAllowed && extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
+            playbackActionsAllowed && text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
             }
-            text.matches(Regex(".*(rewind|go back|skip back|jump back).*")) -> {
+            playbackActionsAllowed && text.matches(Regex(".*(rewind|go back|skip back|jump back).*")) -> {
                 XrPlayerAction.SeekBackward(extractSeconds(text) ?: 10)
             }
-            text.matches(Regex(".*speed.*(\\d+\\.?\\d*).*")) -> {
+            playbackActionsAllowed && text.matches(Regex(".*speed.*(\\d+\\.?\\d*).*")) -> {
                 val speed = Regex("(\\d+\\.?\\d*)").find(text)?.value?.toFloatOrNull()
                 if (speed != null && speed in 0.25f..4.0f) XrPlayerAction.SetSpeed(speed) else null
             }
-            text.matches(Regex(".*(normal speed|reset speed|one ?x|1x).*")) -> XrPlayerAction.SetSpeed(1.0f)
-            text.matches(Regex(".*(double speed|two ?x|2x).*")) -> XrPlayerAction.SetSpeed(2.0f)
-            text.matches(Regex(".*(half speed|0\\.5x).*")) -> XrPlayerAction.SetSpeed(0.5f)
+            playbackActionsAllowed && text.matches(Regex(".*(normal speed|reset speed|one ?x|1x).*")) -> XrPlayerAction.SetSpeed(1.0f)
+            playbackActionsAllowed && text.matches(Regex(".*(double speed|two ?x|2x).*")) -> XrPlayerAction.SetSpeed(2.0f)
+            playbackActionsAllowed && text.matches(Regex(".*(half speed|0\\.5x).*")) -> XrPlayerAction.SetSpeed(0.5f)
             else -> null
         }
     }
@@ -327,24 +478,42 @@ class SpatialCommandCoordinator(
     private fun buildModelPrompt(
         transcript: String,
         playerState: PlayerStateSnapshot,
+        strictRetry: Boolean,
     ): String {
+        val screenGuidance =
+            when (playerState.screenContext) {
+                VoiceScreenContext.HOME ->
+                    "HOME screen: prefer search, chat, go_home, and go_back. Avoid playback-only actions unless explicit."
+                VoiceScreenContext.PLAYER ->
+                    "PLAYER screen: prefer playback, subtitle, audio, timeline, and recap actions when clearly requested."
+            }
+        val retryGuidance =
+            if (strictRetry) {
+                "Previous output was invalid or not parseable JSON. Return exactly one minified JSON object with no commentary."
+            } else {
+                ""
+            }
         return """
             You convert XR media-player voice transcripts into a single JSON action.
             Return ONLY minified JSON.
             Supported action values:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
 
             Rules:
             - Prefer a direct player action when the transcript clearly asks for one.
             - Use "chat" for questions, recommendations, clarifications, recaps, or metadata questions.
+            - Recommendation refinements like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one" are always "chat".
             - Use "search" for find/search/show me requests.
             - If unsure, use "chat" rather than "unrecognized".
             - Include only fields that matter for the chosen action.
+            - $screenGuidance
+            - $retryGuidance
 
             JSON field schema:
-            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends","enabled":true}
+            {"action":"...","query":"...","seconds":15,"position_seconds":120,"speed":1.5,"max_bitrate":10000000,"language":"english","index":0,"percentage":0.5,"delta":0.1,"group_name":"friends","enabled":true,"reset":false}
 
             Current player state:
+            screenContext=${playerState.screenContext}
             title=${playerState.currentItemTitle}
             series=${playerState.currentSeriesName ?: ""}
             overview=${playerState.currentOverview.take(600)}
@@ -358,6 +527,9 @@ class SpatialCommandCoordinator(
             syncPlayActive=${playerState.syncPlayActive}
             syncPlayGroup=${playerState.syncPlayGroupName ?: ""}
             voiceSearchCount=${playerState.voiceSearchResultsCount}
+            lastRecommendationQuery=${playerState.lastRecommendationQuery ?: ""}
+            lastRecommendationCount=${playerState.lastRecommendationCount}
+            lastRecommendationTitles=${playerState.lastRecommendationTitles.joinToString(",")}
             passthroughEnabled=${playerState.passthroughEnabled}
 
             Transcript:
@@ -411,6 +583,14 @@ class SpatialCommandCoordinator(
             "adjust_volume" -> XrPlayerAction.AdjustVolume(
                 percentage = payload.optDouble("percentage", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
                 delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+            )
+            "adjust_scale" -> XrPlayerAction.AdjustScale(
+                delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+                reset = payload.optBoolean("reset", false),
+            )
+            "adjust_distance" -> XrPlayerAction.AdjustDistance(
+                delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+                reset = payload.optBoolean("reset", false),
             )
             "go_home" -> XrPlayerAction.GoHome
             "close_app" -> XrPlayerAction.CloseApp
@@ -470,6 +650,7 @@ class SpatialCommandCoordinator(
 
     private fun isLikelyChatQuery(text: String): Boolean {
         if (chatQuestionPhrases.any(text::contains)) return true
+        if (text.contains("more like") || text.contains("similar to")) return true
 
         return listOf(
             "who ",
@@ -487,6 +668,20 @@ class SpatialCommandCoordinator(
             "how s ",
             "how is ",
         ).any(text::startsWith)
+    }
+
+    private fun isRecommendationFollowUp(text: String): Boolean {
+        return listOf(
+            "more like",
+            "similar to",
+            "shorter",
+            "movie only",
+            "show only",
+            "funny",
+            "not anime",
+            "something new",
+            "with english audio",
+        ).any(text::contains)
     }
 
     private fun shouldUseGemma(): Boolean =
@@ -567,6 +762,28 @@ class SpatialCommandCoordinator(
             "switch dub",
             "change dub",
         ).any(text::contains)
+    }
+
+    private fun extractSizeAdjustment(text: String): XrPlayerAction? {
+        return when {
+            text.matches(Regex(".*(make it|make the video|make screen|make the screen).*bigger.*")) ||
+                text.matches(Regex(".*(increase size|zoom in|larger).*")) ->
+                XrPlayerAction.AdjustScale(delta = 0.1f)
+            text.matches(Regex(".*(make it|make the video|make screen|make the screen).*smaller.*")) ||
+                text.matches(Regex(".*(decrease size|zoom out).*")) ->
+                XrPlayerAction.AdjustScale(delta = -0.1f)
+            text.matches(Regex(".*(reset size|reset screen size|normal size).*")) ->
+                XrPlayerAction.AdjustScale(reset = true)
+            text.matches(Regex(".*(make it|make the video|make screen|make the screen).*closer.*")) ||
+                text.matches(Regex(".*(bring it closer|move closer).*")) ->
+                XrPlayerAction.AdjustDistance(delta = -0.2f)
+            text.matches(Regex(".*(make it|make the video|make screen|make the screen).*further.*")) ||
+                text.matches(Regex(".*(push it back|move further|move farther|push back).*")) ->
+                XrPlayerAction.AdjustDistance(delta = 0.2f)
+            text.matches(Regex(".*(reset distance|normal distance).*")) ->
+                XrPlayerAction.AdjustDistance(reset = true)
+            else -> null
+        }
     }
 
     private fun extractVolumeAdjustment(text: String): XrPlayerAction? {
@@ -712,5 +929,4 @@ class SpatialCommandCoordinator(
 
         return Regex("\\b([1-9])\\b").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.minus(1)
     }
-
 }

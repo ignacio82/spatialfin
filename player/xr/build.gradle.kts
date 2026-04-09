@@ -61,7 +61,7 @@ dependencies {
     implementation(libs.androidx.xr.runtime)
     implementation(libs.androidx.xr.scenecore)
     implementation(libs.androidx.xr.compose)
-    implementation("androidx.xr.arcore:arcore:1.0.0-alpha11")
+    implementation("androidx.xr.arcore:arcore:1.0.0-alpha12")
 
     // Image loading (for next-episode artwork in the next-up panel)
     implementation(libs.coil.compose)
@@ -72,6 +72,7 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     // Utils
+    implementation(libs.litertlm.android)
     implementation(libs.mlkit.genai.prompt)
     implementation(libs.okhttp)
     implementation(libs.timber)

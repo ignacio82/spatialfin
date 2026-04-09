@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -23,9 +25,12 @@ class SpatialVoiceService(private val context: Context) {
     companion object {
         private const val ERROR_CLIENT = 5
         private const val ERROR_NO_MATCH = 7
+        private const val MAX_SOFT_RETRIES = 1
+        private const val SOFT_RETRY_DELAY_MS = 250L
     }
 
     private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val _state = MutableStateFlow(VoiceState.IDLE)
     val state: StateFlow<VoiceState> = _state.asStateFlow()
@@ -36,6 +41,8 @@ class SpatialVoiceService(private val context: Context) {
     private var recognizer: SpeechRecognizer? = null
     private var onResult: ((String) -> Unit)? = null
     private var originalNotificationVolume: Int = -1
+    private var softRetryCount = 0
+    private var pendingRetry: Runnable? = null
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
@@ -75,9 +82,35 @@ class SpatialVoiceService(private val context: Context) {
         }
 
         onResult = onTranscript
+        softRetryCount = 0
         _state.value = VoiceState.LISTENING
         _partialTranscript.value = ""
+        startListeningInternal()
+    }
 
+    fun stopListening() {
+        cancelPendingRetry()
+        recognizer?.stopListening()
+        if (_state.value == VoiceState.LISTENING) {
+            _state.value = VoiceState.PROCESSING
+        }
+    }
+
+    fun destroy() {
+        cancelPendingRetry()
+        recognizer?.destroy()
+        recognizer = null
+        _state.value = VoiceState.IDLE
+    }
+
+    fun resetState() {
+        cancelPendingRetry()
+        _state.value = VoiceState.IDLE
+        _partialTranscript.value = ""
+    }
+
+    private fun startListeningInternal() {
+        cancelPendingRetry()
         muteSystemBeep()
 
         recognizer?.destroy()
@@ -87,6 +120,7 @@ class SpatialVoiceService(private val context: Context) {
                     object : RecognitionListener {
                         override fun onResults(results: Bundle?) {
                             unmuteSystemBeep()
+                            softRetryCount = 0
                             val transcript =
                                 results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                     ?.firstOrNull()
@@ -99,8 +133,21 @@ class SpatialVoiceService(private val context: Context) {
                         override fun onError(error: Int) {
                             unmuteSystemBeep()
                             if (error == ERROR_CLIENT || error == ERROR_NO_MATCH) {
-                                Timber.d("VOICE: speech recognition soft error=%s", error)
-                                _state.value = VoiceState.IDLE
+                                if (softRetryCount < MAX_SOFT_RETRIES && onResult != null) {
+                                    softRetryCount++
+                                    Timber.d("VOICE: speech recognition soft error=%s retry=%s", error, softRetryCount)
+                                    _partialTranscript.value = ""
+                                    pendingRetry =
+                                        Runnable {
+                                            if (onResult != null) {
+                                                _state.value = VoiceState.LISTENING
+                                                startListeningInternal()
+                                            }
+                                        }.also { retry -> mainHandler.postDelayed(retry, SOFT_RETRY_DELAY_MS) }
+                                } else {
+                                    Timber.d("VOICE: speech recognition soft error=%s no more retries", error)
+                                    _state.value = VoiceState.ERROR
+                                }
                             } else {
                                 Timber.w("VOICE: speech recognition error=%s", error)
                                 _state.value = VoiceState.ERROR
@@ -145,20 +192,8 @@ class SpatialVoiceService(private val context: Context) {
         recognizer?.startListening(intent)
     }
 
-    fun stopListening() {
-        recognizer?.stopListening()
-        if (_state.value == VoiceState.LISTENING) {
-            _state.value = VoiceState.PROCESSING
-        }
-    }
-
-    fun destroy() {
-        recognizer?.destroy()
-        recognizer = null
-        _state.value = VoiceState.IDLE
-    }
-
-    fun resetState() {
-        _state.value = VoiceState.IDLE
+    private fun cancelPendingRetry() {
+        pendingRetry?.let(mainHandler::removeCallbacks)
+        pendingRetry = null
     }
 }

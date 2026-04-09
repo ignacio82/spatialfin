@@ -25,11 +25,23 @@ sealed interface XrPlayerAction {
 
     data class SetQuality(val maxBitrate: Long) : XrPlayerAction
 
-    data class SelectAudioTrack(val language: String? = null, val index: Int? = null) :
-        XrPlayerAction
+    data class SelectAudioTrack(
+        val language: String? = null,
+        val index: Int? = null,
+        val secondaryAction: XrPlayerAction? = null,
+    ) : XrPlayerAction
 
-    data class SelectSubtitleTrack(val language: String? = null, val index: Int? = null) :
-        XrPlayerAction
+    data class SelectSubtitleTrack(
+        val language: String? = null,
+        val index: Int? = null,
+        val secondaryAction: XrPlayerAction? = null,
+    ) : XrPlayerAction
+
+    data class ResolveDisambiguation(
+        val query: String,
+        val originalTranscript: String,
+    ) : XrPlayerAction
+
 
     data object DisableSubtitles : XrPlayerAction
 
@@ -51,6 +63,10 @@ sealed interface XrPlayerAction {
     data object RefreshSyncPlay : XrPlayerAction
 
     data class AdjustVolume(val percentage: Float? = null, val delta: Float? = null) : XrPlayerAction
+
+    data class AdjustScale(val delta: Float? = null, val reset: Boolean = false) : XrPlayerAction
+
+    data class AdjustDistance(val delta: Float? = null, val reset: Boolean = false) : XrPlayerAction
 
     data object GoHome : XrPlayerAction
 
