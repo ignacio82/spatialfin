@@ -30,6 +30,21 @@ class LibassTextRenderer(
     private val srtFontSize: Int = 52,
 ) : BaseRenderer(C.TRACK_TYPE_TEXT) {
 
+    /**
+     * When false, subtitle cues are decoded and fed to [onSubtitleText] for AI context but
+     * are NOT forwarded to the LibASS renderer — nothing is displayed visually.
+     * Defaults to true (display enabled). Set to false for silent/shadow tracks.
+     */
+    @Volatile var displayEnabled: Boolean = true
+
+    /**
+     * Called on each subtitle cue that is decoded, regardless of [displayEnabled].
+     * Invoked from ExoPlayer's rendering thread — callers must dispatch to the main thread
+     * before touching any Compose state.
+     * Parameters: (timestampMs, plainText)
+     */
+    var onSubtitleText: ((Long, String) -> Unit)? = null
+
     private var inputFormatReceived = false
     private var dialogueFormatLine: String? = null
     private val formatHolder = FormatHolder()
@@ -144,9 +159,31 @@ class LibassTextRenderer(
                 ?: if (isKaraoke) 300_000L   // karaoke lines span entire song sections
                 else 10_000L                 // regular dialogue — generous to handle long pauses
 
-            libassRenderer.processChunk(normalizedBytes, startMs, durationMs)
+            val plainText = extractPlainText(normalizedBytes)
+            if (plainText.isNotBlank()) {
+                onSubtitleText?.invoke(startMs, plainText)
+            }
+            if (displayEnabled) {
+                libassRenderer.processChunk(normalizedBytes, startMs, durationMs)
+            }
             buffer.clear()
         }
+    }
+
+    /**
+     * Extracts plain human-readable text from a normalised ASS event body.
+     * The normalised format is: ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+     * (9 comma-delimited fields; the last field may itself contain commas).
+     */
+    private fun extractPlainText(normalized: ByteArray): String {
+        val raw = String(normalized, Charsets.UTF_8)
+        val parts = raw.split(",", limit = 9)
+        val textField = if (parts.size >= 9) parts[8] else raw
+        return textField
+            .replace(Regex("\\{[^}]*\\}"), "") // strip ASS override codes e.g. {\i1}
+            .replace("\\N", " ")               // ASS hard line-break
+            .replace("\\n", " ")               // ASS soft line-break
+            .trim()
     }
 
     /**

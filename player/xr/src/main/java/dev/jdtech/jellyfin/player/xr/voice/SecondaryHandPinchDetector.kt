@@ -70,6 +70,14 @@ class SecondaryHandPinchDetector(
         private const val MIN_ARMING_WRIST_HEIGHT = -0.24f
         private const val MIN_ARMING_PALM_HEIGHT = -0.12f
         private const val HOLD_OPEN_PALM_HINT = "Hold palm near face"
+        private const val RAISE_PALM_HINT = "Raise palm to face"
+    }
+
+    private val hand: Hand? by lazy {
+        when (preferredHand.lowercase()) {
+            "right" -> Hand.right(session)
+            else -> Hand.left(session)
+        }
     }
 
     val gestureStates: Flow<GestureState> = flow {
@@ -166,17 +174,24 @@ class SecondaryHandPinchDetector(
                     abs(metrics.palm.x) < MAX_ARMING_PALM_LATERAL_OFFSET &&
                     metrics.wrist.y >= MIN_ARMING_WRIST_HEIGHT &&
                     metrics.palm.y >= MIN_ARMING_PALM_HEIGHT
-            val isOpenPalm =
-                isHandInArmingZone &&
-                    isOpenPalm(metrics, palmAnchor ?: metrics.palm)
+            val hasOpenPalmShape =
+                isOpenPalm(metrics, palmAnchor ?: metrics.palm)
 
             when (phase) {
                 ActivationPhase.IDLE,
                 ActivationPhase.ARMING_PALM -> {
-                    if (!isOpenPalm) {
+                    if (!hasOpenPalmShape || !isHandInActivationZone) {
                         phase = ActivationPhase.IDLE
                         resetPalmTracking()
                         emitIfChanged(GestureState.Idle)
+                        continue
+                    }
+
+                    if (!isHandInArmingZone) {
+                        // Hand is open but too low/far. Show hint but don't progress.
+                        phase = ActivationPhase.IDLE
+                        resetPalmTracking()
+                        emitIfChanged(GestureState.Arming(0f, RAISE_PALM_HINT))
                         continue
                     }
 
@@ -272,11 +287,6 @@ class SecondaryHandPinchDetector(
     }
 
     private fun getVoiceHandState(): Hand.State? {
-        val hand =
-            when (preferredHand.lowercase()) {
-                "right" -> Hand.right(session)
-                else -> Hand.left(session)
-            }
         return hand?.state?.value
     }
 }

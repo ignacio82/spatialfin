@@ -39,6 +39,21 @@ These paths are usually not useful for code understanding and should be skipped 
 - `data/` for Jellyfin API access, repositories, and persistence
 - `settings/` and `setup/` for configuration and onboarding flows
 
+### Voice / AI Entry Points
+
+When the task touches voice, on-device AI, recommendations, or assistant UX, start here before chasing other files:
+
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SpatialVoiceService.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SpatialCommandCoordinator.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/GemmaCommandParser.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SmartChatEngine.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/MediaSkillRegistry.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/RecommendationPlanner.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/SpatialPlayerScreen.kt`
+- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt`
+- `player/session/src/main/java/dev/jdtech/jellyfin/player/session/voice/PlayerSessionController.kt`
+- `settings/src/main/java/dev/jdtech/jellyfin/settings/voice/VoiceTelemetryStore.kt`
+
 ## Official Documentation Links
 - **Jetpack XR SDK Hub:** https://developer.android.com/develop/xr/jetpack-xr-sdk
 - **SceneCore (Entities):** https://developer.android.com/develop/xr/jetpack-xr-sdk/work-with-entities
@@ -109,6 +124,268 @@ To ensure low-latency movement of complex UIs (e.g., a video player with control
 - **Model Provisioning:** The app auto-downloads the Gemma 4 `.task` model from HuggingFace to `context.filesDir/models/gemma-4.task` during the first initialization of `SmartChatEngine`.
 - **Multimodal Context:** The engine supports `visualContext: Bitmap`. During media playback, this allows the AI to "see" the current frame (or a low-res snapshot) to answer questions about specific visual elements in a scene.
 - **Prompt Composition:** Prompts are dynamically built by `SmartChatEngine` using `PlayerStateSnapshot` (metadata), `SubtitleContext` (recent dialogue), and `storySoFarContext`.
+- **Stateless Inference Per Request:** Command parsing and chat must not share a long-lived conversation. `LlmChatModelHelper.runInference(...)` now creates a fresh conversation per request and uses explicit profiles (`COMMAND` vs `CHAT`) to reduce partial JSON and conversational carry-over.
+- **Backend Failure Caching:** If LiteRT NPU initialization fails with `TF_LITE_AUX not found in the model`, the helper caches that as unsupported for the device/model and prefers the last successful backend on later launches. Do not remove this unless you also replace it with an equivalent per-device backend selection strategy.
+
+## Voice & AI Architecture
+
+### Current Request Pipeline
+
+The voice path is intentionally split into separate layers. Keep new work within one of these layers instead of stuffing more logic into prompts:
+
+1. `SpatialVoiceService`
+   - Speech recognition lifecycle
+   - Partial transcript / listening / processing state
+   - Soft-error retry for recognizer errors `5` and `7`
+2. `SpatialCommandCoordinator`
+   - Keyword and replay-library matches
+   - Screen-aware command parsing (`HOME` vs `PLAYER`)
+   - Gemini/Gemma JSON command parsing with strict retry
+3. `XrPlayerAction`
+   - Typed action boundary between parsing and execution
+4. `PlayerSessionController`
+   - Executes playback/search/selection actions
+   - Owns pending-selection state for dialog follow-ups like “play the first one”
+5. `SmartChatEngine`
+   - Handles `ChatQuery`
+   - Builds prompt context only after a skill has been selected
+6. `MediaSkillRegistry`
+   - Selects a built-in skill
+   - Validates extracted input
+   - Decides whether to answer directly, use model phrasing, or fall back
+
+### Built-In Media Skills
+
+The current built-in skills live in `MediaSkillRegistry` and should be extended there, not through ad hoc prompt branches:
+
+- `PLAYBACK_CONTROL`
+- `WATCH_RECOMMENDER`
+- `LIBRARY_SEARCH`
+- `RECAP`
+- `DIALOGUE_EXPLAINER`
+- `METADATA_QA`
+- `CONTINUE_WATCHING`
+- `MOOD_SURPRISE`
+- `EXTERNAL_KNOWLEDGE`
+- `GENERAL_CHAT`
+
+When adding a new assistant capability:
+
+- First ask whether it is a parser concern, a typed action concern, a skill concern, or a UI concern.
+- If it can be answered from structured local data, prefer a direct skill answer over a model call.
+- If it needs model phrasing, still select a skill first and pass explicit task instructions into `SmartChatEngine`.
+
+### Recommendation Flow
+
+Recommendation handling is no longer “generic chat with a long prompt.” The intended flow is:
+
+1. `MediaSkillRegistry` selects `WATCH_RECOMMENDER` or `MOOD_SURPRISE`
+2. `RecommendationPlanner` extracts filters and follow-up context
+3. Candidate items are pulled from:
+   - `repository.getSuggestions()`
+   - `repository.getResumeItems()`
+   - `repository.getFavoriteItems()`
+   - prior `RecommendationContext`
+4. The planner ranks candidates using:
+   - media type filters
+   - runtime / “under N minutes”
+   - comedy / new / English audio
+   - anime avoidance
+   - comfort / late-night / surprise heuristics
+   - overlap with current media genres / prior recommendation seed items
+5. XR displays the results in the interactive recommendation panel
+
+### Interactive Recommendation Panel
+
+The XR recommendation/search dialog in `SpatialPlayerScreen` is the canonical UI for actionable AI results. It is not just a text dump.
+
+Each result card can expose:
+
+- `Play`
+- `Trailer`
+- `More Like This`
+- `Save`
+
+Guidelines:
+
+- Reuse the existing dialog and `PlayerSessionController` pending-selection flow when possible.
+- “More Like This” should create a new `RecommendationContext` seeded from the selected item rather than inventing a prompt-only variant.
+- “Save” should go through `JellyfinRepository.markAsFavorite` / `unmarkAsFavorite` and update the in-memory result list so the dialog reflects the new state immediately.
+- Prefer poster or show-primary imagery from `SpatialFinImages` for result cards.
+
+### External Knowledge Skill
+
+External lookup is currently implemented as a skill, not as a parser feature.
+
+- Primary media data source: TMDB via `data/src/main/java/dev/jdtech/jellyfin/api/TmdbApi.kt`
+- Secondary general summary source: Wikipedia via `WikipediaSummaryClient`
+- Credentials must come from app preferences (`tmdbApiKey`), never from prompt text
+- The skill should degrade gracefully when:
+  - TMDB key is missing
+  - network is unavailable
+  - no confident title/person match is found
+
+Use external knowledge for:
+
+- title lookups
+- actor / director summaries
+- richer answers than local metadata alone can provide
+
+Do not use it for:
+
+- core playback control
+- library search
+- recommendation ranking
+
+### Home vs Player Differences
+
+- `SpatialPlayerScreen` owns the richest voice UI: interactive result dialog, recommendation cards, subtitles, and playback-aware context.
+- `UnifiedMainActivity` home mode shares the parser and chat engine, but remains text-first today.
+- `ChatQuery` must be supported in both places. Never assume player-only handling.
+- `RecommendationContext` and short conversation history must be preserved across follow-up voice turns in both home and player paths.
+
+## Debugging Voice / AI
+
+### Fast Verification Commands
+
+Use these first after any voice or AI change:
+
+```bash
+./gradlew :player:xr:testDebugUnitTest
+./gradlew :player:xr:compileDebugKotlin
+./gradlew :app:unified:compileLibreDebugKotlin -Pksp.incremental=false
+```
+
+Notes:
+
+- The unified compile may need `-Pksp.incremental=false` when KSP incremental state is stale.
+- `:player:xr:testDebugUnitTest` is the cheapest regression check for recommendation and parser behavior.
+
+### Where To Look In Logs
+
+User logs are typically written under `Downloads/SpatialFin/`.
+
+High-signal log categories:
+
+- `SpatialVoiceService`
+  - recognizer availability
+  - soft speech errors
+  - retry behavior
+- `SpatialCommandCoordinator`
+  - parser strategy
+  - keyword vs model fallback behavior
+- `GemmaCommandParser`
+  - raw JSON response
+  - malformed / truncated output
+- `LlmChatModelHelper`
+  - backend choice
+  - NPU/GPU initialization failures
+  - profile (`COMMAND` vs `CHAT`)
+- `VoiceTelemetryStore`
+  - recent stored attempts and retry markers
+
+### Failure Triage Checklist
+
+When “nothing happens,” isolate the failure in this order:
+
+1. **Speech layer**
+   - Did recognition start?
+   - Are there soft errors `5` or `7`?
+   - Did retry happen?
+2. **Parser layer**
+   - Was transcript normalized?
+   - Did keyword/replay library match?
+   - Did Gemma/Gemini return malformed JSON?
+3. **Skill layer**
+   - Which `selectedSkill` was chosen?
+   - Was `validatedInput` sensible?
+   - Was the reply `DIRECT`, `MODEL`, or `FALLBACK`?
+4. **Execution / UI layer**
+   - Was `ChatQuery` actually handled on the current screen?
+   - Did `recommendedItems` populate?
+   - Did the dialog/overlay show feedback?
+
+### Common Real Failure Patterns
+
+- **`TF_LITE_AUX not found in the model`**
+  - NPU backend unsupported for that model/device combination
+  - GPU fallback is expected
+  - This should be cached so future startups skip the failing backend
+- **`GemmaCommandParser: raw response: {"`**
+  - usually truncated JSON
+  - command parsing should retry with stricter instructions before falling through
+- **Speech soft errors `5` / `7`**
+  - transient recognizer problems
+  - one automatic retry is expected
+- **User asks for recommendations and only sees “Thinking...”**
+  - often not a parser problem
+  - check that `ChatQuery` is actually handled on that screen and that feedback / results UI is rendered
+
+### Telemetry Expectations
+
+Assistant telemetry is no longer just transcript + parser strategy.
+
+For assistant replies, record:
+
+- `transcript`
+- `normalizedTranscript`
+- `action`
+- `strategy`
+- `selectedSkill`
+- `validatedInput`
+- `resultDisposition`
+- `success`
+- `details`
+
+`resultDisposition` should clearly distinguish:
+
+- `DIRECT`
+- `MODEL`
+- `FALLBACK`
+
+This is critical for answering “did the parser fail, did the skill fail, or did the model fail?”
+
+## Voice / AI Development Rules
+
+### Prefer Structured Layers Over Prompt Hacks
+
+Before changing prompts, check whether the request belongs in:
+
+- `SpatialCommandCoordinator` for command parsing
+- `XrPlayerAction` for a new typed action
+- `MediaSkillRegistry` for a new assistant capability
+- `PlayerSessionController` or `SpatialPlayerScreen` for an actionable UI flow
+
+### Keep Recommendation Follow-Ups Stateful
+
+Queries like:
+
+- “shorter”
+- “movie only”
+- “more like the second one”
+- “with English audio”
+
+depend on prior `RecommendationContext`. If that state is dropped, the feature will appear flaky even if parsing succeeds.
+
+### Prefer Direct Answers For Structured Facts
+
+If the answer is already in `PlayerStateSnapshot`, repository data, or TMDB/Wikipedia structured output, return a direct skill answer and skip the model.
+
+Good examples:
+
+- directors / writers / ratings
+- continue watching
+- local library search
+- external title summary
+
+### Preserve UX Feedback
+
+For any new voice feature, ensure all of these are still true:
+
+- overlay shows listening / processing / answered / error states
+- `Thinking...` is replaced by a result or failure message
+- follow-up windows are not broken by TTS or gesture state
+- home and player behavior are both considered explicitly
 
 ## Stability & Performance Mandates
 

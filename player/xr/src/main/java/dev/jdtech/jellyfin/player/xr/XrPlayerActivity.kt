@@ -29,6 +29,7 @@ import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateSuccess
 import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -131,6 +132,7 @@ class XrPlayerActivity : AppCompatActivity() {
     @OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        recordLaunchPhase("onCreate:start")
 
         // Enable wide color gamut for HDR support
         window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
@@ -164,7 +166,9 @@ class XrPlayerActivity : AppCompatActivity() {
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
         currentStereoMode = extras.getString("stereoMode") ?: "mono"
         val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
+        recordLaunchPhase("onCreate:inputs-validated")
 
+        recordLaunchPhase("onCreate:before-viewmodel-preferences")
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
         val libassFontLoader = itemId?.let { buildLibassFontLoader(it, maxBitrate) }
@@ -174,6 +178,7 @@ class XrPlayerActivity : AppCompatActivity() {
             LibassRenderer.isAvailable(),
             currentStereoMode,
         )
+        recordLaunchPhase("onCreate:subtitle-prefs-ready")
 
         if (!stereoPlayback) {
             libassRenderer =
@@ -246,28 +251,40 @@ class XrPlayerActivity : AppCompatActivity() {
             .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc))
             .build()
         
+        Timber.d("XrPlayer: step 1 — calling replacePlayer (libassRenderer=%b)", libassRenderer != null)
         viewModel.replacePlayer(player)
+        Timber.d("XrPlayer: step 2 — replacePlayer done")
+        recordLaunchPhase("onCreate:player-replaced")
 
         // Initialize XR Session
+        Timber.d("XrPlayer: step 3 — calling Session.create")
         try {
             val result = Session.create(this)
+            Timber.d("XrPlayer: step 4 — Session.create returned %s", result?.javaClass?.simpleName)
             if (result is SessionCreateSuccess) {
                 xrSession = result.session
-                
+                recordLaunchPhase("onCreate:session-created")
+
                 // Request full space mode for 3D support and immersive playback
                 try {
                     val capabilities = xrSession?.scene?.spatialCapabilities
                     if (capabilities?.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_3D_CONTENT) == true) {
                         xrSession?.scene?.requestFullSpaceMode()
                     }
+                    Timber.d("XrPlayer: step 5 — full space mode requested")
                 } catch (e: Exception) {
-                    Timber.w(e, "Failed to request full space mode")
+                    Timber.w(e, "XrPlayer: step 5 FAILED — full space mode request failed")
                 }
+            } else {
+                recordLaunchPhase("onCreate:session-unavailable")
+                Timber.w("XrPlayer: step 4 — Session.create returned non-success: %s", result)
             }
         } catch (e: Exception) {
-            Timber.w(e, "XR session not available")
+            Timber.e(e, "XrPlayer: step 3 FAILED — Session.create threw exception")
         }
 
+        Timber.d("XrPlayer: step 6 — calling setContent")
+        recordLaunchPhase("onCreate:setContent")
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val session = xrSession
@@ -349,6 +366,11 @@ class XrPlayerActivity : AppCompatActivity() {
         super.onDestroy()
         xrSession = null
         libassRenderer?.destroy()
+        PlayerLaunchBreadcrumbs.clear(this)
+    }
+
+    private fun recordLaunchPhase(phase: String) {
+        PlayerLaunchBreadcrumbs.markPending(this, "XrPlayerActivity:$phase")
     }
 
     private fun buildLibassFontLoader(

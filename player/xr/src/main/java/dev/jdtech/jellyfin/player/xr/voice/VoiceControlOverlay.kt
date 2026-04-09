@@ -32,11 +32,25 @@ import dev.jdtech.jellyfin.core.R as CoreR
 fun VoiceControlOverlay(
     state: VoiceState,
     partialTranscript: String,
+    feedbackText: String? = null,
     gestureArmingProgress: Float = 0f,
     gestureHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
-    val isVisible = state == VoiceState.LISTENING || gestureHint != null
+    val isVisible =
+        state == VoiceState.LISTENING ||
+            state == VoiceState.PROCESSING ||
+            state == VoiceState.ERROR ||
+            gestureHint != null ||
+            !feedbackText.isNullOrBlank()
+    val accentColor =
+        when {
+            state == VoiceState.LISTENING -> Color(0xFF4FC3F7)
+            state == VoiceState.PROCESSING -> Color(0xFFFFB74D)
+            state == VoiceState.ERROR -> Color(0xFFEF5350)
+            !feedbackText.isNullOrBlank() -> Color(0xFF66BB6A)
+            else -> Color(0xFF5E7486)
+        }
     
     if (isVisible) {
         Orbiter(
@@ -51,7 +65,7 @@ fun VoiceControlOverlay(
                 // Microphone icon
                 Surface(
                     shape = CircleShape,
-                    color = if (state == VoiceState.LISTENING) Color(0xFF4FC3F7) else Color(0xFF5E7486),
+                    color = accentColor,
                     tonalElevation = 8.dp,
                     modifier = Modifier.size(80.dp)
                 ) {
@@ -69,6 +83,9 @@ fun VoiceControlOverlay(
                 val textToShow = when {
                     state == VoiceState.LISTENING && partialTranscript.isNotEmpty() -> partialTranscript
                     state == VoiceState.LISTENING -> "Listening..."
+                    !feedbackText.isNullOrBlank() -> feedbackText
+                    state == VoiceState.PROCESSING -> "Thinking..."
+                    state == VoiceState.ERROR -> "Couldn't hear that. Try again."
                     gestureHint != null && gestureArmingProgress > 0f ->
                         "$gestureHint ${(gestureArmingProgress * 100).toInt()}%"
                     gestureHint != null -> gestureHint
@@ -83,7 +100,7 @@ fun VoiceControlOverlay(
                     textToShow?.let { text ->
                         Surface(
                             shape = RoundedCornerShape(24.dp),
-                            color = Color.Black.copy(alpha = 0.85f),
+                            color = accentColor.copy(alpha = 0.22f),
                             modifier = Modifier.padding(top = 12.dp)
                         ) {
                             Text(

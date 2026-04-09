@@ -48,7 +48,11 @@
    <string name="welcome_ai_body">SpatialFin can use on-device AI when available. If it is unavailable on this device, you can optionally add a Gemini API key for cloud fallback.</string>
    <string name="welcome_ai_checking">Checking local AI availability…</string>
    <string name="welcome_ai_ready_title">Local AI is ready</string>
-   <string name="welcome_ai_available">Local AI appears to be available on this device. You can add a cloud API key later if you want a fallback.</string>
+   <string name="welcome_ai_available">SpatialFin has detected that this device supports on-device AI. You can choose to download the LiteRT Gemma model now (approx 2.6GB), or skip this and enable it later in Settings.</string>
+   <string name="welcome_gemma_enable">Download Gemma (Recommended)</string>
+   <string name="welcome_gemma_enable_desc">High quality, fully private, on-device voice AI.</string>
+   <string name="welcome_gemma_disable">Skip for now</string>
+   <string name="welcome_gemma_disable_desc">You can download the model later in Settings.</string>
    <string name="welcome_ai_unavailable">Local AI does not appear to be available right now. You can continue without it or add a Gemini API key now for cloud fallback.</string>
    <string name="welcome_ai_add_key">Add API key now</string>
    <string name="welcome_ai_add_key_body">Use a Gemini API key so SpatialFin still has AI features when on-device AI is unavailable on this headset.</string>

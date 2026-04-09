@@ -98,6 +98,9 @@ fun WelcomeScreen(
     var wantsApiKey by rememberSaveable {
         mutableStateOf(!appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank())
     }
+    var wantsGemma by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled))
+    }
     var cloudApiKey by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
     }
@@ -117,10 +120,9 @@ fun WelcomeScreen(
         if (companionState is CompanionState.Success) {
             val importedApiKey =
                 appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
-            if (importedApiKey.isNotBlank()) {
-                wantsApiKey = true
-                cloudApiKey = importedApiKey
-            }
+            wantsApiKey = importedApiKey.isNotBlank()
+            cloudApiKey = importedApiKey
+            wantsGemma = appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
         }
     }
 
@@ -143,6 +145,7 @@ fun WelcomeScreen(
                 appPreferences.voiceAssistantCloudApiKey,
                 if (wantsApiKey) cloudApiKey.trim().takeIf { it.isNotEmpty() } else null,
             )
+            appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, wantsGemma)
         }
 
         appPreferences.setValue(appPreferences.onboardingCompleted, true)
@@ -195,6 +198,8 @@ fun WelcomeScreen(
         onEditLanguages = { showLanguageDialog = true },
         aiStatus = aiStatus,
         aiStatusLoading = aiStatusLoading,
+        wantsGemma = wantsGemma,
+        onWantsGemmaChange = { wantsGemma = it },
         wantsApiKey = wantsApiKey,
         onWantsApiKeyChange = { wantsApiKey = it },
         cloudApiKey = cloudApiKey,
@@ -220,6 +225,8 @@ private fun WelcomeScreenLayout(
     onEditLanguages: () -> Unit,
     aiStatus: GeminiNanoStatus?,
     aiStatusLoading: Boolean,
+    wantsGemma: Boolean,
+    onWantsGemmaChange: (Boolean) -> Unit,
     wantsApiKey: Boolean,
     onWantsApiKeyChange: (Boolean) -> Unit,
     cloudApiKey: String,
@@ -268,13 +275,6 @@ private fun WelcomeScreenLayout(
                 Modifier.align(Alignment.Center)
                     .widthIn(max = 920.dp),
         ) {
-            Image(
-                painter = painterResource(id = CoreR.drawable.ic_banner),
-                contentDescription = null,
-                modifier = Modifier.width(220.dp),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.extraLarge,
@@ -291,21 +291,28 @@ private fun WelcomeScreenLayout(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = stringResource(SetupR.string.welcome),
-                                style = MaterialTheme.typography.headlineSmall,
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Image(
+                                painter = painterResource(id = CoreR.drawable.ic_launcher_foreground),
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp)
                             )
-                            Text(
-                                text =
-                                    stringResource(
-                                        SetupR.string.welcome_step_counter,
-                                        currentStepIndex + 1,
-                                        totalSteps,
-                                    ),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.secondary,
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = stringResource(SetupR.string.welcome),
+                                    style = MaterialTheme.typography.titleLarge,
+                                )
+                                Text(
+                                    text =
+                                        stringResource(
+                                            SetupR.string.welcome_step_counter,
+                                            currentStepIndex + 1,
+                                            totalSteps,
+                                        ),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                )
+                            }
                         }
                         TextButton(onClick = onSkipSetupClick) {
                             Text(stringResource(SetupR.string.welcome_btn_skip_all))
@@ -327,11 +334,11 @@ private fun WelcomeScreenLayout(
                         ) {
                             Text(
                                 text = stepTitle,
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.titleLarge,
                             )
                             Text(
                                 text = stepBody,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -364,6 +371,8 @@ private fun WelcomeScreenLayout(
                             AiStep(
                                 aiStatus = aiStatus,
                                 aiStatusLoading = aiStatusLoading,
+                                wantsGemma = wantsGemma,
+                                onWantsGemmaChange = onWantsGemmaChange,
                                 wantsApiKey = wantsApiKey,
                                 onWantsApiKeyChange = onWantsApiKeyChange,
                                 cloudApiKey = cloudApiKey,
@@ -391,11 +400,11 @@ private fun WelcomeScreenLayout(
 
                         Button(
                             onClick = onNextClick,
-                            modifier = Modifier.defaultMinSize(minHeight = 60.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                         ) {
                             Text(
                                 text = primaryActionText,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleSmall,
                             )
                         }
                     }
@@ -584,7 +593,7 @@ private fun LanguagesStep(
 
                 OutlinedButton(
                     onClick = onEditLanguages,
-                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 60.dp),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                 ) {
                     Text(stringResource(SetupR.string.welcome_languages_edit))
                 }
@@ -603,6 +612,8 @@ private fun LanguagesStep(
 private fun AiStep(
     aiStatus: GeminiNanoStatus?,
     aiStatusLoading: Boolean,
+    wantsGemma: Boolean,
+    onWantsGemmaChange: (Boolean) -> Unit,
     wantsApiKey: Boolean,
     onWantsApiKeyChange: (Boolean) -> Unit,
     cloudApiKey: String,
@@ -654,6 +665,19 @@ private fun AiStep(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+                StepChoiceCard(
+                    title = stringResource(SetupR.string.welcome_gemma_enable),
+                    body = stringResource(SetupR.string.welcome_gemma_enable_desc),
+                    selected = wantsGemma,
+                    onClick = { onWantsGemmaChange(true) },
+                )
+                StepChoiceCard(
+                    title = stringResource(SetupR.string.welcome_gemma_disable),
+                    body = stringResource(SetupR.string.welcome_gemma_disable_desc),
+                    selected = !wantsGemma,
+                    onClick = { onWantsGemmaChange(false) },
+                )
             }
             else -> {
                 StepChoiceCard(
@@ -722,7 +746,7 @@ private fun AiStep(
                             }
                             OutlinedButton(
                                 onClick = onOpenAiStudioClick,
-                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp),
+                                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
                             ) {
                                 Text(stringResource(SettingsR.string.voice_cloud_api_key_get_one))
                             }
@@ -834,7 +858,9 @@ private fun WelcomeScreenLayoutPreview() {
             onEditLanguages = {},
             aiStatus = null,
             aiStatusLoading = false,
-            wantsApiKey = false,
+            wantsGemma = true,
+        onWantsGemmaChange = {},
+        wantsApiKey = false,
             onWantsApiKeyChange = {},
             cloudApiKey = "",
             onCloudApiKeyChange = {},

@@ -15,8 +15,10 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
+import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.CompanionLogUploader
@@ -32,9 +34,7 @@ import timber.log.Timber
 class UnifiedApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var workerFactory: HiltWorkerFactory
-    // Injected to trigger eager singleton creation so the LLM engine starts
-    // initializing as soon as the app launches (not only when the player opens).
-    @Inject lateinit var llmModelManager: LlmModelManager
+    @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -67,6 +67,8 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         updateLogFileTree(enabled = appPreferences.getValue(appPreferences.loggingEnabled))
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         applyNightMode()
+        reportPendingPlayerLaunch()
+        eagerInitializeLlmIfNeeded()
     }
 
     private fun applyNightMode() {
@@ -127,6 +129,21 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         } catch (e: Exception) {
             Timber.e(e, "LogFileTree: failed to open log file")
         }
+    }
+
+    private fun reportPendingPlayerLaunch() {
+        PlayerLaunchBreadcrumbs.consumePending(this)?.let { breadcrumb ->
+            Timber.w("Previous immersive player launch ended unexpectedly: %s", breadcrumb)
+        }
+    }
+
+    private fun eagerInitializeLlmIfNeeded() {
+        if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
+        if (deviceClass == DeviceClass.XR) {
+            Timber.i("LlmModelManager: deferring engine initialization on XR until voice AI is used")
+            return
+        }
+        llmModelManager.get()
     }
 
     private fun uninstallLogFileTree() {

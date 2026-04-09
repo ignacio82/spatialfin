@@ -30,8 +30,19 @@ class PlayerSessionController(
     private val getAvailableSyncPlayGroups: () -> List<SyncPlayGroup>,
     private val setPassthroughEnabled: (Boolean) -> Unit,
     private val getPassthroughEnabled: () -> Boolean,
+    private val onAdjustScale: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
+    private val onAdjustDistance: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
 ) {
     private var pendingSelection: PendingSelection? = null
+
+    fun showRecommendations(query: String, results: List<SpatialFinItem>) {
+        onShowVoiceSearch(query, results, null)
+        val playableResults = results.filter(::canPlayFromVoiceSearch)
+        pendingSelection =
+            playableResults.takeIf { it.isNotEmpty() }?.let {
+                PendingSelection.SearchResults(query = query, results = it)
+            }
+    }
 
     suspend fun dispatch(action: XrPlayerAction): String {
         Timber.d("VOICE: Dispatching %s", action)
@@ -91,27 +102,40 @@ class PlayerSessionController(
             }
             is XrPlayerAction.SetQuality -> updateQuality(action.maxBitrate)
             is XrPlayerAction.SelectAudioTrack -> {
-                dispatchTrackSelection(
+                val feedback = dispatchTrackSelection(
                     trackType = C.TRACK_TYPE_AUDIO,
                     language = action.language,
                     directIndex = action.index,
                     successPrefix = "Audio",
                     failureText = "Audio track not found",
                 )
+                if (action.secondaryAction != null) {
+                    val secondaryFeedback = dispatch(action.secondaryAction)
+                    "$feedback. $secondaryFeedback"
+                } else {
+                    feedback
+                }
             }
             is XrPlayerAction.SelectSubtitleTrack -> {
-                dispatchTrackSelection(
+                val feedback = dispatchTrackSelection(
                     trackType = C.TRACK_TYPE_TEXT,
                     language = action.language,
                     directIndex = action.index,
                     successPrefix = "Subtitles",
                     failureText = "Subtitle track not found",
                 )
+                if (action.secondaryAction != null) {
+                    val secondaryFeedback = dispatch(action.secondaryAction)
+                    "$feedback. $secondaryFeedback"
+                } else {
+                    feedback
+                }
             }
             is XrPlayerAction.DisableSubtitles -> {
                 viewModel.switchToTrack(C.TRACK_TYPE_TEXT, -1)
                 "Subtitles off"
             }
+            is XrPlayerAction.ResolveDisambiguation -> handleDisambiguation(action.query, action.originalTranscript)
             is XrPlayerAction.Search -> handleSearch(action.query, action.autoPlay)
             is XrPlayerAction.SelectOption -> handleSelection(action.index)
             is XrPlayerAction.OpenSyncPlay -> {
@@ -148,6 +172,18 @@ class PlayerSessionController(
                 } else {
                     "Volume unchanged"
                 }
+            }
+            is XrPlayerAction.AdjustScale -> {
+                onAdjustScale(action.delta, action.reset)
+                if (action.reset) "Resetting screen size"
+                else if (action.delta != null && action.delta > 0) "Making screen bigger"
+                else "Making screen smaller"
+            }
+            is XrPlayerAction.AdjustDistance -> {
+                onAdjustDistance(action.delta, action.reset)
+                if (action.reset) "Resetting screen distance"
+                else if (action.delta != null && action.delta > 0) "Moving screen further"
+                else "Moving screen closer"
             }
             is XrPlayerAction.GoHome -> {
                 if (onGoHome()) "Returning to home" else "Home unavailable"
@@ -275,6 +311,43 @@ class PlayerSessionController(
         return "I found ${groups.size} SyncPlay groups. Say join the first one or choose from the dialog."
     }
 
+    private suspend fun handleDisambiguation(query: String, originalTranscript: String): String {
+        val currentItemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
+        if (currentItemId == null) {
+            return handleSearch(query, autoPlay = true)
+        }
+
+        val sources = viewModel.repository.getMediaSources(currentItemId)
+        if (sources.size <= 1) {
+            return "There's only one version of this media available."
+        }
+
+        val normalized = originalTranscript.lowercase()
+        val is3D = normalized.contains("3d") || normalized.contains("spatial") || normalized.contains("stereo")
+        val isSmaller = normalized.contains("smaller") || normalized.contains("small") || normalized.contains("low") || normalized.contains("flight")
+
+        val selectedSource = when {
+            is3D -> sources.firstOrNull { it.name.contains("3D", ignoreCase = true) || it.name.contains("SBS", ignoreCase = true) || it.name.contains("TAB", ignoreCase = true) }
+            isSmaller -> sources.minByOrNull { it.size ?: Long.MAX_VALUE }
+            else -> null
+        }
+
+        if (selectedSource != null) {
+            val itemKind = viewModel.uiState.value.currentItemKind ?: return "Unable to switch versions right now"
+            val index = sources.indexOf(selectedSource)
+            viewModel.initializePlayer(
+                itemId = currentItemId,
+                itemKind = itemKind,
+                startFromBeginning = false,
+                mediaSourceIndex = index,
+            )
+            return "Switching to ${selectedSource.name}"
+        }
+
+        pendingSelection = PendingSelection.AmbiguousVersions(currentItemId, sources)
+        return "I found ${sources.size} versions. Say play the first one or pick from the list."
+    }
+
     private fun handleSelection(index: Int): String {
         val pending = pendingSelection ?: return "There's nothing to choose from right now"
         return when (pending) {
@@ -292,6 +365,19 @@ class PlayerSessionController(
                 onShowSyncPlayDialog()
                 viewModel.joinSyncPlayGroup(group.id)
                 "Joining ${group.name}"
+            }
+            is PendingSelection.AmbiguousVersions -> {
+                val source = pending.sources.getOrNull(index)
+                    ?: return invalidSelectionFeedback(index, pending.sources.size)
+                val itemKind = viewModel.uiState.value.currentItemKind ?: return "Unable to switch versions right now"
+                pendingSelection = null
+                viewModel.initializePlayer(
+                    itemId = pending.itemId,
+                    itemKind = itemKind,
+                    startFromBeginning = false,
+                    mediaSourceIndex = index,
+                )
+                "Switching to ${source.name}"
             }
         }
     }
@@ -521,5 +607,7 @@ class PlayerSessionController(
         data class SearchResults(val query: String, val results: List<SpatialFinItem>) : PendingSelection
 
         data class SyncPlayGroups(val groups: List<SyncPlayGroup>) : PendingSelection
+
+        data class AmbiguousVersions(val itemId: UUID, val sources: List<dev.jdtech.jellyfin.models.SpatialFinSource>) : PendingSelection
     }
 }

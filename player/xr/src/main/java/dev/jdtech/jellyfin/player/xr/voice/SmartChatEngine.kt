@@ -2,27 +2,18 @@ package dev.jdtech.jellyfin.player.xr.voice
 
 import android.graphics.Bitmap
 import dev.jdtech.jellyfin.core.llm.LlmChatModelHelper
+import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
 import dev.jdtech.jellyfin.core.llm.LlmModelInstance
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-
-private val RECOMMENDATION_KEYWORDS = listOf(
-    "similar", "recommend", "suggestion", "what else", "what should i watch",
-    "watch after", "watch next", "anything else", "like this", "other movies",
-    "other shows", "what other", "something similar", "more like",
-)
-
-private fun isRecommendationQuery(question: String): Boolean {
-    val q = question.lowercase()
-    return RECOMMENDATION_KEYWORDS.any { q.contains(it) }
-}
 
 data class AssistantPreferences(
     val verbosity: String = "balanced",
@@ -34,16 +25,22 @@ data class AssistantReply(
     val text: String?,
     val strategy: String,
     val debugInfo: String,
+    val recommendedItems: List<SpatialFinItem> = emptyList(),
+    val selectedSkill: String = MediaSkillId.GENERAL_CHAT.name,
+    val validatedInput: String = "",
+    val resultDisposition: String = "MODEL",
 )
 
 class SmartChatEngine(
     private val geminiNanoService: GeminiNanoService,
     private val geminiCloudService: GeminiCloudService,
     private val appPreferences: AppPreferences,
-    private val modelManager: LlmModelManager,
+    val modelManager: LlmModelManager,
+    private val repository: JellyfinRepository,
 ) {
     private val llmInstance: LlmModelInstance?
         get() = modelManager.instance
+    private val mediaSkillRegistry = MediaSkillRegistry(repository, appPreferences)
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         if (shouldUseGemma()) {
@@ -66,25 +63,49 @@ class SmartChatEngine(
         onSearchQuery: (suspend (String) -> List<SpatialFinItem>)? = null,
         conversationHistory: List<Pair<String, String>> = emptyList(),
         onGetSuggestions: (suspend () -> List<SpatialFinItem>)? = null,
-        visualContext: Bitmap? = null,
+        recommendationContext: RecommendationContext? = null,
+        visualContexts: List<Bitmap> = emptyList(),
+        lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
-        // Fast-path: answer unambiguous factual lookups without any model call
-        confidenceGatedAnswer(question, playerState)?.let { answer ->
-            return@withContext AssistantReply(text = answer, strategy = "CONFIDENCE_GATE", debugInfo = "fast-path")
+        val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs)
+        val plan =
+            mediaSkillRegistry.plan(
+                question = question,
+                playerState = playerState,
+                storySoFarContext = storySoFarContext,
+                subtitleContext = subtitleContext,
+                recommendationContext = recommendationContext,
+                onSearchQuery = onSearchQuery,
+                onGetSuggestions = onGetSuggestions,
+                hasVisualContext = visualContexts.isNotEmpty(),
+            )
+        val recommendedItems = plan.actionableItems
+
+        if (plan.directAnswer != null && plan.shouldSkipModel) {
+            return@withContext AssistantReply(
+                text = plan.directAnswer,
+                strategy = "SKILL_DIRECT",
+                debugInfo = plan.debugInfo,
+                recommendedItems = recommendedItems,
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "DIRECT",
+            )
         }
 
-        val relatedItemsContext: String? = if (isRecommendationQuery(question) && onGetSuggestions != null) {
-            runCatching { onGetSuggestions() }
-                .onFailure { Timber.w(it, "GEMINI: failed to fetch suggestions") }
-                .getOrNull()
-                ?.take(6)
-                ?.joinToString("\n") { "- ${it.name}: ${it.overview.take(120)}" }
-                ?.takeIf { it.isNotBlank() }
-        } else null
+        val fallbackText =
+            plan.fallbackText
+                ?: fallbackAnswer(
+                    question = question,
+                    playerState = playerState,
+                    storySoFarContext = storySoFarContext,
+                    subtitleContext = subtitleContext,
+                    recommendedItems = recommendedItems,
+                )
 
-        val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs)
-
-        val prompt =
+        val prompt = if (plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION) {
+            buildCharacterIdentificationPrompt(playerState, plan.taskInstructions)
+        } else {
             buildPrompt(
                 question = question,
                 playerState = playerState,
@@ -92,8 +113,11 @@ class SmartChatEngine(
                 subtitleContext = subtitleContext,
                 assistantPreferences = assistantPreferences,
                 conversationHistory = conversationHistory,
-                relatedItemsContext = relatedItemsContext,
+                relatedItemsContext = plan.relatedItemsContext,
+                taskInstructions = plan.taskInstructions,
+                lastPointerPosition = lastPointerPosition,
             )
+        }
 
         val gemmaEnabled = shouldUseGemma()
 
@@ -105,8 +129,12 @@ class SmartChatEngine(
             try {
                 val responseText = suspendCoroutine<String> { continuation ->
                     val sb = StringBuilder()
-                    val images = if (visualContext != null) listOf(visualContext) else emptyList()
-                    LlmChatModelHelper.runInference(llmInstance!!, prompt, images) { text, isDone ->
+                    LlmChatModelHelper.runInference(
+                        instance = llmInstance!!,
+                        prompt = prompt,
+                        images = visualContexts,
+                        profile = LlmInferenceProfile.CHAT,
+                    ) { text, isDone ->
                         if (isDone) {
                             continuation.resume(sb.toString())
                         } else {
@@ -121,10 +149,18 @@ class SmartChatEngine(
                     } else {
                         responseText
                     }
+                    val finalText =
+                        cleanedResponse.trim()
+                            .ifBlank { fallbackText ?: "" }
+                            .takeIf { it.isNotBlank() }
                     return@withContext AssistantReply(
-                        text = cleanedResponse.trim(),
+                        text = finalText,
                         strategy = "GEMMA_LITERT",
-                        debugInfo = "LiteRT LM Engine"
+                        debugInfo = plan.debugInfo.ifBlank { "LiteRT LM Engine" },
+                        recommendedItems = recommendedItems,
+                        selectedSkill = plan.skillId.name,
+                        validatedInput = plan.validatedInput,
+                        resultDisposition = "MODEL",
                     )
                 }
             } catch (e: Exception) {
@@ -134,26 +170,42 @@ class SmartChatEngine(
 
         if (gemmaEnabled) {
             return@withContext AssistantReply(
-                text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
+                text = fallbackText,
                 strategy = "HEURISTIC",
-                debugInfo = "Gemma enabled; Gemini disabled; using heuristic fallback",
+                debugInfo = "${plan.debugInfo}; Gemma enabled; Gemini disabled; using heuristic fallback",
+                recommendedItems = recommendedItems,
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "FALLBACK",
             )
         }
 
         if (!shouldAttemptGemini()) {
             return@withContext AssistantReply(
-                text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
+                text = fallbackText,
                 strategy = "HEURISTIC",
-                debugInfo = "Gemini disabled: cloud API key missing",
+                debugInfo = "${plan.debugInfo}; Gemini disabled: cloud API key missing",
+                recommendedItems = recommendedItems,
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "FALLBACK",
             )
         }
 
         val result = geminiNanoService.generateText(prompt = prompt, reason = "chat")
         if (result.usedModel && !result.text.isNullOrBlank()) {
+            val finalText =
+                result.text.trim()
+                    .ifBlank { fallbackText ?: "" }
+                    .takeIf { it.isNotBlank() }
             return@withContext AssistantReply(
-                text = result.text.trim(),
+                text = finalText,
                 strategy = "MODEL",
-                debugInfo = result.status.details,
+                debugInfo = "${plan.debugInfo}; ${result.status.details}",
+                recommendedItems = recommendedItems,
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "MODEL",
             )
         }
 
@@ -165,18 +217,30 @@ class SmartChatEngine(
                 maxOutputTokens = 320,
             )
         if (cloudResult.status.usedModel && !cloudResult.text.isNullOrBlank()) {
+            val finalText =
+                cloudResult.text.trim()
+                    .ifBlank { fallbackText ?: "" }
+                    .takeIf { it.isNotBlank() }
             return@withContext AssistantReply(
-                text = cloudResult.text.trim(),
+                text = finalText,
                 strategy = "CLOUD",
-                debugInfo = cloudResult.status.details,
+                debugInfo = "${plan.debugInfo}; ${cloudResult.status.details}",
+                recommendedItems = recommendedItems,
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "MODEL",
             )
         }
 
         Timber.d("GEMINI: chat fallback to heuristic answer details=%s", result.status.details)
         AssistantReply(
-            text = heuristicAnswer(question, playerState, storySoFarContext, subtitleContext),
+            text = fallbackText,
             strategy = "HEURISTIC",
-            debugInfo = "${result.status.details}; ${cloudResult.status.details}",
+            debugInfo = "${plan.debugInfo}; ${result.status.details}; ${cloudResult.status.details}",
+            recommendedItems = recommendedItems,
+            selectedSkill = plan.skillId.name,
+            validatedInput = plan.validatedInput,
+            resultDisposition = "FALLBACK",
         )
     }
 
@@ -185,7 +249,7 @@ class SmartChatEngine(
         // LlmModelManager owns the engine lifecycle; do not close it here.
     }
 
-    private fun shouldUseGemma(): Boolean =
+    fun shouldUseGemma(): Boolean =
         appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
 
     private fun hasGeminiApiKey(): Boolean =
@@ -201,13 +265,27 @@ class SmartChatEngine(
         if (lines.isEmpty()) return ""
         val normalized = question.lowercase()
 
-        // Extract an optional "N minutes ago" offset from the question
+        // Extract time window from the question.
         val minutesAgoMatch = Regex("(\\d+)\\s*minutes?\\s*ago").find(normalized)
+        val lastNMinutesMatch = Regex("last\\s+(\\d+)\\s*minutes?").find(normalized)
+        val lastNSecondsMatch = Regex("last\\s+(\\d+)\\s*seconds?").find(normalized)
+        val lastMinuteMatch = if (lastNMinutesMatch == null) Regex("\\blast\\s+minute\\b").find(normalized) else null
         val targetWindowMs: LongRange = when {
             minutesAgoMatch != null -> {
                 val n = minutesAgoMatch.groupValues[1].toLongOrNull() ?: 2L
                 val center = currentPositionMs - n * 60_000L
                 (center - 30_000L)..(center + 30_000L)
+            }
+            lastNMinutesMatch != null -> {
+                val n = lastNMinutesMatch.groupValues[1].toLongOrNull() ?: 2L
+                (currentPositionMs - n * 60_000L)..currentPositionMs
+            }
+            lastMinuteMatch != null -> {
+                (currentPositionMs - 60_000L)..currentPositionMs
+            }
+            lastNSecondsMatch != null -> {
+                val n = lastNSecondsMatch.groupValues[1].toLongOrNull() ?: 30L
+                (currentPositionMs - n * 1_000L)..currentPositionMs
             }
             normalized.contains("just happened") || normalized.contains("right now") || normalized.contains("what did they just") -> {
                 (currentPositionMs - 30_000L)..currentPositionMs
@@ -257,6 +335,27 @@ class SmartChatEngine(
         return null
     }
 
+    private fun buildCharacterIdentificationPrompt(
+        playerState: PlayerStateSnapshot,
+        taskInstructions: String,
+    ): String {
+        val castBlock = playerState.castWithCharacters.take(12)
+            .joinToString("\n") { (actor, character) -> "Character: $character — Actor: $actor" }
+            .ifBlank { playerState.castNames.take(8).joinToString("\n") { "Actor: $it" } }
+
+        return buildString {
+            appendLine("You are SpatialFin, an on-device XR assistant identifying characters in a video frame.")
+            appendLine(taskInstructions)
+            if (castBlock.isNotBlank()) {
+                appendLine()
+                appendLine("Reference cast:")
+                appendLine(castBlock)
+            }
+            appendLine()
+            append("Analyze the video frame above and respond.")
+        }
+    }
+
     private fun buildPrompt(
         question: String,
         playerState: PlayerStateSnapshot,
@@ -265,6 +364,8 @@ class SmartChatEngine(
         assistantPreferences: AssistantPreferences,
         conversationHistory: List<Pair<String, String>>,
         relatedItemsContext: String?,
+        taskInstructions: String,
+        lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
     ): String {
         val historyBlock = if (conversationHistory.isNotEmpty()) {
             "\nConversation history:\n" + conversationHistory.joinToString("\n") { (u, a) ->
@@ -276,13 +377,16 @@ class SmartChatEngine(
             "\nItems available in library that may be relevant:\n$relatedItemsContext\n"
         } else ""
 
+        val pointerContext = if (lastPointerPosition != null) {
+            "\nUser is currently pointing/looking at coordinates: x=${(lastPointerPosition.x * 100).toInt()}%, y=${(lastPointerPosition.y * 100).toInt()}% of the video screen.\n"
+        } else ""
+
         return """
             You are SpatialFin, an on-device XR media assistant.
-            Answer briefly and directly.
             Respect the spoiler policy: ${assistantPreferences.spoilerPolicy}.
             Verbosity: ${assistantPreferences.verbosity}.
-            If the answer is uncertain, say so plainly.
             Do not invent details not present in the supplied context.
+            $taskInstructions
 
             Current title: ${playerState.currentItemTitle}
             Series: ${playerState.currentSeriesName ?: ""}
@@ -293,7 +397,7 @@ class SmartChatEngine(
             Overview: ${playerState.currentOverview.take(1000)}
             Genres: ${playerState.currentGenres.joinToString(", ")}
             Community ratings: ${playerState.currentRatings.joinToString(", ")}
-            Cast: ${playerState.castNames.take(12).joinToString(", ")}
+            Cast: ${playerState.castNames.joinToString(", ")}
             Directors: ${playerState.directors.joinToString(", ")}
             Writers: ${playerState.writers.joinToString(", ")}
             Current chapter: ${playerState.currentChapterName ?: ""}
@@ -301,10 +405,33 @@ class SmartChatEngine(
             Recent subtitles: ${subtitleContext.takeLast(1200)}
             Audio track: ${playerState.currentAudioTrack ?: ""}
             Subtitle track: ${playerState.currentSubtitleTrack ?: ""}
-            $historyBlock$relatedBlock
+            $historyBlock$relatedBlock$pointerContext
             User question:
             $question
         """.trimIndent()
+    }
+
+    private fun fallbackAnswer(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        storySoFarContext: String?,
+        subtitleContext: String,
+        recommendedItems: List<SpatialFinItem>,
+    ): String? {
+        return heuristicAnswer(question, playerState, storySoFarContext, subtitleContext)
+            ?: recommendationFallback(recommendedItems)
+    }
+
+    private fun recommendationFallback(items: List<SpatialFinItem>): String? {
+        val picks = items.map { it.name.trim() }.filter { it.isNotBlank() }.distinct().take(3)
+        if (picks.isEmpty()) return null
+
+        val titleList = when (picks.size) {
+            1 -> picks.first()
+            2 -> "${picks[0]} or ${picks[1]}"
+            else -> "${picks[0]}, ${picks[1]}, or ${picks[2]}"
+        }
+        return "Based on your library, try $titleList."
     }
 
     private fun heuristicAnswer(
@@ -319,6 +446,19 @@ class SmartChatEngine(
                 .replace(Regex("\\s+"), " ")
                 .trim()
         if (normalized.isBlank()) return null
+
+        val isTimeBasedSummary = (normalized.contains("last minute") || normalized.contains("last few minutes") ||
+            Regex("last\\s+\\d+\\s*minutes?").containsMatchIn(normalized) ||
+            Regex("last\\s+\\d+\\s*seconds?").containsMatchIn(normalized)) ||
+            (normalized.contains("summarize") && (normalized.contains("minute") || normalized.contains("second") ||
+                normalized.contains("scene") || normalized.contains("just now")))
+
+        if (isTimeBasedSummary) {
+            return subtitleContext.takeIf { it.isNotBlank() }
+                ?.let { "Here's what happened recently:\n$it" }
+                ?: storySoFarContext?.takeIf { it.isNotBlank() }
+                ?: "I don't have recent dialogue context for that time window."
+        }
 
         if (
             normalized.contains("plot") ||
@@ -362,7 +502,7 @@ class SmartChatEngine(
                 normalized.contains("actors")
         ) {
             return if (playerState.castNames.isNotEmpty()) {
-                "Cast: ${playerState.castNames.take(5).joinToString(", ")}."
+                "Cast: ${playerState.castNames.joinToString(", ")}."
             } else {
                 "I couldn't find cast metadata for ${playerState.currentItemTitle.ifBlank { "this title" }}."
             }
@@ -403,10 +543,6 @@ class SmartChatEngine(
                 ?: "I don't have enough recent dialogue context to answer that."
         }
 
-        return if (playerState.currentOverview.isNotBlank()) {
-            playerState.currentOverview
-        } else {
-            "I don't have enough metadata to answer that right now."
-        }
+        return null
     }
 }
