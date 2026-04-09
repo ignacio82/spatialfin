@@ -60,7 +60,7 @@ class CompanionViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<CompanionState>(CompanionState.Idle)

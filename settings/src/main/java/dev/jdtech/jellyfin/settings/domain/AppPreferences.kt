@@ -115,11 +115,12 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrPlayerPanelPoseVersion = Preference("pref_xr_player_panel_pose_version", 0)
     val xrAppPanelX = Preference("pref_xr_app_panel_x", 0f)
     val xrAppPanelY = Preference("pref_xr_app_panel_y", 0f)
-    val xrAppPanelZ = Preference("pref_xr_app_panel_z", -3f)
+    val xrAppPanelZ = Preference("pref_xr_app_panel_z", -6f)
     val xrAppPanelRotX = Preference("pref_xr_app_panel_rot_x", 0f)
     val xrAppPanelRotY = Preference("pref_xr_app_panel_rot_y", 0f)
     val xrAppPanelRotZ = Preference("pref_xr_app_panel_rot_z", 0f)
     val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
+    val xrAppPanelPoseVersion = Preference("pref_xr_app_panel_pose_version", 0)
 
     // XR Space Mode
     val xrLaunchMode = Preference("pref_xr_launch_mode", "last_used")

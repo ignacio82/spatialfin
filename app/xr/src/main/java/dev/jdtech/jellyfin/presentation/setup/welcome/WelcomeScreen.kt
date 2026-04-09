@@ -34,14 +34,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.autofill.contentType
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -54,7 +56,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.xr.compose.spatial.SpatialDialog
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
@@ -620,7 +622,8 @@ private fun AiStep(
     onCloudApiKeyChange: (String) -> Unit,
     onOpenAiStudioClick: () -> Unit,
 ) {
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val coroutineScope = rememberCoroutineScope()
     var apiKeyFieldValue by remember(cloudApiKey) {
         mutableStateOf(TextFieldValue(text = cloudApiKey, selection = TextRange(cloudApiKey.length)))
     }
@@ -724,13 +727,16 @@ private fun AiStep(
                             ) {
                                 Button(
                                     onClick = {
-                                        val clip = clipboardManager.getText()?.text.orEmpty()
-                                        apiKeyFieldValue =
-                                            TextFieldValue(
-                                                text = clip,
-                                                selection = TextRange(clip.length),
-                                            )
-                                        onCloudApiKeyChange(clip)
+                                        coroutineScope.launch {
+                                            val clip = clipboard.getClipEntry()
+                                                ?.clipData?.getItemAt(0)?.text?.toString().orEmpty()
+                                            apiKeyFieldValue =
+                                                TextFieldValue(
+                                                    text = clip,
+                                                    selection = TextRange(clip.length),
+                                                )
+                                            onCloudApiKeyChange(clip)
+                                        }
                                     },
                                 ) {
                                     Text(stringResource(CoreR.string.paste))

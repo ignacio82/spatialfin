@@ -106,6 +106,11 @@ class UnifiedMainActivity : AppCompatActivity() {
         private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
         private const val PERMISSIONS_PREFS = "startup_permissions"
         private const val STARTUP_PERMISSIONS_REQUESTED_KEY = "startup_permissions_requested"
+        private const val XR_APP_PANEL_LEGACY_DEPTH_METERS = -5f
+        private const val XR_APP_PANEL_V2_DEPTH_METERS = -6f
+        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -9f
+        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 3
+        private const val XR_APP_PANEL_DEFAULT_POSE_EPSILON = 0.05f
     }
 
     private val deviceClass by lazy { detectDeviceClass() }
@@ -675,6 +680,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             val root = rootEntity.value ?: return@LaunchedEffect
             if (movableComponent.value == null) {
                 val m = MovableComponent.createSystemMovable(session, false)
+                m.size = androidx.xr.runtime.math.FloatSize3d(2.56f, 1.44f, 0.1f)
                 root.addComponent(m)
                 movableComponent.value = m
                 Timber.d("VOICE: Home movable permanently enabled")
@@ -721,8 +727,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                 ) {
                     SpatialPanel(
                         modifier = SubspaceModifier
-                            .width(1800.dp)
-                            .height(1800.dp)
+                            .width(2560.dp)
+                            .height(1440.dp)
                             .offset(x = 0.dp, y = 0.dp, z = 0.dp)
                     ) {
                         Box(
@@ -812,19 +818,30 @@ class UnifiedMainActivity : AppCompatActivity() {
     }
 
     private fun loadAppRootPose(): Pose {
-        return Pose(
-            Vector3(
-                appPreferences.getValue(appPreferences.xrAppPanelX),
-                appPreferences.getValue(appPreferences.xrAppPanelY),
-                appPreferences.getValue(appPreferences.xrAppPanelZ),
-            ),
-            Quaternion(
-                appPreferences.getValue(appPreferences.xrAppPanelRotX),
-                appPreferences.getValue(appPreferences.xrAppPanelRotY),
-                appPreferences.getValue(appPreferences.xrAppPanelRotZ),
-                appPreferences.getValue(appPreferences.xrAppPanelRotW),
-            ),
-        )
+        val poseVersion = appPreferences.getValue(appPreferences.xrAppPanelPoseVersion)
+        if (poseVersion < 1) {
+            return Pose(Vector3(0f, 0f, XR_APP_PANEL_DEFAULT_DEPTH_METERS), Quaternion.Identity)
+        }
+        val savedPose =
+            Pose(
+                Vector3(
+                    appPreferences.getValue(appPreferences.xrAppPanelX),
+                    appPreferences.getValue(appPreferences.xrAppPanelY),
+                    appPreferences.getValue(appPreferences.xrAppPanelZ),
+                ),
+                Quaternion(
+                    appPreferences.getValue(appPreferences.xrAppPanelRotX),
+                    appPreferences.getValue(appPreferences.xrAppPanelRotY),
+                    appPreferences.getValue(appPreferences.xrAppPanelRotZ),
+                    appPreferences.getValue(appPreferences.xrAppPanelRotW),
+                ),
+            )
+        if (poseVersion < XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE) {
+            val migratedPose = migrateLegacyCenteredAppPose(savedPose)
+            saveAppRootPose(migratedPose)
+            return migratedPose
+        }
+        return savedPose
     }
 
     private fun saveAppRootPose(pose: Pose) {
@@ -837,10 +854,37 @@ class UnifiedMainActivity : AppCompatActivity() {
         appPreferences.setValue(appPreferences.xrAppPanelRotY, rotation.y)
         appPreferences.setValue(appPreferences.xrAppPanelRotZ, rotation.z)
         appPreferences.setValue(appPreferences.xrAppPanelRotW, rotation.w)
+        appPreferences.setValue(
+            appPreferences.xrAppPanelPoseVersion,
+            XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE,
+        )
     }
 
     private fun safeGetAppRootPose(entity: GroupEntity): Pose? {
         return runCatching { entity.getPose() }.getOrNull()
+    }
+
+    private fun migrateLegacyCenteredAppPose(pose: Pose): Pose {
+        val translation = pose.translation
+        val rotation = pose.rotation
+        val usesLegacyDefaultPosition =
+            kotlin.math.abs(translation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
+                kotlin.math.abs(translation.y) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
+                (kotlin.math.abs(translation.z - XR_APP_PANEL_LEGACY_DEPTH_METERS) <=
+                    XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
+                    kotlin.math.abs(translation.z - XR_APP_PANEL_V2_DEPTH_METERS) <=
+                        XR_APP_PANEL_DEFAULT_POSE_EPSILON)
+        val usesIdentityRotation =
+            kotlin.math.abs(rotation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
+                kotlin.math.abs(rotation.y) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
+                kotlin.math.abs(rotation.z) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
+                kotlin.math.abs(rotation.w - 1f) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON
+
+        return if (usesLegacyDefaultPosition && usesIdentityRotation) {
+            Pose(Vector3(0f, 0f, XR_APP_PANEL_DEFAULT_DEPTH_METERS), Quaternion.Identity)
+        } else {
+            pose
+        }
     }
 }
 

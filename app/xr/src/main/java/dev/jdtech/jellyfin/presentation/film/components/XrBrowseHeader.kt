@@ -86,6 +86,6 @@ private fun BrowseHeaderButton(
 
 data class BrowseHeaderAction(
     val label: String,
-    @DrawableRes val icon: Int,
+    @param:DrawableRes val icon: Int,
     val onClick: () -> Unit,
 )
