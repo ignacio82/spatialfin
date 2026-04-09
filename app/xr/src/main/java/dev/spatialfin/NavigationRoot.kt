@@ -8,14 +8,17 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ViewInAr
@@ -246,12 +249,22 @@ fun NavigationRoot(
     // Use NavigationRail directly to avoid the broken androidx.xr.compose.material3
     // NavigationSuiteScaffold XR override, which calls Subspace() with an incompatible
     // signature due to a version mismatch between compose.material3:alpha11 and compose:alpha11.
-    Row(
+    //
+    // The SpatialPanel is 2560dp wide. A full-width Row would push the NavigationRail to the
+    // far-left edge (~1280dp left of center), outside the XR FOV. We cap the inner row at
+    // 1920dp and center it so the rail is always within comfortable viewing range.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(androidx.compose.material3.MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
     ) {
-        AnimatedVisibility(visible = showBottomBar) {
+        Row(
+            modifier = Modifier
+                .widthIn(max = 1920.dp)
+                .fillMaxHeight()
+                .align(Alignment.Center)
+        ) {
+            AnimatedVisibility(visible = showBottomBar) {
             NavigationRail(
                 containerColor = androidx.compose.ui.graphics.Color.Transparent
             ) {
@@ -336,12 +349,15 @@ fun NavigationRoot(
                 }
             }
         }
-        NavHost(
-            navController = navController,
-            startDestination = startDestination,
-            enterTransition = { fadeIn(tween(300)) },
-            exitTransition = { fadeOut(tween(300)) },
-        ) {
+            NavHost(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                navController = navController,
+                startDestination = startDestination,
+                enterTransition = { fadeIn(tween(300)) },
+                exitTransition = { fadeOut(tween(300)) },
+            ) {
             composable<WelcomeRoute> {
                 WelcomeScreen(
                     appPreferences = appPreferences,
@@ -677,6 +693,7 @@ fun NavigationRoot(
             }
             composable<AboutRoute> {
                 AboutScreen(navigateBack = { navController.safePopBackStack() })
+            }
             }
         }
     }

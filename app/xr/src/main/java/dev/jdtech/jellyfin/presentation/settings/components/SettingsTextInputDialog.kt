@@ -19,13 +19,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.autofill.contentType
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,7 +49,8 @@ fun SettingsTextInputDialog(
     actionLabel: String? = null,
     onActionClick: (() -> Unit)? = null,
 ) {
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val coroutineScope = rememberCoroutineScope()
     var textFieldValue by remember {
         mutableStateOf(
             TextFieldValue(text = initialValue, selection = TextRange(initialValue.length))
@@ -101,12 +104,15 @@ fun SettingsTextInputDialog(
             ) {
                 Button(
                     onClick = {
-                        val clip = clipboardManager.getText()?.text.orEmpty()
-                        textFieldValue =
-                            TextFieldValue(
-                                text = clip,
-                                selection = TextRange(clip.length),
-                            )
+                        coroutineScope.launch {
+                            val clip = clipboard.getClipEntry()
+                                ?.clipData?.getItemAt(0)?.text?.toString().orEmpty()
+                            textFieldValue =
+                                TextFieldValue(
+                                    text = clip,
+                                    selection = TextRange(clip.length),
+                                )
+                        }
                     },
                 ) {
                     Text(stringResource(CoreR.string.paste))

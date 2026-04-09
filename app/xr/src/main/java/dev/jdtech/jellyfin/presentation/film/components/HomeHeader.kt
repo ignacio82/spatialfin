@@ -8,14 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,6 +33,8 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 
+private val HomeHeaderHeight = 72.dp
+
 @Composable
 fun HomeHeader(
     serverName: String,
@@ -51,12 +51,12 @@ fun HomeHeader(
     val isOfflineMode = LocalOfflineMode.current
 
     Row(
-        modifier = modifier.fillMaxWidth().height(72.dp),
+        modifier = modifier.fillMaxWidth().height(HomeHeaderHeight),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Surface(
             onClick = onServerClick,
-            modifier = Modifier.fillMaxHeight().weight(1f, fill = false),
+            modifier = Modifier.height(HomeHeaderHeight).weight(1f, fill = false),
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
@@ -87,7 +87,7 @@ fun HomeHeader(
             AnimatedVisibility(visible = isError, enter = fadeIn(), exit = fadeOut()) {
                 Surface(
                     onClick = onErrorClick,
-                    modifier = Modifier.fillMaxHeight(),
+                    modifier = Modifier.height(HomeHeaderHeight),
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.errorContainer,
                 ) {
@@ -109,7 +109,7 @@ fun HomeHeader(
             AnimatedVisibility(visible = isLoading || isError, enter = fadeIn(), exit = fadeOut()) {
                 Surface(
                     onClick = onRetryClick,
-                    modifier = Modifier.fillMaxHeight(),
+                    modifier = Modifier.height(HomeHeaderHeight),
                     enabled = !isLoading,
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -141,7 +141,7 @@ fun HomeHeader(
             if (!isOfflineMode) {
                 Surface(
                     onClick = onSearchClick,
-                    modifier = Modifier.fillMaxHeight(),
+                    modifier = Modifier.height(HomeHeaderHeight),
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
@@ -161,7 +161,7 @@ fun HomeHeader(
 
             Surface(
                 onClick = onUserClick,
-                modifier = Modifier.fillMaxHeight(),
+                modifier = Modifier.height(HomeHeaderHeight),
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
@@ -180,7 +180,7 @@ fun HomeHeader(
 
             Surface(
                 onClick = onCloseClick,
-                modifier = Modifier.fillMaxHeight(),
+                modifier = Modifier.height(HomeHeaderHeight),
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
