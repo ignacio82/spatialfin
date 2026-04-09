@@ -241,9 +241,14 @@ fun SpatialPlayerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val syncPlayState by viewModel.syncPlayState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
+    val savedPlayerPose = remember(viewModel) { loadSavedPlayerRootPose(viewModel) }
+    val savedPlayerScale = remember(viewModel) { loadSavedPlayerRootScale(viewModel) }
 
     val videoRootEntity = remember { mutableStateOf<androidx.xr.scenecore.GroupEntity?>(null) }
-    var videoDepth by remember { mutableFloatStateOf(VIDEO_DEPTH_METERS) }
+    var videoDepth by remember(savedPlayerPose) {
+        mutableFloatStateOf(extractVideoDepth(savedPlayerPose))
+    }
+    var videoPanelScale by remember(savedPlayerScale) { mutableFloatStateOf(savedPlayerScale) }
     var lastPointerPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
 
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
@@ -552,16 +557,16 @@ fun SpatialPlayerScreen(
                 setPassthroughEnabled = { enabled -> passthroughOverrideEnabled = enabled },
                 getPassthroughEnabled = { passthroughEnabled },
                 onAdjustScale = { delta, reset ->
-                    val root = videoRootEntity.value
-                    if (root != null) {
-                        runCatching {
-                            if (reset) {
-                                root.setScale(1f)
-                            } else if (delta != null) {
-                                val current = root.getScale()
-                                root.setScale((current + delta).coerceIn(0.2f, 5.0f))
-                            }
+                    val updatedScale =
+                        when {
+                            reset -> 1f
+                            delta != null -> (videoPanelScale + delta).coerceIn(0.2f, 5.0f)
+                            else -> videoPanelScale
                         }
+                    videoPanelScale = updatedScale
+                    savePlayerRootScale(viewModel, updatedScale)
+                    videoRootEntity.value?.let { root ->
+                        runCatching { root.setScale(updatedScale) }
                     }
                 },
                 onAdjustDistance = { delta, reset ->
@@ -902,7 +907,7 @@ fun SpatialPlayerScreen(
 
     // Update root poses when depth changes.
     // This allows the + and - buttons to dynamically adjust the spatial layout.
-    LaunchedEffect(videoDepth, videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
+    LaunchedEffect(videoDepth, videoPanelScale, videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
@@ -930,21 +935,28 @@ fun SpatialPlayerScreen(
         )
 
         videoRoot.setPose(newVideoPose)
+        videoRoot.setScale(videoPanelScale)
         uiRoot.setPose(newUiPose)
+        uiRoot.setScale(videoPanelScale)
         subtitleRoot.setPose(newUiPose)
+        subtitleRoot.setScale(videoPanelScale)
+        lastReportedMovePose.value = newVideoPose
 
         // Persist the new base position.
         savePlayerRootPose(viewModel, newVideoPose)
     }
 
     DisposableEffect(session) {
-        val savedPose = loadSavedPlayerRootPose(viewModel)
+        val savedPose = savedPlayerPose
         val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS))
         try {
             val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose)
             val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose)
             val subtitleRoot = GroupEntity.create(session, "PlayerSubtitleRoot", projectedOverlayPose)
+            videoRoot.setScale(videoPanelScale)
+            uiRoot.setScale(videoPanelScale)
+            subtitleRoot.setScale(videoPanelScale)
             videoRootEntity.value = videoRoot
             uiRootEntity.value = uiRoot
             subtitleRootEntity.value = subtitleRoot
@@ -975,9 +987,17 @@ fun SpatialPlayerScreen(
                     ) {
                         runCatching {
                             videoRoot.setPose(initialPose)
-                            videoRoot.setScale(initialScale)
+                            videoRoot.setScale(videoPanelScale)
                         }
-                        syncProjectedOverlayRoots(initialPose, initialScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        val effectiveVideoDepth = extractVideoDepth(initialPose)
+                        videoDepth = effectiveVideoDepth
+                        syncProjectedOverlayRoots(
+                            initialPose,
+                            videoPanelScale,
+                            uiRoot,
+                            subtitleRoot,
+                            uiDepth / effectiveVideoDepth,
+                        )
                         lastReportedMovePose.value = initialPose
                         Timber.i(
                             "subtitle: move start targetIsVideoRoot=%b targetClass=%s",
@@ -994,9 +1014,17 @@ fun SpatialPlayerScreen(
                     ) {
                         runCatching {
                             videoRoot.setPose(currentPose)
-                            videoRoot.setScale(currentScale)
+                            videoRoot.setScale(videoPanelScale)
                         }
-                        syncProjectedOverlayRoots(currentPose, currentScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        val effectiveVideoDepth = extractVideoDepth(currentPose)
+                        videoDepth = effectiveVideoDepth
+                        syncProjectedOverlayRoots(
+                            currentPose,
+                            videoPanelScale,
+                            uiRoot,
+                            subtitleRoot,
+                            uiDepth / effectiveVideoDepth,
+                        )
                         lastReportedMovePose.value = currentPose
                     }
 
@@ -1009,9 +1037,17 @@ fun SpatialPlayerScreen(
                     ) {
                         runCatching {
                             videoRoot.setPose(finalPose)
-                            videoRoot.setScale(finalScale)
+                            videoRoot.setScale(videoPanelScale)
                         }
-                        syncProjectedOverlayRoots(finalPose, finalScale, uiRoot, subtitleRoot, overlayProjectionScale)
+                        val effectiveVideoDepth = extractVideoDepth(finalPose)
+                        videoDepth = effectiveVideoDepth
+                        syncProjectedOverlayRoots(
+                            finalPose,
+                            videoPanelScale,
+                            uiRoot,
+                            subtitleRoot,
+                            uiDepth / effectiveVideoDepth,
+                        )
                         lastReportedMovePose.value = finalPose
                         videoOverlayAttachmentVersion++
                         savePlayerRootPose(viewModel, finalPose)
@@ -1038,10 +1074,12 @@ fun SpatialPlayerScreen(
                 val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
                 finalPose?.let { savePlayerRootPose(viewModel, it) }
             }
+            savePlayerRootScale(viewModel, videoPanelScale)
             voiceService.destroy()
             commandCoordinator?.destroy()
             chatEngine?.destroy()
             tts.destroy()
+            runCatching { player.clearVideoSurface() }
             videoEntity.value?.dispose()
             videoEntity.value = null
             mascotEntity.value?.dispose()
@@ -1116,16 +1154,25 @@ fun SpatialPlayerScreen(
         }
     }
 
-    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, videoPanelScale) {
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
         while (true) {
             val poseToMirror = safeGetEntityPose(videoRoot) ?: lastReportedMovePose.value
-            val scaleToMirror = runCatching { videoRoot.getScale() }.getOrDefault(1f)
             poseToMirror?.let { pose ->
+                val effectiveVideoDepth = extractVideoDepth(pose)
                 lastReportedMovePose.value = pose
-                syncProjectedOverlayRoots(pose, scaleToMirror, uiRoot, subtitleRoot, overlayProjectionScale)
+                if (kotlin.math.abs(videoDepth - effectiveVideoDepth) > 0.001f) {
+                    videoDepth = effectiveVideoDepth
+                }
+                syncProjectedOverlayRoots(
+                    pose,
+                    videoPanelScale,
+                    uiRoot,
+                    subtitleRoot,
+                    uiDepth / effectiveVideoDepth,
+                )
             }
             delay(100L)
         }
@@ -1149,6 +1196,7 @@ fun SpatialPlayerScreen(
         while (true) {
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
             poseToSave?.let { savePlayerRootPose(viewModel, it) }
+            savePlayerRootScale(viewModel, videoPanelScale)
             delay(1_000L)
         }
     }
@@ -3377,6 +3425,17 @@ private fun formatTime(ms: Long): String {
     else String.format("%d:%02d", minutes, seconds)
 }
 
+private fun extractVideoDepth(pose: Pose): Float {
+    val translation = pose.translation
+    val distance =
+        kotlin.math.sqrt(
+            translation.x * translation.x +
+                translation.y * translation.y +
+                translation.z * translation.z,
+        )
+    return if (distance <= 0.001f) VIDEO_DEPTH_METERS else distance.coerceIn(2.0f, 15.0f)
+}
+
 private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
     val prefs = viewModel.appPreferences
     val savedPose = Pose(
@@ -3404,6 +3463,11 @@ private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
     }
 }
 
+private fun loadSavedPlayerRootScale(viewModel: PlayerViewModel): Float {
+    val prefs = viewModel.appPreferences
+    return prefs.getValue(prefs.xrPlayerPanelScale).coerceIn(0.2f, 5.0f)
+}
+
 private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     val prefs = viewModel.appPreferences
     val translation = pose.translation
@@ -3416,6 +3480,11 @@ private fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     prefs.setValue(prefs.xrPlayerPanelRotZ, rotation.z)
     prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
     prefs.setValue(prefs.xrPlayerPanelPoseVersion, XR_PLAYER_POSE_VERSION_VIDEO_CENTER)
+}
+
+private fun savePlayerRootScale(viewModel: PlayerViewModel, scale: Float) {
+    val prefs = viewModel.appPreferences
+    prefs.setValue(prefs.xrPlayerPanelScale, scale.coerceIn(0.2f, 5.0f))
 }
 
 private fun projectPoseFromOrigin(sourcePose: Pose, depthScale: Float): Pose {

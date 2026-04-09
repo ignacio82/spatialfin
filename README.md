@@ -6,6 +6,10 @@ A Jellyfin client built specifically for Android XR, delivering an immersive spa
 
 > **Forked from [Findroid](https://github.com/jarnedemeulemeester/findroid)** — SpatialFin started as a fork of Findroid, an open-source native Jellyfin client for Android. We thank the Findroid contributors for their excellent work.
 
+## Community
+
+Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, testing feedback, and support.
+
 ## Features
 
 - **Instant Playback** — Smarter Media3 preloading fetches the next likely items while you browse, making streaming playback from Next Up, search, and detail screens feel instantaneous.
