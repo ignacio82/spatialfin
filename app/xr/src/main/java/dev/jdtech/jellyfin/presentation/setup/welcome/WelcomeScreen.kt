@@ -120,10 +120,9 @@ fun WelcomeScreen(
         if (companionState is CompanionState.Success) {
             val importedApiKey =
                 appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty()
-            if (importedApiKey.isNotBlank()) {
-                wantsApiKey = true
-                cloudApiKey = importedApiKey
-            }
+            wantsApiKey = importedApiKey.isNotBlank()
+            cloudApiKey = importedApiKey
+            wantsGemma = appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
         }
     }
 
