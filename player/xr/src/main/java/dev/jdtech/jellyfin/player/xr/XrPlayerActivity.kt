@@ -58,6 +58,7 @@ class XrPlayerActivity : AppCompatActivity() {
     private var currentStereoMode: String = "mono"
     private var libassRenderer: LibassRenderer? = null
     private var finishRequested = false
+    private var homeSpaceRequestIssued = false
 
     companion object {
         fun createIntent(
@@ -372,11 +373,18 @@ class XrPlayerActivity : AppCompatActivity() {
             val returnOnFinish = viewModel.appPreferences.getValue(
                 viewModel.appPreferences.xrReturnHomeSpaceAfterPlayback
             )
-            // Always return home when backgrounded (not finishing).
-            // Also return home when finishing if the preference requests it, or when
-            // an explicit player-exit flow is underway.
-            if (!isFinishing || returnOnFinish || finishRequested) {
+            // Only force a Home Space transition during an explicit exit flow or when a
+            // finishing player should return home by preference. Let ordinary background
+            // stops follow the XR runtime's own lifecycle to avoid teardown races.
+            if (finishRequested || (isFinishing && returnOnFinish)) {
                 requestHomeSpaceMode("onStop")
+            } else {
+                Timber.d(
+                    "XrPlayerActivity skipping home space request onStop isFinishing=%b finishRequested=%b returnOnFinish=%b",
+                    isFinishing,
+                    finishRequested,
+                    returnOnFinish,
+                )
             }
         } catch (e: Exception) {
             Timber.w(e, "Failed to request home space mode")
@@ -439,12 +447,18 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     private fun requestHomeSpaceMode(stage: String) {
+        if (homeSpaceRequestIssued) {
+            Timber.d("XrPlayerActivity home space already requested; skipping stage=%s", stage)
+            return
+        }
+        homeSpaceRequestIssued = true
         runCatching {
             xrSession?.scene?.requestHomeSpaceMode()
         }.onSuccess {
             recordLaunchPhase("exit:home-space-requested:$stage")
             Timber.d("XrPlayerActivity requested home space mode stage=%s", stage)
         }.onFailure { error ->
+            homeSpaceRequestIssued = false
             Timber.w(error, "XrPlayerActivity failed to request home space mode stage=%s", stage)
         }
     }

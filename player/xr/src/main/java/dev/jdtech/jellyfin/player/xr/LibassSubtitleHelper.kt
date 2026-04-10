@@ -34,8 +34,17 @@ object LibassSubtitleHelper {
             return false
         }
 
+        val selectedTextGroups =
+            textGroups.filter { group ->
+                group.isSupported && (0 until group.length).any(group::isTrackSelected)
+            }
+        if (selectedTextGroups.isEmpty()) {
+            Timber.i("subtitle: useLibass=false — subtitles not currently selected")
+            return false
+        }
+
         // Check for any text tracks that we can handle via libass
-        val hasCompatibleTrack = textGroups.any { group ->
+        val hasCompatibleTrack = selectedTextGroups.any { group ->
             group.isSupported &&
             (0 until group.length).any { i ->
                 val mime = group.getTrackFormat(i).sampleMimeType
@@ -70,7 +79,7 @@ object LibassSubtitleHelper {
         Timber.i(
             "subtitle: useLibass=%b — compatible text track found groups=%d pref=%s",
             result,
-            textGroups.size,
+            selectedTextGroups.size,
             preference,
         )
         return result
