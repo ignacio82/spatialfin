@@ -18,20 +18,31 @@ class SecondaryHandPinchDetector(
     private val session: Session,
     @Suppress("UNUSED_PARAMETER") private val activity: Activity,
     private val preferredHand: String,
+    private val shouldDetectActivation: () -> Boolean = { true },
+    private val shouldDetectInterrupt: () -> Boolean = { false },
 ) {
+    enum class GestureType {
+        ACTIVATE,
+        INTERRUPT,
+    }
+
     sealed interface GestureState {
         data object Idle : GestureState
 
-        data class Arming(val progress: Float, val hint: String) : GestureState
+        data class Arming(
+            val gestureType: GestureType,
+            val progress: Float,
+            val hint: String,
+        ) : GestureState
 
-        data object Started : GestureState
+        data class Started(val gestureType: GestureType) : GestureState
 
-        data object Ended : GestureState
+        data class Ended(val gestureType: GestureType) : GestureState
     }
 
     private enum class ActivationPhase {
         IDLE,
-        ARMING_PALM,
+        ARMING,
         ACTIVE,
     }
 
@@ -53,14 +64,23 @@ class SecondaryHandPinchDetector(
 
     companion object {
         private const val PALM_HOLD_MS = 240L
+        private const val FIST_HOLD_MS = 150L
         private const val RELEASE_PALM_TRAVEL_METERS = 0.080f
+        private const val RELEASE_FIST_TRAVEL_METERS = 0.085f
         private const val POLL_INTERVAL_MS = 30L
         private const val MIN_PALM_VALID_FRAMES = 6
+        private const val MIN_FIST_VALID_FRAMES = 3
         private const val MAX_PALM_TRAVEL_METERS = 0.055f
+        private const val MAX_FIST_TRAVEL_METERS = 0.070f
         private const val MIN_FINGER_EXTENSION_RATIO = 1.18f
         private const val MIN_THUMB_EXTENSION_RATIO = 1.10f
+        private const val MAX_FINGER_CURL_RATIO = 1.35f
+        private const val MAX_THUMB_CURL_RATIO = 1.45f
         private const val MIN_FINGER_SPREAD_METERS = 0.018f
         private const val MIN_THUMB_SEPARATION_METERS = 0.040f
+        private const val MAX_FINGER_CLUSTER_METERS = 0.090f
+        private const val MAX_THUMB_TO_PALM_METERS = 0.135f
+        private const val MAX_THUMB_TO_INDEX_METACARPAL_METERS = 0.120f
         private const val MIN_RELEASE_FRAMES = 2
         private const val ACTIVATION_COOLDOWN_MS = 450L
         private const val MAX_WRIST_HEIGHT = 0.32f
@@ -69,7 +89,8 @@ class SecondaryHandPinchDetector(
         private const val MAX_ARMING_PALM_LATERAL_OFFSET = 0.45f
         private const val MIN_ARMING_WRIST_HEIGHT = -0.24f
         private const val MIN_ARMING_PALM_HEIGHT = -0.12f
-        private const val HOLD_OPEN_PALM_HINT = "Hold palm near face"
+        private const val HOLD_OPEN_PALM_HINT = "Hold palm to talk"
+        private const val HOLD_FIST_HINT = "Hold fist to interrupt"
         private const val RAISE_PALM_HINT = "Raise palm to face"
     }
 
@@ -82,10 +103,11 @@ class SecondaryHandPinchDetector(
 
     val gestureStates: Flow<GestureState> = flow {
         var phase = ActivationPhase.IDLE
-        var palmValidFrameCount = 0
+        var activeGestureType: GestureType? = null
+        var validFrameCount = 0
         var invalidFrameCount = 0
-        var palmStartTime = 0L
-        var palmAnchor: Vector3? = null
+        var gestureStartTime = 0L
+        var gestureAnchor: Vector3? = null
         var cooldownUntil = 0L
         var lastProgressBucket = -1
         var lastState: GestureState = GestureState.Idle
@@ -96,9 +118,11 @@ class SecondaryHandPinchDetector(
                     state::class != lastState::class -> true
                     state is GestureState.Arming && lastState is GestureState.Arming -> {
                         val previous = lastState as GestureState.Arming
-                        (state.progress * 10).toInt() != (previous.progress * 10).toInt() ||
+                        state.gestureType != previous.gestureType ||
+                            (state.progress * 10).toInt() != (previous.progress * 10).toInt() ||
                             state.hint != previous.hint
                     }
+                    state != lastState -> true
                     else -> false
                 }
             if (shouldEmit) {
@@ -107,30 +131,74 @@ class SecondaryHandPinchDetector(
             }
         }
 
-        fun resetPalmTracking() {
-            palmValidFrameCount = 0
-            palmStartTime = 0L
-            palmAnchor = null
+        fun resetGestureTracking() {
+            activeGestureType = null
+            validFrameCount = 0
+            gestureStartTime = 0L
+            gestureAnchor = null
         }
 
         fun resetAllTracking() {
-            resetPalmTracking()
+            resetGestureTracking()
             invalidFrameCount = 0
             lastProgressBucket = -1
         }
 
         suspend fun transitionToIdle(ended: Boolean, reason: String? = null) {
             val wasActive = phase == ActivationPhase.ACTIVE
+            val endedGestureType = activeGestureType
             phase = ActivationPhase.IDLE
             resetAllTracking()
             if (ended || wasActive) {
                 cooldownUntil = System.currentTimeMillis() + ACTIVATION_COOLDOWN_MS
-                reason?.let { Timber.i("Voice gesture ended: %s", it) }
-                emitIfChanged(GestureState.Ended)
+                reason?.let {
+                    Timber.i(
+                        "Voice gesture ended: type=%s reason=%s",
+                        endedGestureType,
+                        it,
+                    )
+                }
+                endedGestureType?.let { emitIfChanged(GestureState.Ended(it)) }
             } else {
                 emitIfChanged(GestureState.Idle)
             }
         }
+
+        fun isGestureEnabled(type: GestureType): Boolean =
+            when (type) {
+                GestureType.ACTIVATE -> shouldDetectActivation()
+                GestureType.INTERRUPT -> shouldDetectInterrupt()
+            }
+
+        fun isGestureShape(type: GestureType, metrics: HandMetrics, anchor: Vector3): Boolean =
+            when (type) {
+                GestureType.ACTIVATE -> isOpenPalm(metrics, anchor)
+                GestureType.INTERRUPT -> isClosedFist(metrics, anchor)
+            }
+
+        fun holdHint(type: GestureType): String =
+            when (type) {
+                GestureType.ACTIVATE -> HOLD_OPEN_PALM_HINT
+                GestureType.INTERRUPT -> HOLD_FIST_HINT
+            }
+
+        fun holdMs(type: GestureType): Long =
+            when (type) {
+                GestureType.ACTIVATE -> PALM_HOLD_MS
+                GestureType.INTERRUPT -> FIST_HOLD_MS
+            }
+
+        fun minValidFrames(type: GestureType): Int =
+            when (type) {
+                GestureType.ACTIVATE -> MIN_PALM_VALID_FRAMES
+                GestureType.INTERRUPT -> MIN_FIST_VALID_FRAMES
+            }
+
+        fun releaseTravelMeters(type: GestureType): Float =
+            when (type) {
+                GestureType.ACTIVATE -> RELEASE_PALM_TRAVEL_METERS
+                GestureType.INTERRUPT -> RELEASE_FIST_TRAVEL_METERS
+            }
 
         while (currentCoroutineContext().isActive) {
             delay(POLL_INTERVAL_MS)
@@ -174,63 +242,114 @@ class SecondaryHandPinchDetector(
                     abs(metrics.palm.x) < MAX_ARMING_PALM_LATERAL_OFFSET &&
                     metrics.wrist.y >= MIN_ARMING_WRIST_HEIGHT &&
                     metrics.palm.y >= MIN_ARMING_PALM_HEIGHT
-            val hasOpenPalmShape =
-                isOpenPalm(metrics, palmAnchor ?: metrics.palm)
+            val anchor = gestureAnchor ?: metrics.palm
+            val hasOpenPalmShape = isOpenPalm(metrics, anchor)
+            val hasClosedFistShape = isClosedFist(metrics, anchor)
+            val candidateGestureType =
+                when {
+                    shouldDetectInterrupt() && isHandInActivationZone && hasClosedFistShape -> GestureType.INTERRUPT
+                    shouldDetectActivation() && isHandInActivationZone && hasOpenPalmShape -> GestureType.ACTIVATE
+                    else -> null
+                }
 
             when (phase) {
                 ActivationPhase.IDLE,
-                ActivationPhase.ARMING_PALM -> {
-                    if (!hasOpenPalmShape || !isHandInActivationZone) {
+                ActivationPhase.ARMING -> {
+                    val gestureType = activeGestureType ?: candidateGestureType
+                    if (gestureType == null) {
                         phase = ActivationPhase.IDLE
-                        resetPalmTracking()
+                        resetGestureTracking()
                         emitIfChanged(GestureState.Idle)
                         continue
                     }
 
-                    if (!isHandInArmingZone) {
-                        // Hand is open but too low/far. Show hint but don't progress.
+                    val gestureMatches =
+                        isGestureEnabled(gestureType) &&
+                            isHandInActivationZone &&
+                            isGestureShape(gestureType, metrics, anchor)
+                    if (!gestureMatches) {
                         phase = ActivationPhase.IDLE
-                        resetPalmTracking()
-                        emitIfChanged(GestureState.Arming(0f, RAISE_PALM_HINT))
+                        resetGestureTracking()
+                        emitIfChanged(GestureState.Idle)
                         continue
                     }
 
-                    if (phase != ActivationPhase.ARMING_PALM) {
-                        phase = ActivationPhase.ARMING_PALM
-                        palmStartTime = now
-                        palmAnchor = metrics.palm
-                        palmValidFrameCount = 0
+                    val isGestureInReadyZone =
+                        when (gestureType) {
+                            GestureType.ACTIVATE -> isHandInArmingZone
+                            GestureType.INTERRUPT -> isHandInActivationZone
+                        }
+                    if (!isGestureInReadyZone) {
+                        phase = ActivationPhase.IDLE
+                        resetGestureTracking()
+                        if (gestureType == GestureType.ACTIVATE) {
+                            emitIfChanged(GestureState.Arming(gestureType, 0f, RAISE_PALM_HINT))
+                        } else {
+                            emitIfChanged(GestureState.Idle)
+                        }
+                        continue
+                    }
+
+                    if (phase != ActivationPhase.ARMING || activeGestureType != gestureType) {
+                        phase = ActivationPhase.ARMING
+                        activeGestureType = gestureType
+                        gestureStartTime = now
+                        gestureAnchor = metrics.palm
+                        validFrameCount = 0
                         lastProgressBucket = -1
                     }
-                    palmValidFrameCount += 1
+                    validFrameCount += 1
 
-                    val progress = ((now - palmStartTime).toFloat() / PALM_HOLD_MS).coerceIn(0f, 1f)
+                    val progress = ((now - gestureStartTime).toFloat() / holdMs(gestureType)).coerceIn(0f, 1f)
                     val progressBucket = (progress * 10).toInt()
                     if (progressBucket != lastProgressBucket && progress < 1f) {
-                        emitIfChanged(GestureState.Arming(progress, HOLD_OPEN_PALM_HINT))
+                        emitIfChanged(GestureState.Arming(gestureType, progress, holdHint(gestureType)))
                         lastProgressBucket = progressBucket
                     }
-                    if (now - palmStartTime >= PALM_HOLD_MS && palmValidFrameCount >= MIN_PALM_VALID_FRAMES) {
+                    if (now - gestureStartTime >= holdMs(gestureType) && validFrameCount >= minValidFrames(gestureType)) {
                         phase = ActivationPhase.ACTIVE
                         invalidFrameCount = 0
                         lastProgressBucket = -1
-                        Timber.i("Voice gesture started for %s hand", preferredHand.lowercase())
-                        emitIfChanged(GestureState.Started)
+                        Timber.i(
+                            "Voice gesture started: type=%s hand=%s",
+                            gestureType,
+                            preferredHand.lowercase(),
+                        )
+                        emitIfChanged(GestureState.Started(gestureType))
                     }
                 }
 
                 ActivationPhase.ACTIVE -> {
-                    val staysOpenPalm =
-                        isHandInArmingZone &&
-                            isOpenPalm(metrics, palmAnchor ?: metrics.palm)
-                    val palmTravel =
-                        palmAnchor?.let { anchor -> Vector3.distance(anchor, metrics.palm) } ?: 0f
-                    if (staysOpenPalm && palmTravel <= RELEASE_PALM_TRAVEL_METERS) {
+                    val gestureType = activeGestureType ?: run {
+                        transitionToIdle(ended = false, reason = "gesture type unavailable")
+                        continue
+                    }
+                    val staysInGesture =
+                        isGestureEnabled(gestureType) &&
+                            (
+                                when (gestureType) {
+                                    GestureType.ACTIVATE -> isHandInArmingZone
+                                    GestureType.INTERRUPT -> isHandInActivationZone
+                                }
+                            ) &&
+                            isGestureShape(gestureType, metrics, gestureAnchor ?: metrics.palm)
+                    val gestureTravel =
+                        gestureAnchor?.let { gestureAnchor ->
+                            Vector3.distance(gestureAnchor, metrics.palm)
+                        } ?: 0f
+                    if (staysInGesture && gestureTravel <= releaseTravelMeters(gestureType)) {
                         invalidFrameCount = 0
                     } else {
                         invalidFrameCount += 1
                         if (invalidFrameCount >= MIN_RELEASE_FRAMES) {
-                            transitionToIdle(ended = true, reason = "palm lowered or moved away")
+                            transitionToIdle(
+                                ended = true,
+                                reason =
+                                    when (gestureType) {
+                                        GestureType.ACTIVATE -> "palm lowered or moved away"
+                                        GestureType.INTERRUPT -> "fist released or moved away"
+                                    },
+                            )
                         }
                     }
                 }
@@ -279,6 +398,32 @@ class SecondaryHandPinchDetector(
                 Vector3.distance(metrics.thumbTip, metrics.indexMetacarpal) >= MIN_THUMB_SEPARATION_METERS
 
         return isStable && extendedCount >= 4 && thumbExtended && spreadSatisfied && thumbSeparated
+    }
+
+    private fun isClosedFist(metrics: HandMetrics, anchor: Vector3): Boolean {
+        val isStable = Vector3.distance(anchor, metrics.palm) <= MAX_FIST_TRAVEL_METERS
+        val curledFingers =
+            listOf(
+                fingerExtensionRatio(metrics.indexTip, metrics.indexProximal, metrics.palm),
+                fingerExtensionRatio(metrics.middleTip, metrics.middleProximal, metrics.palm),
+                fingerExtensionRatio(metrics.ringTip, metrics.ringProximal, metrics.palm),
+                fingerExtensionRatio(metrics.littleTip, metrics.littleProximal, metrics.palm),
+            )
+        val curledCount = curledFingers.count { it <= MAX_FINGER_CURL_RATIO }
+        val thumbCurled =
+            fingerExtensionRatio(metrics.thumbTip, metrics.thumbProximal, metrics.palm) <= MAX_THUMB_CURL_RATIO
+        val fingertipsClustered =
+            Vector3.distance(metrics.indexTip, metrics.middleTip) <= MAX_FINGER_CLUSTER_METERS &&
+                Vector3.distance(metrics.middleTip, metrics.ringTip) <= MAX_FINGER_CLUSTER_METERS &&
+                Vector3.distance(metrics.ringTip, metrics.littleTip) <= MAX_FINGER_CLUSTER_METERS
+        val thumbNearPalm =
+            Vector3.distance(metrics.thumbTip, metrics.palm) <= MAX_THUMB_TO_PALM_METERS ||
+                Vector3.distance(metrics.thumbTip, metrics.indexMetacarpal) <= MAX_THUMB_TO_INDEX_METACARPAL_METERS
+
+        return isStable &&
+            curledCount >= 3 &&
+            fingertipsClustered &&
+            (thumbCurled || thumbNearPalm)
     }
 
     private fun fingerExtensionRatio(tip: Vector3, proximal: Vector3, palm: Vector3): Float {

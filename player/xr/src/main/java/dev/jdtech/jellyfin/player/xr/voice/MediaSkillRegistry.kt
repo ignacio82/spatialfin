@@ -10,6 +10,8 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.SortBy
+import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -18,6 +20,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import org.jellyfin.sdk.model.api.BaseItemKind
 
 internal enum class MediaSkillId {
     PLAYBACK_CONTROL,
@@ -336,10 +339,36 @@ internal class MediaSkillRegistry(
             val suggestions = async { runCatching { repository.getSuggestions() }.getOrNull() }
             val resume = async { runCatching { repository.getResumeItems() }.getOrNull() }
             val favorites = async { runCatching { repository.getFavoriteItems() }.getOrNull() }
+            val recentlyAdded =
+                async {
+                    runCatching {
+                        repository.getItems(
+                            includeTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
+                            recursive = true,
+                            sortBy = SortBy.DATE_ADDED,
+                            sortOrder = SortOrder.DESCENDING,
+                            limit = 40,
+                        )
+                    }.getOrNull()
+                }
+            val topRated =
+                async {
+                    runCatching {
+                        repository.getItems(
+                            includeTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES),
+                            recursive = true,
+                            sortBy = SortBy.IMDB_RATING,
+                            sortOrder = SortOrder.DESCENDING,
+                            limit = 40,
+                        )
+                    }.getOrNull()
+                }
 
             resume.await()?.take(8)?.let { addWeighted(it, 3) }
             favorites.await()?.take(8)?.let { addWeighted(it, 4) }
             suggestions.await()?.take(10)?.let { addWeighted(it, 5) }
+            recentlyAdded.await()?.take(20)?.let { addWeighted(it, 2) }
+            topRated.await()?.take(20)?.let { addWeighted(it, 2) }
         }
 
         if (candidates.isEmpty() && onGetSuggestions != null) {
@@ -363,6 +392,12 @@ internal class MediaSkillRegistry(
                     "For that mood, try ${ranked.take(3).joinToString(", ") { it.name }}."
                 else -> "Based on your library, try ${ranked.take(3).joinToString(", ") { it.name }}."
             }
+        val directRecommendationReply =
+            RecommendationPlanner.buildRecommendationReply(
+                items = ranked,
+                analysis = analysis,
+                currentTitle = playerState.currentItemTitle,
+            )
         val instructions =
             when (skillId) {
                 MediaSkillId.MOOD_SURPRISE ->
@@ -377,8 +412,10 @@ internal class MediaSkillRegistry(
             taskInstructions = instructions,
             actionableItems = ranked,
             relatedItemsContext = RecommendationPlanner.buildRelatedItemsContext(ranked),
+            directAnswer = directRecommendationReply,
             fallbackText = fallback,
-            debugInfo = "recommendation candidates=${candidates.size} ranked=${ranked.size}",
+            debugInfo = "recommendation candidates=${candidates.size} ranked=${ranked.size} direct=${directRecommendationReply != null}",
+            shouldSkipModel = directRecommendationReply != null,
         )
     }
 

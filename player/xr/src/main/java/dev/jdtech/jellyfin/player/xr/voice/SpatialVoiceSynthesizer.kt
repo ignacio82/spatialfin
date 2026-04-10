@@ -31,15 +31,18 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
                     isInitialized = true
                     it.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
+                            Timber.i("TTS: utterance started id=%s", utteranceId)
                             _isSpeaking.value = true
                         }
 
                         override fun onDone(utteranceId: String?) {
+                            Timber.i("TTS: utterance finished id=%s", utteranceId)
                             _isSpeaking.value = false
                         }
 
                         @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId)"), level = DeprecationLevel.WARNING)
                         override fun onError(utteranceId: String?) {
+                            Timber.w("TTS: utterance failed id=%s", utteranceId)
                             _isSpeaking.value = false
                         }
                     })
@@ -55,11 +58,22 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         languageHint: String? = null,
         voicePreference: String = "male",
     ) {
-        if (!isInitialized) return
-        resolveLocale(languageHint)?.let { locale ->
+        if (!isInitialized) {
+            Timber.w("TTS: speak ignored because engine is not initialized")
+            return
+        }
+        val locale = resolveLocale(languageHint)
+        locale?.let {
             applyVoiceSelection(locale, voicePreference)
         }
         val utteranceId = "spatialfin_chat_${System.currentTimeMillis()}"
+        Timber.i(
+            "TTS: speak requested id=%s chars=%d locale=%s voicePreference=%s",
+            utteranceId,
+            text.length,
+            locale,
+            voicePreference,
+        )
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 

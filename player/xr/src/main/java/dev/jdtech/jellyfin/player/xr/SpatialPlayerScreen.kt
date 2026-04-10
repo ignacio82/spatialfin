@@ -102,6 +102,7 @@ import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.offset
 import androidx.xr.compose.subspace.layout.rotate
 import androidx.xr.compose.subspace.layout.width
+import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.FloatSize3d
@@ -128,6 +129,7 @@ import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.capture.PlayerFrameCapture
 import dev.jdtech.jellyfin.player.xr.voice.CharacterScanOverlay
+import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
@@ -173,6 +175,7 @@ import dev.jdtech.jellyfin.player.local.R as LocalR
 // ── Next-episode panel threshold ───────────────────────────────────────────────────
 private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2 minutes
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
+private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -282,10 +285,25 @@ fun SpatialPlayerScreen(
     var shouldStartVoiceCapture by remember { mutableStateOf(false) }
     var followUpPending by remember { mutableStateOf(false) }
     var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
+    val followUpListenWindowMs = 12_000L
+    val followUpAutoStartDelayMs = 200L
     var characterScanActive by remember { mutableStateOf(false) }
     var voiceAssetsRequested by remember { mutableStateOf(false) }
     var exitRequested by remember { mutableStateOf(false) }
     var activeVoiceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val voiceGestureHand =
+        viewModel.appPreferences.getValue(viewModel.appPreferences.voiceGestureHand) ?: "left"
+
+    fun armFollowUpWindow(reason: String) {
+        followUpPending = true
+        followUpDeadlineMs = System.currentTimeMillis() + followUpListenWindowMs
+        voiceGestureHint = "Answer now"
+        Timber.i(
+            "VOICE: player follow-up armed reason=%s windowMs=%d",
+            reason,
+            followUpListenWindowMs,
+        )
+    }
 
     LaunchedEffect(Unit) {
         Timber.i("VOICE: deferring XR voice startup work until explicit activation")
@@ -322,6 +340,12 @@ fun SpatialPlayerScreen(
                 PackageManager.PERMISSION_GRANTED
         )
     }
+    var hasHandTrackingPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, HAND_TRACKING_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
 
     val audioPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -330,6 +354,14 @@ fun SpatialPlayerScreen(
                 shouldStartVoiceCapture = false
                 voiceFeedback = "Microphone permission required"
                 voiceService.resetState()
+            }
+        }
+    val handTrackingPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasHandTrackingPermission = granted
+            if (!granted) {
+                voiceGestureArmingProgress = 0f
+                voiceGestureHint = null
             }
         }
     
@@ -383,6 +415,44 @@ fun SpatialPlayerScreen(
     var resumePlaybackAfterAssistantSpeech by remember { mutableStateOf(false) }
     var assistantSpeechPendingStart by remember { mutableStateOf(false) }
     var assistantSpeechStarted by remember { mutableStateOf(false) }
+
+    fun isVoiceTurnBusy(): Boolean {
+        return voiceState != VoiceState.IDLE ||
+            activeVoiceJob?.isActive == true ||
+            assistantSpeechPendingStart ||
+            assistantSpeechStarted ||
+            isTtsSpeaking
+    }
+
+    fun canInterruptVoiceTurn(): Boolean {
+        return voiceState != VoiceState.IDLE ||
+            activeVoiceJob?.isActive == true ||
+            assistantSpeechPendingStart ||
+            assistantSpeechStarted ||
+            isTtsSpeaking
+    }
+
+    val pinchDetector = remember(session, activity, voiceGestureHand) {
+        activity?.let {
+            SecondaryHandPinchDetector(
+                session = session,
+                activity = it,
+                preferredHand = voiceGestureHand,
+                shouldDetectActivation = {
+                    voiceControlEnabled &&
+                        hasHandTrackingPermission &&
+                        hasAudioPermission &&
+                        voiceService.isAvailable() &&
+                        !isVoiceTurnBusy()
+                },
+                shouldDetectInterrupt = {
+                    voiceControlEnabled &&
+                        hasHandTrackingPermission &&
+                        canInterruptVoiceTurn()
+                },
+            )
+        }
+    }
 
     // --- MCP Bridge integration ---
     var showPausedMascot by remember { mutableStateOf(false) }
@@ -454,7 +524,8 @@ fun SpatialPlayerScreen(
         libassBitmap = null
         currentCues = emptyList()
         runCatching { player.pause() }
-        runCatching { (player as? ExoPlayer)?.clearVideoSurface() }
+        // Let the activity finish drive the single XR surface teardown path. Clearing the
+        // video surface here races with SurfaceEntity disposal on some devices.
         coroutineScope.launch {
             delay(150L)
             onBackClick()
@@ -572,7 +643,7 @@ fun SpatialPlayerScreen(
             voiceSearchResultsCount = voiceSearchResults.size,
             lastRecommendationQuery = recommendationContext?.query,
             lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-            lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
+            lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
             passthroughEnabled = passthroughEnabled,
         )
 
@@ -635,6 +706,11 @@ fun SpatialPlayerScreen(
         resumePlaybackAfterAssistantSpeech = player.isPlaying
         assistantSpeechPendingStart = true
         assistantSpeechStarted = false
+        if (followUpPending) {
+            followUpDeadlineMs = 0L
+            voiceGestureHint = "Wait for the reply, then answer"
+            Timber.i("VOICE: player follow-up scheduled pending spoken reply")
+        }
         if (resumePlaybackAfterAssistantSpeech) {
             player.pause()
         }
@@ -652,11 +728,24 @@ fun SpatialPlayerScreen(
         }
     }
 
-    fun requestVoiceCommand() {
+    fun requestVoiceCommand(source: String = "manual") {
+        if (source != "manual" && isVoiceTurnBusy()) {
+            Timber.i(
+                "VOICE: player request ignored source=%s state=%s speaking=%b pendingSpeech=%b startedSpeech=%b jobActive=%b",
+                source,
+                voiceState,
+                isTtsSpeaking,
+                assistantSpeechPendingStart,
+                assistantSpeechStarted,
+                activeVoiceJob?.isActive == true,
+            )
+            return
+        }
         // Cancel any in-flight inference from the previous voice command before starting a new one.
         activeVoiceJob?.cancel()
         activeVoiceJob = null
         if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
+            Timber.i("VOICE: player request ignored source=%s state=%s", source, voiceState)
             return
         }
         if (isTtsSpeaking) {
@@ -665,7 +754,6 @@ fun SpatialPlayerScreen(
             assistantSpeechStarted = false
             resumePlaybackAfterAssistantSpeech = false
         }
-        followUpPending = false
         if (!voiceControlEnabled) {
             voiceFeedback = "Voice control disabled"
             return
@@ -681,6 +769,15 @@ fun SpatialPlayerScreen(
             return
         }
         shouldStartVoiceCapture = false
+        Timber.i(
+            "VOICE: player request starting source=%s followUpPending=%b followUpDeadlineMs=%d",
+            source,
+            followUpPending,
+            followUpDeadlineMs,
+        )
+        followUpPending = false
+        followUpDeadlineMs = 0L
+        voiceGestureHint = null
         revealControls("voice-command")
         startVoiceCapture(
             voiceService = voiceService,
@@ -716,9 +813,7 @@ fun SpatialPlayerScreen(
             recommendationContext = recommendationContext,
             onRecommendationContextUpdated = { recommendationContext = it },
             onScheduleFollowUp = {
-                followUpPending = true
-                followUpDeadlineMs = System.currentTimeMillis() + 8_000L
-                voiceGestureHint = "Ask a follow-up"
+                armFollowUpWindow("chat-reply")
             },
             onGetSuggestions = { viewModel.repository.getSuggestions() },
             onResult = { voiceFeedback = it },
@@ -729,6 +824,42 @@ fun SpatialPlayerScreen(
             onJobStarted = { activeVoiceJob = it },
             )
             }
+
+    fun interruptVoiceCommand(reason: String) {
+        if (!canInterruptVoiceTurn()) return
+        val shouldResumeFollowUp =
+            followUpPending &&
+                (isTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
+        Timber.i(
+            "VOICE: player interrupt requested reason=%s state=%s speaking=%b jobActive=%b resumeFollowUp=%b",
+            reason,
+            voiceState,
+            isTtsSpeaking,
+            activeVoiceJob?.isActive == true,
+            shouldResumeFollowUp,
+        )
+        voiceGestureArmingProgress = 0f
+        voiceGestureHint = null
+        voiceFeedback = null
+        assistantSpeechPendingStart = false
+        assistantSpeechStarted = false
+        resumePlaybackAfterAssistantSpeech = false
+        activeVoiceJob?.cancel()
+        activeVoiceJob = null
+        tts.stop()
+        voiceService.cancelListening()
+        voiceService.resetState()
+        if (shouldResumeFollowUp) {
+            armFollowUpWindow("speech-interrupted")
+            coroutineScope.launch {
+                delay(followUpAutoStartDelayMs)
+                requestVoiceCommand("follow-up-interrupt")
+            }
+        } else {
+            followUpPending = false
+            followUpDeadlineMs = 0L
+        }
+    }
 
     // Reset conversation history when the playing item changes
     LaunchedEffect(uiState.currentItemTitle) {
@@ -756,6 +887,54 @@ fun SpatialPlayerScreen(
         if (hasAudioPermission && shouldStartVoiceCapture) {
             shouldStartVoiceCapture = false
             requestVoiceCommand()
+        }
+    }
+
+    LaunchedEffect(voiceControlEnabled, hasHandTrackingPermission) {
+        if (voiceControlEnabled && !hasHandTrackingPermission) {
+            handTrackingPermissionLauncher.launch(HAND_TRACKING_PERMISSION)
+        }
+    }
+
+    LaunchedEffect(session, hasHandTrackingPermission) {
+        if (!hasHandTrackingPermission) return@LaunchedEffect
+        runCatching {
+            session.configure(session.config.copy(handTracking = HandTrackingMode.BOTH))
+        }.onFailure { Timber.w(it, "VOICE: Player hand tracking not available") }
+    }
+
+    LaunchedEffect(pinchDetector, hasHandTrackingPermission) {
+        val detector = pinchDetector ?: return@LaunchedEffect
+        if (!hasHandTrackingPermission) return@LaunchedEffect
+        detector.gestureStates.collect { event ->
+            when (event) {
+                is SecondaryHandPinchDetector.GestureState.Arming -> {
+                    voiceGestureArmingProgress = event.progress
+                    voiceGestureHint = event.hint
+                }
+                is SecondaryHandPinchDetector.GestureState.Started -> {
+                    voiceGestureArmingProgress = 1f
+                    voiceGestureHint = null
+                    when (event.gestureType) {
+                        SecondaryHandPinchDetector.GestureType.ACTIVATE ->
+                            requestVoiceCommand("gesture-activate")
+                        SecondaryHandPinchDetector.GestureType.INTERRUPT ->
+                            interruptVoiceCommand("fist-gesture")
+                    }
+                }
+                is SecondaryHandPinchDetector.GestureState.Ended -> {
+                    voiceGestureArmingProgress = 0f
+                    if (voiceState != VoiceState.LISTENING) {
+                        voiceGestureHint = null
+                    }
+                }
+                SecondaryHandPinchDetector.GestureState.Idle -> {
+                    voiceGestureArmingProgress = 0f
+                    if (voiceState != VoiceState.LISTENING) {
+                        voiceGestureHint = null
+                    }
+                }
+            }
         }
     }
 
@@ -788,21 +967,48 @@ fun SpatialPlayerScreen(
         }
     }
 
-    LaunchedEffect(followUpPending, isTtsSpeaking, voiceState) {
-        if (!followUpPending || isTtsSpeaking || voiceState != VoiceState.IDLE) return@LaunchedEffect
+    LaunchedEffect(
+        followUpPending,
+        followUpDeadlineMs,
+        isTtsSpeaking,
+        assistantSpeechPendingStart,
+        assistantSpeechStarted,
+        voiceState,
+        activeVoiceJob,
+    ) {
+        if (
+            !followUpPending ||
+            followUpDeadlineMs == 0L ||
+            isTtsSpeaking ||
+            assistantSpeechPendingStart ||
+            assistantSpeechStarted ||
+            voiceState != VoiceState.IDLE ||
+            activeVoiceJob?.isActive == true
+        ) {
+            return@LaunchedEffect
+        }
         val remaining = followUpDeadlineMs - System.currentTimeMillis()
         if (remaining <= 0L) {
             followUpPending = false
             voiceGestureHint = null
             return@LaunchedEffect
         }
-        delay(600L)
-        if (followUpPending && !isTtsSpeaking && voiceState == VoiceState.IDLE) {
-            requestVoiceCommand()
+        delay(followUpAutoStartDelayMs)
+        if (
+            followUpPending &&
+            followUpDeadlineMs > 0L &&
+            !isTtsSpeaking &&
+            !assistantSpeechPendingStart &&
+            !assistantSpeechStarted &&
+            voiceState == VoiceState.IDLE &&
+            activeVoiceJob?.isActive != true
+        ) {
+            Timber.i("VOICE: player auto-starting follow-up listening remainingMs=%d", followUpDeadlineMs - System.currentTimeMillis())
+            requestVoiceCommand("follow-up-auto")
         }
     }
 
-    LaunchedEffect(isTtsSpeaking, assistantSpeechPendingStart, assistantSpeechStarted) {
+    LaunchedEffect(isTtsSpeaking, assistantSpeechPendingStart, assistantSpeechStarted, followUpPending) {
         if (assistantSpeechPendingStart && isTtsSpeaking) {
             assistantSpeechPendingStart = false
             assistantSpeechStarted = true
@@ -810,11 +1016,14 @@ fun SpatialPlayerScreen(
             delay(1_500L)
             if (assistantSpeechPendingStart && !isTtsSpeaking) {
                 assistantSpeechPendingStart = false
+                assistantSpeechStarted = false
                 if (resumePlaybackAfterAssistantSpeech) {
                     player.play()
                 }
                 resumePlaybackAfterAssistantSpeech = false
-                assistantSpeechStarted = false
+                if (followUpPending && followUpDeadlineMs == 0L) {
+                    armFollowUpWindow("spoken-reply-did-not-start")
+                }
             }
         } else if (!isTtsSpeaking && assistantSpeechStarted) {
             if (resumePlaybackAfterAssistantSpeech) {
@@ -822,6 +1031,9 @@ fun SpatialPlayerScreen(
             }
             resumePlaybackAfterAssistantSpeech = false
             assistantSpeechStarted = false
+            if (followUpPending && followUpDeadlineMs == 0L) {
+                armFollowUpWindow("spoken-reply-finished")
+            }
         }
     }
 
@@ -2191,7 +2403,7 @@ private fun startVoiceCapture(
                         voiceSearchResultsCount = voiceSearchResults.size,
                         lastRecommendationQuery = recommendationContext?.query,
                         lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-                        lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
+                        lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
                         passthroughEnabled = passthroughEnabled,
                         castWithCharacters = uiState.currentPeople
                             .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
@@ -2282,13 +2494,28 @@ private fun startVoiceCapture(
                     }
 
                     if (response.text != null) {
+                        Timber.i(
+                            "VOICE: chat reply strategy=%s skill=%s recommendations=%d disposition=%s spokenReplies=%b",
+                            response.strategy,
+                            response.selectedSkill,
+                            response.recommendedItems.size,
+                            response.resultDisposition,
+                            assistantPreferences.spokenRepliesEnabled,
+                        )
                         onResult(response.text)
                         onConversationTurn(action.query, response.text)
                         onScheduleFollowUp()
                         if (assistantPreferences.spokenRepliesEnabled) {
+                            Timber.i("VOICE: speaking chat reply chars=%d", response.text.length)
                             onSpokenReply(response.text, responseLanguageHint)
                         }
                         if (response.recommendedItems.isNotEmpty()) {
+                            Timber.i(
+                                "VOICE: showing recommendation results query=%s count=%d first=%s",
+                                action.query,
+                                response.recommendedItems.size,
+                                response.recommendedItems.firstOrNull()?.name,
+                            )
                             onRecommendationContextUpdated(
                                 RecommendationContext(
                                     query = action.query,
@@ -2298,6 +2525,7 @@ private fun startVoiceCapture(
                             controller.showRecommendations(action.query, response.recommendedItems)
                         }
                     } else {
+                        Timber.w("VOICE: chat reply was null")
                         onResult("Sorry, I couldn't process that.")
                     }
                     telemetryStore.record(

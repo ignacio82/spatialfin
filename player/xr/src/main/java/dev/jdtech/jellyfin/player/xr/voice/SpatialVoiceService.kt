@@ -43,6 +43,7 @@ class SpatialVoiceService(private val context: Context) {
     private var originalNotificationVolume: Int = -1
     private var softRetryCount = 0
     private var pendingRetry: Runnable? = null
+    private var suppressNextError = false
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
@@ -75,8 +76,16 @@ class SpatialVoiceService(private val context: Context) {
     }
 
     fun startListening(onTranscript: (String) -> Unit) {
-        if (_state.value == VoiceState.LISTENING || !isAvailable()) return
+        if (_state.value == VoiceState.LISTENING) {
+            Timber.i("VOICE: startListening ignored because recognizer is already listening")
+            return
+        }
+        if (!isAvailable()) {
+            Timber.w("VOICE: startListening ignored because speech recognition is unavailable")
+            return
+        }
         if (!canStartListening()) {
+            Timber.w("VOICE: startListening rejected because audio mode is in communication")
             _state.value = VoiceState.ERROR
             return
         }
@@ -85,19 +94,33 @@ class SpatialVoiceService(private val context: Context) {
         softRetryCount = 0
         _state.value = VoiceState.LISTENING
         _partialTranscript.value = ""
+        Timber.i("VOICE: startListening")
         startListeningInternal()
     }
 
     fun stopListening() {
         cancelPendingRetry()
+        Timber.i("VOICE: stopListening")
         recognizer?.stopListening()
         if (_state.value == VoiceState.LISTENING) {
             _state.value = VoiceState.PROCESSING
         }
     }
 
+    fun cancelListening() {
+        cancelPendingRetry()
+        suppressNextError = true
+        onResult = null
+        Timber.i("VOICE: cancelListening")
+        recognizer?.cancel()
+        unmuteSystemBeep()
+        _partialTranscript.value = ""
+        _state.value = VoiceState.IDLE
+    }
+
     fun destroy() {
         cancelPendingRetry()
+        suppressNextError = false
         recognizer?.destroy()
         recognizer = null
         _state.value = VoiceState.IDLE
@@ -105,6 +128,7 @@ class SpatialVoiceService(private val context: Context) {
 
     fun resetState() {
         cancelPendingRetry()
+        suppressNextError = false
         _state.value = VoiceState.IDLE
         _partialTranscript.value = ""
     }
@@ -125,6 +149,7 @@ class SpatialVoiceService(private val context: Context) {
                                 results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                     ?.firstOrNull()
                                     .orEmpty()
+                            Timber.i("VOICE: recognition result chars=%d", transcript.length)
                             _state.value = VoiceState.PROCESSING
                             _partialTranscript.value = transcript
                             onResult?.invoke(transcript)
@@ -132,6 +157,12 @@ class SpatialVoiceService(private val context: Context) {
 
                         override fun onError(error: Int) {
                             unmuteSystemBeep()
+                            if (suppressNextError) {
+                                suppressNextError = false
+                                _state.value = VoiceState.IDLE
+                                _partialTranscript.value = ""
+                                return
+                            }
                             if (error == ERROR_CLIENT || error == ERROR_NO_MATCH) {
                                 if (softRetryCount < MAX_SOFT_RETRIES && onResult != null) {
                                     softRetryCount++
@@ -154,15 +185,21 @@ class SpatialVoiceService(private val context: Context) {
                             }
                         }
 
-                        override fun onReadyForSpeech(params: Bundle?) = Unit
+                        override fun onReadyForSpeech(params: Bundle?) {
+                            Timber.i("VOICE: ready for speech")
+                        }
 
-                        override fun onBeginningOfSpeech() = Unit
+                        override fun onBeginningOfSpeech() {
+                            Timber.i("VOICE: beginning of speech")
+                        }
 
                         override fun onRmsChanged(rmsdB: Float) = Unit
 
                         override fun onBufferReceived(buffer: ByteArray?) = Unit
 
-                        override fun onEndOfSpeech() = Unit
+                        override fun onEndOfSpeech() {
+                            Timber.i("VOICE: end of speech")
+                        }
 
                         override fun onPartialResults(partialResults: Bundle?) {
                             val partial =

@@ -189,6 +189,15 @@ class SpatialCommandCoordinator(
             )
         }
 
+        extractRecommendationSelection(normalized, playerState)?.let {
+            return VoiceParseResult(
+                action = it,
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "recommendation title matched",
+            )
+        }
+
         VoiceReplayCommandLibrary.match(transcript, normalized, playerState)?.let {
             return VoiceParseResult(
                 action = it,
@@ -395,6 +404,58 @@ class SpatialCommandCoordinator(
             text.matches(Regex("^(exit|quit|back|go back)$")) -> if (text.matches(Regex("^(back|go back)$"))) XrPlayerAction.GoBack else XrPlayerAction.CloseApp
             else -> null
         }
+    }
+
+    private fun extractRecommendationSelection(
+        text: String,
+        playerState: PlayerStateSnapshot,
+    ): XrPlayerAction? {
+        val titles = playerState.lastRecommendationTitles
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (titles.isEmpty()) return null
+
+        val strippedSelection =
+            text
+                .replace(
+                    Regex(
+                        "^(yes|yeah|yep|sure|okay|ok|alright|please|play|watch|open|start|choose|pick|go with|let s watch|lets watch|i want to watch|i want|i ll watch|ill watch)\\s+"
+                    ),
+                    "",
+                )
+                .replace(
+                    Regex("^(the|this|that)\\s+"),
+                    "",
+                )
+                .trim()
+        if (strippedSelection.length < 3) return null
+
+        fun normalizeTitleForMatch(value: String): String {
+            return value
+                .lowercase()
+                .replace(Regex("[^a-z0-9\\s]"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .removePrefix("the ")
+                .removePrefix("a ")
+                .removePrefix("an ")
+                .trim()
+        }
+
+        val normalizedSelection = normalizeTitleForMatch(strippedSelection)
+        if (normalizedSelection.length < 3) return null
+
+        val matchingIndices =
+            titles.mapIndexedNotNull { index, title ->
+                val normalizedTitle = normalizeTitleForMatch(title)
+                index.takeIf {
+                    normalizedSelection == normalizedTitle ||
+                        normalizedSelection.contains(normalizedTitle) ||
+                        normalizedTitle.contains(normalizedSelection)
+                }
+            }
+
+        return matchingIndices.singleOrNull()?.let { XrPlayerAction.SelectOption(it) }
     }
 
     private fun keywordMatch(

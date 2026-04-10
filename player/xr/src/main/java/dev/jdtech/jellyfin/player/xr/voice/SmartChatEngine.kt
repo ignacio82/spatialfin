@@ -80,10 +80,17 @@ class SmartChatEngine(
                 hasVisualContext = visualContexts.isNotEmpty(),
             )
         val recommendedItems = plan.actionableItems
+        val finalizeReply: (String?) -> String? = { text ->
+            finalizeRecommendationReply(
+                text = text,
+                skillId = plan.skillId,
+                recommendedItems = recommendedItems,
+            )
+        }
 
         if (plan.directAnswer != null && plan.shouldSkipModel) {
             return@withContext AssistantReply(
-                text = plan.directAnswer,
+                text = finalizeReply(plan.directAnswer),
                 strategy = "SKILL_DIRECT",
                 debugInfo = plan.debugInfo,
                 recommendedItems = recommendedItems,
@@ -147,7 +154,7 @@ class SmartChatEngine(
                             .ifBlank { fallbackText ?: "" }
                             .takeIf { it.isNotBlank() }
                     return@withContext AssistantReply(
-                        text = finalText,
+                        text = finalizeReply(finalText),
                         strategy = "GEMMA_LITERT",
                         debugInfo = plan.debugInfo.ifBlank { "LiteRT LM Engine" },
                         recommendedItems = recommendedItems,
@@ -163,7 +170,7 @@ class SmartChatEngine(
 
         if (gemmaEnabled) {
             return@withContext AssistantReply(
-                text = fallbackText,
+                text = finalizeReply(fallbackText),
                 strategy = "HEURISTIC",
                 debugInfo = "${plan.debugInfo}; Gemma enabled; Gemini disabled; using heuristic fallback",
                 recommendedItems = recommendedItems,
@@ -175,7 +182,7 @@ class SmartChatEngine(
 
         if (!shouldAttemptGemini()) {
             return@withContext AssistantReply(
-                text = fallbackText,
+                text = finalizeReply(fallbackText),
                 strategy = "HEURISTIC",
                 debugInfo = "${plan.debugInfo}; Gemini disabled: cloud API key missing",
                 recommendedItems = recommendedItems,
@@ -192,7 +199,7 @@ class SmartChatEngine(
                     .ifBlank { fallbackText ?: "" }
                     .takeIf { it.isNotBlank() }
             return@withContext AssistantReply(
-                text = finalText,
+                text = finalizeReply(finalText),
                 strategy = "MODEL",
                 debugInfo = "${plan.debugInfo}; ${result.status.details}",
                 recommendedItems = recommendedItems,
@@ -215,7 +222,7 @@ class SmartChatEngine(
                     .ifBlank { fallbackText ?: "" }
                     .takeIf { it.isNotBlank() }
             return@withContext AssistantReply(
-                text = finalText,
+                text = finalizeReply(finalText),
                 strategy = "CLOUD",
                 debugInfo = "${plan.debugInfo}; ${cloudResult.status.details}",
                 recommendedItems = recommendedItems,
@@ -227,7 +234,7 @@ class SmartChatEngine(
 
         Timber.d("GEMINI: chat fallback to heuristic answer details=%s", result.status.details)
         AssistantReply(
-            text = fallbackText,
+            text = finalizeReply(fallbackText),
             strategy = "HEURISTIC",
             debugInfo = "${plan.debugInfo}; ${result.status.details}; ${cloudResult.status.details}",
             recommendedItems = recommendedItems,
@@ -425,6 +432,21 @@ class SmartChatEngine(
             else -> "${picks[0]}, ${picks[1]}, or ${picks[2]}"
         }
         return "Based on your library, try $titleList."
+    }
+
+    private fun finalizeRecommendationReply(
+        text: String?,
+        skillId: MediaSkillId,
+        recommendedItems: List<SpatialFinItem>,
+    ): String? {
+        val base = text?.trim()?.takeIf { it.isNotBlank() } ?: return text
+        if (recommendedItems.isEmpty()) return base
+        if (skillId != MediaSkillId.WATCH_RECOMMENDER && skillId != MediaSkillId.MOOD_SURPRISE) {
+            return base
+        }
+        if (base.contains("would you like to watch", ignoreCase = true)) return base
+        if (base.contains("which one", ignoreCase = true)) return base
+        return "$base Would you like to watch any of these? You can say play the first one or say a title."
     }
 
     private fun heuristicAnswer(

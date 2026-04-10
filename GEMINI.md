@@ -246,6 +246,92 @@ Do not use it for:
 
 ## Debugging Voice / AI
 
+### Wireless ADB Workflow For XR Headsets
+
+For Samsung / Android XR headset work, prefer wireless `adb` so live debugging, installs, and log capture can happen during feature development without asking the user to paste logs manually.
+
+Use this workflow:
+
+1. On the headset, enable `Developer options` and turn on `Wireless debugging`.
+2. Open `Pair device with pairing code`.
+3. Pair from the workstation:
+
+```bash
+adb pair <headset-ip>:<pairing-port>
+```
+
+4. The pairing dialog shows a `Pairing code`. Enter it when prompted.
+5. Find the actual debug endpoint. The main wireless debugging screen shows an `IP address & Port`, or you can discover it with:
+
+```bash
+adb mdns services
+```
+
+6. Connect to the debug endpoint:
+
+```bash
+adb connect <headset-ip>:<debug-port>
+adb devices -l
+```
+
+Important notes:
+
+- The pairing port and debug port are different. Do not reuse the pairing port for `adb connect`.
+- XR headsets may appear twice in `adb devices`: once as `<ip>:<port>` and once as an mDNS alias like `adb-<id>._adb-tls-connect._tcp`.
+- When duplicates appear, always use the explicit `<ip>:<debug-port>` serial with `adb -s ...` to avoid `more than one device/emulator`.
+
+### Headset Debug / Install Commands
+
+Build and install the current unified XR debug APK:
+
+```bash
+./gradlew :app:unified:assembleLibreDebug
+adb -s <ip>:<debug-port> install -r app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
+```
+
+Useful device checks:
+
+```bash
+adb -s <ip>:<debug-port> shell pidof dev.spatialfin.debug
+adb -s <ip>:<debug-port> shell dumpsys package dev.spatialfin.debug
+```
+
+Use full-system log capture when the app does not write its own crash log or when the failure may come from XR/runtime/surface teardown:
+
+```bash
+adb -s <ip>:<debug-port> logcat -c
+adb -s <ip>:<debug-port> logcat -b all -v threadtime
+```
+
+For a saved repro log:
+
+```bash
+adb -s <ip>:<debug-port> logcat -c
+adb -s <ip>:<debug-port> logcat -b all -v threadtime | tee xr-crash.log
+```
+
+When the app is running and a narrower view is useful, filter by PID:
+
+```bash
+adb -s <ip>:<debug-port> shell pidof dev.spatialfin.debug
+adb -s <ip>:<debug-port> logcat -d -v threadtime --pid <pid>
+```
+
+High-signal log sources for headset debugging:
+
+- `AndroidRuntime` for Java/Kotlin fatal exceptions
+- `libc` for native aborts
+- `SurfaceFlinger`, `BufferQueue`, and media codec logs for playback/surface issues
+- XR / OpenXR vendor logs for scene, swapchain, and surface lifecycle failures
+- `dev.spatialfin.debug` app logs for parser, voice, player, and subtitle state
+
+If a wireless session gets stale:
+
+```bash
+adb disconnect <ip>:<debug-port>
+adb connect <headset-ip>:<debug-port>
+```
+
 ### Fast Verification Commands
 
 Use these first after any voice or AI change:

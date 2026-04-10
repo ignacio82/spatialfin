@@ -428,18 +428,11 @@ class XrPlayerActivity : AppCompatActivity() {
             libassRenderer != null,
         )
         runCatching { viewModel.updatePlaybackProgress() }
-        runCatching { viewModel.player.pause() }
-        runCatching { (viewModel.player as? ExoPlayer)?.clearVideoSurface() }
-        requestHomeSpaceMode("finish-requested:$reason")
-        window.decorView.postDelayed(
-            {
-                if (!isFinishing && !isDestroyed) {
-                    recordLaunchPhase("exit:finish-called:$reason")
-                    finish()
-                }
-            },
-            150L,
-        )
+        // Do not force XR teardown before finish(). SpatialPlayerScreen.onDispose() already
+        // detaches the SurfaceEntity, and preemptive home-space/surface work has proven
+        // crash-prone on device during player shutdown.
+        recordLaunchPhase("exit:finish-called:$reason")
+        finish()
     }
 
     private fun recordLaunchPhase(phase: String) {

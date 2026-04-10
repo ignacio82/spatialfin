@@ -97,6 +97,26 @@ class RecommendationPlannerTest {
         assertEquals(90, analysis.filters.maxRuntimeMinutes)
     }
 
+    @Test
+    fun `direct recommendation reply names titles and concrete reasons`() {
+        val quickMovie = movie(name = "Quick Laughs", genres = listOf("Comedy"), englishAudio = true, runtimeMinutes = 88)
+        val backupMovie = movie(name = "Space Patrol", genres = listOf("Sci-Fi"), englishAudio = true, runtimeMinutes = 104)
+        val analysis = RecommendationPlanner.analyzeQuestion("recommend something funny with english audio", null)
+
+        val reply =
+            RecommendationPlanner.buildRecommendationReply(
+                items = listOf(quickMovie, backupMovie),
+                analysis = analysis!!,
+                currentTitle = null,
+            )
+
+        assertNotNull(reply)
+        assertTrue(reply!!.contains("Quick Laughs"))
+        assertTrue(reply.contains("Space Patrol"))
+        assertTrue(reply.contains("English audio"))
+        assertTrue(reply.contains("Comedy") || reply.contains("comedic"))
+    }
+
     private fun movie(
         name: String,
         genres: List<String>,
