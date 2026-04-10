@@ -339,6 +339,9 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        if (finishRequested) {
+            recordLaunchPhase("exit:onPause")
+        }
         Timber.d(
             "XrPlayerActivity onPause mediaId=%s posMs=%d state=%d finishRequested=%b",
             viewModel.player.currentMediaItem?.mediaId,
@@ -351,6 +354,9 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        if (finishRequested) {
+            recordLaunchPhase("exit:onStop")
+        }
         Timber.d(
             "XrPlayerActivity onStop mediaId=%s posMs=%d state=%d isFinishing=%b finishRequested=%b",
             viewModel.player.currentMediaItem?.mediaId,
@@ -367,9 +373,10 @@ class XrPlayerActivity : AppCompatActivity() {
                 viewModel.appPreferences.xrReturnHomeSpaceAfterPlayback
             )
             // Always return home when backgrounded (not finishing).
-            // Also return home when finishing if the preference requests it.
-            if (!isFinishing || returnOnFinish) {
-                xrSession?.scene?.requestHomeSpaceMode()
+            // Also return home when finishing if the preference requests it, or when
+            // an explicit player-exit flow is underway.
+            if (!isFinishing || returnOnFinish || finishRequested) {
+                requestHomeSpaceMode("onStop")
             }
         } catch (e: Exception) {
             Timber.w(e, "Failed to request home space mode")
@@ -379,6 +386,9 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (finishRequested) {
+            recordLaunchPhase("exit:onDestroy")
+        }
         Timber.d(
             "XrPlayerActivity onDestroy mediaId=%s posMs=%d state=%d error=%s finishRequested=%b",
             viewModel.player.currentMediaItem?.mediaId,
@@ -400,6 +410,7 @@ class XrPlayerActivity : AppCompatActivity() {
             return
         }
         finishRequested = true
+        recordLaunchPhase("exit:finish-requested:$reason")
         Timber.i(
             "XrPlayerActivity finish requested reason=%s mediaId=%s posMs=%d state=%d useLibass=%b",
             reason,
@@ -408,11 +419,34 @@ class XrPlayerActivity : AppCompatActivity() {
             viewModel.player.playbackState,
             libassRenderer != null,
         )
-        finish()
+        runCatching { viewModel.updatePlaybackProgress() }
+        runCatching { viewModel.player.pause() }
+        runCatching { (viewModel.player as? ExoPlayer)?.clearVideoSurface() }
+        requestHomeSpaceMode("finish-requested:$reason")
+        window.decorView.postDelayed(
+            {
+                if (!isFinishing && !isDestroyed) {
+                    recordLaunchPhase("exit:finish-called:$reason")
+                    finish()
+                }
+            },
+            150L,
+        )
     }
 
     private fun recordLaunchPhase(phase: String) {
         PlayerLaunchBreadcrumbs.markPending(this, "XrPlayerActivity:$phase")
+    }
+
+    private fun requestHomeSpaceMode(stage: String) {
+        runCatching {
+            xrSession?.scene?.requestHomeSpaceMode()
+        }.onSuccess {
+            recordLaunchPhase("exit:home-space-requested:$stage")
+            Timber.d("XrPlayerActivity requested home space mode stage=%s", stage)
+        }.onFailure { error ->
+            Timber.w(error, "XrPlayerActivity failed to request home space mode stage=%s", stage)
+        }
     }
 
     private fun buildLibassFontLoader(
