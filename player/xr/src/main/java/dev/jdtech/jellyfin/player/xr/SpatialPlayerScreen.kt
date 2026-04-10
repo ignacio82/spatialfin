@@ -285,9 +285,16 @@ fun SpatialPlayerScreen(
     var characterScanActive by remember { mutableStateOf(false) }
     var voiceAssetsRequested by remember { mutableStateOf(false) }
     var exitRequested by remember { mutableStateOf(false) }
+    var activeVoiceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     LaunchedEffect(Unit) {
         Timber.i("VOICE: deferring XR voice startup work until explicit activation")
+        // Warm-up: if the model file is already on disk and Gemma is enabled, begin
+        // engine initialization now in the background so the first interaction is instant
+        // instead of waiting 30–120 s after the user first presses the mic button.
+        if (viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantGemmaEnabled)) {
+            llmEntryPoint.modelManager().ensureInitialized()
+        }
     }
 
     fun requireCommandCoordinator(): SpatialCommandCoordinator =
@@ -646,6 +653,9 @@ fun SpatialPlayerScreen(
     }
 
     fun requestVoiceCommand() {
+        // Cancel any in-flight inference from the previous voice command before starting a new one.
+        activeVoiceJob?.cancel()
+        activeVoiceJob = null
         if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
             return
         }
@@ -716,6 +726,7 @@ fun SpatialPlayerScreen(
             onCharacterScanActiveChanged = { characterScanActive = it },
             scope = coroutineScope,
             lastPointerPosition = lastPointerPosition,
+            onJobStarted = { activeVoiceJob = it },
             )
             }
 
@@ -2134,10 +2145,11 @@ private fun startVoiceCapture(
     onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
     scope: kotlinx.coroutines.CoroutineScope,
     lastPointerPosition: androidx.compose.ui.geometry.Offset?,
+    onJobStarted: ((kotlinx.coroutines.Job) -> Unit)? = null,
 ) {
     val startedAtMs = System.currentTimeMillis()
     voiceService.startListening { transcript ->
-        scope.launch {
+        val job = scope.launch {
             try {
                 val snapshot =
                     PlayerStateSnapshot(
@@ -2189,7 +2201,7 @@ private fun startVoiceCapture(
                 val parseResult = commandCoordinator.parse(transcript, snapshot)
                 val action = parseResult.action
                 if (action is XrPlayerAction.ChatQuery) {
-                    onResult("Thinking...")
+                    onResult("…")
                     val chatEngine = chatEngineProvider()
                     
                     val visualContexts = mutableListOf<android.graphics.Bitmap>()
@@ -2257,6 +2269,7 @@ private fun startVoiceCapture(
                             onGetSuggestions = onGetSuggestions,
                             visualContexts = visualContexts,
                             lastPointerPosition = lastPointerPosition,
+                            onTokenStream = { partial -> onResult(partial) },
                         )
                     } finally {
                         if (isCharacterIDQuery) onCharacterScanActiveChanged?.invoke(false)
@@ -2323,6 +2336,7 @@ private fun startVoiceCapture(
                 voiceService.resetState()
             }
         }
+        onJobStarted?.invoke(job)
     }
 }
 

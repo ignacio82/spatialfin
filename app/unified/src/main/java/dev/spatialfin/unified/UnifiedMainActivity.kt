@@ -306,6 +306,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         val voiceState by voiceService.state.collectAsState()
         val partialTranscript by voiceService.partialTranscript.collectAsState()
         var voiceFeedback by remember { mutableStateOf<String?>(null) }
+        var activeVoiceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
         val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
         var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
         var voiceGestureHint by remember { mutableStateOf<String?>(null) }
@@ -351,14 +352,13 @@ class UnifiedMainActivity : AppCompatActivity() {
             val assistantReply: AssistantReply? = null,
         )
 
-        suspend fun handleVoiceAction(action: XrPlayerAction): HomeVoiceActionOutcome {
+        suspend fun handleVoiceAction(action: XrPlayerAction, onToken: ((String) -> Unit)? = null): HomeVoiceActionOutcome {
             return when (action) {
                 is XrPlayerAction.Search -> {
                     voiceSearchQuery = action.query
                     HomeVoiceActionOutcome("Searching for ${action.query}")
                 }
                 is XrPlayerAction.ChatQuery -> {
-                    voiceFeedback = "Thinking..."
                     val nano = geminiNanoService
                         ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
                     val cloud = geminiCloudService
@@ -387,6 +387,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                             conversationHistory = conversationHistory,
                             recommendationContext = recommendationContext,
                             onGetSuggestions = { repository.getSuggestions() },
+                            onTokenStream = onToken,
                         )
                     response.recommendedItems
                         .takeIf { it.isNotEmpty() }
@@ -425,6 +426,9 @@ class UnifiedMainActivity : AppCompatActivity() {
         }
 
         fun requestVoiceCommand() {
+            // Cancel any in-flight inference before starting a new capture.
+            activeVoiceJob?.cancel()
+            activeVoiceJob = null
             if (!voiceService.isAvailable()) {
                 voiceFeedback = "Speech recognition unavailable"
                 return
@@ -438,7 +442,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                 return
             }
             voiceService.startListening { transcript ->
-                coroutineScope.launch {
+                val job = coroutineScope.launch {
+                    try {
                     val startedAtMs = System.currentTimeMillis()
                     val nano = geminiNanoService
                         ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
@@ -462,7 +467,10 @@ class UnifiedMainActivity : AppCompatActivity() {
                             lastRecommendationTitles = recommendationContext?.items?.take(3)?.map { it.name } ?: emptyList(),
                         )
                     val parseResult = coordinator.parse(transcript, snapshot)
-                    val outcome = handleVoiceAction(parseResult.action)
+                    if (parseResult.action is XrPlayerAction.ChatQuery) {
+                        voiceFeedback = "…"
+                    }
+                    val outcome = handleVoiceAction(parseResult.action, onToken = { partial -> voiceFeedback = partial })
                     voiceFeedback = outcome.feedback
                     voiceTelemetryStore.record(
                         VoiceTelemetryEntry(
@@ -491,7 +499,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                             )
                         )
                     }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        voiceFeedback = null
+                        throw e
+                    }
                 }
+                activeVoiceJob = job
             }
         }
 
@@ -535,8 +548,12 @@ class UnifiedMainActivity : AppCompatActivity() {
 
         LaunchedEffect(voiceFeedback, isTtsSpeaking) {
             val feedback = voiceFeedback ?: return@LaunchedEffect
-            if (feedback != "Thinking..." && !isTtsSpeaking) {
-                delay((feedback.length * 55L).coerceIn(4_000L, 10_000L))
+            if (!isTtsSpeaking) {
+                // "…" is the in-progress indicator — give it a long timeout so it clears
+                // if inference never completes (e.g. job cancelled, GPU stuck).
+                val timeoutMs = if (feedback == "…") 60_000L
+                                else (feedback.length * 55L).coerceIn(4_000L, 10_000L)
+                delay(timeoutMs)
                 if (voiceFeedback == feedback && !isTtsSpeaking) {
                     voiceFeedback = null
                     voiceService.resetState()

@@ -1,6 +1,5 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
-import com.google.ai.edge.litertlm.ExperimentalApi
 import dev.jdtech.jellyfin.core.llm.LlmChatModelHelper
 import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
 import dev.jdtech.jellyfin.core.llm.LlmModelInstance
@@ -11,8 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import timber.log.Timber
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 /**
  * Dedicated parser that uses a private Gemma conversation to map voice transcripts
@@ -20,7 +17,6 @@ import kotlin.coroutines.suspendCoroutine
  */
 class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
 
-    @OptIn(ExperimentalApi::class)
     suspend fun parse(
         transcript: String,
         playerState: PlayerStateSnapshot
@@ -33,20 +29,11 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
 
         prompts.forEachIndexed { index, prompt ->
             try {
-                val responseText = suspendCoroutine<String> { continuation ->
-                    val sb = StringBuilder()
-                    LlmChatModelHelper.runInference(
-                        instance = llmInstance,
-                        prompt = prompt,
-                        profile = LlmInferenceProfile.COMMAND,
-                    ) { text, isDone ->
-                        if (isDone) {
-                            continuation.resume(sb.toString())
-                        } else {
-                            sb.append(text)
-                        }
-                    }
-                }
+                val responseText = LlmChatModelHelper.runInference(
+                    instance = llmInstance,
+                    prompt = prompt,
+                    profile = LlmInferenceProfile.COMMAND,
+                )
                 Timber.d(
                     "GemmaCommandParser: raw response retry=%s response=%s",
                     index > 0,
