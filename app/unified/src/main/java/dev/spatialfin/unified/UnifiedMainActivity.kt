@@ -108,9 +108,14 @@ class UnifiedMainActivity : AppCompatActivity() {
         private const val STARTUP_PERMISSIONS_REQUESTED_KEY = "startup_permissions_requested"
         private const val XR_APP_PANEL_LEGACY_DEPTH_METERS = -5f
         private const val XR_APP_PANEL_V2_DEPTH_METERS = -6f
-        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -9f
-        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 3
+        private const val XR_APP_PANEL_V3_DEPTH_METERS = -9f
+        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -11f
+        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 4
         private const val XR_APP_PANEL_DEFAULT_POSE_EPSILON = 0.05f
+        private const val XR_APP_PANEL_WIDTH_DP = 1792
+        private const val XR_APP_PANEL_HEIGHT_DP = 1008
+        private const val XR_APP_PANEL_WIDTH_METERS = 1.792f
+        private const val XR_APP_PANEL_HEIGHT_METERS = 1.008f
     }
 
     private val deviceClass by lazy { detectDeviceClass() }
@@ -680,7 +685,12 @@ class UnifiedMainActivity : AppCompatActivity() {
             val root = rootEntity.value ?: return@LaunchedEffect
             if (movableComponent.value == null) {
                 val m = MovableComponent.createSystemMovable(session, false)
-                m.size = androidx.xr.runtime.math.FloatSize3d(2.56f, 1.44f, 0.1f)
+                m.size =
+                    androidx.xr.runtime.math.FloatSize3d(
+                        XR_APP_PANEL_WIDTH_METERS,
+                        XR_APP_PANEL_HEIGHT_METERS,
+                        0.1f,
+                    )
                 root.addComponent(m)
                 movableComponent.value = m
                 Timber.d("VOICE: Home movable permanently enabled")
@@ -727,8 +737,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                 ) {
                     SpatialPanel(
                         modifier = SubspaceModifier
-                            .width(2560.dp)
-                            .height(1440.dp)
+                            .width(XR_APP_PANEL_WIDTH_DP.dp)
+                            .height(XR_APP_PANEL_HEIGHT_DP.dp)
                             .offset(x = 0.dp, y = 0.dp, z = 0.dp)
                     ) {
                         Box(
@@ -873,6 +883,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                 (kotlin.math.abs(translation.z - XR_APP_PANEL_LEGACY_DEPTH_METERS) <=
                     XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
                     kotlin.math.abs(translation.z - XR_APP_PANEL_V2_DEPTH_METERS) <=
+                        XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
+                    kotlin.math.abs(translation.z - XR_APP_PANEL_V3_DEPTH_METERS) <=
                         XR_APP_PANEL_DEFAULT_POSE_EPSILON)
         val usesIdentityRotation =
             kotlin.math.abs(rotation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
