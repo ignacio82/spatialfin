@@ -12,8 +12,6 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 data class AssistantPreferences(
     val verbosity: String = "balanced",
@@ -66,6 +64,8 @@ class SmartChatEngine(
         recommendationContext: RecommendationContext? = null,
         visualContexts: List<Bitmap> = emptyList(),
         lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
+        /** Called on the IO thread with accumulating text as each token arrives. */
+        onTokenStream: ((String) -> Unit)? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
         val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs)
         val plan =
@@ -127,21 +127,14 @@ class SmartChatEngine(
 
         if (gemmaEnabled && llmInstance != null) {
             try {
-                val responseText = suspendCoroutine<String> { continuation ->
-                    val sb = StringBuilder()
-                    LlmChatModelHelper.runInference(
-                        instance = llmInstance!!,
-                        prompt = prompt,
-                        images = visualContexts,
-                        profile = LlmInferenceProfile.CHAT,
-                    ) { text, isDone ->
-                        if (isDone) {
-                            continuation.resume(sb.toString())
-                        } else {
-                            sb.append(text)
-                        }
-                    }
-                }
+                val currentInstance = llmInstance!!
+                val responseText = LlmChatModelHelper.runInference(
+                    instance = currentInstance,
+                    prompt = prompt,
+                    images = visualContexts,
+                    profile = LlmInferenceProfile.CHAT,
+                    onToken = onTokenStream,
+                )
                 if (responseText.isNotBlank()) {
                     val prefixToRemove = "Model: "
                     val cleanedResponse = if (responseText.startsWith(prefixToRemove)) {

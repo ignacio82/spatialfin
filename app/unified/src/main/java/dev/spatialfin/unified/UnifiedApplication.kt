@@ -20,6 +20,8 @@ import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
+import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.CompanionLogUploader
 import dev.spatialfin.DiagnosticsExport
@@ -35,6 +37,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
+    @Inject lateinit var llmDownloadManager: Lazy<LlmDownloadManager>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -140,8 +143,16 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     private fun eagerInitializeLlmIfNeeded() {
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
         if (deviceClass == DeviceClass.XR) {
-            Timber.i("LlmModelManager: deferring engine initialization on XR until voice AI is used")
-            return
+            // On XR: only initialize if the model is already on disk. We never auto-download
+            // at launch (that would pull 2.6 GB without user consent), but if the user has
+            // already downloaded the model we should start warming up the engine immediately
+            // so that home-screen voice queries (recommendations, search) are ready quickly.
+            val modelReady = llmDownloadManager.get().downloadState.value is DownloadState.Ready
+            if (!modelReady) {
+                Timber.i("LlmModelManager: model not yet downloaded on XR — deferring until voice AI is used")
+                return
+            }
+            Timber.i("LlmModelManager: model already on disk on XR — starting engine warm-up at launch")
         }
         llmModelManager.get()
     }

@@ -73,7 +73,6 @@ class SpatialCommandCoordinator(
     private val appPreferences: AppPreferences,
     private val modelManager: LlmModelManager,
 ) {
-    private var gemmaParser: GemmaCommandParser? = null
     private val chatQuestionPhrases = listOf(
         "what happened",
         "what s happened",
@@ -199,14 +198,25 @@ class SpatialCommandCoordinator(
             )
         }
 
+        // Fast path: if the transcript is clearly a chat/question, skip Gemma command
+        // parsing entirely. This saves one full LLM inference (~2–5 s) for the most
+        // common voice interactions.
+        if (shouldUseGemma() && isLikelyChatQuery(normalized)) {
+            return VoiceParseResult(
+                action = XrPlayerAction.ChatQuery(transcript),
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "pre-Gemma chat classification",
+            )
+        }
+
         if (shouldUseGemma()) {
             modelManager.ensureInitialized()
             val instance = modelManager.instance
             if (instance != null) {
-                if (gemmaParser == null) {
-                    gemmaParser = GemmaCommandParser(instance)
-                }
-                val gemmaAction = gemmaParser!!.parse(transcript, playerState)
+                // Create a fresh parser each time so it always references the live engine
+                // instance — a cached parser would hold a stale reference after engine re-init.
+                val gemmaAction = GemmaCommandParser(instance).parse(transcript, playerState)
                 if (gemmaAction !is XrPlayerAction.Unrecognized) {
                     return VoiceParseResult(
                         action = gemmaAction,

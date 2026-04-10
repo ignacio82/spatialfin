@@ -14,9 +14,14 @@ import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.SamplerConfig
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class LlmModelInstance(val engine: Engine, val backendName: String)
 
@@ -50,12 +55,12 @@ object LlmChatModelHelper {
     private const val KEY_LAST_SUCCESSFUL = "last_successful"
     private const val KEY_NPU_UNSUPPORTED = "npu_unsupported"
 
-    // Tracks the currently open conversation. LiteRT only allows one session at a time;
-    // if a session leaks (e.g. coroutine cancellation before onDone fires) every subsequent
-    // createConversation() call fails with FAILED_PRECONDITION. We close the stale session
-    // before opening a new one to recover automatically.
-    @Volatile
-    private var activeConversation: Conversation? = null
+    // LiteRT only allows one active Conversation (GPU session) at a time. Closing a
+    // Conversation does NOT interrupt an in-flight GPU operation — the native session
+    // stays alive until sendMessageAsync completes. This Mutex serialises all inference:
+    // it is acquired before sendMessageAsync and released only in onDone/onError, so a
+    // cancelled coroutine still holds the lock until the GPU finishes.
+    private val inferenceMutex = Mutex()
 
     private data class BackendCacheState(
         val lastSuccessfulBackend: String? = null,
@@ -158,25 +163,35 @@ object LlmChatModelHelper {
         return LlmModelInstance(engine, backendName)
     }
 
+    /**
+     * Runs one inference call and returns the full response text.
+     *
+     * Acquires [inferenceMutex] before calling sendMessageAsync and releases it only
+     * inside [onDone]/[onError] (i.e. when the GPU has finished). A cancelled coroutine
+     * keeps the lock held until the GPU completes, preventing a FAILED_PRECONDITION on
+     * the next call.
+     *
+     * @param onToken Called on the LiteRT thread with the accumulated response after
+     *   each token arrives. Useful for streaming UI updates.
+     */
     @OptIn(ExperimentalApi::class)
-    fun runInference(
+    suspend fun runInference(
         instance: LlmModelInstance,
         prompt: String,
         images: List<Bitmap> = emptyList(),
         profile: LlmInferenceProfile = LlmInferenceProfile.CHAT,
-        onResult: (String, Boolean) -> Unit
-    ) {
+        onToken: ((String) -> Unit)? = null,
+    ): String {
+        // Suspend here until any prior GPU session finishes.
+        inferenceMutex.lock()
+
         val contents = mutableListOf<Content>()
-        
         for (bitmap in images) {
             val stream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
             contents.add(Content.ImageBytes(stream.toByteArray()))
         }
-        
-        if (prompt.isNotEmpty()) {
-            contents.add(Content.Text(prompt))
-        }
+        if (prompt.isNotEmpty()) contents.add(Content.Text(prompt))
 
         Timber.d(
             "LiteRT: runInference profile=%s promptChars=%d imageCount=%d backend=%s",
@@ -186,50 +201,46 @@ object LlmChatModelHelper {
             instance.backendName,
         )
 
-        // Close any session leaked by a previous call (e.g. coroutine cancelled before onDone).
-        val conversation: Conversation
-        synchronized(this) {
-            val leaked = activeConversation
-            if (leaked != null) {
-                Timber.w("LiteRT: closing leaked session before new inference (profile=%s)", profile.name)
-                try { leaked.close() } catch (ignored: Exception) {}
-                activeConversation = null
-            }
-            conversation = createConversation(instance.engine, profile)
-            activeConversation = conversation
-        }
+        val conversation = createConversation(instance.engine, profile)
 
-        try {
-            conversation.sendMessageAsync(
-                Contents.of(contents),
-                object : MessageCallback {
-                    override fun onMessage(message: Message) {
-                        onResult(message.toString(), false)
-                    }
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                // Cancellation must NOT release the mutex — the GPU is still running.
+                // inferenceMutex.unlock() happens only in onDone/onError below.
+                val sb = StringBuilder()
+                try {
+                    conversation.sendMessageAsync(
+                        Contents.of(contents),
+                        object : MessageCallback {
+                            override fun onMessage(message: Message) {
+                                sb.append(message.toString())
+                                onToken?.invoke(sb.toString())
+                            }
 
-                    override fun onDone() {
-                        synchronized(this@LlmChatModelHelper) {
-                            if (activeConversation === conversation) activeConversation = null
+                            override fun onDone() {
+                                conversation.close()
+                                inferenceMutex.unlock()
+                                continuation.resume(sb.toString())
+                            }
+
+                            override fun onError(throwable: Throwable) {
+                                conversation.close()
+                                inferenceMutex.unlock()
+                                Timber.e(throwable, "LiteRT: inference error")
+                                continuation.resumeWithException(throwable)
+                            }
                         }
-                        conversation.close()
-                        onResult("", true)
-                    }
-
-                    override fun onError(throwable: Throwable) {
-                        synchronized(this@LlmChatModelHelper) {
-                            if (activeConversation === conversation) activeConversation = null
-                        }
-                        conversation.close()
-                        Timber.e(throwable, "Inference error")
-                        onResult("Error: ${throwable.message}", true)
-                    }
+                    )
+                } catch (e: Exception) {
+                    // sendMessageAsync threw synchronously — no callback will fire.
+                    conversation.close()
+                    inferenceMutex.unlock()
+                    continuation.resumeWithException(e)
                 }
-            )
-        } catch (e: Exception) {
-            synchronized(this@LlmChatModelHelper) {
-                if (activeConversation === conversation) activeConversation = null
             }
-            conversation.close()
+        } catch (e: CancellationException) {
+            // The coroutine was cancelled. The mutex is still locked and will be
+            // released when onDone/onError fires. Re-throw so the caller sees cancellation.
             throw e
         }
     }
