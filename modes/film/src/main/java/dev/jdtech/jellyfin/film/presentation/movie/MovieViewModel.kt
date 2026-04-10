@@ -8,6 +8,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
+import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
@@ -15,6 +16,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.PersonKind
@@ -29,10 +31,16 @@ constructor(
 ) : ViewModel() {
     private val _state = MutableStateFlow(MovieState())
     val state = _state.asStateFlow()
+    private var hasLoadedMovie = false
 
     lateinit var movieId: UUID
 
+    init {
+        observeRealtimeEvents()
+    }
+
     fun loadMovie(movieId: UUID) {
+        hasLoadedMovie = true
         this.movieId = movieId
         viewModelScope.launch {
             try {
@@ -60,6 +68,19 @@ constructor(
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect { event ->
+                    if (!hasLoadedMovie || !::movieId.isInitialized) return@collect
+                    if (event.affects(movieId) || event is JellyfinRealtimeEvent.LibraryChanged) {
+                        loadMovie(movieId)
+                    }
+                }
         }
     }
 

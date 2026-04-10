@@ -250,9 +250,9 @@ fun NavigationRoot(
     // NavigationSuiteScaffold XR override, which calls Subspace() with an incompatible
     // signature due to a version mismatch between compose.material3:alpha11 and compose:alpha11.
     //
-    // The SpatialPanel is 2560dp wide. A full-width Row would push the NavigationRail to the
-    // far-left edge (~1280dp left of center), outside the XR FOV. We cap the inner row at
-    // 1920dp and center it so the rail is always within comfortable viewing range.
+    // The XR panel is wider than the comfortable interaction zone. A full-width Row would push
+    // the NavigationRail too far left, outside the XR FOV. We cap the inner row at 1920dp and
+    // center it so the rail stays within comfortable viewing range.
     Box(
         modifier = Modifier
             .fillMaxSize()

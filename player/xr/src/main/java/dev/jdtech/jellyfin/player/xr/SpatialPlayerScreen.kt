@@ -17,6 +17,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -87,6 +88,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.xr.compose.spatial.ContentEdge
@@ -282,6 +284,7 @@ fun SpatialPlayerScreen(
     var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
     var characterScanActive by remember { mutableStateOf(false) }
     var voiceAssetsRequested by remember { mutableStateOf(false) }
+    var exitRequested by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         Timber.i("VOICE: deferring XR voice startup work until explicit activation")
@@ -367,6 +370,7 @@ fun SpatialPlayerScreen(
     var videoWidth by remember { mutableFloatStateOf(DEFAULT_VIDEO_WIDTH_METERS) }
     var videoHeight by remember { mutableFloatStateOf(DEFAULT_VIDEO_HEIGHT_METERS) }
     var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    var subtitleTrackSelected by remember { mutableStateOf(false) }
     var subtitleTrackVersion by remember { mutableIntStateOf(0) }
     val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
     var resumePlaybackAfterAssistantSpeech by remember { mutableStateOf(false) }
@@ -412,6 +416,46 @@ fun SpatialPlayerScreen(
 
     fun resetAutoHide() {
         hideTimestamp = System.currentTimeMillis()
+    }
+
+    fun revealControls(reason: String) {
+        if (!controlsVisible) {
+            Timber.d("XrPlayer controls revealed reason=%s", reason)
+        }
+        controlsVisible = true
+        resetAutoHide()
+    }
+
+    fun requestExit(reason: String) {
+        if (exitRequested) {
+            Timber.d("XrPlayer exit already requested reason=%s", reason)
+            return
+        }
+        exitRequested = true
+        Timber.i(
+            "XrPlayer exit requested reason=%s mediaId=%s posMs=%d state=%d useLibass=%b",
+            reason,
+            player.currentMediaItem?.mediaId,
+            player.currentPosition,
+            player.playbackState,
+            useLibass,
+        )
+        viewModel.updatePlaybackProgress()
+        useLibass = false
+        subtitleTrackSelected = false
+        hasLibassContent = false
+        libassBitmap = null
+        currentCues = emptyList()
+        runCatching { player.pause() }
+        runCatching { (player as? ExoPlayer)?.clearVideoSurface() }
+        coroutineScope.launch {
+            delay(150L)
+            onBackClick()
+        }
+    }
+
+    BackHandler(enabled = true) {
+        requestExit("system-back")
     }
 
     DisposableEffect(context) {
@@ -531,7 +575,7 @@ fun SpatialPlayerScreen(
                 viewModel = viewModel,
                 player = player,
                 onControlsVisibilityChange = { controlsVisible = it },
-                onNavigateBack = onBackClick,
+                onNavigateBack = { requestExit("voice-go-back") },
                 onShowVoiceSearch = ::openVoiceSearch,
                 onShowSyncPlayDialog = {
                     activeDialog = "syncplay"
@@ -627,8 +671,7 @@ fun SpatialPlayerScreen(
             return
         }
         shouldStartVoiceCapture = false
-        controlsVisible = true
-        resetAutoHide()
+        revealControls("voice-command")
         startVoiceCapture(
             voiceService = voiceService,
             commandCoordinatorProvider = ::requireCommandCoordinator,
@@ -682,18 +725,9 @@ fun SpatialPlayerScreen(
         recommendationContext = null
     }
 
-    // Auto-hide controls after 10 s during playback
-    LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
-        if (controlsVisible && isPlaying && !isLocked) {
-            delay(10_000L)
-            controlsVisible = false
-        }
-    }
-
     LaunchedEffect(isActuallyPaused) {
         if (isActuallyPaused) {
-            controlsVisible = true
-            resetAutoHide()
+            revealControls("playback-paused")
         }
     }
 
@@ -784,6 +818,10 @@ fun SpatialPlayerScreen(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
+                if (!subtitleTrackSelected) {
+                    currentCues = emptyList()
+                    return
+                }
                 currentCues = cueGroup.cues
                 if (cueGroup.cues.isNotEmpty()) {
                     val first = cueGroup.cues[0].text?.toString()
@@ -805,11 +843,21 @@ fun SpatialPlayerScreen(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
+                subtitleTrackSelected =
+                    tracks.groups.any { group ->
+                        group.type == C.TRACK_TYPE_TEXT &&
+                            group.isSupported &&
+                            groupIsSelected(group)
+                    }
+                if (!subtitleTrackSelected) {
+                    currentCues = emptyList()
+                }
                 subtitleTrackVersion++
                 Timber.i(
-                    "subtitle: XR track snapshot updated version=%d textGroups=%d",
+                    "subtitle: XR track snapshot updated version=%d textGroups=%d selected=%b",
                     subtitleTrackVersion,
                     tracks.groups.count { it.type == C.TRACK_TYPE_TEXT },
+                    subtitleTrackSelected,
                 )
             }
         }
@@ -874,7 +922,7 @@ fun SpatialPlayerScreen(
     LaunchedEffect(Unit) {
         viewModel.eventsChannelFlow.collect { event ->
             if (event is PlayerEvents.NavigateBack) {
-                onBackClick()
+                requestExit("playback-ended")
             }
         }
     }
@@ -989,6 +1037,9 @@ fun SpatialPlayerScreen(
                             videoRoot.setPose(initialPose)
                             videoRoot.setScale(videoPanelScale)
                         }
+                        if (!controlsVisible && !isActuallyPaused) {
+                            revealControls("video-move-start")
+                        }
                         val effectiveVideoDepth = extractVideoDepth(initialPose)
                         videoDepth = effectiveVideoDepth
                         syncProjectedOverlayRoots(
@@ -1080,17 +1131,17 @@ fun SpatialPlayerScreen(
             chatEngine?.destroy()
             tts.destroy()
             runCatching { player.clearVideoSurface() }
-            videoEntity.value?.dispose()
+            runCatching { videoEntity.value?.dispose() }
             videoEntity.value = null
-            mascotEntity.value?.dispose()
-            videoRootEntity.value?.dispose()
+            runCatching { mascotEntity.value?.dispose() }
+            runCatching { videoRootEntity.value?.dispose() }
             videoRootEntity.value = null
-            uiRootEntity.value?.dispose()
+            runCatching { uiRootEntity.value?.dispose() }
             uiRootEntity.value = null
-            subtitleRootEntity.value?.dispose()
+            runCatching { subtitleRootEntity.value?.dispose() }
             subtitleRootEntity.value = null
             mascotEntity.value = null
-            mascotModel.value?.close()
+            runCatching { mascotModel.value?.close() }
             mascotModel.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
@@ -1342,7 +1393,7 @@ fun SpatialPlayerScreen(
     // hit-testing.  When disabled, grab gestures pass straight through to the video entity's
     // MovableComponent so the user can move the video even when subtitles are present.
     val hasSubtitleContent = (useLibass && hasLibassContent && libassBitmap != null) ||
-        (!useLibass && currentCues.isNotEmpty())
+        (!useLibass && subtitleTrackSelected && currentCues.isNotEmpty())
     LaunchedEffect(hasSubtitleContent, subtitleRootEntity.value) {
         subtitleRootEntity.value?.setEnabled(hasSubtitleContent)
     }
@@ -1447,6 +1498,12 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value
         if (uiRoot != null) {
             SceneCoreEntity(factory = { uiRoot }, modifier = SubspaceModifier) {
+        // ── Hidden-controls reveal button ──────────────────────────────────────────
+        // XR hit testing against a fully transparent hidden panel is unreliable on
+        // device. Keep a small dedicated reveal target near the bottom of the video
+        // so controls can always be brought back after auto-hide.
+
+
         // ── Control Panel ────────────────────────────────────────────────────────────
         // Floats below the video.  Secondary controls are in an Orbiter on the right
         // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
@@ -1518,7 +1575,7 @@ fun SpatialPlayerScreen(
                             activeDialog = "chapters"
                             resetAutoHide()
                         },
-                        onBackClick = onBackClick,
+                        onBackClick = { requestExit("controls-back") },
                         resetAutoHide = { resetAutoHide() },
                     )
                 }
@@ -1535,8 +1592,7 @@ fun SpatialPlayerScreen(
                                         val event = awaitPointerEvent()
                                         if (event.type == PointerEventType.Enter ||
                                             event.type == PointerEventType.Move) {
-                                            controlsVisible = true
-                                            resetAutoHide()
+                                            revealControls("hidden-panel-hover")
                                         }
                                     }
                                 }
@@ -1545,8 +1601,7 @@ fun SpatialPlayerScreen(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                                 onClick = {
-                                    controlsVisible = true
-                                    resetAutoHide()
+                                    revealControls("hidden-panel-click")
                                 },
                             ),
                     )

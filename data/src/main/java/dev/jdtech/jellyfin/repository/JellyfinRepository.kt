@@ -17,6 +17,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
@@ -136,6 +137,10 @@ interface JellyfinRepository {
     fun observeSyncPlayCommandMessages(): Flow<SyncPlayCommandMessage>
 
     fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage>
+
+    fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage>
+
+    fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent>
 
     fun observeSocketState(): Flow<SocketApiState>
 

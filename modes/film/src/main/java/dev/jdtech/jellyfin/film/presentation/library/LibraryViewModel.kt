@@ -13,6 +13,7 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
 
@@ -31,6 +32,11 @@ constructor(
 
     lateinit var sortBy: SortBy
     lateinit var sortOrder: SortOrder
+    private var hasLoadedItems = false
+
+    init {
+        observeRealtimeEvents()
+    }
 
     fun setup(parentId: UUID, libraryType: CollectionType) {
         this.parentId = parentId
@@ -38,6 +44,7 @@ constructor(
     }
 
     fun loadItems() {
+        hasLoadedItems = true
         val itemType =
             when (libraryType) {
                 CollectionType.Movies -> listOf(BaseItemKind.MOVIE)
@@ -78,6 +85,18 @@ constructor(
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            jellyfinRepository.observeRealtimeEvents()
+                .debounce(300)
+                .collect {
+                    if (hasLoadedItems && ::parentId.isInitialized && !_state.value.isLoading) {
+                        loadItems()
+                    }
+                }
         }
     }
 

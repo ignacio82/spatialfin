@@ -17,6 +17,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -28,8 +29,14 @@ class FavoritesViewModel @Inject constructor(
     ViewModel() {
     private val _state = MutableStateFlow(CollectionState())
     val state = _state.asStateFlow()
+    private var hasLoadedItems = false
+
+    init {
+        observeRealtimeEvents()
+    }
 
     fun loadItems() {
+        hasLoadedItems = true
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null))
 
@@ -76,6 +83,18 @@ class FavoritesViewModel @Inject constructor(
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(isLoading = false, error = e))
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect {
+                    if (hasLoadedItems && !_state.value.isLoading) {
+                        loadItems()
+                    }
+                }
         }
     }
 }

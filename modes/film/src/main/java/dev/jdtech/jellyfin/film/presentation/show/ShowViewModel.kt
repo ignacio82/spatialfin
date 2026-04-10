@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
@@ -13,6 +14,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.PersonKind
@@ -24,10 +26,16 @@ class ShowViewModel @Inject constructor(
 ) : ViewModel() {
     private val _state = MutableStateFlow(ShowState())
     val state = _state.asStateFlow()
+    private var hasLoadedShow = false
 
     lateinit var showId: UUID
 
+    init {
+        observeRealtimeEvents()
+    }
+
     fun loadShow(showId: UUID) {
+        hasLoadedShow = true
         this.showId = showId
         viewModelScope.launch {
             try {
@@ -52,6 +60,25 @@ class ShowViewModel @Inject constructor(
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect { event ->
+                    if (!hasLoadedShow || !::showId.isInitialized) return@collect
+                    val relatedIds =
+                        buildSet {
+                            add(showId)
+                            _state.value.nextUp?.id?.let(::add)
+                            _state.value.seasons.forEach { season -> add(season.id) }
+                        }
+                    if (event.itemIds.any(relatedIds::contains) || event is JellyfinRealtimeEvent.LibraryChanged) {
+                        loadShow(showId)
+                    }
+                }
         }
     }
 

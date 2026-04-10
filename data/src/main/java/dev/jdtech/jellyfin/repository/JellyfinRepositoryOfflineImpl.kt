@@ -34,6 +34,7 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
@@ -305,6 +306,10 @@ class JellyfinRepositoryOfflineImpl(
 
     override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> = emptyFlow()
 
+    override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> = emptyFlow()
+
+    override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> = emptyFlow()
+
     override fun observeSocketState(): Flow<SocketApiState> = emptyFlow()
 
     override suspend fun postCapabilities() {}
@@ -379,9 +384,7 @@ class JellyfinRepositoryOfflineImpl(
         return ""
     }
 
-    override suspend fun updateDeviceName(name: String) {
-        TODO("Not yet implemented")
-    }
+    override suspend fun updateDeviceName(name: String) = Unit
 
     override suspend fun getUserConfiguration(): UserConfiguration? {
         return null
