@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -18,6 +19,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -29,8 +31,16 @@ class CollectionViewModel @Inject constructor(
     ViewModel() {
     private val _state = MutableStateFlow(CollectionState())
     val state = _state.asStateFlow()
+    private var hasLoadedItems = false
+    private var currentParentId: UUID? = null
+
+    init {
+        observeRealtimeEvents()
+    }
 
     fun loadItems(parentId: UUID) {
+        hasLoadedItems = true
+        currentParentId = parentId
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null))
 
@@ -77,6 +87,25 @@ class CollectionViewModel @Inject constructor(
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(isLoading = false, error = e))
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect { event ->
+                    val parentId = currentParentId ?: return@collect
+                    if (!hasLoadedItems || _state.value.isLoading) return@collect
+                    val visibleItemIds =
+                        _state.value.sections
+                            .flatMap { section -> section.items }
+                            .map { item -> item.id }
+                            .toSet()
+                    if (event.itemIds.any(visibleItemIds::contains) || event is JellyfinRealtimeEvent.LibraryChanged) {
+                        loadItems(parentId)
+                    }
+                }
         }
     }
 }

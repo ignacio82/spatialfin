@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,8 +70,14 @@ constructor(
 
     private val _continueWatchingItems = MutableStateFlow<List<SpatialFinItem>>(emptyList())
     val continueWatchingItems = _continueWatchingItems.asStateFlow()
+    private var hasLoadedItems = false
+
+    init {
+        observeRealtimeEvents()
+    }
 
     fun loadItems() {
+        hasLoadedItems = true
         viewModelScope.launch {
             _isLoading.emit(true)
             _error.emit(null)
@@ -112,6 +119,18 @@ constructor(
                 _isLoading.emit(false)
                 _error.emit(e)
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect {
+                    if (hasLoadedItems && !_isLoading.value) {
+                        loadItems()
+                    }
+                }
         }
     }
 

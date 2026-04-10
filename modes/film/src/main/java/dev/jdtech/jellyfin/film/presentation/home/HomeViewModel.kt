@@ -22,6 +22,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -59,13 +60,16 @@ constructor(
         UiText.StringResource(FilmR.string.offline_downloaded_movies)
     private val uiTextOfflineShows =
         UiText.StringResource(FilmR.string.offline_downloaded_shows)
+    private var hasLoadedData = false
 
     init {
         observeConnectionState()
         observeSyncStatus()
+        observeRealtimeEvents()
     }
 
     fun loadData() {
+        hasLoadedData = true
         Timber.i("Loading data")
         viewModelScope.launch(Dispatchers.Default) {
             _state.emit(_state.value.copy(isLoading = true, error = null))
@@ -237,6 +241,18 @@ constructor(
             offlineSyncStatusMonitor.state.collect { syncStatus ->
                 _state.update { it.copy(syncStatus = syncStatus) }
             }
+        }
+    }
+
+    private fun observeRealtimeEvents() {
+        viewModelScope.launch {
+            repository.observeRealtimeEvents()
+                .debounce(300)
+                .collect {
+                    if (hasLoadedData && !_state.value.isLoading) {
+                        loadData()
+                    }
+                }
         }
     }
 

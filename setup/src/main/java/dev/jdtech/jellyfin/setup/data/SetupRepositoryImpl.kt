@@ -86,6 +86,7 @@ class SetupRepositoryImpl(
             )
         val goodServers = mutableListOf<RecommendedServerInfo>()
         val okServers = mutableListOf<RecommendedServerInfo>()
+        val rejectedServers = mutableListOf<RecommendedServerInfo>()
 
         for (recommendedServerInfo in recommended) {
             when (recommendedServerInfo.score) {
@@ -94,7 +95,7 @@ class SetupRepositoryImpl(
                 }
                 RecommendedServerInfoScore.GOOD -> goodServers.add(recommendedServerInfo)
                 RecommendedServerInfoScore.OK -> okServers.add(recommendedServerInfo)
-                RecommendedServerInfoScore.BAD -> Unit
+                RecommendedServerInfoScore.BAD -> rejectedServers.add(recommendedServerInfo)
             }
         }
 
@@ -104,6 +105,16 @@ class SetupRepositoryImpl(
             }
             okServers.isNotEmpty() -> {
                 return saveServerInDatabase(okServers.first())
+            }
+            rejectedServers.isNotEmpty() -> {
+                throw ExceptionUiTexts(
+                    rejectedServers
+                        .flatMap(::createIssuesString)
+                        .distinct()
+                        .ifEmpty {
+                            listOf(UiText.StringResource(SetupR.string.add_server_error_not_found))
+                        }
+                )
             }
             else -> {
                 throw ExceptionUiText(

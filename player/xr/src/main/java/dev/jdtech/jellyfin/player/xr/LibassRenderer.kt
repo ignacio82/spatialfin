@@ -55,6 +55,7 @@ class LibassRenderer(
     private var nativeCtx: Long = 0L
     private val thread = HandlerThread("libass-renderer").also { it.start() }
     private val handler = Handler(thread.looper)
+    @Volatile private var destroyed = false
 
     // Reusable bitmap for the current frame. Never recycle eagerly: Compose may still
     // be drawing a previously published bitmap on the UI thread when resize/destroy
@@ -66,10 +67,23 @@ class LibassRenderer(
     @Volatile var hasActiveSubtitles: Boolean = false
         private set
 
+    private fun postWork(name: String, block: () -> Unit): Boolean {
+        if (destroyed) return false
+        val posted =
+            handler.post {
+                if (destroyed) return@post
+                block()
+            }
+        if (!posted) {
+            Timber.w("%s: skipped because renderer thread is unavailable", name)
+        }
+        return posted
+    }
+
     fun init() {
-        if (!isAvailable()) return
+        if (!isAvailable() || destroyed) return
         Timber.i("init: %dx%d", width, height)
-        handler.post {
+        postWork("init") {
             nativeCtx = nativeInit(width, height)
             Timber.i("init: nativeCtx=%d", nativeCtx)
         }
@@ -79,7 +93,7 @@ class LibassRenderer(
      * Register an embedded font (from MKV attachments) BEFORE loading the track.
      */
     fun addFont(name: String, data: ByteArray) {
-        handler.post {
+        postWork("addFont") {
             if (nativeCtx != 0L) nativeAddFont(nativeCtx, name, data)
         }
     }
@@ -89,7 +103,7 @@ class LibassRenderer(
      * Call this after addFont() calls are complete.
      */
     fun setTrackData(codecPrivate: ByteArray) {
-        handler.post {
+        postWork("setTrackData") {
             if (nativeCtx != 0L) nativeSetTrackData(nativeCtx, codecPrivate)
         }
     }
@@ -98,7 +112,7 @@ class LibassRenderer(
      * Feed a subtitle event (dialogue chunk) with its timing.
      */
     fun processChunk(data: ByteArray, startTimeMs: Long, durationMs: Long) {
-        handler.post {
+        postWork("processChunk") {
             if (nativeCtx != 0L) nativeProcessChunk(nativeCtx, data, startTimeMs, durationMs)
         }
     }
@@ -108,7 +122,7 @@ class LibassRenderer(
      * ghost subtitles or missed events after large time jumps.
      */
     fun clearCache() {
-        handler.post {
+        postWork("clearCache") {
             if (nativeCtx != 0L) nativeClearCache(nativeCtx)
         }
     }
@@ -121,10 +135,11 @@ class LibassRenderer(
      * @param storageH pixel height of the original video.
      */
     fun resize(newWidth: Int, newHeight: Int, storageW: Int = 0, storageH: Int = 0) {
+        if (destroyed) return
         Timber.d("subtitle: resize %dx%d → %dx%d storage=%dx%d", width, height, newWidth, newHeight, storageW, storageH)
         width = newWidth
         height = newHeight
-        handler.post {
+        postWork("resize") {
             if (nativeCtx != 0L) nativeResize(nativeCtx, newWidth, newHeight, storageW, storageH)
             cachedBitmap = null
         }
@@ -135,67 +150,97 @@ class LibassRenderer(
      * Returns a RenderResult indicating whether content is visible.
      */
     fun renderFrame(timeMs: Long): RenderResult {
+        if (destroyed) return RenderResult(hasContent = false)
         // Default to the last known content state so that when the native layer returns null
         // ("no change — reuse cached frame"), we preserve visibility instead of hiding the panel.
         var result = RenderResult(hasContent = hasActiveSubtitles)
         val latch = java.util.concurrent.CountDownLatch(1)
         // Subtitle tracks with many ASS events can enqueue thousands of chunk updates at start.
         // Rendering must preempt that backlog or the panel will freeze on the first visible line.
-        handler.postAtFrontOfQueue {
-            if (nativeCtx != 0L) {
-                val nativeResult = nativeRenderFrame(nativeCtx, timeMs)
-                if (nativeResult != null) {
-                    val hasContent = nativeResult[0] != 0
-                    hasActiveSubtitles = hasContent
-                    if (hasContent) {
-                        val buffer = nativeGetBuffer(nativeCtx)
-                        if (buffer != null) {
-                            buffer.rewind()
-                            val bitmap = cachedBitmap?.let {
-                                if (it.width == width && it.height == height) it
-                                else {
-                                    Timber.w("renderFrame: bitmap size mismatch %dx%d vs %dx%d — replacing without recycle",
-                                        it.width, it.height, width, height)
-                                    null
+        val posted =
+            handler.postAtFrontOfQueue {
+                try {
+                    if (!destroyed && nativeCtx != 0L) {
+                        val nativeResult = nativeRenderFrame(nativeCtx, timeMs)
+                        if (nativeResult != null) {
+                            val hasContent = nativeResult[0] != 0
+                            hasActiveSubtitles = hasContent
+                            if (hasContent) {
+                                val buffer = nativeGetBuffer(nativeCtx)
+                                if (buffer != null) {
+                                    buffer.rewind()
+                                    val bitmap = cachedBitmap?.let {
+                                        if (it.width == width && it.height == height) it
+                                        else {
+                                            Timber.w(
+                                                "renderFrame: bitmap size mismatch %dx%d vs %dx%d — replacing without recycle",
+                                                it.width,
+                                                it.height,
+                                                width,
+                                                height,
+                                            )
+                                            null
+                                        }
+                                    } ?: Bitmap.createBitmap(
+                                        width,
+                                        height,
+                                        Bitmap.Config.ARGB_8888,
+                                    ).also {
+                                        it.setHasAlpha(true)
+                                        cachedBitmap = it
+                                    }
+                                    bitmap.copyPixelsFromBuffer(buffer)
+                                    val dirtyW = nativeResult[3]
+                                    val dirtyH = nativeResult[4]
+                                    result = RenderResult(
+                                        hasContent = true,
+                                        bitmap = bitmap,
+                                        dirtyX = nativeResult[1],
+                                        dirtyY = nativeResult[2],
+                                        dirtyW = dirtyW,
+                                        dirtyH = dirtyH,
+                                    )
                                 }
-                            } ?: Bitmap.createBitmap(
-                                width, height, Bitmap.Config.ARGB_8888
-                            ).also {
-                                it.setHasAlpha(true)
-                                cachedBitmap = it
+                            } else {
+                                result = RenderResult(hasContent = false)
                             }
-                            bitmap.copyPixelsFromBuffer(buffer)
-                            val dirtyW = nativeResult[3]
-                            val dirtyH = nativeResult[4]
-                            result = RenderResult(
-                                hasContent = true,
-                                bitmap = bitmap,
-                                dirtyX = nativeResult[1],
-                                dirtyY = nativeResult[2],
-                                dirtyW = dirtyW,
-                                dirtyH = dirtyH,
-                            )
                         }
-                    } else {
-                        result = RenderResult(hasContent = false)
                     }
+                } finally {
+                    latch.countDown()
                 }
             }
-            latch.countDown()
+        if (!posted) {
+            hasActiveSubtitles = false
+            Timber.w("renderFrame: skipped because renderer thread is unavailable")
+            return RenderResult(hasContent = false)
         }
         latch.await()
+        if (destroyed) return RenderResult(hasContent = false)
         return result
     }
 
     fun destroy() {
-        handler.post {
+        if (destroyed) return
+        destroyed = true
+        hasActiveSubtitles = false
+        cachedBitmap = null
+        val posted =
+            handler.post {
+                if (nativeCtx != 0L) {
+                    nativeDestroy(nativeCtx)
+                    nativeCtx = 0L
+                }
+                thread.quitSafely()
+            }
+        if (!posted) {
+            Timber.w("destroy: renderer thread already unavailable; destroying context on caller thread")
             if (nativeCtx != 0L) {
                 nativeDestroy(nativeCtx)
                 nativeCtx = 0L
             }
             thread.quitSafely()
         }
-        cachedBitmap = null
     }
 
     // --- Native methods ---

@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.os.SystemClock
 import android.view.Display
 import android.widget.Toast
@@ -23,6 +24,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.Rating
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -63,7 +65,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GeneralCommandMessage
+import org.jellyfin.sdk.model.api.GeneralCommandType
 import org.jellyfin.sdk.model.api.GroupStateType
+import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.PlaystateCommand
 import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
 import org.jellyfin.sdk.model.api.SyncPlayGroupDoesNotExistUpdate
@@ -179,6 +184,7 @@ constructor(
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
     private var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()
+    private var currentMediaSourceStreams: List<SpatialFinMediaStream> = emptyList()
 
     // Segments preferences
     var segmentsSkipButton: Boolean = false
@@ -197,6 +203,11 @@ constructor(
     private var suppressSyncUntilMs: Long = 0L
     private var isSocketConnected = false
     private var pendingAutoAdvanceMediaId: String? = null
+    private var pendingRemoteAudioStreamIndex: Int? = null
+    private var pendingRemoteSubtitleStreamIndex: Int? = null
+    private var lastNonMutedVolume: Float = 1f
+    private var remoteSessionConfigured = false
+    private var configuredDeviceName: String? = null
 
     init {
         // Log HDR capabilities
@@ -261,6 +272,9 @@ constructor(
         }
         viewModelScope.launch {
             repository.observeSyncPlayGroupUpdates().collect(::handleSyncPlayGroupUpdate)
+        }
+        viewModelScope.launch {
+            repository.observeGeneralCommandMessages().collect(::handleGeneralCommandMessage)
         }
         viewModelScope.launch {
             repository.observeSocketState().collectLatest(::handleSocketState)
@@ -902,6 +916,13 @@ constructor(
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            currentMediaSourceStreams =
+                                repository
+                                    .getMediaSources(item.itemId, includePath = true)
+                                    .firstOrNull { source -> source.id == item.mediaSourceId }
+                                    ?.mediaStreams
+                                    .orEmpty()
+                            ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
                             if (segmentsSkipButton || segmentsAutoSkip) {
@@ -913,6 +934,7 @@ constructor(
                             }
                         } else {
                             currentMediaItemSegments = emptyList()
+                            currentMediaSourceStreams = emptyList()
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
@@ -1314,6 +1336,7 @@ constructor(
         }
 
         applySmartLanguagePreferences()
+        applyPendingRemoteStreamSelections()
     }
 
     override fun onCleared() {
@@ -1482,9 +1505,246 @@ constructor(
         }
     }
 
+    private suspend fun handleGeneralCommandMessage(message: GeneralCommandMessage) {
+        val command = message.data ?: return
+        when (command.name) {
+            GeneralCommandType.VOLUME_UP -> setPlayerVolume(player.volume + 0.05f)
+            GeneralCommandType.VOLUME_DOWN -> setPlayerVolume(player.volume - 0.05f)
+            GeneralCommandType.MUTE -> mutePlayer()
+            GeneralCommandType.UNMUTE -> unmutePlayer()
+            GeneralCommandType.TOGGLE_MUTE -> {
+                if (player.volume <= 0.001f) {
+                    unmutePlayer()
+                } else {
+                    mutePlayer()
+                }
+            }
+            GeneralCommandType.SET_VOLUME -> {
+                parseRemoteVolume(message)?.let(::setPlayerVolume)
+            }
+            GeneralCommandType.SET_AUDIO_STREAM_INDEX -> {
+                pendingRemoteAudioStreamIndex =
+                    parseRemoteIntArgument(message, "AudioStreamIndex", "StreamIndex", "Index")
+                applyPendingRemoteStreamSelections()
+            }
+            GeneralCommandType.SET_SUBTITLE_STREAM_INDEX -> {
+                pendingRemoteSubtitleStreamIndex =
+                    parseRemoteIntArgument(
+                        message,
+                        "SubtitleStreamIndex",
+                        "StreamIndex",
+                        "Index",
+                    )
+                applyPendingRemoteStreamSelections()
+            }
+            GeneralCommandType.DISPLAY_MESSAGE -> {
+                parseRemoteArgument(message, "Text", "Message", "DisplayMessage")?.let { text ->
+                    Toast.makeText(application, text, Toast.LENGTH_LONG).show()
+                }
+            }
+            GeneralCommandType.PLAY -> {
+                if (!handleRemotePlayMediaSource(message)) {
+                    applyRemoteSync { player.play() }
+                }
+            }
+            GeneralCommandType.PLAY_NEXT -> skipToNextItem()
+            GeneralCommandType.PLAY_STATE -> handleRemotePlayStateCommand(message)
+            GeneralCommandType.PLAY_MEDIA_SOURCE -> {
+                handleRemotePlayMediaSource(message)
+            }
+            else -> Unit
+        }
+    }
+
     private suspend fun seekToRemotePosition(positionTicks: Long) {
         val targetMs = positionTicks / 10_000L
         applyRemoteSync { player.seekTo(targetMs.coerceAtLeast(0L)) }
+    }
+
+    private suspend fun ensureRemotePlaybackSessionReady(force: Boolean = false) {
+        if (currentPlayerItem()?.contentSource != PlayerContentSource.JELLYFIN) return
+
+        val deviceName = buildPreferredDeviceName()
+        if (!force && remoteSessionConfigured && configuredDeviceName == deviceName) return
+
+        runCatching { repository.postCapabilities() }
+            .onSuccess { remoteSessionConfigured = true }
+            .onFailure { Timber.w(it, "Failed to register Jellyfin remote-control capabilities") }
+
+        runCatching { repository.updateDeviceName(deviceName) }
+            .onSuccess { configuredDeviceName = deviceName }
+            .onFailure { Timber.w(it, "Failed to update Jellyfin device name") }
+    }
+
+    private fun buildPreferredDeviceName(): String {
+        val appName = application.applicationInfo.loadLabel(application.packageManager).toString().trim()
+        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+        val model = Build.MODEL?.trim().orEmpty()
+        val deviceLabel =
+            buildList {
+                if (manufacturer.isNotBlank()) add(manufacturer)
+                if (model.isNotBlank() && !model.equals(manufacturer, ignoreCase = true)) add(model)
+            }.joinToString(" ")
+
+        return if (deviceLabel.isBlank()) appName else "$appName on $deviceLabel"
+    }
+
+    private fun setPlayerVolume(targetVolume: Float) {
+        val clamped = targetVolume.coerceIn(0f, 1f)
+        if (clamped > 0f) {
+            lastNonMutedVolume = clamped
+        }
+        applyRemoteSync { player.volume = clamped }
+    }
+
+    private fun mutePlayer() {
+        if (player.volume > 0f) {
+            lastNonMutedVolume = player.volume
+        }
+        applyRemoteSync { player.volume = 0f }
+    }
+
+    private fun unmutePlayer() {
+        setPlayerVolume(lastNonMutedVolume.takeIf { it > 0f } ?: 1f)
+    }
+
+    private fun applyPendingRemoteStreamSelections() {
+        pendingRemoteAudioStreamIndex?.let { streamIndex ->
+            if (switchRemoteTrackByStreamIndex(C.TRACK_TYPE_AUDIO, streamIndex)) {
+                pendingRemoteAudioStreamIndex = null
+            }
+        }
+
+        pendingRemoteSubtitleStreamIndex?.let { streamIndex ->
+            if (switchRemoteTrackByStreamIndex(C.TRACK_TYPE_TEXT, streamIndex)) {
+                pendingRemoteSubtitleStreamIndex = null
+            }
+        }
+    }
+
+    private fun switchRemoteTrackByStreamIndex(
+        trackType: @C.TrackType Int,
+        streamIndex: Int,
+    ): Boolean {
+        if (trackType == C.TRACK_TYPE_TEXT && streamIndex < 0) {
+            switchToTrack(trackType, -1)
+            return true
+        }
+
+        val streamType =
+            when (trackType) {
+                C.TRACK_TYPE_AUDIO -> MediaStreamType.AUDIO
+                C.TRACK_TYPE_TEXT -> MediaStreamType.SUBTITLE
+                else -> return false
+            }
+        val candidateStreams =
+            currentMediaSourceStreams.filter { it.type == streamType }
+        if (candidateStreams.isEmpty()) return false
+
+        val targetOrder = candidateStreams.indexOfFirst { it.index == streamIndex }
+        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+        if (targetOrder !in groups.indices) {
+            Timber.w(
+                "Remote stream selection failed type=%d streamIndex=%d candidateStreams=%s groups=%d",
+                trackType,
+                streamIndex,
+                candidateStreams.map(SpatialFinMediaStream::index),
+                groups.size,
+            )
+            return false
+        }
+
+        switchToTrack(trackType, targetOrder)
+        return true
+    }
+
+    private suspend fun handleRemotePlayMediaSource(message: GeneralCommandMessage): Boolean {
+        val itemId = parseRemoteItemId(message) ?: return false
+        val item = runCatching { repository.getItem(itemId) }
+            .onFailure { Timber.w(it, "Failed to resolve remote play item %s", itemId) }
+            .getOrNull() ?: return false
+        val itemKind = item.toPlayerItemKind() ?: return false
+
+        val requestedSourceId = parseRemoteArgument(message, "MediaSourceId", "SourceId")
+        val sourceIndex =
+            requestedSourceId?.let { sourceId ->
+                runCatching { repository.getMediaSources(itemId, includePath = true) }
+                    .getOrNull()
+                    ?.indexOfFirst { source -> source.id == sourceId }
+                    ?.takeIf { it >= 0 }
+            }
+
+        pendingRemoteAudioStreamIndex =
+            parseRemoteIntArgument(message, "AudioStreamIndex", "AudioIndex")
+        pendingRemoteSubtitleStreamIndex =
+            parseRemoteIntArgument(message, "SubtitleStreamIndex", "SubtitleIndex")
+
+        playbackPosition =
+            (parseRemoteLongArgument(message, "StartPositionTicks", "PositionTicks")
+                ?.div(10_000L)
+                ?.coerceAtLeast(0L))
+                ?: 0L
+
+        applyRemoteSync {
+            initializePlayer(
+                itemId = itemId,
+                itemKind = itemKind,
+                startFromBeginning = playbackPosition <= 0L,
+                mediaSourceIndex = sourceIndex,
+                autoPlay = true,
+            )
+        }
+        return true
+    }
+
+    private suspend fun handleRemotePlayStateCommand(message: GeneralCommandMessage) {
+        val command =
+            when (parseRemoteArgument(message, "Command", "PlayCommand", "PlaystateCommand")
+                ?.trim()
+                ?.lowercase()) {
+                "pause" -> PlaystateCommand.PAUSE
+                "unpause", "play" -> PlaystateCommand.UNPAUSE
+                "playpause", "play_pause", "toggle" -> PlaystateCommand.PLAY_PAUSE
+                "seek" -> PlaystateCommand.SEEK
+                "stop" -> PlaystateCommand.STOP
+                else -> null
+            } ?: return
+
+        val seekTicks = parseRemoteLongArgument(message, "SeekPositionTicks", "PositionTicks")
+        handlePlayStateMessage(command, seekTicks)
+    }
+
+    private fun parseRemoteItemId(message: GeneralCommandMessage): UUID? {
+        val raw =
+            parseRemoteArgument(message, "ItemId", "ItemIds", "Ids")
+                ?.split(',', ';', '|')
+                ?.map(String::trim)
+                ?.firstOrNull { it.isNotEmpty() }
+                ?: return null
+        return runCatching { UUID.fromString(raw) }
+            .onFailure { Timber.w(it, "Ignoring invalid remote item id %s", raw) }
+            .getOrNull()
+    }
+
+    private fun parseRemoteVolume(message: GeneralCommandMessage): Float? {
+        val raw =
+            parseRemoteArgument(message, "Volume", "Value", "Argument")
+                ?: return null
+        val numeric = raw.toFloatOrNull() ?: return null
+        return if (numeric > 1f) numeric / 100f else numeric
+    }
+
+    private fun parseRemoteIntArgument(message: GeneralCommandMessage, vararg keys: String): Int? =
+        parseRemoteArgument(message, *keys)?.toIntOrNull()
+
+    private fun parseRemoteLongArgument(message: GeneralCommandMessage, vararg keys: String): Long? =
+        parseRemoteArgument(message, *keys)?.toLongOrNull()
+
+    private fun parseRemoteArgument(message: GeneralCommandMessage, vararg keys: String): String? {
+        val arguments = message.data?.arguments ?: return null
+        return keys.firstNotNullOfOrNull { key ->
+            arguments.entries.firstOrNull { entry -> entry.key.equals(key, ignoreCase = true) }?.value
+        }?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun handleSocketState(state: SocketApiState) {
@@ -1492,6 +1752,9 @@ constructor(
             is SocketApiState.Connected -> {
                 val reconnected = !isSocketConnected
                 isSocketConnected = true
+                if (reconnected && currentPlayerItem()?.contentSource == PlayerContentSource.JELLYFIN) {
+                    ensureRemotePlaybackSessionReady(force = true)
+                }
                 if (reconnected && isSyncPlayActive()) {
                     _syncPlayState.update { it.copy(statusMessage = "SyncPlay reconnected") }
                     refreshSyncPlayGroups()
@@ -1504,6 +1767,7 @@ constructor(
             }
             is SocketApiState.Disconnected -> {
                 isSocketConnected = false
+                remoteSessionConfigured = false
                 if (isSyncPlayActive()) {
                     _syncPlayState.update { it.copy(statusMessage = "SyncPlay connection lost") }
                 }

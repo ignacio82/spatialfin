@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.PlaystateMessage
 import org.jellyfin.sdk.model.api.PublicSystemInfo
@@ -318,6 +319,12 @@ constructor(
 
     override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> =
         onlineRepository.observeSyncPlayGroupUpdates()
+
+    override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> =
+        onlineRepository.observeGeneralCommandMessages()
+
+    override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> =
+        onlineRepository.observeRealtimeEvents()
 
     override fun observeSocketState(): Flow<SocketApiState> =
         onlineRepository.observeSocketState()

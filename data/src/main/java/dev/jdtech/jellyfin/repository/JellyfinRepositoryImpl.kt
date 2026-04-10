@@ -35,20 +35,26 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import org.jellyfin.sdk.api.sockets.subscribePlayStateCommands
-import org.jellyfin.sdk.api.sockets.subscribeSyncPlayCommands
 import org.jellyfin.sdk.api.sockets.SocketApiState
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.operations.VideoAttachmentsApi
+import org.jellyfin.sdk.api.sockets.subscribeGeneralCommands
+import org.jellyfin.sdk.api.sockets.subscribePlayStateCommands
+import org.jellyfin.sdk.api.sockets.subscribeSyncPlayCommands
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
-import org.jellyfin.sdk.model.api.GroupInfoDto
 import org.jellyfin.sdk.model.api.DeviceOptionsDto
 import org.jellyfin.sdk.model.api.DeviceProfile
+import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.GeneralCommandType
+import org.jellyfin.sdk.model.api.GroupInfoDto
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.ItemFilter
 import org.jellyfin.sdk.model.api.ItemSortBy
+import org.jellyfin.sdk.model.api.LibraryChangedMessage
 import org.jellyfin.sdk.model.api.MediaType
 import org.jellyfin.sdk.model.api.PlayMethod
 import org.jellyfin.sdk.model.api.PlayRequestDto
@@ -74,6 +80,8 @@ import org.jellyfin.sdk.model.api.NextItemRequestDto
 import org.jellyfin.sdk.model.api.PreviousItemRequestDto
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import org.jellyfin.sdk.model.api.SubtitleProfile
+import org.jellyfin.sdk.model.api.UserDataChangeInfo
+import org.jellyfin.sdk.model.api.UserDataChangedMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
 import timber.log.Timber
 
@@ -564,6 +572,33 @@ class JellyfinRepositoryImpl(
     override fun observeSyncPlayGroupUpdates(): Flow<SyncPlayGroupUpdateMessage> =
         jellyfinApi.api.webSocket.subscribe(SyncPlayGroupUpdateMessage::class)
 
+    override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> =
+        jellyfinApi.api.webSocket.subscribeGeneralCommands(supportedGeneralCommands().toSet())
+
+    override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> =
+        merge(
+            jellyfinApi.api.webSocket.subscribe(UserDataChangedMessage::class).mapNotNull { message ->
+                val changeInfo = message.data ?: return@mapNotNull null
+                persistRemoteUserDataChange(changeInfo)
+                JellyfinRealtimeEvent.UserDataChanged(
+                    userId = changeInfo.userId,
+                    itemIds = changeInfo.userDataList.map { it.itemId }.toSet(),
+                )
+            },
+            jellyfinApi.api.webSocket.subscribe(LibraryChangedMessage::class).mapNotNull { message ->
+                val updateInfo = message.data ?: return@mapNotNull null
+                if (updateInfo.isEmpty) {
+                    null
+                } else {
+                    JellyfinRealtimeEvent.LibraryChanged(
+                        addedItemIds = parseRealtimeItemIds(updateInfo.itemsAdded),
+                        updatedItemIds = parseRealtimeItemIds(updateInfo.itemsUpdated),
+                        removedItemIds = parseRealtimeItemIds(updateInfo.itemsRemoved),
+                    )
+                }
+            },
+        )
+
     override fun observeSocketState(): Flow<SocketApiState> = jellyfinApi.api.webSocket.state
 
     override suspend fun postCapabilities() {
@@ -571,22 +606,7 @@ class JellyfinRepositoryImpl(
         withContext(Dispatchers.IO) {
             jellyfinApi.sessionApi.postCapabilities(
                 playableMediaTypes = listOf(MediaType.VIDEO),
-                supportedCommands =
-                    listOf(
-                        GeneralCommandType.VOLUME_UP,
-                        GeneralCommandType.VOLUME_DOWN,
-                        GeneralCommandType.TOGGLE_MUTE,
-                        GeneralCommandType.SET_AUDIO_STREAM_INDEX,
-                        GeneralCommandType.SET_SUBTITLE_STREAM_INDEX,
-                        GeneralCommandType.MUTE,
-                        GeneralCommandType.UNMUTE,
-                        GeneralCommandType.SET_VOLUME,
-                        GeneralCommandType.DISPLAY_MESSAGE,
-                        GeneralCommandType.PLAY,
-                        GeneralCommandType.PLAY_STATE,
-                        GeneralCommandType.PLAY_NEXT,
-                        GeneralCommandType.PLAY_MEDIA_SOURCE,
-                    ),
+                supportedCommands = supportedGeneralCommands(),
                 supportsMediaControl = true,
             )
         }
@@ -770,4 +790,46 @@ class JellyfinRepositoryImpl(
             )
         }
     }
+
+    private fun supportedGeneralCommands(): List<GeneralCommandType> =
+        listOf(
+            GeneralCommandType.VOLUME_UP,
+            GeneralCommandType.VOLUME_DOWN,
+            GeneralCommandType.TOGGLE_MUTE,
+            GeneralCommandType.SET_AUDIO_STREAM_INDEX,
+            GeneralCommandType.SET_SUBTITLE_STREAM_INDEX,
+            GeneralCommandType.MUTE,
+            GeneralCommandType.UNMUTE,
+            GeneralCommandType.SET_VOLUME,
+            GeneralCommandType.DISPLAY_MESSAGE,
+            GeneralCommandType.PLAY,
+            GeneralCommandType.PLAY_STATE,
+            GeneralCommandType.PLAY_NEXT,
+            GeneralCommandType.PLAY_MEDIA_SOURCE,
+        )
+
+    private suspend fun persistRemoteUserDataChange(changeInfo: UserDataChangeInfo) {
+        if (changeInfo.userId != jellyfinApi.userId) return
+
+        withContext(Dispatchers.IO) {
+            changeInfo.userDataList.forEach { userData ->
+                val existing = database.getUserDataOrCreateNew(userData.itemId, changeInfo.userId)
+                database.insertUserData(
+                    existing.copy(
+                        played = userData.played,
+                        favorite = userData.isFavorite,
+                        playbackPositionTicks = userData.playbackPositionTicks,
+                        toBeSynced = false,
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseRealtimeItemIds(ids: List<String>): Set<UUID> =
+        ids.mapNotNull { id ->
+            runCatching { UUID.fromString(id) }
+                .onFailure { Timber.w(it, "Ignoring non-UUID realtime item id %s", id) }
+                .getOrNull()
+        }.toSet()
 }

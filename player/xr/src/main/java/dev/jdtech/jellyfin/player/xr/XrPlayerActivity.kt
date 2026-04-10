@@ -57,6 +57,7 @@ class XrPlayerActivity : AppCompatActivity() {
     private var mediaSession: MediaSession? = null
     private var currentStereoMode: String = "mono"
     private var libassRenderer: LibassRenderer? = null
+    private var finishRequested = false
 
     companion object {
         fun createIntent(
@@ -306,11 +307,11 @@ class XrPlayerActivity : AppCompatActivity() {
                         onLaunchSearchResult = { item ->
                             createIntentForItem(this, item)?.let { launchIntent ->
                                 startActivity(launchIntent)
-                                finish()
+                                requestFinish("launch-search-result")
                             }
                         },
                         telemetryStore = voiceTelemetryStore,
-                        onBackClick = { finish() }
+                        onBackClick = { requestFinish("xr-player-back") }
                     )
                 } else {
                     // Fallback UI or close if session failed
@@ -338,11 +339,26 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        Timber.d(
+            "XrPlayerActivity onPause mediaId=%s posMs=%d state=%d finishRequested=%b",
+            viewModel.player.currentMediaItem?.mediaId,
+            viewModel.player.currentPosition,
+            viewModel.player.playbackState,
+            finishRequested,
+        )
         super.onPause()
         viewModel.updatePlaybackProgress()
     }
 
     override fun onStop() {
+        Timber.d(
+            "XrPlayerActivity onStop mediaId=%s posMs=%d state=%d isFinishing=%b finishRequested=%b",
+            viewModel.player.currentMediaItem?.mediaId,
+            viewModel.player.currentPosition,
+            viewModel.player.playbackState,
+            isFinishing,
+            finishRequested,
+        )
         super.onStop()
         viewModel.playWhenReady = viewModel.player.playWhenReady
         viewModel.player.playWhenReady = false
@@ -363,10 +379,36 @@ class XrPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        Timber.d(
+            "XrPlayerActivity onDestroy mediaId=%s posMs=%d state=%d error=%s finishRequested=%b",
+            viewModel.player.currentMediaItem?.mediaId,
+            viewModel.player.currentPosition,
+            viewModel.player.playbackState,
+            viewModel.player.playerError?.errorCodeName,
+            finishRequested,
+        )
         super.onDestroy()
         xrSession = null
         libassRenderer?.destroy()
+        libassRenderer = null
         PlayerLaunchBreadcrumbs.clear(this)
+    }
+
+    private fun requestFinish(reason: String) {
+        if (finishRequested || isFinishing) {
+            Timber.d("XrPlayerActivity finish already requested reason=%s", reason)
+            return
+        }
+        finishRequested = true
+        Timber.i(
+            "XrPlayerActivity finish requested reason=%s mediaId=%s posMs=%d state=%d useLibass=%b",
+            reason,
+            viewModel.player.currentMediaItem?.mediaId,
+            viewModel.player.currentPosition,
+            viewModel.player.playbackState,
+            libassRenderer != null,
+        )
+        finish()
     }
 
     private fun recordLaunchPhase(phase: String) {
