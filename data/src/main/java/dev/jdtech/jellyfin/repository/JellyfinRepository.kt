@@ -166,6 +166,8 @@ interface JellyfinRepository {
 
     fun getBaseUrl(): String
 
+    fun getAccessToken(): String?
+
     suspend fun updateDeviceName(name: String)
 
     suspend fun getUserConfiguration(): UserConfiguration?

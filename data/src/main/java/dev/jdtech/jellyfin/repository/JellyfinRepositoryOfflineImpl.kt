@@ -424,4 +424,6 @@ class JellyfinRepositoryOfflineImpl(
     override suspend fun downloadRemoteSubtitles(itemId: UUID, subtitleId: String) {
         // Offline mode, do nothing
     }
+
+    override fun getAccessToken(): String? = null
 }

@@ -293,6 +293,22 @@ fun SpatialPlayerScreen(
     val assistantSubtitleHistory by viewModel.assistantSubtitleHistory.collectAsState()
     val assistantSubtitleLines =
         if (assistantSubtitleHistory.isNotEmpty()) assistantSubtitleHistory else recentSubtitles.toList()
+
+    // Disk-cache fallback: reads the current item UUID from the ViewModel's StateFlow at call time,
+    // so it always uses the correct item even if the composable hasn't recomposed yet.
+    val subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>) = remember(viewModel) {
+        { fromMs, toMs ->
+            val itemId = runCatching {
+                java.util.UUID.fromString(viewModel.uiState.value.currentItemId)
+            }.getOrNull()
+            if (itemId != null) {
+                viewModel.subtitleCacheManager.loadWindow(itemId, fromMs, toMs)
+            } else {
+                emptyList()
+            }
+        }
+    }
+
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
@@ -493,7 +509,7 @@ fun SpatialPlayerScreen(
         (duration - currentPosition) in 0L..NEXT_EPISODE_THRESHOLD_MS
 
     LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
-        if (controlsVisible && isPlaying && !isLocked) {
+        if (controlsVisible && isPlaying) {
             val wait = (hideTimestamp + 5000L) - System.currentTimeMillis()
             if (wait > 0) delay(wait)
             controlsVisible = false
@@ -732,7 +748,7 @@ fun SpatialPlayerScreen(
                 },
                 onGoHome = {
                     val launchIntent =
-                        Intent().setClassName(context, "dev.spatialfin.MainActivity")
+                        Intent().setClassName(context, "dev.spatialfin.unified.UnifiedMainActivity")
                             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     runCatching {
                         context.startActivity(launchIntent)
@@ -774,7 +790,10 @@ fun SpatialPlayerScreen(
         }
 
     fun speakAssistantReply(text: String, languageHint: String?) {
-        if (!assistantSpokenReplies || !tts.canSpeak()) return
+        if (!assistantSpokenReplies || !tts.canSpeak()) {
+            Timber.w("VOICE: speakAssistantReply skipped spokenReplies=%b canSpeak=%b chars=%d", assistantSpokenReplies, tts.canSpeak(), text.length)
+            return
+        }
         resumePlaybackAfterAssistantSpeech = player.isPlaying
         assistantSpeechPendingStart = true
         assistantSpeechStarted = false
@@ -892,6 +911,7 @@ fun SpatialPlayerScreen(
             onResult = { voiceFeedback = it },
             onSpokenReply = { text, lang -> speakAssistantReply(text, lang) },
             onCharacterScanActiveChanged = { characterScanActive = it },
+            subtitleCacheFallback = subtitleCacheFallback,
             scope = coroutineScope,
             lastPointerPosition = lastPointerPosition,
             onJobStarted = { activeVoiceJob = it },
@@ -943,6 +963,13 @@ fun SpatialPlayerScreen(
     LaunchedEffect(isActuallyPaused) {
         if (isActuallyPaused) {
             revealControls("playback-paused")
+            showPausedMascot = false
+            delay(PAUSED_MASCOT_DELAY_MS)
+            showPausedMascot = true
+            Timber.i("Paused mascot requested after pause delay")
+        } else {
+            showPausedMascot = false
+            Timber.d("Paused mascot hidden because playback resumed")
         }
     }
 
@@ -1692,6 +1719,34 @@ fun SpatialPlayerScreen(
         movableComponent.value?.size = movableVideoBounds(videoWidth, videoHeight)
     }
 
+    LaunchedEffect(videoRootEntity.value, movableComponent.value, isLocked) {
+        val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
+        val movable = movableComponent.value ?: return@LaunchedEffect
+        val hasMovable =
+            runCatching {
+                videoRoot
+                    .getComponentsOfType(androidx.xr.scenecore.MovableComponent::class.java)
+                    .any { it === movable }
+            }.getOrElse {
+                Timber.d(it, "Unable to inspect XR screen movable component state")
+                false
+            }
+
+        runCatching {
+            if (isLocked && hasMovable) {
+                videoRoot.removeComponent(movable)
+                moveInProgress = false
+                Timber.i("XR screen movement locked")
+            } else if (!isLocked && !hasMovable) {
+                videoRoot.addComponent(movable)
+                movable.size = movableVideoBounds(videoWidth, videoHeight)
+                Timber.i("XR screen movement unlocked")
+            }
+        }.onFailure {
+            Timber.w(it, "Unable to update XR screen movement lock state")
+        }
+    }
+
     // Frame rate matching: apply content frame rate to the video surface and UI compositing layer.
     val currentFrameRate by viewModel.currentFrameRate.collectAsState()
     LaunchedEffect(currentFrameRate, videoEntity.value) {
@@ -2105,6 +2160,7 @@ fun SpatialPlayerScreen(
                                                 conversationHistory = conversationHistory,
                                                 onGetSuggestions = { viewModel.repository.getSuggestions() },
                                                 recommendationContext = RecommendationContext(item.name, listOf(item)),
+                                                subtitleCacheFallback = subtitleCacheFallback,
                                             )
                                         voiceSearchLoading = false
                                         response.recommendedItems
@@ -2470,6 +2526,7 @@ private fun startVoiceCapture(
     onResult: (String) -> Unit,
     onSpokenReply: (String, String?) -> Unit,
     onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
+    subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
     scope: kotlinx.coroutines.CoroutineScope,
     lastPointerPosition: androidx.compose.ui.geometry.Offset?,
     onJobStarted: ((kotlinx.coroutines.Job) -> Unit)? = null,
@@ -2596,6 +2653,7 @@ private fun startVoiceCapture(
                             onGetSuggestions = onGetSuggestions,
                             visualContexts = visualContexts,
                             lastPointerPosition = lastPointerPosition,
+                            subtitleCacheFallback = subtitleCacheFallback,
                             onTokenStream = { partial -> onResult(partial) },
                         )
                     } finally {
@@ -3000,7 +3058,7 @@ private fun ControlPanelUI(
                     )
                     Text(
                         text = when {
-                            isLocked -> "Controls Locked"
+                            isLocked -> "Controls & Screen Locked"
                             spatialAudioAvailable -> "Spatial Playback • Spatial Audio"
                             else -> "Spatial Playback"
                         },
@@ -3043,7 +3101,8 @@ private fun ControlPanelUI(
                         painter = painterResource(
                             if (isLocked) CoreR.drawable.ic_lock else CoreR.drawable.ic_unlock,
                         ),
-                        contentDescription = "Lock Controls",
+                        contentDescription =
+                            if (isLocked) "Unlock controls and screen" else "Lock controls and screen",
                         tint = if (isLocked) Color.Red else Color.White,
                         modifier = Modifier.size(64.dp),
                     )

@@ -41,6 +41,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
 import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
+import dev.jdtech.jellyfin.player.local.subtitles.SubtitleCacheManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
@@ -96,6 +97,10 @@ constructor(
     val appPreferences: AppPreferences,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel(), Player.Listener {
+
+    /** Disk-backed subtitle cache used to provide full-video dialogue context to the AI. */
+    val subtitleCacheManager = SubtitleCacheManager(application)
+
     private val _playerFlow: MutableStateFlow<Player>
     val playerFlow: kotlinx.coroutines.flow.StateFlow<Player>
     var player: Player
@@ -329,6 +334,117 @@ constructor(
         }
     }
 
+    /**
+     * Downloads and caches the subtitle file for [item] so the AI can answer questions about any
+     * part of the video — not just the last 20 minutes captured in the in-memory ring buffer.
+     *
+     * Strategy:
+     * 1. Skip if a cache already exists for this item.
+     * 2. Download from an existing external Jellyfin subtitle track (fastest path — the URL is
+     *    already embedded in the PlaybackInfo response).
+     * 3. If no external subtitles are present, search OpenSubtitles via the Jellyfin plugin,
+     *    download the best match server-side, then fetch the newly created stream URL.
+     *
+     * This runs on a background IO dispatcher and never blocks or affects playback.
+     */
+    private suspend fun prefetchSubtitleCache(item: PlayerItem, itemKind: String) {
+        val itemId = item.itemId
+        if (subtitleCacheManager.hasCache(itemId)) return
+
+        val accessToken = repository.getAccessToken()
+        Timber.i(
+            "SubtitleCache: prefetching for %s extSubs=%d contentSource=%s",
+            itemId, item.externalSubtitles.size, item.contentSource,
+        )
+
+        // ── Phase 1: existing external subtitle tracks (URI already known) ─────
+        val externalSub = item.externalSubtitles
+            .firstOrNull { it.mimeType != androidx.media3.common.MimeTypes.TEXT_UNKNOWN }
+            ?: item.externalSubtitles.firstOrNull()
+
+        if (externalSub != null) {
+            val count = subtitleCacheManager.downloadAndCache(itemId, externalSub.uri, accessToken)
+            Timber.i("SubtitleCache: phase1 external → %d lines for %s", count, itemId)
+            if (count > 0) return
+        }
+
+        // ── Phase 1.5: embedded subtitle streams via Jellyfin delivery API ────
+        // Jellyfin constructs a deliveryUrl for ALL text subtitle tracks (embedded or external),
+        // stored in SpatialFinMediaStream.path = baseUrl + deliveryUrl.
+        // This is the primary path for embedded MKV subtitle tracks.
+        if (item.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN) {
+            runCatching {
+                val sources = repository.getMediaSources(itemId, includePath = true)
+                // Pick the best subtitle stream: prefer SDH (hearing-impaired), otherwise any text track.
+                // We do NOT filter by isExternal — embedded tracks also have valid deliveryUrls.
+                val subtitleStream = sources
+                    .flatMap { it.mediaStreams }
+                    .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
+                    .let { streams ->
+                        streams.firstOrNull { it.codec in listOf("srt", "subrip", "ass", "ssa", "vtt", "webvtt") }
+                            ?: streams.firstOrNull()
+                    }
+                Timber.i(
+                    "SubtitleCache: phase1.5 streams=%d chosen=%s path=%s",
+                    sources.flatMap { it.mediaStreams }.count { it.type == MediaStreamType.SUBTITLE },
+                    subtitleStream?.codec, subtitleStream?.path?.take(80),
+                )
+                if (subtitleStream?.path != null) {
+                    val count = subtitleCacheManager.downloadAndCache(
+                        itemId,
+                        android.net.Uri.parse(subtitleStream.path),
+                        accessToken,
+                    )
+                    Timber.i("SubtitleCache: phase1.5 embedded → %d lines for %s", count, itemId)
+                    if (count > 0) return@runCatching
+                }
+            }.onFailure { e ->
+                Timber.w(e, "SubtitleCache: phase1.5 failed for %s", itemId)
+            }
+            if (subtitleCacheManager.hasCache(itemId)) return
+        }
+
+        // ── Phase 2: OpenSubtitles via Jellyfin plugin ────────────────────────
+        // Only attempt for Jellyfin items (local/network items have no itemId in Jellyfin).
+        if (item.contentSource != dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN) return
+
+        runCatching {
+            val language = appPreferences.getValue(appPreferences.preferredSubtitleLanguage) ?: "en"
+            val results = repository.searchRemoteSubtitles(itemId, language)
+            Timber.i("SubtitleCache: phase2 OpenSubtitles results=%d for %s", results.size, itemId)
+            if (results.isEmpty()) return
+
+            // Prefer hearing-impaired (SDH) subtitles — most information-dense for AI context.
+            val best = results.firstOrNull { it.hearingImpaired == true }
+                ?: results.firstOrNull { it.forced != true }
+                ?: results.firstOrNull()
+            val subtitleId = best?.id ?: return
+
+            // Tell the Jellyfin server to download the subtitle from the external provider.
+            repository.downloadRemoteSubtitles(itemId, subtitleId)
+
+            // Re-fetch media sources to get the streaming URL for the newly added subtitle.
+            val sources = repository.getMediaSources(itemId, includePath = true)
+            val subtitleStream = sources
+                .flatMap { it.mediaStreams }
+                .firstOrNull { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
+
+            if (subtitleStream?.path != null) {
+                val count = subtitleCacheManager.downloadAndCache(
+                    itemId,
+                    android.net.Uri.parse(subtitleStream.path),
+                    accessToken,
+                )
+                Timber.i(
+                    "SubtitleCache: phase2 OpenSubtitles → %d lines for %s",
+                    count, itemId,
+                )
+            }
+        }.onFailure { e ->
+            Timber.w(e, "SubtitleCache: phase2 OpenSubtitles failed for %s", itemId)
+        }
+    }
+
     fun refreshSyncPlayGroups() {
         viewModelScope.launch {
             _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
@@ -535,6 +651,11 @@ constructor(
                 player.play()
             } else {
                 player.pause()
+            }
+
+            // Pre-fetch subtitle file for AI context in the background.
+            viewModelScope.launch(Dispatchers.IO) {
+                prefetchSubtitleCache(startItem, itemKind)
             }
         }
     }

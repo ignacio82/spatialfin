@@ -210,11 +210,26 @@ internal class MediaSkillRegistry(
     ): MediaSkillPlan {
         val n = normalize(question)
         val isRecent = n.contains("last") || n.contains("just now") || n.contains("minutes") || n.contains("seconds")
-        
+
+        if (isRecent && subtitleContext.isNotBlank()) {
+            // Format the subtitle lines into a clean spoken narrative locally.
+            // Gemma on this device takes 45+ seconds to respond, so we skip it and
+            // produce a well-formatted spoken answer directly.
+            val answer = buildRecapNarrative(question, playerState, subtitleContext)
+            return MediaSkillPlan(
+                skillId = MediaSkillId.RECAP,
+                validatedInput = question.trim(),
+                taskInstructions = "",
+                directAnswer = answer,
+                fallbackText = answer,
+                debugInfo = "recap-local-narrative",
+                shouldSkipModel = true,
+            )
+        }
+
         val directFallback =
             if (isRecent) {
-                subtitleContext.takeIf { it.isNotBlank() }
-                    ?: "I don't have enough recent dialogue context yet to summarize what happened."
+                "I don't have subtitle data for this content yet. Try enabling subtitles in the player so I can track what's happening."
             } else {
                 storySoFarContext?.takeIf { it.isNotBlank() }
                     ?: playerState.currentOverview.takeIf { it.isNotBlank() }
@@ -232,8 +247,90 @@ internal class MediaSkillRegistry(
             validatedInput = question.trim(),
             taskInstructions = instructions,
             fallbackText = directFallback,
-            debugInfo = "recap-context=${storySoFarContext?.isNotBlank() == true} isRecent=$isRecent",
+            debugInfo = "recap isRecent=$isRecent hasSubtitles=${subtitleContext.isNotBlank()}",
         )
+    }
+
+    /**
+     * Converts raw timestamped subtitle lines into a concise spoken narrative.
+     *
+     * Keeps the response short enough for comfortable TTS (under ~300 chars of dialogue)
+     * by taking only the most recent lines from the window.
+     */
+    private fun buildRecapNarrative(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        subtitleContext: String,
+    ): String {
+        // Build the show/episode identifier.
+        val title = buildString {
+            if (!playerState.currentSeriesName.isNullOrBlank()) {
+                append(playerState.currentSeriesName)
+                if (playerState.currentSeasonNumber != null && playerState.currentEpisodeNumber != null) {
+                    append(", season ${playerState.currentSeasonNumber} episode ${playerState.currentEpisodeNumber}")
+                }
+                if (playerState.currentItemTitle.isNotBlank()) {
+                    append(", \"${playerState.currentItemTitle}\"")
+                }
+            } else if (playerState.currentItemTitle.isNotBlank()) {
+                append("\"${playerState.currentItemTitle}\"")
+            }
+        }
+        val chapterHint = playerState.currentChapterName
+            ?.takeIf { it.isNotBlank() }
+            ?.let { " during $it" }
+            ?: ""
+
+        // Strip [M:SS] timestamps and deduplicate.
+        val allLines = subtitleContext.lines()
+            .mapNotNull { line ->
+                val cleaned = line.trimStart().removePrefix("[").let { s ->
+                    val closeBracket = s.indexOf(']')
+                    if (closeBracket > 0) s.substring(closeBracket + 1).trim() else s.trim()
+                }
+                cleaned.ifBlank { null }
+            }
+            .distinct()
+
+        if (allLines.isEmpty()) return "I couldn't find any dialogue for that moment."
+
+        // Keep only the most recent lines that fit in a reasonable spoken response.
+        // Aim for ~15 lines max — enough to convey what happened without a 3-minute TTS read.
+        val lines = allLines.takeLast(15)
+        val omittedCount = allLines.size - lines.size
+
+        val intro = buildString {
+            if (title.isNotBlank()) {
+                append("In $title$chapterHint")
+            } else {
+                append("Just now")
+            }
+            if (omittedCount > 0) {
+                append(", here are the most recent exchanges")
+            } else {
+                append(", here's what was said")
+            }
+            append(": ")
+        }
+
+        // Pair short lines together ("A" + "B" → "A. B"), keep long lines solo.
+        val body = buildString {
+            var i = 0
+            while (i < lines.size) {
+                val cur = lines[i]
+                val next = lines.getOrNull(i + 1)
+                if (next != null && cur.length + next.length < 80) {
+                    append("$cur. $next")
+                    i += 2
+                } else {
+                    append(cur)
+                    i++
+                }
+                if (i < lines.size) append(". ")
+            }
+        }
+
+        return "$intro$body"
     }
 
     private fun dialogueExplainerPlan(

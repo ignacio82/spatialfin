@@ -10,6 +10,10 @@ import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeoutException
@@ -66,10 +70,17 @@ class SmartChatEngine(
         recommendationContext: RecommendationContext? = null,
         visualContexts: List<Bitmap> = emptyList(),
         lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
+        /**
+         * Optional fallback that loads subtitle lines from the disk cache for a given time window.
+         * Called when the in-memory [recentSubtitleLines] buffer has no coverage for the window
+         * extracted from the user's question (e.g. "what happened an hour ago").
+         * Parameters: (fromMs, toMs) → list of (timestampMs, text) pairs.
+         */
+        subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
         /** Called on the IO thread with accumulating text as each token arrives. */
         onTokenStream: ((String) -> Unit)? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
-        val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs)
+        val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs, subtitleCacheFallback)
         val plan =
             mediaSkillRegistry.plan(
                 question = question,
@@ -88,6 +99,104 @@ class SmartChatEngine(
                 skillId = plan.skillId,
                 recommendedItems = recommendedItems,
             )
+        }
+
+        // Fast path: RECAP with subtitle data → use a focused summarization prompt.
+        // Try cloud first (fast), then Gemma (slower but on-device), then local narrative.
+        if (plan.skillId == MediaSkillId.RECAP && subtitleContext.isNotBlank()) {
+            val recapPrompt = buildRecapSummaryPrompt(question, playerState, subtitleContext)
+
+            // 1. Cloud (preferred — instant, no GPU bottleneck)
+            if (hasGeminiApiKey()) {
+                Timber.d("RECAP: routing to cloud (subtitleContext lines=%d)", subtitleContext.lines().size)
+                val cloudResult = geminiCloudService.generateText(
+                    prompt = recapPrompt,
+                    reason = "recap",
+                    temperature = 0.3,
+                    maxOutputTokens = 200,
+                )
+                if (cloudResult.status.usedModel && !cloudResult.text.isNullOrBlank()) {
+                    return@withContext AssistantReply(
+                        text = finalizeReply(cloudResult.text.trim()),
+                        strategy = "CLOUD_RECAP",
+                        debugInfo = "${plan.debugInfo}; cloud-recap; ${cloudResult.status.details}",
+                        recommendedItems = recommendedItems,
+                        selectedSkill = plan.skillId.name,
+                        validatedInput = plan.validatedInput,
+                        resultDisposition = "MODEL",
+                    )
+                }
+                Timber.w("RECAP: cloud failed (%s), trying Gemma", cloudResult.status.details)
+            }
+
+            // 2. Gemma with focused prompt (shorter input → faster inference than full buildPrompt)
+            val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference) ?: false
+            val currentInstance = if (shouldUseGemma()) { modelManager.ensureInitialized(); llmInstance } else null
+            if (currentInstance != null && (currentInstance.backendName != "CPU" || cpuAllowed)) {
+                Timber.d("RECAP: routing to Gemma focused prompt")
+                // Run Gemma in a child job so we can return as soon as we detect a
+                // complete sentence in the stream — without waiting for onDone (which Gemma
+                // often delays or never fires because it keeps generating past the answer).
+                var streamedAnswer: String? = null
+                val latch = CompletableDeferred<String?>()
+                val gemmaResult: String? = try {
+                    coroutineScope {
+                        val inferenceJob = launch {
+                            try {
+                                val fullResult = LlmChatModelHelper.runInference(
+                                    instance = currentInstance,
+                                    prompt = recapPrompt,
+                                    images = emptyList(),
+                                    profile = LlmInferenceProfile.CHAT,
+                                    onToken = { accumulated ->
+                                        if (!latch.isCompleted) {
+                                            onTokenStream?.invoke(accumulated)
+                                            val t = accumulated.trimEnd()
+                                            val looksComplete = t.endsWith('.') || t.endsWith('!') ||
+                                                t.endsWith('?') || t.endsWith('\n')
+                                            if (t.length >= 30 && looksComplete) {
+                                                streamedAnswer = t.trimEnd('\n')
+                                                latch.complete(streamedAnswer)
+                                            }
+                                        }
+                                    },
+                                )
+                                // onDone fired — use full result if we didn't already get a stream answer
+                                latch.complete(if (fullResult.isNotBlank()) fullResult else streamedAnswer)
+                            } catch (e: CancellationException) {
+                                latch.complete(streamedAnswer)
+                                // Do not re-throw: this job is cancelled intentionally after we get the answer
+                            } catch (e: Exception) {
+                                Timber.e(e, "RECAP: Gemma inference error")
+                                latch.complete(streamedAnswer)
+                            }
+                        }
+                        // Wait for the first complete sentence, full result, or 40s timeout
+                        val result = withTimeoutOrNull(40_000L) { latch.await() } ?: streamedAnswer
+                        if (inferenceJob.isActive) inferenceJob.cancel()
+                        result
+                    }
+                } catch (e: CancellationException) {
+                    latch.complete(streamedAnswer)
+                    throw e
+                }
+                Timber.d("RECAP: Gemma result chars=%d blank=%b streamed=%b", gemmaResult?.length ?: -1, gemmaResult.isNullOrBlank(), streamedAnswer != null)
+                if (!gemmaResult.isNullOrBlank()) {
+                    val cleaned = gemmaResult.removePrefix("Model: ").trim()
+                    return@withContext AssistantReply(
+                        text = finalizeReply(cleaned),
+                        strategy = "GEMMA_RECAP",
+                        debugInfo = "${plan.debugInfo}; gemma-recap-focused streamed=${streamedAnswer != null}",
+                        recommendedItems = recommendedItems,
+                        selectedSkill = plan.skillId.name,
+                        validatedInput = plan.validatedInput,
+                        resultDisposition = "MODEL",
+                    )
+                }
+                Timber.w("RECAP: Gemma timed out with no complete sentence, falling back to local narrative")
+            }
+
+            // 3. Local narrative formatter (instant, no model required)
         }
 
         if (plan.directAnswer != null && plan.shouldSkipModel) {
@@ -141,7 +250,7 @@ class SmartChatEngine(
             } else {
                 try {
                     val currentInstance = llmInstance!!
-                    val responseText = withTimeoutOrNull(10_000L) {
+                    val responseText = withTimeoutOrNull(45_000L) {
                         LlmChatModelHelper.runInference(
                             instance = currentInstance,
                             prompt = prompt,
@@ -272,8 +381,8 @@ class SmartChatEngine(
         question: String,
         lines: List<Pair<Long, String>>,
         currentPositionMs: Long,
+        cacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
     ): String {
-        if (lines.isEmpty()) return ""
         val normalized = question.lowercase()
 
         // Extract time window from the question.
@@ -288,7 +397,7 @@ class SmartChatEngine(
                 (center - 60_000L)..(center + 60_000L)
             }
             lastNMinutesMatch != null -> {
-                val n = (lastNMinutesMatch.groupValues[1].toLongOrNull() ?: 2L).coerceAtMost(20L)
+                val n = (lastNMinutesMatch.groupValues[1].toLongOrNull() ?: 2L).coerceAtMost(60L)
                 (currentPositionMs - n * 60_000L)..currentPositionMs
             }
             lastMinuteMatch != null -> {
@@ -305,15 +414,29 @@ class SmartChatEngine(
             else -> (currentPositionMs - 120_000L)..currentPositionMs
         }
 
-        val relevant = lines.filter { (ts, _) -> ts in targetWindowMs }
-            .takeLast(100)
+        // Always merge disk cache + in-memory lines for the window.
+        val inMemory = lines.filter { (ts, _) -> ts in targetWindowMs }
+        val cached = cacheFallback?.invoke(targetWindowMs.first, targetWindowMs.last) ?: emptyList()
+        Timber.d(
+            "SubtitleCtx: posMs=%d window=%d..%d inMemory=%d cached=%d",
+            currentPositionMs, targetWindowMs.first, targetWindowMs.last,
+            inMemory.size, cached.size,
+        )
+        val source = if (cached.isNotEmpty()) {
+            (cached + inMemory).distinctBy { it.first }.sortedBy { it.first }
+        } else {
+            inMemory
+        }
+
+        if (source.isEmpty()) return ""
+
+        return source.takeLast(120)
             .joinToString("\n") { (ts, line) ->
                 val totalSec = ts / 1000L
                 val m = totalSec / 60
                 val s = totalSec % 60
                 "[%d:%02d] %s".format(m, s, line)
             }
-        return relevant
     }
 
     private fun confidenceGatedAnswer(question: String, playerState: PlayerStateSnapshot): String? {
@@ -345,6 +468,47 @@ class SmartChatEngine(
         }
 
         return null
+    }
+
+    /**
+     * Builds a short, focused prompt for cloud-based RECAP summarization.
+     * Intentionally minimal — just the show context, the subtitles, and a clear instruction.
+     * Long prompts waste tokens and produce worse summaries on Gemini Flash.
+     */
+    private fun buildRecapSummaryPrompt(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        subtitleContext: String,
+    ): String {
+        val showInfo = buildString {
+            if (!playerState.currentSeriesName.isNullOrBlank()) {
+                append(playerState.currentSeriesName)
+                if (playerState.currentSeasonNumber != null && playerState.currentEpisodeNumber != null) {
+                    append(" S${playerState.currentSeasonNumber}E${playerState.currentEpisodeNumber}")
+                }
+                if (playerState.currentItemTitle.isNotBlank()) {
+                    append(" \"${playerState.currentItemTitle}\"")
+                }
+            } else {
+                append(playerState.currentItemTitle.ifBlank { "this content" })
+            }
+        }
+        val chapterHint = playerState.currentChapterName
+            ?.takeIf { it.isNotBlank() }
+            ?.let { " (chapter: $it)" }
+            ?: ""
+
+        // Cap subtitles at 60 lines so the prompt stays small and fast.
+        val cappedSubtitles = subtitleContext.lines().takeLast(60).joinToString("\n")
+
+        return buildString {
+            appendLine("The user is watching $showInfo$chapterHint and asked: \"$question\"")
+            appendLine()
+            appendLine("Subtitles from that moment:")
+            appendLine(cappedSubtitles)
+            appendLine()
+            append("In 2-3 natural sentences, summarize what just happened. Be conversational — do not read the lines back verbatim.")
+        }
     }
 
     private fun buildCharacterIdentificationPrompt(
@@ -481,7 +645,16 @@ class SmartChatEngine(
                 normalized.contains("scene") || normalized.contains("just now")))
 
         if (isTimeBasedSummary) {
-            return "I need the AI assistant enabled to summarize what just happened."
+            // If we have subtitle context from the disk cache, return it as a plain transcript
+            // rather than blocking the user with a "need AI" message.
+            return if (subtitleContext.isNotBlank()) {
+                "Here's the dialogue from that part:\n$subtitleContext"
+            } else {
+                val chapterHint = playerState.currentChapterName?.let { " You are currently in the chapter \"$it\"." } ?: ""
+                val overviewHint = playerState.currentOverview.takeIf { it.isNotBlank() }
+                    ?.let { " Here's the episode overview: $it" } ?: ""
+                "I don't have subtitle data for this content, so I can't give a dialogue recap.$chapterHint$overviewHint For the best experience, enable subtitles in the player and I'll be able to answer questions like this."
+            }
         }
 
         if (
@@ -561,7 +734,12 @@ class SmartChatEngine(
         }
 
         if (normalized.contains("what happened") || normalized.contains("what did they say")) {
-            return "I need the AI assistant enabled to explain what they just said."
+            return if (subtitleContext.isNotBlank()) {
+                "Here's the recent dialogue:\n$subtitleContext"
+            } else {
+                val chapterHint = playerState.currentChapterName?.let { " You are in the chapter \"$it\"." } ?: ""
+                "I don't have subtitle data to show recent dialogue.$chapterHint Enable subtitles so I can track the conversation for you."
+            }
         }
 
         return null

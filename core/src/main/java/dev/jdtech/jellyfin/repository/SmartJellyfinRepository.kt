@@ -472,4 +472,6 @@ constructor(
             offline = { offlineRepository.downloadRemoteSubtitles(itemId, subtitleId) },
         )
     }
+
+    override fun getAccessToken(): String? = onlineRepository.getAccessToken()
 }
