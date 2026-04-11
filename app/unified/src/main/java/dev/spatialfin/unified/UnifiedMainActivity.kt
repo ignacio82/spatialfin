@@ -120,8 +120,9 @@ class UnifiedMainActivity : AppCompatActivity() {
         private const val XR_APP_PANEL_LEGACY_DEPTH_METERS = -5f
         private const val XR_APP_PANEL_V2_DEPTH_METERS = -6f
         private const val XR_APP_PANEL_V3_DEPTH_METERS = -9f
-        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -11f
-        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 4
+        private const val XR_APP_PANEL_V4_DEPTH_METERS = -11f
+        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -1.75f
+        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 5
         private const val XR_APP_PANEL_DEFAULT_POSE_EPSILON = 0.05f
         private const val XR_APP_PANEL_WIDTH_DP = 1792
         private const val XR_APP_PANEL_HEIGHT_DP = 1008
@@ -940,7 +941,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         LaunchedEffect(rootEntity.value) {
             val root = rootEntity.value ?: return@LaunchedEffect
             if (movableComponent.value == null) {
-                val m = MovableComponent.createSystemMovable(session, false)
+                val m = MovableComponent.createSystemMovable(session, true)
                 m.size =
                     androidx.xr.runtime.math.FloatSize3d(
                         XR_APP_PANEL_WIDTH_METERS,
@@ -1141,6 +1142,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                     kotlin.math.abs(translation.z - XR_APP_PANEL_V2_DEPTH_METERS) <=
                         XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
                     kotlin.math.abs(translation.z - XR_APP_PANEL_V3_DEPTH_METERS) <=
+                        XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
+                    kotlin.math.abs(translation.z - XR_APP_PANEL_V4_DEPTH_METERS) <=
                         XR_APP_PANEL_DEFAULT_POSE_EPSILON)
         val usesIdentityRotation =
             kotlin.math.abs(rotation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&

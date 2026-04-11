@@ -11,6 +11,8 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.TimeoutException
 import timber.log.Timber
 
 data class AssistantPreferences(
@@ -127,44 +129,53 @@ class SmartChatEngine(
         }
 
         val gemmaEnabled = shouldUseGemma()
+        val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference) ?: false
 
         if (gemmaEnabled) {
             modelManager.ensureInitialized()
         }
 
         if (gemmaEnabled && llmInstance != null) {
-            try {
-                val currentInstance = llmInstance!!
-                val responseText = LlmChatModelHelper.runInference(
-                    instance = currentInstance,
-                    prompt = prompt,
-                    images = visualContexts,
-                    profile = LlmInferenceProfile.CHAT,
-                    onToken = onTokenStream,
-                )
-                if (responseText.isNotBlank()) {
-                    val prefixToRemove = "Model: "
-                    val cleanedResponse = if (responseText.startsWith(prefixToRemove)) {
-                        responseText.substring(prefixToRemove.length)
-                    } else {
-                        responseText
+            if (llmInstance!!.backendName == "CPU" && !cpuAllowed) {
+                Timber.w("LiteRT: skipping CPU inference because it is not explicitly enabled in settings")
+            } else {
+                try {
+                    val currentInstance = llmInstance!!
+                    val responseText = withTimeoutOrNull(10_000L) {
+                        LlmChatModelHelper.runInference(
+                            instance = currentInstance,
+                            prompt = prompt,
+                            images = visualContexts,
+                            profile = LlmInferenceProfile.CHAT,
+                            onToken = { partial -> 
+                                onTokenStream?.invoke(partial)
+                            },
+                        )
+                    } ?: throw TimeoutException("Inference timed out")
+                    if (responseText.isNotBlank()) {
+                        val prefixToRemove = "Model: "
+                        val cleanedResponse = if (responseText.startsWith(prefixToRemove)) {
+                            responseText.substring(prefixToRemove.length)
+                        } else {
+                            responseText
+                        }
+                        val finalText =
+                            cleanedResponse.trim()
+                                .ifBlank { fallbackText ?: "" }
+                                .takeIf { it.isNotBlank() }
+                        return@withContext AssistantReply(
+                            text = finalizeReply(finalText),
+                            strategy = "GEMMA_LITERT",
+                            debugInfo = plan.debugInfo.ifBlank { "LiteRT LM Engine" },
+                            recommendedItems = recommendedItems,
+                            selectedSkill = plan.skillId.name,
+                            validatedInput = plan.validatedInput,
+                            resultDisposition = "MODEL",
+                        )
                     }
-                    val finalText =
-                        cleanedResponse.trim()
-                            .ifBlank { fallbackText ?: "" }
-                            .takeIf { it.isNotBlank() }
-                    return@withContext AssistantReply(
-                        text = finalizeReply(finalText),
-                        strategy = "GEMMA_LITERT",
-                        debugInfo = plan.debugInfo.ifBlank { "LiteRT LM Engine" },
-                        recommendedItems = recommendedItems,
-                        selectedSkill = plan.skillId.name,
-                        validatedInput = plan.validatedInput,
-                        resultDisposition = "MODEL",
-                    )
+                } catch (e: Exception) {
+                    Timber.e(e, "LiteRT inference failed")
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "LiteRT inference failed")
             }
         }
 
@@ -274,27 +285,28 @@ class SmartChatEngine(
             minutesAgoMatch != null -> {
                 val n = minutesAgoMatch.groupValues[1].toLongOrNull() ?: 2L
                 val center = currentPositionMs - n * 60_000L
-                (center - 30_000L)..(center + 30_000L)
+                (center - 60_000L)..(center + 60_000L)
             }
             lastNMinutesMatch != null -> {
-                val n = lastNMinutesMatch.groupValues[1].toLongOrNull() ?: 2L
+                val n = (lastNMinutesMatch.groupValues[1].toLongOrNull() ?: 2L).coerceAtMost(20L)
                 (currentPositionMs - n * 60_000L)..currentPositionMs
             }
             lastMinuteMatch != null -> {
                 (currentPositionMs - 60_000L)..currentPositionMs
             }
             lastNSecondsMatch != null -> {
-                val n = lastNSecondsMatch.groupValues[1].toLongOrNull() ?: 30L
+                val n = (lastNSecondsMatch.groupValues[1].toLongOrNull() ?: 30L).coerceAtMost(300L)
                 (currentPositionMs - n * 1_000L)..currentPositionMs
             }
-            normalized.contains("just happened") || normalized.contains("right now") || normalized.contains("what did they just") -> {
-                (currentPositionMs - 30_000L)..currentPositionMs
+            normalized.contains("just happened") || normalized.contains("right now") || normalized.contains("what did they just") ||
+                normalized.contains("what happened") || normalized.contains("summarize") -> {
+                (currentPositionMs - 180_000L)..currentPositionMs
             }
             else -> (currentPositionMs - 120_000L)..currentPositionMs
         }
 
         val relevant = lines.filter { (ts, _) -> ts in targetWindowMs }
-            .takeLast(40)
+            .takeLast(100)
             .joinToString("\n") { (ts, line) ->
                 val totalSec = ts / 1000L
                 val m = totalSec / 60
@@ -469,10 +481,7 @@ class SmartChatEngine(
                 normalized.contains("scene") || normalized.contains("just now")))
 
         if (isTimeBasedSummary) {
-            return subtitleContext.takeIf { it.isNotBlank() }
-                ?.let { "Here's what happened recently:\n$it" }
-                ?: storySoFarContext?.takeIf { it.isNotBlank() }
-                ?: "I don't have recent dialogue context for that time window."
+            return "I need the AI assistant enabled to summarize what just happened."
         }
 
         if (
@@ -552,10 +561,7 @@ class SmartChatEngine(
         }
 
         if (normalized.contains("what happened") || normalized.contains("what did they say")) {
-            return subtitleContext.takeIf { it.isNotBlank() }
-                ?.let { "Based on the recent dialogue:\n$it" }
-                ?: storySoFarContext?.takeIf { it.isNotBlank() }
-                ?: "I don't have enough recent dialogue context to answer that."
+            return "I need the AI assistant enabled to explain what they just said."
         }
 
         return null

@@ -568,13 +568,14 @@ class SpatialCommandCoordinator(
             You convert XR media-player voice transcripts into a single JSON action.
             Return ONLY minified JSON.
             Supported action values:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,reset_screen_placement,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
 
             Rules:
             - Prefer a direct player action when the transcript clearly asks for one.
             - Use "chat" for questions, recommendations, clarifications, recaps, or metadata questions.
             - Recommendation refinements like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one" are always "chat".
             - Use "search" for find/search/show me requests.
+            - Use "reset_screen_placement" when the user asks to recenter the screen or restore the default IMAX position.
             - If unsure, use "chat" rather than "unrecognized".
             - Include only fields that matter for the chosen action.
             - $screenGuidance
@@ -663,6 +664,7 @@ class SpatialCommandCoordinator(
                 delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
                 reset = payload.optBoolean("reset", false),
             )
+            "reset_screen_placement" -> XrPlayerAction.ResetScreenPlacement
             "go_home" -> XrPlayerAction.GoHome
             "close_app" -> XrPlayerAction.CloseApp
             "go_back" -> XrPlayerAction.GoBack
@@ -837,6 +839,11 @@ class SpatialCommandCoordinator(
 
     private fun extractSizeAdjustment(text: String): XrPlayerAction? {
         return when {
+            text.matches(
+                Regex(
+                    ".*((reset|restore) ((the )?(screen|video) )?(position|placement)|recenter (the )?(screen|video)|center (the )?(screen|video)|default imax( experience)?( position| placement)?|imax( experience)? position|(put|move) (it|the screen|the video) back (to )?(the )?(default|center|middle)).*",
+                ),
+            ) -> XrPlayerAction.ResetScreenPlacement
             text.matches(Regex(".*(make it|make the video|make screen|make the screen).*bigger.*")) ||
                 text.matches(Regex(".*(increase size|zoom in|larger).*")) ->
                 XrPlayerAction.AdjustScale(delta = 0.1f)

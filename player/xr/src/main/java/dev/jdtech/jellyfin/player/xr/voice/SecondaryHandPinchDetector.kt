@@ -64,12 +64,12 @@ class SecondaryHandPinchDetector(
 
     companion object {
         private const val PALM_HOLD_MS = 240L
-        private const val FIST_HOLD_MS = 150L
+        private const val FIST_HOLD_MS = 450L
         private const val RELEASE_PALM_TRAVEL_METERS = 0.080f
         private const val RELEASE_FIST_TRAVEL_METERS = 0.085f
         private const val POLL_INTERVAL_MS = 30L
         private const val MIN_PALM_VALID_FRAMES = 6
-        private const val MIN_FIST_VALID_FRAMES = 3
+        private const val MIN_FIST_VALID_FRAMES = 8
         private const val MAX_PALM_TRAVEL_METERS = 0.055f
         private const val MAX_FIST_TRAVEL_METERS = 0.070f
         private const val MIN_FINGER_EXTENSION_RATIO = 1.18f

@@ -81,6 +81,9 @@ import org.jellyfin.sdk.model.api.SyncPlayQueueItem
 import org.jellyfin.sdk.model.api.SyncPlayStateUpdate
 import timber.log.Timber
 
+private const val ASSISTANT_SUBTITLE_HISTORY_WINDOW_MS = 20 * 60 * 1_000L
+private const val ASSISTANT_SUBTITLE_HISTORY_MAX_LINES = 400
+
 @HiltViewModel
 class PlayerViewModel
 @Inject
@@ -122,6 +125,7 @@ constructor(
                 currentProductionYear = null,
                 nextEpisode = null,
                 fileLoaded = false,
+                visualSubtitlesEnabled = true,
             )
         )
     val uiState = _uiState.asStateFlow()
@@ -154,6 +158,9 @@ constructor(
     private val _currentFrameRate = MutableStateFlow(-1f)
     val currentFrameRate = _currentFrameRate.asStateFlow()
 
+    private val _assistantSubtitleHistory = MutableStateFlow<List<Pair<Long, String>>>(emptyList())
+    val assistantSubtitleHistory = _assistantSubtitleHistory.asStateFlow()
+
     data class UiState(
         val currentItemTitle: String,
         val currentItemId: String? = null,
@@ -175,6 +182,7 @@ constructor(
         /** Next episode in the playlist, or null for movies / last episode of a season. */
         val nextEpisode: PlayerItem?,
         val fileLoaded: Boolean,
+        val visualSubtitlesEnabled: Boolean = true,
     )
 
     private var items: MutableList<PlayerItem> = mutableListOf()
@@ -290,11 +298,35 @@ constructor(
             newPlayer.javaClass.simpleName,
             player.currentMediaItem?.mediaId,
         )
+        clearAssistantSubtitleHistory()
         player.removeListener(this)
         player.release()
         player = newPlayer
         player.addListener(this)
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
+    }
+
+    fun clearAssistantSubtitleHistory() {
+        _assistantSubtitleHistory.value = emptyList()
+    }
+
+    fun recordAssistantSubtitleLine(timestampMs: Long, text: String) {
+        val normalized = text.replace(Regex("\\s+"), " ").trim()
+        if (normalized.isBlank()) return
+
+        _assistantSubtitleHistory.update { existing ->
+            val cutoff = (timestampMs - ASSISTANT_SUBTITLE_HISTORY_WINDOW_MS).coerceAtLeast(0L)
+            val trimmed =
+                existing
+                    .filter { (lineTimestampMs, _) -> lineTimestampMs in cutoff..timestampMs }
+                    .toMutableList()
+            val lastLine = trimmed.lastOrNull()
+            if (lastLine != null && lastLine.first == timestampMs && lastLine.second == normalized) {
+                return@update trimmed
+            }
+            trimmed.add(timestampMs to normalized)
+            trimmed.takeLast(ASSISTANT_SUBTITLE_HISTORY_MAX_LINES)
+        }
     }
 
     fun refreshSyncPlayGroups() {
@@ -876,6 +908,7 @@ constructor(
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         Timber.d("Playing MediaItem: ${mediaItem?.mediaId}")
+        clearAssistantSubtitleHistory()
         pendingAutoAdvanceMediaId = null
         savedStateHandle["mediaItemIndex"] = player.currentMediaItemIndex
         viewModelScope.launch {
@@ -1126,28 +1159,41 @@ constructor(
                 }
             }
 
-        val updatedParameters =
-            player.trackSelectionParameters
-                .buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .setPreferredAudioLanguage(selectedAudioLanguage)
-                .setPreferredTextLanguage(groupPrimaryLanguage(selectedSubtitleGroup))
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, selectedSubtitleGroup == null)
-                .setOverrideForType(
-                    TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0)
-                )
-                .apply {
-                    if (selectedSubtitleGroup != null) {
-                        setOverrideForType(
-                            TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0)
-                        )
-                        setIgnoredTextSelectionFlags(0)
-                    }
-                }
-                .build()
+        val builder = player.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setPreferredAudioLanguage(selectedAudioLanguage)
+            .setOverrideForType(
+                TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0)
+            )
 
-        player.trackSelectionParameters = updatedParameters
+        if (selectedSubtitleGroup != null) {
+            _uiState.update { it.copy(visualSubtitlesEnabled = true) }
+            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            builder.setOverrideForType(
+                TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0)
+            )
+            builder.setIgnoredTextSelectionFlags(0)
+        } else {
+            _uiState.update { it.copy(visualSubtitlesEnabled = false) }
+            val allSubtitleGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+            val aiTrack = selectHiddenAiSubtitleTrack(allSubtitleGroups)
+            if (aiTrack != null) {
+                val format = aiTrack.getTrackFormat(0)
+                Timber.i("FORCING Hidden AI subtitle track: label=%s lang=%s", format.label, format.language)
+                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                builder.setOverrideForType(
+                    TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
+                )
+                builder.setIgnoredTextSelectionFlags(0)
+            } else {
+                Timber.i("No suitable tracks found for hidden AI context.")
+                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            }
+        }
+
+        player.trackSelectionParameters = builder.build()
         lastAutoLanguageSelectionMediaId = mediaId
 
         Timber.d(
@@ -1232,6 +1278,9 @@ constructor(
         newPosition: Player.PositionInfo,
         reason: Int,
     ) {
+        if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            clearAssistantSubtitleHistory()
+        }
         if (
             !isSyncPlayActive() ||
                 shouldSuppressSyncEvents() ||
@@ -1354,14 +1403,43 @@ constructor(
     fun switchToTrack(trackType: @C.TrackType Int, index: Int) {
         val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
 
+        if (trackType == C.TRACK_TYPE_TEXT) {
+            _uiState.update { it.copy(visualSubtitlesEnabled = index != -1) }
+        }
+
         // Index -1 equals disable track
         if (index == -1) {
-            player.trackSelectionParameters =
-                player.trackSelectionParameters
-                    .buildUpon()
-                    .clearOverridesOfType(trackType)
-                    .setTrackTypeDisabled(trackType, true)
-                    .build()
+            if (trackType == C.TRACK_TYPE_TEXT) {
+                val aiTrack = selectHiddenAiSubtitleTrack(groups)
+                if (aiTrack != null) {
+                    val format = aiTrack.getTrackFormat(0)
+                    Timber.i("Hidden AI subtitle track selected: label=%s lang=%s", format.label, format.language)
+                    player.trackSelectionParameters =
+                        player.trackSelectionParameters
+                            .buildUpon()
+                            .setOverrideForType(
+                                TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
+                            )
+                            .setTrackTypeDisabled(trackType, false)
+                            .setIgnoredTextSelectionFlags(0)
+                            .build()
+                } else {
+                    Timber.i("No suitable AI subtitle track found.")
+                    player.trackSelectionParameters =
+                        player.trackSelectionParameters
+                            .buildUpon()
+                            .clearOverridesOfType(trackType)
+                            .setTrackTypeDisabled(trackType, true)
+                            .build()
+                }
+            } else {
+                player.trackSelectionParameters =
+                    player.trackSelectionParameters
+                        .buildUpon()
+                        .clearOverridesOfType(trackType)
+                        .setTrackTypeDisabled(trackType, true)
+                        .build()
+            }
             persistSeriesLanguageOverride(
                 trackType = trackType,
                 languageCode = null,
@@ -1405,6 +1483,22 @@ constructor(
                 )
             }
         }
+    }
+
+    private fun selectHiddenAiSubtitleTrack(groups: List<Tracks.Group>): Tracks.Group? {
+        return groups
+            .sortedByDescending { group ->
+                val format = group.getTrackFormat(0)
+                val label = format.label.orEmpty().lowercase()
+                val roleFlags = format.roleFlags
+                var score = 0
+                if (label.contains("sdh") || label.contains("cc")) score += 100
+                if (roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) score += 50
+                if (roleFlags and C.ROLE_FLAG_TRANSCRIBES_DIALOG != 0) score += 50
+                if (groupMatchesLanguage(group, "en") || groupMatchesLanguage(group, "eng")) score += 20
+                score
+            }
+            .firstOrNull()
     }
 
     private fun isSyncPlayActive(): Boolean = activeSyncPlayGroupId != null

@@ -210,7 +210,9 @@ class XrPlayerActivity : AppCompatActivity() {
                             fontLoader = libassFontLoader,
                             usagePref = libassUsagePref,
                             srtFontSize = xrSubtitleSize,
-                        )
+                        ).apply {
+                            onSubtitleText = viewModel::recordAssistantSubtitleLine
+                        }
                     )
                     Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
                     // Do NOT add the default TextRenderer here. With parsing disabled,
@@ -269,10 +271,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
                 // Request full space mode for 3D support and immersive playback
                 try {
-                    val capabilities = xrSession?.scene?.spatialCapabilities
-                    if (capabilities?.contains(androidx.xr.scenecore.SpatialCapability.SPATIAL_3D_CONTENT) == true) {
-                        xrSession?.scene?.requestFullSpaceMode()
-                    }
+                    xrSession?.scene?.requestFullSpaceMode()
                     Timber.d("XrPlayer: step 5 — full space mode requested")
                 } catch (e: Exception) {
                     Timber.w(e, "XrPlayer: step 5 FAILED — full space mode request failed")

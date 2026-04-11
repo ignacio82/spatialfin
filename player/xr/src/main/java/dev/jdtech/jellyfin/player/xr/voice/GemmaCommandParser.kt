@@ -98,13 +98,14 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
             - If the user is refining recommendations with phrases like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one", use action "chat".
             - If recommendation results are visible and the user says "play the first one" or "open the second result", use action "select_option" with the matching index.
             - If the request is for version selection (e.g. "the 3D one", "the smaller one"), use "select_version" with a query.
+            - If the user asks to recenter the screen or restore the default IMAX placement, use action "reset_screen_placement".
             - If the request specifies both audio and subtitles, pick one as the primary action and put the other in "secondary_action".
             - $screenGuidance
             $retryGuidance
             
             JSON schema:
             {
-              "action": "play|pause|toggle_play_pause|seek_forward|seek_backward|seek_to|skip_intro|skip_outro|next_episode|previous_episode|set_speed|set_quality|select_audio|select_subtitles|disable_subtitles|search|select_option|open_syncplay|join_syncplay|adjust_volume|adjust_scale|adjust_distance|go_home|close_app|go_back|show_controls|hide_controls|report_current_time|report_remaining_time|report_current_media|set_passthrough|toggle_passthrough|chat|select_version|unrecognized",
+              "action": "play|pause|toggle_play_pause|seek_forward|seek_backward|seek_to|skip_intro|skip_outro|next_episode|previous_episode|set_speed|set_quality|select_audio|select_subtitles|disable_subtitles|search|select_option|open_syncplay|join_syncplay|adjust_volume|adjust_scale|adjust_distance|reset_screen_placement|go_home|close_app|go_back|show_controls|hide_controls|report_current_time|report_remaining_time|report_current_media|set_passthrough|toggle_passthrough|chat|select_version|unrecognized",
               "query": "string (for search, chat, or version selection)",
               "seconds": number,
               "position_seconds": number,
@@ -124,6 +125,7 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
             - "recommend something for me" -> {"action": "chat", "query": "recommend something for me"}
             - "what should i watch next" -> {"action": "chat", "query": "what should i watch next"}
             - "play the 3D one" -> {"action": "select_version", "query": "3d"}
+            - "reset the screen to the default imax position" -> {"action": "reset_screen_placement"}
             - "pause the video" -> {"action": "pause"}
             - "seek forward 30 seconds" -> {"action": "seek_forward", "seconds": 30}
             - "switch to japanese with english subtitles" -> {"action": "select_audio", "language": "japanese", "secondary_action": {"action": "select_subtitles", "language": "english"}}
@@ -240,6 +242,7 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
                 delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
                 reset = payload.optBoolean("reset", false),
             )
+            "reset_screen_placement" -> XrPlayerAction.ResetScreenPlacement
             "go_home" -> XrPlayerAction.GoHome
             "close_app" -> XrPlayerAction.CloseApp
             "go_back" -> XrPlayerAction.GoBack

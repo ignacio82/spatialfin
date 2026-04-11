@@ -79,7 +79,7 @@ internal class MediaSkillRegistry(
             MediaSkillId.LIBRARY_SEARCH ->
                 librarySearchPlan(question, onSearchQuery)
             MediaSkillId.RECAP ->
-                recapPlan(question, playerState, storySoFarContext)
+                recapPlan(question, playerState, storySoFarContext, subtitleContext)
             MediaSkillId.DIALOGUE_EXPLAINER ->
                 dialogueExplainerPlan(question, playerState, subtitleContext, storySoFarContext)
             MediaSkillId.METADATA_QA ->
@@ -206,18 +206,33 @@ internal class MediaSkillRegistry(
         question: String,
         playerState: PlayerStateSnapshot,
         storySoFarContext: String?,
+        subtitleContext: String,
     ): MediaSkillPlan {
+        val n = normalize(question)
+        val isRecent = n.contains("last") || n.contains("just now") || n.contains("minutes") || n.contains("seconds")
+        
         val directFallback =
-            storySoFarContext?.takeIf { it.isNotBlank() }
-                ?: playerState.currentOverview.takeIf { it.isNotBlank() }
-                ?: "I don't have enough context yet to recap the story so far."
+            if (isRecent) {
+                subtitleContext.takeIf { it.isNotBlank() }
+                    ?: "I don't have enough recent dialogue context yet to summarize what happened."
+            } else {
+                storySoFarContext?.takeIf { it.isNotBlank() }
+                    ?: playerState.currentOverview.takeIf { it.isNotBlank() }
+                    ?: "I don't have enough context yet to recap the story so far."
+            }
+
+        val instructions = if (isRecent) {
+            "Task: Summarize the events from the recent dialogue. Use the supplied dialogue with timestamps to explain what just happened. Keep it strictly focused on the most recent events."
+        } else {
+            "Task: Give a short recap of the story so far for this movie or episode. Use the supplied story-so-far context."
+        }
 
         return MediaSkillPlan(
             skillId = MediaSkillId.RECAP,
             validatedInput = question.trim(),
-            taskInstructions = "Task: Give a short recap of the story so far. Use the supplied recap context and avoid spoilers beyond the current moment.",
+            taskInstructions = instructions,
             fallbackText = directFallback,
-            debugInfo = "recap-context=${storySoFarContext?.isNotBlank() == true}",
+            debugInfo = "recap-context=${storySoFarContext?.isNotBlank() == true} isRecent=$isRecent",
         )
     }
 
@@ -252,7 +267,7 @@ internal class MediaSkillRegistry(
                 subtitleContext.takeIf { it.isNotBlank() }
                     ?: storySoFarContext?.takeIf { it.isNotBlank() }
                     ?: playerState.currentOverview.takeIf { it.isNotBlank() }
-                    ?: "I don't have enough recent dialogue to explain that."
+                    ?: "I don't have enough recent dialogue context yet to explain that."
             taskInstructions = "Task: Explain the most recent dialogue or action. Use recent subtitles first, then the story-so-far context if needed. Do not invent dialogue that is not in the supplied context."
         }
 
@@ -799,12 +814,11 @@ internal class MediaSkillRegistry(
             normalized.contains("what are they saying") ||
             normalized.contains("what did i miss") ||
             normalized.contains("what just happened") ||
-            isTimeBasedSummaryQuery(normalized) ||
             ((normalized.startsWith("who is") || normalized.startsWith("who are") || normalized.startsWith("who was")) &&
                 isGenericCharacterQuery(normalized))
 
     private fun isRecapQuery(normalized: String): Boolean =
-        !isTimeBasedSummaryQuery(normalized) &&
+        isTimeBasedSummaryQuery(normalized) ||
             (normalized.contains("story so far") ||
                 normalized.contains("recap") ||
                 normalized.contains("summarize") ||

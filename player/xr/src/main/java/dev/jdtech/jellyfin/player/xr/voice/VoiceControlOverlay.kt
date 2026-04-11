@@ -54,9 +54,9 @@ fun VoiceControlOverlay(
     
     if (isVisible) {
         Orbiter(
-            position = ContentEdge.End,
-            alignment = Alignment.Top,
-            offset = 20.dp,
+            position = ContentEdge.Top,
+            alignment = Alignment.CenterHorizontally,
+            offset = 40.dp,
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

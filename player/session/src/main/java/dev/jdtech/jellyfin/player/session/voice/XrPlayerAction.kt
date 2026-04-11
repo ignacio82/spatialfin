@@ -68,6 +68,8 @@ sealed interface XrPlayerAction {
 
     data class AdjustDistance(val delta: Float? = null, val reset: Boolean = false) : XrPlayerAction
 
+    data object ResetScreenPlacement : XrPlayerAction
+
     data object GoHome : XrPlayerAction
 
     data object CloseApp : XrPlayerAction

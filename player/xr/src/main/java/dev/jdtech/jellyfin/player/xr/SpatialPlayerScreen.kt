@@ -115,6 +115,7 @@ import androidx.xr.scenecore.SpatialCapability
 import androidx.xr.scenecore.SpatialEnvironment
 import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.GroupEntity
+import androidx.xr.scenecore.Space
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.scenecore.scene
 import androidx.core.content.ContextCompat
@@ -184,6 +185,11 @@ interface LlmEntryPoint {
     fun modelManager(): dev.jdtech.jellyfin.core.llm.LlmModelManager
 }
 private const val VIDEO_DEPTH_METERS = 6.0f
+private const val UI_DEPTH_METERS = 2.0f
+private const val DEFAULT_VIDEO_PANEL_SCALE = 1.39f
+private const val MIN_RESTORABLE_VIDEO_DEPTH_METERS = 3.5f
+private const val MAX_RESTORABLE_VIDEO_YAW_DEGREES = 18f
+private const val MAX_RESTORABLE_VIDEO_PITCH_DEGREES = 14f
 private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
 private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
 private const val VIDEO_MOVE_HANDLE_MARGIN_METERS = 0.35f
@@ -250,11 +256,20 @@ fun SpatialPlayerScreen(
     val savedPlayerScale = remember(viewModel) { loadSavedPlayerRootScale(viewModel) }
 
     val videoRootEntity = remember { mutableStateOf<androidx.xr.scenecore.GroupEntity?>(null) }
+    val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val subtitleRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
+    val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
+    val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
+    val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
+    val lastReportedMovePose = remember { mutableStateOf<Pose?>(null) }
     var videoDepth by remember(savedPlayerPose) {
-        mutableFloatStateOf(extractVideoDepth(savedPlayerPose))
+        mutableFloatStateOf(extractVideoDepth(savedPlayerPose, VIDEO_DEPTH_METERS))
     }
     var videoPanelScale by remember(savedPlayerScale) { mutableFloatStateOf(savedPlayerScale) }
     var lastPointerPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    var startupPoseGuardActive by remember { mutableStateOf(true) }
+    var moveInProgress by remember { mutableStateOf(false) }
 
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
@@ -275,6 +290,9 @@ fun SpatialPlayerScreen(
     val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
     val recentSubtitles = remember { mutableStateListOf<Pair<Long, String>>() }
+    val assistantSubtitleHistory by viewModel.assistantSubtitleHistory.collectAsState()
+    val assistantSubtitleLines =
+        if (assistantSubtitleHistory.isNotEmpty()) assistantSubtitleHistory else recentSubtitles.toList()
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
@@ -647,6 +665,59 @@ fun SpatialPlayerScreen(
             passthroughEnabled = passthroughEnabled,
         )
 
+    fun resetScreenPlacementToDefault() {
+        val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
+        val projectedOverlayPose = projectPoseFromOrigin(defaultPose, UI_DEPTH_METERS / VIDEO_DEPTH_METERS)
+        videoDepth = VIDEO_DEPTH_METERS
+        videoPanelScale = DEFAULT_VIDEO_PANEL_SCALE
+        lastReportedMovePose.value = defaultPose
+        runCatching {
+            videoRootEntity.value?.let { root ->
+                root.setPose(defaultPose)
+                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+            }
+        }
+        runCatching {
+            uiRootEntity.value?.let { root ->
+                root.setPose(projectedOverlayPose)
+                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+            }
+        }
+        runCatching {
+            subtitleRootEntity.value?.let { root ->
+                root.setPose(projectedOverlayPose)
+                root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+            }
+        }
+        savePlayerRootPose(viewModel, defaultPose)
+        savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
+        videoOverlayAttachmentVersion++
+    }
+
+    fun applyCurrentLaunchPose() {
+        val targetPose = Pose(Vector3(0f, 0f, -videoDepth), Quaternion.Identity)
+        val projectedOverlayPose = projectPoseFromOrigin(targetPose, UI_DEPTH_METERS / videoDepth)
+        runCatching {
+            videoRootEntity.value?.let { root ->
+                root.setPose(targetPose)
+                root.setScale(videoPanelScale)
+            }
+        }
+        runCatching {
+            uiRootEntity.value?.let { root ->
+                root.setPose(projectedOverlayPose)
+                root.setScale(videoPanelScale)
+            }
+        }
+        runCatching {
+            subtitleRootEntity.value?.let { root ->
+                root.setPose(projectedOverlayPose)
+                root.setScale(videoPanelScale)
+            }
+        }
+        lastReportedMovePose.value = targetPose
+    }
+
     val sessionController =
         remember(player, viewModel, activity) {
             PlayerSessionController(
@@ -681,7 +752,7 @@ fun SpatialPlayerScreen(
                 onAdjustScale = { delta, reset ->
                     val updatedScale =
                         when {
-                            reset -> 1f
+                            reset -> DEFAULT_VIDEO_PANEL_SCALE
                             delta != null -> (videoPanelScale + delta).coerceIn(0.2f, 5.0f)
                             else -> videoPanelScale
                         }
@@ -698,6 +769,7 @@ fun SpatialPlayerScreen(
                         videoDepth = (videoDepth + delta).coerceIn(2.0f, 15.0f)
                     }
                 },
+                onResetScreenPlacement = ::resetScreenPlacementToDefault,
             )
         }
 
@@ -778,12 +850,13 @@ fun SpatialPlayerScreen(
         followUpPending = false
         followUpDeadlineMs = 0L
         voiceGestureHint = null
+        voiceFeedback = null
         revealControls("voice-command")
         startVoiceCapture(
             voiceService = voiceService,
             commandCoordinatorProvider = ::requireCommandCoordinator,
             chatEngineProvider = ::requireChatEngine,
-            recentSubtitles = recentSubtitles.toList(),
+            recentSubtitles = assistantSubtitleLines,
             player = player,
             viewModel = viewModel,
             uiState = uiState,
@@ -1041,27 +1114,15 @@ fun SpatialPlayerScreen(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) {
-                if (!subtitleTrackSelected) {
-                    currentCues = emptyList()
-                    return
-                }
-                currentCues = cueGroup.cues
+                currentCues = if (subtitleTrackSelected) cueGroup.cues else emptyList()
                 if (cueGroup.cues.isNotEmpty()) {
                     val first = cueGroup.cues[0].text?.toString()
                     if (first != null) {
                         val pos = player.currentPosition
+                        Timber.d("AI Subtitle Buffer: adding cue at %d: %s", pos, first)
                         recentSubtitles.add(pos to first)
-                        recentSubtitles.removeAll { pos - it.first > 60_000L }
+                        recentSubtitles.removeAll { pos - it.first > 1_200_000L }
                     }
-                }
-            }
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int
-            ) {
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                    libassRenderer?.clearCache()
                 }
             }
 
@@ -1072,6 +1133,33 @@ fun SpatialPlayerScreen(
                             group.isSupported &&
                             groupIsSelected(group)
                     }
+
+                // AI context optimization: find and record the first available SDH track for assistant context,
+                // even if not visually selected.  This gives the AI non-verbal cues (e.g. [Door Slams]).
+                val aiTrack =
+                    tracks.groups
+                        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+                        .sortedByDescending { group ->
+                            val label = group.mediaTrackGroup.getFormat(0).label?.lowercase() ?: ""
+                            val roleFlags = group.mediaTrackGroup.getFormat(0).roleFlags
+                            var score = 0
+                            if (label.contains("sdh") || label.contains("cc")) score += 100
+                            if (roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) score += 50
+                            if (roleFlags and C.ROLE_FLAG_TRANSCRIBES_DIALOG != 0) score += 50
+                            score
+                        }
+                        .firstOrNull()
+
+                if (aiTrack != null) {
+                    val format = aiTrack.mediaTrackGroup.getFormat(0)
+                    Timber.i(
+                        "subtitle: XR assistant track candidate label=%s lang=%s roleFlags=%d",
+                        format.label,
+                        format.language,
+                        format.roleFlags,
+                    )
+                }
+
                 if (!subtitleTrackSelected) {
                     currentCues = emptyList()
                 }
@@ -1163,29 +1251,26 @@ fun SpatialPlayerScreen(
     }
 
     // --- SceneCore video entity ---
-    val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
-    val subtitleRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
-    val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
-    val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
-    val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
-    val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
-    // Cache the video root pose reported by move callbacks so the UI root can mirror it
-    // and the pose can be persisted without relying on SceneCore's internal drag overlay.
-    val lastReportedMovePose = remember { mutableStateOf<androidx.xr.runtime.math.Pose?>(null) }
-
-    val uiDepth = 2.0f
-    val overlayProjectionScale = uiDepth / videoDepth
+    val overlayProjectionScale = UI_DEPTH_METERS / videoDepth
 
     // Update root poses when depth changes.
     // This allows the + and - buttons to dynamically adjust the spatial layout.
-    LaunchedEffect(videoDepth, videoPanelScale, videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value) {
+    LaunchedEffect(
+        videoDepth,
+        videoPanelScale,
+        videoRootEntity.value,
+        uiRootEntity.value,
+        subtitleRootEntity.value,
+        moveInProgress,
+    ) {
+        if (moveInProgress) return@LaunchedEffect
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
 
         // Calculate the new pose by preserving direction but scaling distance.
         // We assume the user is at the origin (0,0,0) and the initial pose defines the view vector.
-        val currentVideoPose = videoRoot.getPose()
+        val currentVideoPose = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot) ?: savedPlayerPose
         val t = currentVideoPose.translation
         val length = kotlin.math.sqrt(t.x * t.x + t.y * t.y + t.z * t.z)
         val viewDirection = if (length > 0f) {
@@ -1201,7 +1286,11 @@ fun SpatialPlayerScreen(
 
         // UI and subtitles stay projected at uiDepth along the same vector.
         val newUiPose = Pose(
-            Vector3(viewDirection.x * uiDepth, viewDirection.y * uiDepth, viewDirection.z * uiDepth),
+            Vector3(
+                viewDirection.x * UI_DEPTH_METERS,
+                viewDirection.y * UI_DEPTH_METERS,
+                viewDirection.z * UI_DEPTH_METERS,
+            ),
             currentVideoPose.rotation
         )
 
@@ -1217,20 +1306,34 @@ fun SpatialPlayerScreen(
         savePlayerRootPose(viewModel, newVideoPose)
     }
 
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, startupPoseGuardActive) {
+        if (!startupPoseGuardActive) return@LaunchedEffect
+        videoRootEntity.value ?: return@LaunchedEffect
+        uiRootEntity.value ?: return@LaunchedEffect
+        subtitleRootEntity.value ?: return@LaunchedEffect
+
+        val guardPassDelays = listOf(0L, 250L, 1000L, 2500L, 5000L, 8000L)
+        for (delayMs in guardPassDelays) {
+            if (!startupPoseGuardActive) break
+            if (delayMs > 0L) delay(delayMs)
+            if (!startupPoseGuardActive) break
+            applyCurrentLaunchPose()
+        }
+        startupPoseGuardActive = false
+    }
+
     DisposableEffect(session) {
         val savedPose = savedPlayerPose
         val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS))
         try {
-            val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose)
-            val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose)
-            val subtitleRoot = GroupEntity.create(session, "PlayerSubtitleRoot", projectedOverlayPose)
+            val activitySpace = session.scene.activitySpace
+            val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose, activitySpace)
+            val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose, activitySpace)
+            val subtitleRoot = GroupEntity.create(session, "PlayerSubtitleRoot", projectedOverlayPose, activitySpace)
             videoRoot.setScale(videoPanelScale)
             uiRoot.setScale(videoPanelScale)
             subtitleRoot.setScale(videoPanelScale)
-            videoRootEntity.value = videoRoot
-            uiRootEntity.value = uiRoot
-            subtitleRootEntity.value = subtitleRoot
 
             val entity = SurfaceEntity.create(
                 session = session,
@@ -1241,12 +1344,17 @@ fun SpatialPlayerScreen(
                 mediaBlendingMode = SurfaceEntity.MediaBlendingMode.OPAQUE
             }
             videoRoot.addChild(entity)
-            videoEntity.value = entity
             lastReportedMovePose.value = savedPose
 
+            // createCustomMovable gives us full control over the entity pose during a grab.
+            // createSystemMovable snaps the entity to the user's hand position (arm's reach
+            // ~2m) even when the video is 6m away, causing the jarring "jump to nose" bug.
+            // With a custom movable we preserve the video depth and only allow lateral
+            // repositioning driven by the input-ray direction.
+            var grabDepth = videoDepth // depth locked at the moment the user starts a grab
             val movable = androidx.xr.scenecore.MovableComponent.createCustomMovable(
                 session,
-                false,
+                true, // scalingEnabled
                 ContextCompat.getMainExecutor(context),
                 object : androidx.xr.scenecore.EntityMoveListener {
                     override fun onMoveStart(
@@ -1256,27 +1364,30 @@ fun SpatialPlayerScreen(
                         initialScale: Float,
                         initialParent: androidx.xr.scenecore.Entity,
                     ) {
-                        runCatching {
-                            videoRoot.setPose(initialPose)
-                            videoRoot.setScale(videoPanelScale)
+                        startupPoseGuardActive = false
+                        grabDepth = extractVideoDepth(initialPose, videoDepth)
+                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                            lastReportedMovePose.value = initialPose
+                            // Do not update videoDepth yet to avoid triggering LaunchedEffect fights
+                            moveInProgress = true
                         }
                         if (!controlsVisible && !isActuallyPaused) {
                             revealControls("video-move-start")
                         }
-                        val effectiveVideoDepth = extractVideoDepth(initialPose)
-                        videoDepth = effectiveVideoDepth
                         syncProjectedOverlayRoots(
                             initialPose,
                             videoPanelScale,
                             uiRoot,
                             subtitleRoot,
-                            uiDepth / effectiveVideoDepth,
+                            UI_DEPTH_METERS / grabDepth,
                         )
-                        lastReportedMovePose.value = initialPose
+                        val t = initialPose.translation
                         Timber.i(
-                            "subtitle: move start targetIsVideoRoot=%b targetClass=%s",
+                            "subtitle: move start targetIsVideoRoot=%b targetClass=%s grabDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
                             entity == videoRoot,
                             entity.javaClass.simpleName,
+                            grabDepth,
+                            t.x, t.y, t.z
                         )
                     }
 
@@ -1286,20 +1397,37 @@ fun SpatialPlayerScreen(
                         currentPose: androidx.xr.runtime.math.Pose,
                         currentScale: Float,
                     ) {
-                        runCatching {
-                            videoRoot.setPose(currentPose)
-                            videoRoot.setScale(videoPanelScale)
+                        // Project the ray direction to the grab depth so the video moves
+                        // laterally (left/right/up/down) without snapping to hand distance.
+                        val dir = currentInputRay.direction
+                        val dirLen = kotlin.math.sqrt(
+                            dir.x * dir.x + dir.y * dir.y + dir.z * dir.z
+                        ).coerceAtLeast(0.001f)
+                        val newPos = androidx.xr.runtime.math.Vector3(
+                            dir.x / dirLen * grabDepth,
+                            dir.y / dirLen * grabDepth,
+                            dir.z / dirLen * grabDepth,
+                        )
+                        val depthPreservedPose = androidx.xr.runtime.math.Pose(newPos, currentPose.rotation)
+                        runCatching { entity.setPose(depthPreservedPose) }
+                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                            lastReportedMovePose.value = depthPreservedPose
                         }
-                        val effectiveVideoDepth = extractVideoDepth(currentPose)
-                        videoDepth = effectiveVideoDepth
                         syncProjectedOverlayRoots(
-                            currentPose,
+                            depthPreservedPose,
                             videoPanelScale,
                             uiRoot,
                             subtitleRoot,
-                            uiDepth / effectiveVideoDepth,
+                            UI_DEPTH_METERS / grabDepth,
                         )
-                        lastReportedMovePose.value = currentPose
+                        if (System.currentTimeMillis() % 1000 < 50) { // Throttle logs to ~1fps
+                            val t = depthPreservedPose.translation
+                            Timber.d(
+                                "subtitle: move update grabDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
+                                grabDepth,
+                                t.x, t.y, t.z
+                            )
+                        }
                     }
 
                     override fun onMoveEnd(
@@ -1309,36 +1437,57 @@ fun SpatialPlayerScreen(
                         finalScale: Float,
                         updatedParent: androidx.xr.scenecore.Entity?,
                     ) {
-                        runCatching {
-                            videoRoot.setPose(finalPose)
-                            videoRoot.setScale(videoPanelScale)
+                        // Use the depth-preserved pose we computed in onMoveUpdate rather than
+                        // the system's finalPose (which would still be at hand position).
+                        val savedPose = lastReportedMovePose.value ?: finalPose
+                        val effectiveDepth = extractVideoDepth(savedPose, videoDepth)
+                        runCatching { entity.setPose(savedPose) }
+                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                            lastReportedMovePose.value = savedPose
+                            videoDepth = effectiveDepth
+                            moveInProgress = false
                         }
-                        val effectiveVideoDepth = extractVideoDepth(finalPose)
-                        videoDepth = effectiveVideoDepth
                         syncProjectedOverlayRoots(
-                            finalPose,
+                            savedPose,
                             videoPanelScale,
                             uiRoot,
                             subtitleRoot,
-                            uiDepth / effectiveVideoDepth,
+                            UI_DEPTH_METERS / effectiveDepth,
                         )
-                        lastReportedMovePose.value = finalPose
                         videoOverlayAttachmentVersion++
-                        savePlayerRootPose(viewModel, finalPose)
+                        savePlayerRootPose(viewModel, savedPose)
+                        val t = savedPose.translation
                         Timber.i(
-                            "subtitle: move end targetIsVideoRoot=%b targetClass=%s overlayVersion=%d useLibass=%b hasContent=%b frameVersion=%d",
-                            entity == videoRoot,
-                            entity.javaClass.simpleName,
-                            videoOverlayAttachmentVersion,
-                            useLibass,
-                            hasLibassContent,
-                            libassFrameVersion,
+                            "subtitle: move end effectiveDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
+                            effectiveDepth,
+                            t.x, t.y, t.z
                         )
                     }
                 },
             )
             videoRoot.addComponent(movable)
             movable.size = movableVideoBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
+
+            // SceneCore can briefly re-home the movable root until the first interaction.
+            // Re-apply the intended launch layout after the movable component attaches so the
+            // screen starts in the IMAX baseline instead of snapping there on first tap.
+            runCatching {
+                videoRoot.setPose(savedPose)
+                videoRoot.setScale(videoPanelScale)
+            }
+            syncProjectedOverlayRoots(
+                savedPose,
+                videoPanelScale,
+                uiRoot,
+                subtitleRoot,
+                UI_DEPTH_METERS / videoDepth,
+            )
+            lastReportedMovePose.value = savedPose
+
+            videoRootEntity.value = videoRoot
+            uiRootEntity.value = uiRoot
+            subtitleRootEntity.value = subtitleRoot
+            videoEntity.value = entity
             movableComponent.value = movable
 
         } catch (_: Exception) {}
@@ -1350,22 +1499,24 @@ fun SpatialPlayerScreen(
             }
             savePlayerRootScale(viewModel, videoPanelScale)
             voiceService.destroy()
-            commandCoordinator?.destroy()
-            chatEngine?.destroy()
             tts.destroy()
             runCatching { player.clearVideoSurface() }
             runCatching { videoEntity.value?.dispose() }
             videoEntity.value = null
+            // Close the GltfModel BEFORE disposing the GltfModelEntity. Filament tracks
+            // material instances on the model; if the entity is disposed first, Filament
+            // walks its own instance list after the backing data is gone and hits
+            // assertion 'pos != mMaterialInstances.cend()' → SIGABRT.
+            runCatching { mascotModel.value?.close() }
+            mascotModel.value = null
             runCatching { mascotEntity.value?.dispose() }
+            mascotEntity.value = null
             runCatching { videoRootEntity.value?.dispose() }
             videoRootEntity.value = null
             runCatching { uiRootEntity.value?.dispose() }
             uiRootEntity.value = null
             runCatching { subtitleRootEntity.value?.dispose() }
             subtitleRootEntity.value = null
-            mascotEntity.value = null
-            runCatching { mascotModel.value?.close() }
-            mascotModel.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
         }
@@ -1435,17 +1586,13 @@ fun SpatialPlayerScreen(
         while (true) {
             val poseToMirror = safeGetEntityPose(videoRoot) ?: lastReportedMovePose.value
             poseToMirror?.let { pose ->
-                val effectiveVideoDepth = extractVideoDepth(pose)
-                lastReportedMovePose.value = pose
-                if (kotlin.math.abs(videoDepth - effectiveVideoDepth) > 0.001f) {
-                    videoDepth = effectiveVideoDepth
-                }
+                val effectiveVideoDepth = extractVideoDepth(pose, videoDepth)
                 syncProjectedOverlayRoots(
                     pose,
                     videoPanelScale,
                     uiRoot,
                     subtitleRoot,
-                    uiDepth / effectiveVideoDepth,
+                    UI_DEPTH_METERS / effectiveVideoDepth,
                 )
             }
             delay(100L)
@@ -1469,7 +1616,10 @@ fun SpatialPlayerScreen(
         val root = videoRootEntity.value ?: return@LaunchedEffect
         while (true) {
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
-            poseToSave?.let { savePlayerRootPose(viewModel, it) }
+            poseToSave?.let {
+                lastReportedMovePose.value = it
+                savePlayerRootPose(viewModel, it)
+            }
             savePlayerRootScale(viewModel, videoPanelScale)
             delay(1_000L)
         }
@@ -1564,8 +1714,8 @@ fun SpatialPlayerScreen(
     }
 
     // --- Layout calculations ---
-    val uiScaleFactor = uiDepth / videoDepth
-    val subtitleScaleFactor = uiDepth / videoDepth
+    val uiScaleFactor = UI_DEPTH_METERS / videoDepth
+    val subtitleScaleFactor = UI_DEPTH_METERS / videoDepth
     val scaledVideoWidthDp = videoWidth * subtitleScaleFactor * 1000f
     val scaledVideoHeightDp = videoHeight * subtitleScaleFactor * 1000f
     val subtitlePanelWidthDp = scaledVideoWidthDp
@@ -1615,8 +1765,10 @@ fun SpatialPlayerScreen(
     // appearance), but a disabled GroupEntity does not participate in SceneCore raycast
     // hit-testing.  When disabled, grab gestures pass straight through to the video entity's
     // MovableComponent so the user can move the video even when subtitles are present.
-    val hasSubtitleContent = (useLibass && hasLibassContent && libassBitmap != null) ||
+    val hasSubtitleContent = uiState.visualSubtitlesEnabled && (
+        (useLibass && hasLibassContent && libassBitmap != null) ||
         (!useLibass && subtitleTrackSelected && currentCues.isNotEmpty())
+    )
     LaunchedEffect(hasSubtitleContent, subtitleRootEntity.value) {
         subtitleRootEntity.value?.setEnabled(hasSubtitleContent)
     }
@@ -1673,441 +1825,404 @@ fun SpatialPlayerScreen(
                         )
                     }
                 }
+            }
+        }
 
-                if (
-                    voiceState == VoiceState.LISTENING ||
-                    voiceState == VoiceState.PROCESSING ||
-                    voiceGestureHint != null ||
-                    !voiceFeedback.isNullOrBlank()
-                ) {
-                    SpatialPanel(
-                        modifier = SubspaceModifier
-                            .width(subtitlePanelWidthDp.dp)
-                            .height(subtitlePanelHeightDp.dp)
-                            .offset(x = 0.dp, y = 0.dp, z = subtitlePanelZDp.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            if (event.type == PointerEventType.Move || event.type == PointerEventType.Enter) {
-                                                val position = event.changes.first().position
-                                                lastPointerPosition = androidx.compose.ui.geometry.Offset(
-                                                    x = (position.x / size.width).coerceIn(0f, 1f),
-                                                    y = (position.y / size.height).coerceIn(0f, 1f)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                        ) {
-                            VoiceControlOverlay(
-                                state = voiceState,
-                                partialTranscript = partialTranscript,
-                                feedbackText = if (characterScanActive) null else voiceFeedback,
-                                gestureArmingProgress = voiceGestureArmingProgress,
-                                gestureHint = voiceGestureHint,
-                            )
-                            CharacterScanOverlay(visible = characterScanActive)
-                        }
-                    }
-                }
+        val videoRoot = videoRootEntity.value
+        if (videoRoot != null) {
+            SceneCoreEntity(factory = { videoRoot }, modifier = SubspaceModifier) {
+                // ── Voice & Gesture Interaction ──
+                // Anchored to the Video root so it stays visible and centered even if panels are hidden.
+                VoiceControlOverlay(
+                    state = voiceState,
+                    partialTranscript = partialTranscript,
+                    feedbackText = if (characterScanActive) null else voiceFeedback,
+                    gestureArmingProgress = voiceGestureArmingProgress,
+                    gestureHint = voiceGestureHint,
+                )
+                CharacterScanOverlay(visible = characterScanActive)
             }
         }
 
         val uiRoot = uiRootEntity.value
         if (uiRoot != null) {
             SceneCoreEntity(factory = { uiRoot }, modifier = SubspaceModifier) {
-        // ── Hidden-controls reveal button ──────────────────────────────────────────
-        // XR hit testing against a fully transparent hidden panel is unreliable on
-        // device. Keep a small dedicated reveal target near the bottom of the video
-        // so controls can always be brought back after auto-hide.
+                // XR hit testing against a fully transparent hidden panel is unreliable on
+                // device. Keep a small dedicated reveal target near the bottom of the video
+                // so controls can always be brought back after auto-hide.
 
-
-        // ── Control Panel ────────────────────────────────────────────────────────────
-        // Floats below the video.  Secondary controls are in an Orbiter on the right
-        // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
-        SpatialPanel(
-            modifier = SubspaceModifier
-                .width(1800.dp)
-                .height(800.dp)
-                .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-            resizePolicy = ResizePolicy(),
-        ) {
-            // ── Orbiter: secondary controls (right edge, hidden when locked/controls hidden) ──
-            if ((controlsVisible || isActuallyPaused) && !isLocked) {
-                Orbiter(
-                    position = ContentEdge.End,
-                    alignment = Alignment.CenterVertically,
-                    offset = 40.dp,
+                // ── Control Panel ────────────────────────────────────────────────────────────
+                // Floats below the video. Secondary controls are in an Orbiter on the right
+                // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
+                SpatialPanel(
+                    modifier = SubspaceModifier
+                        .width(1800.dp)
+                        .height(800.dp)
+                        .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
+                    resizePolicy = ResizePolicy(),
                 ) {
-                    SecondaryControlsOrbiter(
-                        onAudioClick = { activeDialog = "audio"; resetAutoHide() },
-                        onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
-                        onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
-                        onQualityClick = { activeDialog = "quality"; resetAutoHide() },
-                        onSyncPlayClick = {
-                            activeDialog = "syncplay"
-                            viewModel.refreshSyncPlayGroups()
-                            resetAutoHide()
-                        },
-                        onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
-                        onVoiceClick = {
-                            requestVoiceCommand()
-                            resetAutoHide()
-                        },
-                        voiceControlEnabled = voiceControlEnabled,
-                        voiceAvailable = voiceService.isAvailable(),
-                        voiceState = voiceState,
-                        syncPlayActive = syncPlayState.activeGroup != null,
-                    )
-                }
-            }
-
-            // ── Main control content ──────────────────────────────────────────────
-            // When controls are hidden the whole panel area is tappable.  A faint glass
-            // background makes the tap target discoverable without cluttering the view.
-            Box(modifier = Modifier.fillMaxSize()) {
-                AnimatedVisibility(
-                    visible = controlsVisible || isActuallyPaused,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                ) {
-                    ControlPanelUI(
-                        viewModel = viewModel,
-                        player = player,
-                        uiState = uiState,
-                        isPlaying = isPlaying,
-                        currentPosition = currentPosition,
-                        duration = duration,
-                        isLocked = isLocked,
-                        spatialAudioAvailable = spatialAudioAvailable,
-                        onLockToggle = { isLocked = !isLocked },
-                        onMoveCloser = {
-                            videoDepth = (videoDepth - 0.5f).coerceAtLeast(2.0f)
-                            resetAutoHide()
-                        },
-                        onMoveFurther = {
-                            videoDepth = (videoDepth + 0.5f).coerceAtMost(15.0f)
-                            resetAutoHide()
-                        },
-                        onChaptersClick = {
-                            activeDialog = "chapters"
-                            resetAutoHide()
-                        },
-                        onBackClick = { requestExit("controls-back") },
-                        resetAutoHide = { resetAutoHide() },
-                    )
-                }
-
-                if (!controlsVisible && !isActuallyPaused) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(48.dp))
-                            .background(Color.Transparent)
-                            .pointerInput(Unit) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        if (event.type == PointerEventType.Enter ||
-                                            event.type == PointerEventType.Move) {
-                                            revealControls("hidden-panel-hover")
-                                        }
-                                    }
-                                }
-                            }
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {
-                                    revealControls("hidden-panel-click")
+                    if ((controlsVisible || isActuallyPaused) && !isLocked) {
+                        Orbiter(
+                            position = ContentEdge.End,
+                            alignment = Alignment.CenterVertically,
+                            offset = 40.dp,
+                        ) {
+                            SecondaryControlsOrbiter(
+                                onAudioClick = { activeDialog = "audio"; resetAutoHide() },
+                                onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
+                                onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
+                                onQualityClick = { activeDialog = "quality"; resetAutoHide() },
+                                onSyncPlayClick = {
+                                    activeDialog = "syncplay"
+                                    viewModel.refreshSyncPlayGroups()
+                                    resetAutoHide()
                                 },
-                            ),
-                    )
-                }
-
-            }
-
-            // ── SpatialDialogs ────────────────────────────────────────────────────
-            // Placed inside the control SpatialPanel: when shown, the SDK pushes the
-            // panel back 125 dp and renders the dialog floating in front — proper XR
-            // depth hierarchy without manual zIndex hacks.
-            if (activeDialog == "audio") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    TrackSelectionDialogContent(
-                        title = stringResource(LocalR.string.select_audio_track),
-                        player = player,
-                        trackType = C.TRACK_TYPE_AUDIO,
-                        onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index) },
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "subtitle") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    TrackSelectionDialogContent(
-                        title = stringResource(LocalR.string.select_subtitle_track),
-                        player = player,
-                        trackType = C.TRACK_TYPE_TEXT,
-                        onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
-                        onDismiss = { activeDialog = null },
-                        onSearchSubtitles = { activeDialog = "search_subtitles" },
-                    )
-                }
-            }
-            if (activeDialog == "search_subtitles") {
-                SpatialDialog(onDismissRequest = { 
-                    activeDialog = null
-                    viewModel.clearSubtitleSearchState() 
-                }) {
-                    SubtitleSearchDialogContent(
-                        viewModel = viewModel,
-                        onDismiss = {
-                            activeDialog = null
-                            viewModel.clearSubtitleSearchState()
+                                onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
+                                onVoiceClick = {
+                                    requestVoiceCommand()
+                                    resetAutoHide()
+                                },
+                                voiceControlEnabled = voiceControlEnabled,
+                                voiceAvailable = voiceService.isAvailable(),
+                                voiceState = voiceState,
+                                syncPlayActive = syncPlayState.activeGroup != null,
+                            )
                         }
-                    )
-                }
-            }
-            if (activeDialog == "speed") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    SpeedDialogContent(
-                        currentSpeed = viewModel.playbackSpeed,
-                        onSpeedSelected = { speed -> viewModel.selectSpeed(speed) },
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "chapters") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    ChaptersDialogContent(
-                        chapters = uiState.currentChapters,
-                        currentPosition = currentPosition,
-                        onPreviousChapter = {
-                            viewModel.seekToPreviousChapter()
-                            resetAutoHide()
-                        },
-                        onNextChapter = {
-                            viewModel.seekToNextChapter()
-                            resetAutoHide()
-                        },
-                        onSelectChapter = { index ->
-                            viewModel.seekToChapterIndex(index)
-                            resetAutoHide()
-                            activeDialog = null
-                        },
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "quality") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    QualityDialogContent(
-                        currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
-                        onQualitySelected = { bitrate ->
-                            if (itemId != null) {
-                                viewModel.changeQuality(itemId, itemKind, bitrate)
-                            }
-                        },
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "cast_crew") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    CastCrewDialogContent(
-                        title = uiState.currentItemTitle,
-                        overview = uiState.currentOverview,
-                        people = uiState.currentPeople,
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "syncplay") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    SyncPlayDialogContent(
-                        state = syncPlayState,
-                        onRefresh = { viewModel.refreshSyncPlayGroups() },
-                        onCreateGroup = { viewModel.createSyncPlayGroup() },
-                        onJoinGroup = { viewModel.joinSyncPlayGroup(it) },
-                        onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
-                        onDismiss = { activeDialog = null },
-                    )
-                }
-            }
-            if (activeDialog == "voice_search") {
-                SpatialDialog(onDismissRequest = { activeDialog = null }) {
-                    VoiceSearchDialogContent(
-                        query = voiceSearchQuery,
-                        loading = voiceSearchLoading,
-                        error = voiceSearchError,
-                        results = voiceSearchResults,
-                        currentItemTitle = uiState.currentItemTitle,
-                        onWatchTrailer = { item ->
-                            itemTrailerUrl(item)?.let { trailerUrl ->
-                                runCatching {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse(trailerUrl)).apply {
-                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        },
-                                    )
-                                }.onSuccess {
-                                    voiceFeedback = "Opening trailer for ${item.name}"
-                                }.onFailure {
-                                    voiceFeedback = "Couldn't open trailer for ${item.name}"
-                                }
-                            } ?: run {
-                                voiceFeedback = "No trailer found for ${item.name}"
-                            }
-                        },
-                        onMoreLikeThis = { item ->
-                            coroutineScope.launch {
-                                voiceSearchLoading = true
-                                voiceSearchError = null
-                                voiceSearchQuery = "More like ${item.name}"
-                                val chatEngine = requireChatEngine()
-                                val response =
-                                    chatEngine.query(
-                                        question = "more like this",
-                                        playerState = currentRecommendationSnapshot(),
-                                        storySoFarContext = uiState.storySoFarContext,
-                                        recentSubtitleLines = recentSubtitles.toList(),
-                                        currentPositionMs = player.currentPosition,
-                                        assistantPreferences =
-                                            AssistantPreferences(
-                                                verbosity = assistantVerbosity,
-                                                spoilerPolicy = assistantSpoilerPolicy,
-                                                spokenRepliesEnabled = assistantSpokenReplies,
-                                            ),
-                                        onSearchQuery = onSearchQuery,
-                                        conversationHistory = conversationHistory,
-                                        onGetSuggestions = { viewModel.repository.getSuggestions() },
-                                        recommendationContext = RecommendationContext(item.name, listOf(item)),
-                                    )
-                                voiceSearchLoading = false
-                                response.recommendedItems
-                                    .takeIf { it.isNotEmpty() }
-                                    ?.let {
-                                        recommendationContext = RecommendationContext(item.name, it)
-                                        voiceSearchResults = it
-                                    }
-                                    ?: run {
-                                        voiceSearchError = "No similar titles found"
-                                    }
-                                voiceFeedback = response.text
-                            }
-                        },
-                        onToggleFavorite = { item ->
-                            coroutineScope.launch {
-                                runCatching {
-                                    if (item.favorite) {
-                                        viewModel.repository.unmarkAsFavorite(item.id)
-                                    } else {
-                                        viewModel.repository.markAsFavorite(item.id)
-                                    }
-                                }.onSuccess {
-                                    val updated = item.withFavorite(!item.favorite)
-                                    updateVoiceSearchItem(updated)
-                                    recommendationContext =
-                                        recommendationContext?.let { context ->
-                                            if (context.items.any { it.id == updated.id }) {
-                                                context.copy(
-                                                    items = context.items.map { existing ->
-                                                        if (existing.id == updated.id) updated else existing
-                                                    },
-                                                )
-                                            } else {
-                                                context
+                    }
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AnimatedVisibility(
+                            visible = controlsVisible || isActuallyPaused,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                        ) {
+                            ControlPanelUI(
+                                viewModel = viewModel,
+                                player = player,
+                                uiState = uiState,
+                                isPlaying = isPlaying,
+                                currentPosition = currentPosition,
+                                duration = duration,
+                                isLocked = isLocked,
+                                spatialAudioAvailable = spatialAudioAvailable,
+                                onLockToggle = { isLocked = !isLocked },
+                                onMoveCloser = {
+                                    videoPanelScale = (videoPanelScale + 0.08f).coerceAtMost(2.5f)
+                                    savePlayerRootScale(viewModel, videoPanelScale)
+                                    resetAutoHide()
+                                },
+                                onMoveFurther = {
+                                    videoPanelScale = (videoPanelScale - 0.08f).coerceAtLeast(0.75f)
+                                    savePlayerRootScale(viewModel, videoPanelScale)
+                                    resetAutoHide()
+                                },
+                                onChaptersClick = {
+                                    activeDialog = "chapters"
+                                    resetAutoHide()
+                                },
+                                onBackClick = { requestExit("controls-back") },
+                                resetAutoHide = { resetAutoHide() },
+                            )
+                        }
+
+                        if (!controlsVisible && !isActuallyPaused) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(48.dp))
+                                    .background(Color.Transparent)
+                                    .pointerInput(Unit) {
+                                        awaitPointerEventScope {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                if (event.type == PointerEventType.Enter ||
+                                                    event.type == PointerEventType.Move) {
+                                                    revealControls("hidden-panel-hover")
+                                                }
                                             }
                                         }
-                                    voiceFeedback =
-                                        if (updated.favorite) {
-                                            "Saved ${updated.name}"
-                                        } else {
-                                            "Removed ${updated.name} from favorites"
+                                    }
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {
+                                            revealControls("hidden-panel-click")
+                                        },
+                                    ),
+                            )
+                        }
+                    }
+
+                    if (activeDialog == "audio") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            TrackSelectionDialogContent(
+                                title = stringResource(LocalR.string.select_audio_track),
+                                player = player,
+                                trackType = C.TRACK_TYPE_AUDIO,
+                                onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index) },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "subtitle") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            TrackSelectionDialogContent(
+                                title = stringResource(LocalR.string.select_subtitle_track),
+                                player = player,
+                                trackType = C.TRACK_TYPE_TEXT,
+                                onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
+                                onDismiss = { activeDialog = null },
+                                onSearchSubtitles = { activeDialog = "search_subtitles" },
+                                visualSubtitlesEnabled = uiState.visualSubtitlesEnabled,
+                            )
+                        }
+                    }
+                    if (activeDialog == "search_subtitles") {
+                        SpatialDialog(onDismissRequest = {
+                            activeDialog = null
+                            viewModel.clearSubtitleSearchState()
+                        }) {
+                            SubtitleSearchDialogContent(
+                                viewModel = viewModel,
+                                onDismiss = {
+                                    activeDialog = null
+                                    viewModel.clearSubtitleSearchState()
+                                },
+                            )
+                        }
+                    }
+                    if (activeDialog == "speed") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            SpeedDialogContent(
+                                currentSpeed = viewModel.playbackSpeed,
+                                onSpeedSelected = { speed -> viewModel.selectSpeed(speed) },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "chapters") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            ChaptersDialogContent(
+                                chapters = uiState.currentChapters,
+                                currentPosition = currentPosition,
+                                onPreviousChapter = {
+                                    viewModel.seekToPreviousChapter()
+                                    resetAutoHide()
+                                },
+                                onNextChapter = {
+                                    viewModel.seekToNextChapter()
+                                    resetAutoHide()
+                                },
+                                onSelectChapter = { index ->
+                                    viewModel.seekToChapterIndex(index)
+                                    resetAutoHide()
+                                    activeDialog = null
+                                },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "quality") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            QualityDialogContent(
+                                currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                                onQualitySelected = { bitrate ->
+                                    if (itemId != null) {
+                                        viewModel.changeQuality(itemId, itemKind, bitrate)
+                                    }
+                                },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "cast_crew") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            CastCrewDialogContent(
+                                title = uiState.currentItemTitle,
+                                overview = uiState.currentOverview,
+                                people = uiState.currentPeople,
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "syncplay") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            SyncPlayDialogContent(
+                                state = syncPlayState,
+                                onRefresh = { viewModel.refreshSyncPlayGroups() },
+                                onCreateGroup = { viewModel.createSyncPlayGroup() },
+                                onJoinGroup = { viewModel.joinSyncPlayGroup(it) },
+                                onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "voice_search") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            VoiceSearchDialogContent(
+                                query = voiceSearchQuery,
+                                loading = voiceSearchLoading,
+                                error = voiceSearchError,
+                                results = voiceSearchResults,
+                                currentItemTitle = uiState.currentItemTitle,
+                                onWatchTrailer = { item ->
+                                    itemTrailerUrl(item)?.let { trailerUrl ->
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse(trailerUrl)).apply {
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                },
+                                            )
+                                        }.onSuccess {
+                                            voiceFeedback = "Opening trailer for ${item.name}"
+                                        }.onFailure {
+                                            voiceFeedback = "Couldn't open trailer for ${item.name}"
                                         }
-                                }.onFailure {
-                                    voiceFeedback = "Couldn't update favorite for ${item.name}"
+                                    } ?: run {
+                                        voiceFeedback = "No trailer found for ${item.name}"
+                                    }
+                                },
+                                onMoreLikeThis = { item ->
+                                    coroutineScope.launch {
+                                        voiceSearchLoading = true
+                                        voiceSearchError = null
+                                        voiceSearchQuery = "More like ${item.name}"
+                                        val chatEngine = requireChatEngine()
+                                        val response =
+                                            chatEngine.query(
+                                                question = "more like this",
+                                                playerState = currentRecommendationSnapshot(),
+                                                storySoFarContext = uiState.storySoFarContext,
+                                                recentSubtitleLines = assistantSubtitleLines,
+                                                currentPositionMs = player.currentPosition,
+                                                assistantPreferences =
+                                                    AssistantPreferences(
+                                                        verbosity = assistantVerbosity,
+                                                        spoilerPolicy = assistantSpoilerPolicy,
+                                                        spokenRepliesEnabled = assistantSpokenReplies,
+                                                    ),
+                                                onSearchQuery = onSearchQuery,
+                                                conversationHistory = conversationHistory,
+                                                onGetSuggestions = { viewModel.repository.getSuggestions() },
+                                                recommendationContext = RecommendationContext(item.name, listOf(item)),
+                                            )
+                                        voiceSearchLoading = false
+                                        response.recommendedItems
+                                            .takeIf { it.isNotEmpty() }
+                                            ?.let {
+                                                recommendationContext = RecommendationContext(item.name, it)
+                                                voiceSearchResults = it
+                                            }
+                                            ?: run {
+                                                voiceSearchError = "No similar titles found"
+                                            }
+                                        voiceFeedback = response.text
+                                    }
+                                },
+                                onToggleFavorite = { item ->
+                                    coroutineScope.launch {
+                                        runCatching {
+                                            if (item.favorite) {
+                                                viewModel.repository.unmarkAsFavorite(item.id)
+                                            } else {
+                                                viewModel.repository.markAsFavorite(item.id)
+                                            }
+                                        }.onSuccess {
+                                            val updated = item.withFavorite(!item.favorite)
+                                            updateVoiceSearchItem(updated)
+                                            recommendationContext =
+                                                recommendationContext?.let { context ->
+                                                    if (context.items.any { it.id == updated.id }) {
+                                                        context.copy(
+                                                            items = context.items.map { existing ->
+                                                                if (existing.id == updated.id) updated else existing
+                                                            },
+                                                        )
+                                                    } else {
+                                                        context
+                                                    }
+                                                }
+                                            voiceFeedback =
+                                                if (updated.favorite) {
+                                                    "Saved ${updated.name}"
+                                                } else {
+                                                    "Removed ${updated.name} from favorites"
+                                                }
+                                        }.onFailure {
+                                            voiceFeedback = "Couldn't update favorite for ${item.name}"
+                                        }
+                                    }
+                                },
+                                onPlayResult = {
+                                    sessionController.clearPendingSelection()
+                                    onLaunchSearchResult(it)
+                                    activeDialog = null
+                                },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                }
+
+                if (!voiceSearchOpen) {
+                    uiState.currentSegment?.let { segment ->
+                        SpatialPanel(
+                            modifier = SubspaceModifier
+                                .width(480.dp)
+                                .height(160.dp)
+                                .offset(x = 1150.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
+                        ) {
+                            Surface(
+                                onClick = { viewModel.skipSegment(segment); resetAutoHide() },
+                                shape = RoundedCornerShape(32.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                tonalElevation = 8.dp,
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    Icon(
+                                        painter = painterResource(CoreR.drawable.ic_skip_forward),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(64.dp),
+                                    )
+                                    Spacer(Modifier.width(20.dp))
+                                    Text(
+                                        text = stringResource(uiState.currentSkipButtonStringRes),
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold,
+                                    )
                                 }
                             }
-                        },
-                        onPlayResult = {
-                            sessionController.clearPendingSelection()
-                            onLaunchSearchResult(it)
-                            activeDialog = null
-                        },
-                        onDismiss = { activeDialog = null },
-                    )
+                        }
+                    }
                 }
-            }
-            }
-        }
 
-        // ── Contextual Skip Panel ────────────────────────────────────────────────
-        if (!voiceSearchOpen) {
-            uiState.currentSegment?.let { segment ->
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(480.dp)
-                    .height(160.dp)
-                    .offset(x = 1150.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-            ) {
-                Surface(
-                    onClick = { viewModel.skipSegment(segment); resetAutoHide() },
-                    shape = RoundedCornerShape(32.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    tonalElevation = 8.dp,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
+                if (!voiceSearchOpen && showNextEpisodePanel) {
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(900.dp)
+                            .height(560.dp)
+                            .offset(x = (-1350).dp, y = controlsPanelY.dp, z = controlsZDp.dp),
                     ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_skip_forward),
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                        )
-                        Spacer(Modifier.width(20.dp))
-                        Text(
-                            text = stringResource(uiState.currentSkipButtonStringRes),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
+                        NextEpisodePanelContent(
+                            nextEpisode = uiState.nextEpisode!!,
+                            onPlayNext = {
+                                viewModel.skipToNextItem()
+                                nextEpisodePanelDismissed = true
+                            },
+                            onDismiss = { nextEpisodePanelDismissed = true },
                         )
                     }
                 }
             }
         }
-        }
-
-        // ── Next Episode Panel ───────────────────────────────────────────────────
-        // Floats to the LEFT of the control panel during the last 2 minutes of an episode.
-        if (!voiceSearchOpen && showNextEpisodePanel) {
-            SpatialPanel(
-                modifier = SubspaceModifier
-                    .width(900.dp)
-                    .height(560.dp)
-                    .offset(x = (-1350).dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-            ) {
-                NextEpisodePanelContent(
-                    nextEpisode = uiState.nextEpisode!!,
-                    onPlayNext = {
-                        viewModel.skipToNextItem()
-                        nextEpisodePanelDismissed = true
-                    },
-                    onDismiss = { nextEpisodePanelDismissed = true },
-                    )
-                    }
-                    }
-                    }
-                    }
-                    }
+    }
+}
 
 // ── Secondary Controls Orbiter ────────────────────────────────────────────────────
 // Floats to the right of the control panel. Keeps the main panel clean while still
@@ -2903,7 +3018,7 @@ private fun ControlPanelUI(
                     ) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_plus),
-                            contentDescription = "Closer",
+                            contentDescription = "Bigger",
                             tint = Color.White,
                             modifier = Modifier.size(64.dp),
                         )
@@ -2914,7 +3029,7 @@ private fun ControlPanelUI(
                     ) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_minus_fat),
-                            contentDescription = "Further Away",
+                            contentDescription = "Smaller",
                             tint = Color.White,
                             modifier = Modifier.size(64.dp),
                         )
@@ -3117,10 +3232,15 @@ private fun TrackSelectionDialogContent(
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
+    visualSubtitlesEnabled: Boolean = true,
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
     val trackNames = trackGroups.getTrackNames()
-    val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
+    val selectedIndex = if (trackType == C.TRACK_TYPE_TEXT && !visualSubtitlesEnabled) {
+        -1
+    } else {
+        trackGroups.indexOfFirst { it.isSelected }
+    }
 
     Surface(
         modifier = Modifier
@@ -3722,7 +3842,7 @@ private fun formatTime(ms: Long): String {
     else String.format("%d:%02d", minutes, seconds)
 }
 
-private fun extractVideoDepth(pose: Pose): Float {
+private fun extractVideoDepth(pose: Pose, currentDepth: Float): Float {
     val translation = pose.translation
     val distance =
         kotlin.math.sqrt(
@@ -3730,34 +3850,23 @@ private fun extractVideoDepth(pose: Pose): Float {
                 translation.y * translation.y +
                 translation.z * translation.z,
         )
-    return if (distance <= 0.001f) VIDEO_DEPTH_METERS else distance.coerceIn(2.0f, 15.0f)
+    // If distance is extremely small (near head), preserve current depth to prevent snapping.
+    // Otherwise, clamp to the Android XR design guide range (0.75m to 15m).
+    val finalDepth = if (distance <= 0.5f) currentDepth else distance.coerceIn(0.75f, 15.0f)
+    if (System.currentTimeMillis() % 1000 < 10) {
+        Timber.v("extractVideoDepth: raw=%.3f clamped=%.3f fallback=%.3f", distance, finalDepth, currentDepth)
+    }
+    return finalDepth
 }
 
 private fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
-    val prefs = viewModel.appPreferences
-    val savedPose = Pose(
-        Vector3(
-            prefs.getValue(prefs.xrPlayerPanelX),
-            prefs.getValue(prefs.xrPlayerPanelY),
-            prefs.getValue(prefs.xrPlayerPanelZ),
-        ),
-        Quaternion(
-            prefs.getValue(prefs.xrPlayerPanelRotX),
-            prefs.getValue(prefs.xrPlayerPanelRotY),
-            prefs.getValue(prefs.xrPlayerPanelRotZ),
-            prefs.getValue(prefs.xrPlayerPanelRotW),
-        ),
-    )
-    return if (prefs.getValue(prefs.xrPlayerPanelPoseVersion) >= XR_PLAYER_POSE_VERSION_VIDEO_CENTER) {
-        savedPose
-    } else {
-        // Legacy saves stored the invisible parent node at the user origin and placed the
-        // visible video 5 m forward as a child. Convert that persisted root pose into the
-        // actual video-center pose so the movable affordance lands on the screen border.
-        val migratedPose = savedPose.compose(Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity))
-        savePlayerRootPose(viewModel, migratedPose)
-        migratedPose
-    }
+    val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
+    // Persisted XR placement has repeatedly restored uncomfortable launch poses. Always
+    // spawn the player at the centered IMAX baseline, while still allowing movement during
+    // the current session.
+    savePlayerRootPose(viewModel, defaultPose)
+    savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
+    return defaultPose
 }
 
 private fun loadSavedPlayerRootScale(viewModel: PlayerViewModel): Float {
@@ -3814,8 +3923,72 @@ private fun syncProjectedOverlayRoots(
     }
 }
 
+private fun constrainPoseToDepth(
+    sourcePose: Pose,
+    targetDepth: Float,
+    fallbackPose: Pose,
+): Pose {
+    val translation = sourcePose.translation
+    val distance =
+        kotlin.math.sqrt(
+            translation.x * translation.x +
+                translation.y * translation.y +
+                translation.z * translation.z,
+        )
+    val fallbackTranslation = fallbackPose.translation
+    val fallbackDistance =
+        kotlin.math.sqrt(
+            fallbackTranslation.x * fallbackTranslation.x +
+                fallbackTranslation.y * fallbackTranslation.y +
+                fallbackTranslation.z * fallbackTranslation.z,
+        )
+    val direction =
+        when {
+            distance > 0.001f -> Vector3(
+                translation.x / distance,
+                translation.y / distance,
+                translation.z / distance,
+            )
+            fallbackDistance > 0.001f -> Vector3(
+                fallbackTranslation.x / fallbackDistance,
+                fallbackTranslation.y / fallbackDistance,
+                fallbackTranslation.z / fallbackDistance,
+            )
+            else -> Vector3(0f, 0f, -1f)
+        }
+    return Pose(
+        Vector3(
+            direction.x * targetDepth,
+            direction.y * targetDepth,
+            direction.z * targetDepth,
+        ),
+        sourcePose.rotation,
+    )
+}
+
+private fun isRestorableVideoPose(pose: Pose): Boolean {
+    val translation = pose.translation
+    val distance =
+        kotlin.math.sqrt(
+            translation.x * translation.x +
+                translation.y * translation.y +
+                translation.z * translation.z,
+        )
+    if (distance <= MIN_RESTORABLE_VIDEO_DEPTH_METERS || translation.z >= -0.5f) {
+        return false
+    }
+    val yawDegrees =
+        Math.toDegrees(kotlin.math.atan2(kotlin.math.abs(translation.x), kotlin.math.abs(translation.z)).toDouble())
+            .toFloat()
+    val pitchDegrees =
+        Math.toDegrees(kotlin.math.atan2(kotlin.math.abs(translation.y), kotlin.math.abs(translation.z)).toDouble())
+            .toFloat()
+    return yawDegrees <= MAX_RESTORABLE_VIDEO_YAW_DEGREES &&
+        pitchDegrees <= MAX_RESTORABLE_VIDEO_PITCH_DEGREES
+}
+
 private fun safeGetEntityPose(entity: androidx.xr.scenecore.Entity): Pose? {
-    return runCatching { entity.getPose() }
+    return runCatching { entity.getPose(Space.ACTIVITY) }
         .onFailure { Timber.d("Skipping disposed XR player entity pose save") }
         .getOrNull()
 }

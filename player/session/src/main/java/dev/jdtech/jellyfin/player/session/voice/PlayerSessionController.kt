@@ -32,6 +32,7 @@ class PlayerSessionController(
     private val getPassthroughEnabled: () -> Boolean,
     private val onAdjustScale: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
     private val onAdjustDistance: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
+    private val onResetScreenPlacement: () -> Unit = {},
 ) {
     private var pendingSelection: PendingSelection? = null
 
@@ -184,6 +185,10 @@ class PlayerSessionController(
                 if (action.reset) "Resetting screen distance"
                 else if (action.delta != null && action.delta > 0) "Moving screen further"
                 else "Moving screen closer"
+            }
+            is XrPlayerAction.ResetScreenPlacement -> {
+                onResetScreenPlacement()
+                "Resetting screen to the default IMAX position"
             }
             is XrPlayerAction.GoHome -> {
                 if (onGoHome()) "Returning to home" else "Home unavailable"
