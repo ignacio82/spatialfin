@@ -186,6 +186,15 @@ class GeminiCloudService(
         return null
     }
 
+    fun destroy() {
+        // Release OkHttp dispatcher threads and pooled connections so the service
+        // doesn't keep the process alive after the XR player screen is disposed.
+        runCatching { httpClient.dispatcher.executorService.shutdown() }
+            .onFailure { Timber.w(it, "GeminiCloudService: shutdown dispatcher failed") }
+        runCatching { httpClient.connectionPool.evictAll() }
+            .onFailure { Timber.w(it, "GeminiCloudService: evict connection pool failed") }
+    }
+
     companion object {
         private const val MODEL = "gemini-3.1-flash-lite-preview"
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"

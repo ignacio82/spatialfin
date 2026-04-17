@@ -366,6 +366,7 @@ class SmartChatEngine(
 
     fun destroy() {
         geminiNanoService.destroy()
+        geminiCloudService.destroy()
         // LlmModelManager owns the engine lifecycle; do not close it here.
     }
 

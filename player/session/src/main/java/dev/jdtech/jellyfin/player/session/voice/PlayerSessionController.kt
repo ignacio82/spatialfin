@@ -226,7 +226,10 @@ class PlayerSessionController(
                 if (enabled) "Passthrough on" else "Passthrough off"
             }
             is XrPlayerAction.ChatQuery -> {
-                "Thinking..." // Handled upstream, should not reach here
+                // ChatQuery is consumed upstream by SmartChatEngine before dispatch().
+                // Reaching here means a routing regression — fail loudly instead of
+                // papering over with a placeholder that the user would see as stuck.
+                throw IllegalStateException("ChatQuery must be handled upstream and not dispatched here")
             }
             is XrPlayerAction.Unrecognized -> {
                 "Sorry, I didn't understand: ${action.transcript}"
@@ -535,8 +538,10 @@ class PlayerSessionController(
         if (language == null) {
             val selectedIndex = groups.indexOfFirst(::groupIsSelected)
             return when (trackType) {
-                C.TRACK_TYPE_TEXT -> groups.indices.firstOrNull()
-                C.TRACK_TYPE_AUDIO -> {
+                // Cycle through available tracks on each unqualified "subtitles"/"audio"
+                // request so a second invocation advances rather than re-selecting
+                // the same first track. Explicit disable is handled by DisableSubtitles.
+                C.TRACK_TYPE_TEXT, C.TRACK_TYPE_AUDIO -> {
                     if (groups.isEmpty()) null
                     else if (selectedIndex >= 0 && groups.size > 1) (selectedIndex + 1) % groups.size
                     else groups.indices.firstOrNull()

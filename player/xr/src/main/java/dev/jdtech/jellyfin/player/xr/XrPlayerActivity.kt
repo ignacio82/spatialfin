@@ -173,7 +173,18 @@ class XrPlayerActivity : AppCompatActivity() {
         recordLaunchPhase("onCreate:before-viewmodel-preferences")
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
-        val libassFontLoader = itemId?.let { buildLibassFontLoader(it, maxBitrate) }
+        // Preload embedded ASS fonts synchronously once at activity start. This blocks
+        // the main thread briefly here (same as the other sync prefs/I/O already above),
+        // but keeps the renderer thread free — previously the loader ran runBlocking()
+        // inside LibassTextRenderer.ensureFontsLoaded, stalling ExoPlayer during track
+        // initialization.
+        val preloadedLibassFonts: List<Pair<String, ByteArray>> = itemId?.let {
+            runCatching { runBlocking(Dispatchers.IO) { loadLibassFonts(it, maxBitrate) } }
+                .onFailure { err -> Timber.w(err, "subtitle: preload embedded ASS fonts failed") }
+                .getOrDefault(emptyList())
+        }.orEmpty()
+        val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
+            if (itemId != null) ({ preloadedLibassFonts }) else null
         Timber.i(
             "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
             libassUsagePref,
@@ -183,6 +194,9 @@ class XrPlayerActivity : AppCompatActivity() {
         recordLaunchPhase("onCreate:subtitle-prefs-ready")
 
         if (!stereoPlayback) {
+            // Initial dimensions are a placeholder — we resize() below as soon as
+            // ExoPlayer reports the actual Format size via onVideoSizeChanged so
+            // libass renders at the native video resolution (pixel-perfect cues).
             libassRenderer =
                 runCatching { LibassRenderer(1920, 1080).apply { init() } }
                     .onFailure { Timber.w(it, "subtitle: failed to initialize LibassRenderer") }
@@ -256,6 +270,24 @@ class XrPlayerActivity : AppCompatActivity() {
         
         Timber.d("XrPlayer: step 1 — calling replacePlayer (libassRenderer=%b)", libassRenderer != null)
         viewModel.replacePlayer(player)
+
+        // Match the libass render resolution to the actual video size. Without this
+        // we render 1080p ASS cues and upscale them into the panel, which shows as
+        // fuzzy edges on 4K content.
+        if (libassRenderer != null) {
+            player.addListener(
+                object : androidx.media3.common.Player.Listener {
+                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        val w = videoSize.width
+                        val h = videoSize.height
+                        if (w > 0 && h > 0) {
+                            Timber.i("subtitle: video size changed %dx%d — resizing libass renderer", w, h)
+                            libassRenderer?.resize(w, h, w, h)
+                        }
+                    }
+                }
+            )
+        }
         Timber.d("XrPlayer: step 2 — replacePlayer done")
         recordLaunchPhase("onCreate:player-replaced")
 
@@ -454,27 +486,25 @@ class XrPlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun buildLibassFontLoader(
+    private suspend fun loadLibassFonts(
         itemId: UUID,
         maxBitrate: Long?,
-    ): () -> List<Pair<String, ByteArray>> = {
-        runBlocking(Dispatchers.IO) {
-            val sources = repository.getMediaSources(itemId, includePath = false, maxBitrate = maxBitrate)
-            val fontAttachments = sources.flatMap { source ->
-                source.mediaAttachments.map { attachment -> source to attachment }
-            }.filter { (_, attachment) ->
-                isFontAttachment(attachment.fileName, attachment.mimeType, attachment.codec)
-            }
-            Timber.i("subtitle: candidate embedded ASS fonts=%d itemId=%s", fontAttachments.size, itemId)
-            val loadedFonts = fontAttachments.mapNotNull { (source, attachment) ->
-                val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
-                repository.getMediaAttachment(itemId, source.id, attachment.index)?.let { bytes ->
-                    fileName to bytes
-                }
-            }
-            Timber.i("subtitle: loaded embedded ASS fonts=%d itemId=%s", loadedFonts.size, itemId)
-            loadedFonts
+    ): List<Pair<String, ByteArray>> {
+        val sources = repository.getMediaSources(itemId, includePath = false, maxBitrate = maxBitrate)
+        val fontAttachments = sources.flatMap { source ->
+            source.mediaAttachments.map { attachment -> source to attachment }
+        }.filter { (_, attachment) ->
+            isFontAttachment(attachment.fileName, attachment.mimeType, attachment.codec)
         }
+        Timber.i("subtitle: candidate embedded ASS fonts=%d itemId=%s", fontAttachments.size, itemId)
+        val loadedFonts = fontAttachments.mapNotNull { (source, attachment) ->
+            val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
+            repository.getMediaAttachment(itemId, source.id, attachment.index)?.let { bytes ->
+                fileName to bytes
+            }
+        }
+        Timber.i("subtitle: loaded embedded ASS fonts=%d itemId=%s", loadedFonts.size, itemId)
+        return loadedFonts
     }
 
     private fun isFontAttachment(fileName: String, mimeType: String, codec: String): Boolean {

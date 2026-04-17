@@ -52,6 +52,9 @@ class SpatialVoiceService(private val context: Context) {
     }
 
     private fun muteSystemBeep() {
+        // Idempotent: if we've already muted (originalNotificationVolume != -1),
+        // do not overwrite the saved level with the current (already-zero) value.
+        if (originalNotificationVolume != -1) return
         audioManager?.let { am ->
             try {
                 originalNotificationVolume = am.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
@@ -102,6 +105,10 @@ class SpatialVoiceService(private val context: Context) {
         cancelPendingRetry()
         Timber.i("VOICE: stopListening")
         recognizer?.stopListening()
+        // Restore notification volume eagerly — if the recognizer never fires
+        // onResults/onError (e.g. timeout while holding a stopListening), the
+        // system stream would otherwise stay muted indefinitely.
+        unmuteSystemBeep()
         if (_state.value == VoiceState.LISTENING) {
             _state.value = VoiceState.PROCESSING
         }
@@ -123,6 +130,9 @@ class SpatialVoiceService(private val context: Context) {
         suppressNextError = false
         recognizer?.destroy()
         recognizer = null
+        // Must run after recognizer?.destroy() so the listener cannot race
+        // a later onError that would re-mute after we restored the volume.
+        unmuteSystemBeep()
         _state.value = VoiceState.IDLE
     }
 

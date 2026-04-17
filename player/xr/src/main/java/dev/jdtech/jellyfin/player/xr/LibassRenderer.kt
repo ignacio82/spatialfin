@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
 import timber.log.Timber
 
 /**
@@ -60,7 +61,9 @@ class LibassRenderer(
     // Reusable bitmap for the current frame. Never recycle eagerly: Compose may still
     // be drawing a previously published bitmap on the UI thread when resize/destroy
     // happens, and recycling it here will crash with "trying to use a recycled bitmap".
-    private var cachedBitmap: Bitmap? = null
+    // @Volatile so renderFrame (caller-thread blocked on latch) observes any value
+    // written by the render-handler thread without torn references.
+    @Volatile private var cachedBitmap: Bitmap? = null
 
     // Track whether the last render had content — used by callers to decide
     // whether to compose the SpatialPanel (raycast passthrough when false)
@@ -215,7 +218,14 @@ class LibassRenderer(
             Timber.w("renderFrame: skipped because renderer thread is unavailable")
             return RenderResult(hasContent = false)
         }
-        latch.await()
+        // Bounded wait: if the native render stalls (font loader deadlock, corrupted
+        // track), the UI thread must not hang until ANR. One frame (~16 ms) is enough
+        // that a healthy native side always completes, and a stall degrades to a
+        // dropped subtitle frame rather than an ANR.
+        if (!latch.await(16L, TimeUnit.MILLISECONDS)) {
+            Timber.w("renderFrame: native render exceeded 16ms budget — dropping frame")
+            return RenderResult(hasContent = hasActiveSubtitles)
+        }
         if (destroyed) return RenderResult(hasContent = false)
         return result
     }

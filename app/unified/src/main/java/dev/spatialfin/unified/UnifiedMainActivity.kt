@@ -402,15 +402,10 @@ class UnifiedMainActivity : AppCompatActivity() {
             return navigateHomeVoiceItem(item)
         }
 
+        // A voice turn is "busy" when a recognition/processing/speech cycle is in flight.
+        // The same predicate answers both "is it safe to start a new turn?" (callers
+        // negate) and "is there something to interrupt right now?" (callers use directly).
         fun isVoiceTurnBusy(): Boolean {
-            return voiceState != VoiceState.IDLE ||
-                activeVoiceJob?.isActive == true ||
-                assistantSpeechPendingStart ||
-                assistantSpeechStarted ||
-                isTtsSpeaking
-        }
-
-        fun canInterruptVoiceTurn(): Boolean {
             return voiceState != VoiceState.IDLE ||
                 activeVoiceJob?.isActive == true ||
                 assistantSpeechPendingStart ||
@@ -457,7 +452,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 shouldDetectInterrupt = {
                     voiceControlEnabled &&
                         hasHandTrackingPermission &&
-                        canInterruptVoiceTurn()
+                        isVoiceTurnBusy()
                 },
             )
         }
@@ -661,7 +656,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         }
 
         fun interruptVoiceCommand(reason: String) {
-            if (!canInterruptVoiceTurn()) return
+            if (!isVoiceTurnBusy()) return
             val shouldResumeFollowUp =
                 followUpPending &&
                     (isTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
@@ -828,8 +823,16 @@ class UnifiedMainActivity : AppCompatActivity() {
             onDispose {
                 voiceService.destroy()
                 tts.destroy()
-                commandCoordinator?.destroy()
-                chatEngine?.destroy()
+                // Release voice/AI services so their background work (OkHttp dispatcher,
+                // LiteRT/AICore handles, coroutine scopes) doesn't leak past the Activity.
+                runCatching { commandCoordinator?.destroy() }
+                commandCoordinator = null
+                runCatching { chatEngine?.destroy() }
+                chatEngine = null
+                runCatching { geminiNanoService?.destroy() }
+                geminiNanoService = null
+                runCatching { geminiCloudService?.destroy() }
+                geminiCloudService = null
             }
         }
 
@@ -963,8 +966,16 @@ class UnifiedMainActivity : AppCompatActivity() {
 
         LaunchedEffect(rootEntity.value) {
             val root = rootEntity.value ?: return@LaunchedEffect
+            // Only commit to SharedPreferences when the pose actually changes. Writing
+            // every 1 s wears flash, burns battery, and can race the MovableComponent's
+            // final pose with a stale tick.
+            var lastSaved: Pose? = null
             while (true) {
-                safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                val current = safeGetAppRootPose(root)
+                if (current != null && !poseApproximatelyEqual(current, lastSaved)) {
+                    saveAppRootPose(current)
+                    lastSaved = current
+                }
                 delay(1_000L)
             }
         }
@@ -1129,6 +1140,24 @@ class UnifiedMainActivity : AppCompatActivity() {
 
     private fun safeGetAppRootPose(entity: GroupEntity): Pose? {
         return runCatching { entity.getPose() }.getOrNull()
+    }
+
+    private fun poseApproximatelyEqual(a: Pose, b: Pose?): Boolean {
+        if (b == null) return false
+        val epsPos = 1e-4f
+        val epsRot = 1e-4f
+        val ta = a.translation
+        val tb = b.translation
+        if (kotlin.math.abs(ta.x - tb.x) > epsPos) return false
+        if (kotlin.math.abs(ta.y - tb.y) > epsPos) return false
+        if (kotlin.math.abs(ta.z - tb.z) > epsPos) return false
+        val ra = a.rotation
+        val rb = b.rotation
+        if (kotlin.math.abs(ra.x - rb.x) > epsRot) return false
+        if (kotlin.math.abs(ra.y - rb.y) > epsRot) return false
+        if (kotlin.math.abs(ra.z - rb.z) > epsRot) return false
+        if (kotlin.math.abs(ra.w - rb.w) > epsRot) return false
+        return true
     }
 
     private fun migrateLegacyCenteredAppPose(pose: Pose): Pose {

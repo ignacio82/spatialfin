@@ -450,15 +450,10 @@ fun SpatialPlayerScreen(
     var assistantSpeechPendingStart by remember { mutableStateOf(false) }
     var assistantSpeechStarted by remember { mutableStateOf(false) }
 
+    // A voice turn is "busy" when a recognition/processing/speech cycle is in flight.
+    // The same predicate answers both "is it safe to start a new turn?" (callers negate)
+    // and "is there something to interrupt right now?" (callers use directly).
     fun isVoiceTurnBusy(): Boolean {
-        return voiceState != VoiceState.IDLE ||
-            activeVoiceJob?.isActive == true ||
-            assistantSpeechPendingStart ||
-            assistantSpeechStarted ||
-            isTtsSpeaking
-    }
-
-    fun canInterruptVoiceTurn(): Boolean {
         return voiceState != VoiceState.IDLE ||
             activeVoiceJob?.isActive == true ||
             assistantSpeechPendingStart ||
@@ -482,7 +477,7 @@ fun SpatialPlayerScreen(
                 shouldDetectInterrupt = {
                     voiceControlEnabled &&
                         hasHandTrackingPermission &&
-                        canInterruptVoiceTurn()
+                        isVoiceTurnBusy()
                 },
             )
         }
@@ -919,7 +914,7 @@ fun SpatialPlayerScreen(
             }
 
     fun interruptVoiceCommand(reason: String) {
-        if (!canInterruptVoiceTurn()) return
+        if (!isVoiceTurnBusy()) return
         val shouldResumeFollowUp =
             followUpPending &&
                 (isTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
@@ -1526,6 +1521,14 @@ fun SpatialPlayerScreen(
             }
             savePlayerRootScale(viewModel, videoPanelScale)
             voiceService.destroy()
+            // Release voice/AI services so their background work (OkHttp dispatcher,
+            // LiteRT/AICore handles, coroutine scopes) doesn't leak past the screen.
+            runCatching { commandCoordinator?.destroy() }
+            commandCoordinator = null
+            runCatching { chatEngine?.destroy() }
+            chatEngine = null
+            runCatching { geminiNanoService.destroy() }
+            runCatching { geminiCloudService.destroy() }
             tts.destroy()
             runCatching { player.clearVideoSurface() }
             runCatching { videoEntity.value?.dispose() }
@@ -1641,13 +1644,24 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(videoRootEntity.value) {
         val root = videoRootEntity.value ?: return@LaunchedEffect
+        // Only commit to SharedPreferences when pose or scale actually changes. Writing
+        // every 1 s wears flash, burns battery, and can race the MovableComponent's
+        // final pose with a stale tick.
+        var lastSavedPose: Pose? = null
+        var lastSavedScale: Float = Float.NaN
         while (true) {
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
-            poseToSave?.let {
-                lastReportedMovePose.value = it
-                savePlayerRootPose(viewModel, it)
+            if (poseToSave != null) {
+                lastReportedMovePose.value = poseToSave
+                if (!posesApproximatelyEqual(poseToSave, lastSavedPose)) {
+                    savePlayerRootPose(viewModel, poseToSave)
+                    lastSavedPose = poseToSave
+                }
             }
-            savePlayerRootScale(viewModel, videoPanelScale)
+            if (kotlin.math.abs(videoPanelScale - lastSavedScale) > 1e-4f) {
+                savePlayerRootScale(viewModel, videoPanelScale)
+                lastSavedScale = videoPanelScale
+            }
             delay(1_000L)
         }
     }
@@ -4050,6 +4064,24 @@ private fun safeGetEntityPose(entity: androidx.xr.scenecore.Entity): Pose? {
     return runCatching { entity.getPose(Space.ACTIVITY) }
         .onFailure { Timber.d("Skipping disposed XR player entity pose save") }
         .getOrNull()
+}
+
+private fun posesApproximatelyEqual(a: Pose, b: Pose?): Boolean {
+    if (b == null) return false
+    val epsPos = 1e-4f
+    val epsRot = 1e-4f
+    val ta = a.translation
+    val tb = b.translation
+    if (kotlin.math.abs(ta.x - tb.x) > epsPos) return false
+    if (kotlin.math.abs(ta.y - tb.y) > epsPos) return false
+    if (kotlin.math.abs(ta.z - tb.z) > epsPos) return false
+    val ra = a.rotation
+    val rb = b.rotation
+    if (kotlin.math.abs(ra.x - rb.x) > epsRot) return false
+    if (kotlin.math.abs(ra.y - rb.y) > epsRot) return false
+    if (kotlin.math.abs(ra.z - rb.z) > epsRot) return false
+    if (kotlin.math.abs(ra.w - rb.w) > epsRot) return false
+    return true
 }
 
 private fun safelyToggleMascotEntity(
