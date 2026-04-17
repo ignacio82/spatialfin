@@ -52,8 +52,18 @@ internal class MediaSkillRegistry(
     private val repository: JellyfinRepository,
     appPreferences: AppPreferences,
 ) {
-    private val tmdbApi = TmdbApi(appPreferences)
-    private val wikipediaClient = WikipediaSummaryClient()
+    // Share a single OkHttpClient across both helpers so we don't allocate two
+    // independent dispatcher thread pools per registry instance. Full Hilt-scoping
+    // of these clients would require reshaping SmartChatEngine's construction (it
+    // is created from a Composable `remember` block, not injected), so this is
+    // the minimum that removes the duplication concern without a cascading refactor.
+    private val httpClient = sharedHttpClient
+    private val tmdbApi = TmdbApi(appPreferences, httpClient)
+    private val wikipediaClient = WikipediaSummaryClient(httpClient)
+
+    companion object {
+        private val sharedHttpClient: okhttp3.OkHttpClient by lazy { okhttp3.OkHttpClient() }
+    }
 
     suspend fun plan(
         question: String,

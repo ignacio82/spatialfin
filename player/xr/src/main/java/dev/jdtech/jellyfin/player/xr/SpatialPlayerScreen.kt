@@ -1045,7 +1045,11 @@ fun SpatialPlayerScreen(
     }
 
     LaunchedEffect(voiceFeedback, isTtsSpeaking) {
-        if (voiceFeedback != null && !isTtsSpeaking && voiceFeedback != "Thinking...") {
+        // Auto-dismiss any transient feedback once TTS has finished speaking it.
+        // The "Thinking..." sentinel that previously guarded this check came from a
+        // dead dispatch branch (now throws) — nothing assigns it anymore, and the
+        // live "thinking" indicator is driven by VoiceControlOverlay from voiceState.
+        if (voiceFeedback != null && !isTtsSpeaking) {
             delay(4_000L)
             if (!isTtsSpeaking) {
                 voiceFeedback = null
@@ -1260,13 +1264,43 @@ fun SpatialPlayerScreen(
         }
     }
 
-    // Poll playback state (position, duration, isPlaying, segments)
-    LaunchedEffect(player) {
+    // Event-driven playback state. The previous implementation polled every 500 ms
+    // regardless of whether anything changed; here isPlaying / playbackState /
+    // duration / segment-on-seek are all driven by Player.Listener events, and the
+    // only cadence-based work left is the position tick which pauses when not playing.
+    DisposableEffect(player) {
+        // Seed from the current player state so late-bound composition sees
+        // accurate values before the first event arrives.
+        currentPosition = player.currentPosition
+        duration = player.duration.coerceAtLeast(0L)
+        isPlaying = player.isPlaying
+        playbackState = player.playbackState
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                isPlaying = isPlayingNow
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+                duration = player.duration.coerceAtLeast(0L)
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                currentPosition = player.currentPosition
+                viewModel.updateCurrentSegment()
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    // Position tick only while playing — stops waking up when paused or buffering.
+    LaunchedEffect(player, isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
         while (true) {
             currentPosition = player.currentPosition
-            duration = player.duration.coerceAtLeast(0L)
-            isPlaying = player.isPlaying
-            playbackState = player.playbackState
             viewModel.updateCurrentSegment()
             delay(500)
         }

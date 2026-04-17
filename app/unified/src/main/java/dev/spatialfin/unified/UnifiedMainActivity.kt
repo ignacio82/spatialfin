@@ -330,11 +330,21 @@ class UnifiedMainActivity : AppCompatActivity() {
         var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
         val followUpListenWindowMs = 12_000L
         val followUpAutoStartDelayMs = 200L
-        val voiceControlEnabled = appPreferences.getValue(appPreferences.voiceControlEnabled)
-        val voiceGestureHand =
+        // Reactive prefs: observe SharedPreferences changes so toggling a setting
+        // from the Settings screen recomposes the Home Space voice UI immediately
+        // instead of requiring the Activity to be recreated.
+        val voiceControlEnabled by appPreferences.rememberPrefState(appPreferences.voiceControlEnabled) {
+            appPreferences.getValue(appPreferences.voiceControlEnabled)
+        }
+        val voiceGestureHand by appPreferences.rememberPrefState(appPreferences.voiceGestureHand) {
             appPreferences.getValue(appPreferences.voiceGestureHand) ?: "left"
-        val assistantSpokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
-        val assistantVoicePreference = appPreferences.getValue(appPreferences.voiceAssistantVoice) ?: "male"
+        }
+        val assistantSpokenReplies by appPreferences.rememberPrefState(appPreferences.voiceAssistantSpokenReplies) {
+            appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
+        }
+        val assistantVoicePreference by appPreferences.rememberPrefState(appPreferences.voiceAssistantVoice) {
+            appPreferences.getValue(appPreferences.voiceAssistantVoice) ?: "male"
+        }
 
         fun armFollowUpWindow(reason: String) {
             followUpPending = true
@@ -1186,6 +1196,32 @@ class UnifiedMainActivity : AppCompatActivity() {
             pose
         }
     }
+}
+
+/**
+ * Generic version of [rememberBooleanPreferenceState] that re-reads any preference
+ * whenever its backing SharedPreferences key changes. Callers supply a [read]
+ * lambda so this doesn't depend on the inline/reified `getValue` overload.
+ */
+@Composable
+private fun <T> AppPreferences.rememberPrefState(
+    preference: dev.jdtech.jellyfin.settings.domain.models.Preference<*>,
+    read: () -> T,
+): androidx.compose.runtime.State<T> {
+    val state = remember(this, preference) { mutableStateOf(read()) }
+    DisposableEffect(this, preference) {
+        val listener =
+            android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == preference.backendName) {
+                    state.value = read()
+                }
+            }
+        sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            sharedPreferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+    return state
 }
 
 @Composable
