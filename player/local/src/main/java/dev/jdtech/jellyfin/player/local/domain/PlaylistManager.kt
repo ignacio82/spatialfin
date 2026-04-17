@@ -298,22 +298,30 @@ class PlaylistManager @Inject internal constructor(
             mediaSource.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO && languageMatches(it.language, preferredAudioLanguage) }?.codec,
             effectiveMaxBitrate,
         )
+        // Include BOTH external and embedded subtitle streams. Jellyfin exposes a deliveryUrl
+        // (mediaStream.path) for every text track, so we sideload all of them via
+        // MediaItem.SubtitleConfiguration and bypass MatroskaExtractor's buggy handling of
+        // zlib-compressed ContentEncoding subtitle blocks.
+        val subtitleStreams = mediaSource.mediaStreams.filter { mediaStream ->
+            mediaStream.type == MediaStreamType.SUBTITLE && !mediaStream.path.isNullOrBlank()
+        }
+        subtitleStreams.take(5).forEach { s ->
+            Timber.i(
+                "Subtitle sideload index=%s codec=%s isExternal=%b lang=%s path=%s",
+                s.index, s.codec, s.isExternal, s.language, s.path,
+            )
+        }
         val externalSubtitles =
-            mediaSource.mediaStreams
-                .filter { mediaStream ->
-                    mediaStream.isExternal &&
-                        mediaStream.type == MediaStreamType.SUBTITLE &&
-                        !mediaStream.path.isNullOrBlank()
-                }
+            subtitleStreams
                 .map { mediaStream ->
                     ExternalSubtitle(
                         mediaStream.title,
                         mediaStream.language,
                         mediaStream.path!!.toUri(),
-                        when (mediaStream.codec) {
-                            "subrip" -> MimeTypes.APPLICATION_SUBRIP
-                            "webvtt" -> MimeTypes.APPLICATION_SUBRIP
-                            "ass" -> MimeTypes.TEXT_SSA
+                        when (mediaStream.codec.lowercase()) {
+                            "subrip", "srt" -> MimeTypes.APPLICATION_SUBRIP
+                            "webvtt", "vtt" -> MimeTypes.TEXT_VTT
+                            "ass", "ssa" -> MimeTypes.TEXT_SSA
                             else -> MimeTypes.TEXT_UNKNOWN
                         },
                     )

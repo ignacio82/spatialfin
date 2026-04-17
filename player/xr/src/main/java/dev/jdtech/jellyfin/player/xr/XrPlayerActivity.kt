@@ -215,24 +215,23 @@ class XrPlayerActivity : AppCompatActivity() {
                         }
                     )
                     Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
-                    // Do NOT add the default TextRenderer here. With parsing disabled,
-                    // raw subtitle bytes (e.g. application/pgs) arrive in their original
-                    // format which the modern TextRenderer cannot decode (it expects
-                    // application/x-media3-cues). LibassTextRenderer handles all text-based
-                    // formats (ASS/SSA/SRT/VTT). PGS (bitmap) is unsupported by libass and
-                    // intentionally left unclaimed so ExoPlayer skips those tracks silently.
+                    // Do NOT add the default TextRenderer in this mode. With parsing disabled,
+                    // LibassTextRenderer receives raw ASS/SRT/VTT bytes and handles them
+                    // (including full-file sideloaded samples which it explodes into events).
                 } else {
-                    // Stereo mode: no libass, parsing is enabled → subtitles arrive as
-                    // application/x-media3-cues which the default TextRenderer can handle.
+                    // Stereo mode: no libass, parsing is enabled → default TextRenderer handles cues.
                     super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
                 }
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
          .setEnableDecoderFallback(true)
 
-        // Libass needs raw ASS/SSA packets, but ExoPlayer's fallback subtitle pipeline
-        // needs extraction/parsing enabled so ASS can be converted into displayable cues.
-        val mediaSourceFactory = DefaultMediaSourceFactory(this)
+        // Subtitles are sideloaded via MediaItem.SubtitleConfiguration using Jellyfin's
+        // per-stream delivery URL (see PlaylistManager). The custom ExtractorsFactory drops
+        // embedded text tracks inside MKV containers so Media3's buggy zlib handling never
+        // surfaces as garbage subtitles on screen.
+        val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
+        val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
             .experimentalParseSubtitlesDuringExtraction(stereoPlayback)
         if (stereoPlayback) {
             Timber.i("subtitle: stereo playback — using Media3 subtitle parsing/transcoding for fallback renderer")

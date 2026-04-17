@@ -30,7 +30,9 @@ fun MediaStream.toSpatialFinMediaStream(jellyfinRepository: JellyfinRepository):
         type = type,
         codec = codec.orEmpty(),
         isExternal = isExternal,
-        path = jellyfinRepository.getBaseUrl() + deliveryUrl,
+        path = deliveryUrl?.let {
+            jellyfinRepository.getBaseUrl().trimEnd('/') + "/" + it.trimStart('/')
+        },
         channelLayout = channelLayout,
         videoRangeType = videoRangeType,
         height = height,

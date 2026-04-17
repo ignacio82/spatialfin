@@ -53,6 +53,7 @@ class LibassTextRenderer(
     // the same ReadOrder value, so every SRT chunk must get a unique counter. Reset on seek.
     private var srtReadOrder = 0
     private var fontsLoaded = false
+    private var isSrtOrVtt = false
 
     override fun getName(): String = "LibassTextRenderer"
 
@@ -83,6 +84,8 @@ class LibassTextRenderer(
     ) {
         super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
         val format = formats[0]
+        val mimeType = format.sampleMimeType
+        isSrtOrVtt = mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT
         val initData = format.initializationData
         dialogueFormatLine = initData.firstOrNull()?.toString(Charsets.UTF_8)?.takeIf { it.startsWith("Format:") }
         Timber.i(
@@ -136,8 +139,6 @@ class LibassTextRenderer(
     }
 
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
-        // Read available samples from the SampleStream
-        // Each sample is a raw ASS dialogue line
         while (true) {
             buffer.clear()
             val result = readSource(formatHolder, buffer, /* readFlags= */ 0)
@@ -148,26 +149,214 @@ class LibassTextRenderer(
             val data = buffer.data ?: continue
             val bytes = ByteArray(data.remaining())
             data.get(bytes)
-            val normalizedBytes = normalizeAssChunkForLibass(bytes)
 
-            // Timestamps from readSource include the stream offset; subtract it to match 
+            // Timestamps from readSource include the stream offset; subtract it to match
             // the window-relative position used by the UI render polling loop.
-            val startMs = (buffer.timeUs - getStreamOffsetUs()) / 1000
-            val parsedDuration = parseDurationFromAssChunk(bytes)
-            val isKaraoke = parsedDuration == null && hasKaraokeTags(normalizedBytes)
-            val durationMs = parsedDuration
-                ?: if (isKaraoke) 300_000L   // karaoke lines span entire song sections
-                else 10_000L                 // regular dialogue — generous to handle long pauses
+            val sampleStartMs = (buffer.timeUs - getStreamOffsetUs()) / 1000
 
-            val plainText = extractPlainText(normalizedBytes)
-            if (plainText.isNotBlank()) {
-                onSubtitleText?.invoke(startMs, plainText)
-            }
-            if (displayEnabled) {
-                libassRenderer.processChunk(normalizedBytes, startMs, durationMs)
+            if (isFullAssFile(bytes)) {
+                processFullAssFile(bytes)
+            } else if (isSrtOrVtt && isFullSrtOrVttFile(bytes)) {
+                processFullSrtOrVttFile(bytes)
+            } else {
+                processSingleChunk(bytes, sampleStartMs)
             }
             buffer.clear()
         }
+    }
+
+    private fun processSingleChunk(bytes: ByteArray, startMs: Long) {
+        val normalizedBytes = normalizeAssChunkForLibass(bytes)
+        val parsedDuration = parseDurationFromAssChunk(bytes)
+        val isKaraoke = parsedDuration == null && hasKaraokeTags(normalizedBytes)
+        val durationMs = parsedDuration
+            ?: if (isKaraoke) 300_000L else 10_000L
+
+        val plainText = extractPlainText(normalizedBytes)
+        if (plainText.isNotBlank()) {
+            onSubtitleText?.invoke(startMs, plainText)
+        }
+        if (displayEnabled) {
+            libassRenderer.processChunk(normalizedBytes, startMs, durationMs)
+        }
+    }
+
+    private fun isFullAssFile(bytes: ByteArray): Boolean {
+        if (bytes.size < 32) return false
+        val head = String(bytes, 0, minOf(bytes.size, 256), Charsets.UTF_8)
+        return head.contains("[Script Info]", ignoreCase = true) ||
+            head.contains("[V4+ Styles]", ignoreCase = true) ||
+            head.contains("[V4 Styles]", ignoreCase = true)
+    }
+
+    /**
+     * A sideloaded ASS file arrives as one sample containing header + all Dialogue lines.
+     * Split it: pass the script header to libass via setTrackData(), then dispatch each
+     * Dialogue line as its own chunk with timestamps extracted from the file.
+     */
+    private fun processFullAssFile(bytes: ByteArray) {
+        val text = String(bytes, Charsets.UTF_8)
+        val eventsIdx = text.indexOf("[Events]", ignoreCase = true)
+        if (eventsIdx < 0) {
+            Timber.w("subtitle: full-file ASS has no [Events] section (%d bytes)", bytes.size)
+            return
+        }
+
+        val eventsBlock = text.substring(eventsIdx)
+        val lines = eventsBlock.lines()
+        val formatLine = lines.firstOrNull { it.trimStart().startsWith("Format:", ignoreCase = true) }
+        val fieldOrder = formatLine?.let(::parseEventFieldOrder) ?: DEFAULT_ASS_EVENT_FIELDS
+
+        // Header = everything before [Events] + the Format line inside [Events].
+        val headerBuilder = StringBuilder(text.substring(0, eventsIdx))
+        headerBuilder.append("[Events]\n")
+        if (formatLine != null) {
+            headerBuilder.append(formatLine.trimEnd()).append('\n')
+        } else {
+            headerBuilder.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+        }
+        if (!inputFormatReceived) {
+            libassRenderer.setTrackData(headerBuilder.toString().toByteArray(Charsets.UTF_8))
+            inputFormatReceived = true
+            dialogueFormatLine = formatLine
+            onTrackInitialized()
+            Timber.i("subtitle: full-file ASS header loaded (%d bytes)", headerBuilder.length)
+        }
+
+        var dispatched = 0
+        for (line in lines) {
+            val trimmed = line.trimStart()
+            if (!trimmed.startsWith("Dialogue:", ignoreCase = true)) continue
+            val body = trimmed.substringAfter(':').trimStart()
+            val chunk = assEventToChunk(body, fieldOrder) ?: continue
+            val plainText = extractPlainText(chunk.body.toByteArray(Charsets.UTF_8))
+            if (plainText.isNotBlank()) {
+                onSubtitleText?.invoke(chunk.startMs, plainText)
+            }
+            if (displayEnabled) {
+                libassRenderer.processChunk(
+                    chunk.body.toByteArray(Charsets.UTF_8),
+                    chunk.startMs,
+                    chunk.durationMs,
+                )
+            }
+            dispatched++
+        }
+        Timber.i("subtitle: full-file ASS dispatched %d events", dispatched)
+    }
+
+    private data class AssChunk(val body: String, val startMs: Long, val durationMs: Long)
+
+    private fun parseEventFieldOrder(formatLine: String): List<String> {
+        return formatLine.substringAfter(':').split(',').map { it.trim() }
+    }
+
+    private fun assEventToChunk(eventBody: String, fieldOrder: List<String>): AssChunk? {
+        val fields = eventBody.split(',', limit = fieldOrder.size)
+        if (fields.size < fieldOrder.size) return null
+        val get = { name: String ->
+            val idx = fieldOrder.indexOfFirst { it.equals(name, ignoreCase = true) }
+            if (idx < 0) null else fields[idx]
+        }
+        val startMs = parseAssTime(get("Start") ?: return null) ?: return null
+        val endMs = parseAssTime(get("End") ?: return null) ?: return null
+        val durationMs = (endMs - startMs).coerceAtLeast(0L)
+
+        // Libass chunk format: ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+        val layer = get("Layer") ?: "0"
+        val style = get("Style") ?: "Default"
+        val name = get("Name") ?: ""
+        val marginL = get("MarginL") ?: "0"
+        val marginR = get("MarginR") ?: "0"
+        val marginV = get("MarginV") ?: "0"
+        val effect = get("Effect") ?: ""
+        val textField = fields.drop(fieldOrder.indexOfFirst { it.equals("Text", ignoreCase = true) })
+            .joinToString(",")
+        val readOrder = srtReadOrder++
+        val body = "$readOrder,$layer,$style,$name,$marginL,$marginR,$marginV,$effect,$textField"
+        return AssChunk(body, startMs, durationMs)
+    }
+
+    /** Parses `H:MM:SS.cc` (ASS timestamp) into milliseconds. */
+    private fun parseAssTime(value: String): Long? {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return null
+        val parts = trimmed.split(':')
+        if (parts.size != 3) return null
+        return try {
+            val h = parts[0].toLong()
+            val m = parts[1].toLong()
+            val secPart = parts[2].replace(',', '.').split('.')
+            val s = secPart[0].toLong()
+            val cs = if (secPart.size > 1) secPart[1].padEnd(2, '0').take(2).toLong() else 0L
+            ((h * 3600 + m * 60 + s) * 1000) + (cs * 10)
+        } catch (_: NumberFormatException) {
+            null
+        }
+    }
+
+    private fun isFullSrtOrVttFile(bytes: ByteArray): Boolean {
+        if (bytes.size < 32) return false
+        val head = String(bytes, 0, minOf(bytes.size, 256), Charsets.UTF_8)
+        return head.startsWith("WEBVTT", ignoreCase = true) ||
+            Regex("""^\s*\d+\s*\r?\n\s*\d{2}:\d{2}""", RegexOption.MULTILINE).containsMatchIn(head)
+    }
+
+    /**
+     * Explode a full-file SRT or VTT sample into ASS Dialogue chunks. The synthetic ASS header
+     * set in onStreamChanged() provides the styling context, so each cue is emitted as a
+     * standard dialogue chunk that libass can render.
+     */
+    private fun processFullSrtOrVttFile(bytes: ByteArray) {
+        val text = String(bytes, Charsets.UTF_8)
+            .replace("\r\n", "\n")
+            .removePrefix("\uFEFF")
+        val timecodeRegex = Regex("""(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})""")
+        var dispatched = 0
+        val blocks = text.split(Regex("\\n{2,}"))
+        for (block in blocks) {
+            val match = timecodeRegex.find(block) ?: continue
+            val startMs = parseSrtTime(match.groupValues[1]) ?: continue
+            val endMs = parseSrtTime(match.groupValues[2]) ?: continue
+            val lineEnd = block.indexOf('\n', match.range.last)
+            if (lineEnd < 0) continue
+            val body = block.substring(lineEnd + 1)
+                .trim()
+                .replace("\n", "\\N")
+                .replace(Regex("<[^>]+>"), "")
+            if (body.isEmpty()) continue
+
+            val readOrder = srtReadOrder++
+            val chunk = "$readOrder,0,Default,,0,0,0,,$body"
+            onSubtitleText?.invoke(startMs, body.replace("\\N", " "))
+            if (displayEnabled) {
+                libassRenderer.processChunk(chunk.toByteArray(Charsets.UTF_8), startMs, (endMs - startMs).coerceAtLeast(0L))
+            }
+            dispatched++
+        }
+        Timber.i("subtitle: full-file SRT/VTT dispatched %d cues", dispatched)
+    }
+
+    private fun parseSrtTime(value: String): Long? {
+        val parts = value.replace(',', '.').split(':')
+        if (parts.size != 3) return null
+        return try {
+            val h = parts[0].toLong()
+            val m = parts[1].toLong()
+            val secParts = parts[2].split('.')
+            val s = secParts[0].toLong()
+            val ms = if (secParts.size > 1) secParts[1].padEnd(3, '0').take(3).toLong() else 0L
+            ((h * 3600 + m * 60 + s) * 1000) + ms
+        } catch (_: NumberFormatException) {
+            null
+        }
+    }
+
+    private companion object {
+        val DEFAULT_ASS_EVENT_FIELDS = listOf(
+            "Layer", "Start", "End", "Style", "Name",
+            "MarginL", "MarginR", "MarginV", "Effect", "Text",
+        )
     }
 
     /**
@@ -228,6 +417,62 @@ class LibassTextRenderer(
             else -> "$normalizedHeader\n$formatLine"
         }
         return mergedHeader.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun zlibDecompressIfNeeded(bytes: ByteArray): ByteArray {
+        if (bytes.size < 2) return bytes
+        val b0 = bytes[0].toInt() and 0xFF
+        val b1 = bytes[1].toInt() and 0xFF
+        // Strict zlib header check: first byte must be 0x78 AND second byte must
+        // have CM=8 (deflate) and a valid compression level. The CMF/FLG checksum
+        // alone is not specific enough — ASCII byte pairs like "xX" or "0 " can
+        // satisfy (CMF*256+FLG)%31==0 and feed garbage into the Inflater.
+        if (b0 != 0x78 || (b0 * 256 + b1) % 31 != 0) return bytes
+        // b1 low-5 bits = FCHECK (already validated), bit 5 = FDICT, bits 6-7 = FLEVEL.
+        // For raw ASCII text starting with '0,' etc., b0 ≠ 0x78, so those don't get here.
+        // Additional sanity: if FDICT=1 we don't support external dictionaries — bail.
+        if ((b1 and 0x20) != 0) return bytes
+        return try {
+            val inflater = java.util.zip.Inflater()
+            inflater.setInput(bytes)
+            val out = java.io.ByteArrayOutputStream()
+            val tmp = ByteArray(8192)
+            while (!inflater.finished()) {
+                val n = inflater.inflate(tmp)
+                if (n <= 0) break
+                out.write(tmp, 0, n)
+            }
+            val finished = inflater.finished()
+            val remaining = inflater.remaining
+            inflater.end()
+            // Accept output even when finished()==false: some MKV encoders omit
+            // the Adler32 trailer, so Inflater reports not-finished even after
+            // successfully decoding a BFINAL deflate block. The downstream
+            // UTF-8 validity filter rejects garbage output, so trusting the
+            // partial result here is safe.
+            if (out.size() > 0) {
+                if (!finished) {
+                    Timber.d(
+                        "subtitle: zlib decompressed %d→%d bytes (no trailer, remaining=%d)",
+                        bytes.size, out.size(), remaining,
+                    )
+                } else {
+                    Timber.d("subtitle: zlib decompressed %d→%d bytes", bytes.size, out.size())
+                }
+                out.toByteArray()
+            } else {
+                val preview = bytes.take(32).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                Timber.w(
+                    "subtitle: zlib produced zero output %d bytes finished=%b remaining=%d head=%s",
+                    bytes.size, finished, remaining, preview,
+                )
+                bytes
+            }
+        } catch (e: Exception) {
+            val preview = bytes.take(32).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+            Timber.w(e, "subtitle: zlib decompression failed head=%s", preview)
+            bytes
+        }
     }
 
     /**
@@ -321,31 +566,58 @@ class LibassTextRenderer(
     }
 
     private fun normalizeAssChunkForLibass(bytes: ByteArray): ByteArray {
-        val text = String(bytes, Charsets.UTF_8)
-        if (text.startsWith("Dialogue:")) {
-            val body = text.removePrefix("Dialogue:").trimStart()
-            val commaPositions = ArrayList<Int>(3)
-            body.forEachIndexed { index, c ->
-                if (c == ',') {
-                    commaPositions += index
-                    if (commaPositions.size == 3) return@forEachIndexed
-                }
-            }
-            if (commaPositions.size < 3) return bytes
-
-            // Embedded ASS packets include: Start,End,ReadOrder,... while ass_process_chunk
-            // receives timecode/duration separately and expects only the event payload.
-            val normalized = body.substring(commaPositions[1] + 1)
-            return normalized.toByteArray(Charsets.UTF_8)
-        } else {
-            // SRT or VTT raw block. Strip the index number and timestamp line, convert
-            // HTML tags, then return the MKV event body format that ass_process_chunk expects:
-            // ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
-            // ReadOrder must be unique per event — libass deduplicates events with the same value.
+        if (isSrtOrVtt) {
+            val text = String(bytes, Charsets.UTF_8)
             val cleanText = parseSrtOrVttText(text)
-            val readOrder = srtReadOrder++
-            return "$readOrder,0,Default,,0,0,0,,$cleanText".toByteArray(Charsets.UTF_8)
+            return "${srtReadOrder++},0,Default,,0,0,0,,$cleanText".toByteArray(Charsets.UTF_8)
         }
+
+        // Media3 with experimentalParseSubtitlesDuringExtraction(false) still prepends
+        // "Dialogue: Start,End," before the raw MKV block even for ContentEncoding-compressed
+        // tracks. We must strip those two comma-delimited fields first, then decompress the
+        // remaining body. Checking for zlib on the full bytes would fail because the first
+        // byte is 'D' (0x44), not the zlib CMF byte 0x78.
+        val payloadBytes: ByteArray
+        if (bytes.size >= 9 &&
+            bytes[0] == 'D'.code.toByte() && bytes[1] == 'i'.code.toByte() &&
+            bytes[2] == 'a'.code.toByte() && bytes[3] == 'l'.code.toByte() &&
+            bytes[4] == 'o'.code.toByte() && bytes[5] == 'g'.code.toByte() &&
+            bytes[6] == 'u'.code.toByte() && bytes[7] == 'e'.code.toByte() &&
+            bytes[8] == ':'.code.toByte()
+        ) {
+            // Scan past "Dialogue:" and skip the first two comma-delimited fields (Start, End).
+            var commaCount = 0
+            var bodyOffset = 9
+            while (bodyOffset < bytes.size && commaCount < 2) {
+                if (bytes[bodyOffset] == ','.code.toByte()) commaCount++
+                bodyOffset++
+            }
+            if (commaCount < 2) return ByteArray(0)
+            val rawBlock = bytes.copyOfRange(bodyOffset, bytes.size)
+            payloadBytes = zlibDecompressIfNeeded(rawBlock)
+        } else {
+            // No "Dialogue:" prefix — raw MKV event block, possibly zlib-compressed.
+            payloadBytes = zlibDecompressIfNeeded(bytes)
+        }
+
+        val text = String(payloadBytes, Charsets.UTF_8)
+
+        // Discard binary/corrupt content. UTF-8 replacement chars (U+FFFD) appear when binary
+        // bytes survived intact after a failed decompression — sending them to libass produces
+        // random white-text artifacts.
+        if (text.any { it == '\uFFFD' || it.code < 0x09 || it.code in 0x0E..0x1F }) {
+            Timber.w("subtitle: discarding binary/corrupt chunk (%d bytes)", payloadBytes.size)
+            return ByteArray(0)
+        }
+
+        return replaceReadOrder(text)
+    }
+
+    private fun replaceReadOrder(block: String): ByteArray {
+        val firstComma = block.indexOf(',')
+        if (firstComma < 0) return ByteArray(0)
+        val normalized = "${srtReadOrder++},${block.substring(firstComma + 1)}"
+        return normalized.toByteArray(Charsets.UTF_8)
     }
 
     override fun isReady(): Boolean = true

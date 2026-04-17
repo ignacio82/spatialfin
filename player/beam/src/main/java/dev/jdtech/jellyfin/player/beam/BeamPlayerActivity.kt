@@ -382,8 +382,9 @@ class BeamPlayerActivity : AppCompatActivity() {
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
 
+        val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
         val mediaSourceFactory =
-            DefaultMediaSourceFactory(this)
+            DefaultMediaSourceFactory(this, extractorsFactory)
                 .experimentalParseSubtitlesDuringExtraction(true)
 
         val trackSelector = DefaultTrackSelector(this)

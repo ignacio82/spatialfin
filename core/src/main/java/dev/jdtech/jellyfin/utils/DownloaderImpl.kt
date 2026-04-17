@@ -62,6 +62,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import org.jellyfin.sdk.model.api.EncodingContext
+import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import timber.log.Timber
 
@@ -431,7 +432,12 @@ class DownloaderImpl(
         item: SpatialFinItem,
         source: SpatialFinSource,
     ) {
-        for (mediaStream in source.mediaStreams.filter { it.isExternal && it.path != null }) {
+        // Include both external and embedded subtitle tracks. Jellyfin exposes a deliveryUrl for
+        // every text stream, so pre-downloading them lets offline playback sideload subtitles
+        // without relying on MatroskaExtractor's buggy ContentEncoding decompression path.
+        for (mediaStream in source.mediaStreams.filter {
+            it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank()
+        }) {
             val id = UUID.randomUUID()
             val streamFile =
                 downloadStorageManager.buildTargetFile(
