@@ -497,6 +497,9 @@ For any new voice feature, ensure all of these are still true:
 
 ## Release & Compliance Mandates
 
+### Dependency Management
+- **Library Updates:** Before building releases, you can automatically update and format the version catalog (`libs.versions.toml`) by running `./gradlew versionCatalogUpdate`. Always review the applied version bumps via `git diff gradle/libs.versions.toml` to ensure compatibility before committing.
+
 ### Versioning
 - **Semantic Versioning:** Follow `major.minor.patch` for `APP_NAME`.
 - **Play Store Requirements:** ALWAYS increment `APP_CODE` (integer) and `APP_NAME` in `buildSrc/src/main/kotlin/Versions.kt` before building a production bundle. The Play Store will reject bundles with duplicate version codes.

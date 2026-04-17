@@ -19,10 +19,10 @@ OUT_DIR="$(pwd)/player/xr/src/main/jniLibs"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-FREETYPE_VER="2.13.3"
+FREETYPE_VER="2.14.3"
 FRIBIDI_VER="1.0.16"
-HARFBUZZ_VER="10.0.1"
-LIBASS_VER="0.17.3"
+HARFBUZZ_VER="14.1.0"
+LIBASS_VER="0.17.4"
 
 [ ! -d freetype ] && wget -qO- https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VER}.tar.xz | tar xJ && mv freetype-${FREETYPE_VER} freetype
 [ ! -d fribidi ] && wget -qO- https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VER}/fribidi-${FRIBIDI_VER}.tar.xz | tar xJ && mv fribidi-${FRIBIDI_VER} fribidi

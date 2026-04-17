@@ -25,6 +25,7 @@ class LibassTextRenderer(
     private val formatHolder = FormatHolder()
     private val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
     private var srtReadOrder = 0
+    private var isSrtOrVtt = false
 
     override fun getName(): String = "BeamLibassTextRenderer"
 
@@ -55,6 +56,8 @@ class LibassTextRenderer(
     ) {
         super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
         val format = formats[0]
+        val mimeType = format.sampleMimeType
+        isSrtOrVtt = mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT
         val initData = format.initializationData
         dialogueFormatLine = initData.firstOrNull()?.toString(Charsets.UTF_8)?.takeIf { it.startsWith("Format:") }
         if (!inputFormatReceived && initData.isNotEmpty()) {
@@ -126,6 +129,50 @@ class LibassTextRenderer(
         return mergedHeader.toByteArray(Charsets.UTF_8)
     }
 
+    private fun zlibDecompressIfNeeded(bytes: ByteArray): ByteArray {
+        if (bytes.size < 2) return bytes
+        val b0 = bytes[0].toInt() and 0xFF
+        val b1 = bytes[1].toInt() and 0xFF
+        if (b0 != 0x78 || (b0 * 256 + b1) % 31 != 0) return bytes
+        if ((b1 and 0x20) != 0) return bytes
+        return try {
+            val inflater = java.util.zip.Inflater()
+            inflater.setInput(bytes)
+            val out = java.io.ByteArrayOutputStream()
+            val tmp = ByteArray(8192)
+            while (!inflater.finished()) {
+                val n = inflater.inflate(tmp)
+                if (n <= 0) break
+                out.write(tmp, 0, n)
+            }
+            val finished = inflater.finished()
+            val remaining = inflater.remaining
+            inflater.end()
+            if (out.size() > 0) {
+                if (!finished) {
+                    Timber.d(
+                        "beam subtitle: zlib decompressed %d→%d bytes (no trailer, remaining=%d)",
+                        bytes.size, out.size(), remaining,
+                    )
+                } else {
+                    Timber.d("beam subtitle: zlib decompressed %d→%d bytes", bytes.size, out.size())
+                }
+                out.toByteArray()
+            } else {
+                val preview = bytes.take(32).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                Timber.w(
+                    "beam subtitle: zlib produced zero output %d bytes finished=%b remaining=%d head=%s",
+                    bytes.size, finished, remaining, preview,
+                )
+                bytes
+            }
+        } catch (e: Exception) {
+            val preview = bytes.take(32).joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+            Timber.w(e, "beam subtitle: zlib decompression failed head=%s", preview)
+            bytes
+        }
+    }
+
     private fun hasKaraokeTags(bytes: ByteArray): Boolean =
         Regex("""\\[kK][fo]?""").containsMatchIn(String(bytes, Charsets.UTF_8))
 
@@ -184,22 +231,48 @@ class LibassTextRenderer(
             .replace(Regex("<[^>]+>"), "")
 
     private fun normalizeAssChunkForLibass(bytes: ByteArray): ByteArray {
-        val text = String(bytes, Charsets.UTF_8)
-        if (text.startsWith("Dialogue:")) {
-            val body = text.removePrefix("Dialogue:").trimStart()
-            val commaPositions = ArrayList<Int>(3)
-            body.forEachIndexed { index, c ->
-                if (c == ',') {
-                    commaPositions += index
-                    if (commaPositions.size == 3) return@forEachIndexed
-                }
-            }
-            if (commaPositions.size < 3) return bytes
-            return body.substring(commaPositions[1] + 1).toByteArray(Charsets.UTF_8)
+        if (isSrtOrVtt) {
+            val text = String(bytes, Charsets.UTF_8)
+            val cleanText = parseSrtOrVttText(text)
+            return "${srtReadOrder++},0,Default,,0,0,0,,$cleanText".toByteArray(Charsets.UTF_8)
         }
-        val cleanText = parseSrtOrVttText(text)
-        val readOrder = srtReadOrder++
-        return "$readOrder,0,Default,,0,0,0,,$cleanText".toByteArray(Charsets.UTF_8)
+
+        val payloadBytes: ByteArray
+        if (bytes.size >= 9 &&
+            bytes[0] == 'D'.code.toByte() && bytes[1] == 'i'.code.toByte() &&
+            bytes[2] == 'a'.code.toByte() && bytes[3] == 'l'.code.toByte() &&
+            bytes[4] == 'o'.code.toByte() && bytes[5] == 'g'.code.toByte() &&
+            bytes[6] == 'u'.code.toByte() && bytes[7] == 'e'.code.toByte() &&
+            bytes[8] == ':'.code.toByte()
+        ) {
+            var commaCount = 0
+            var bodyOffset = 9
+            while (bodyOffset < bytes.size && commaCount < 2) {
+                if (bytes[bodyOffset] == ','.code.toByte()) commaCount++
+                bodyOffset++
+            }
+            if (commaCount < 2) return ByteArray(0)
+            val rawBlock = bytes.copyOfRange(bodyOffset, bytes.size)
+            payloadBytes = zlibDecompressIfNeeded(rawBlock)
+        } else {
+            payloadBytes = zlibDecompressIfNeeded(bytes)
+        }
+
+        val text = String(payloadBytes, Charsets.UTF_8)
+
+        if (text.any { it == '\uFFFD' || it.code < 0x09 || it.code in 0x0E..0x1F }) {
+            Timber.w("beam subtitle: discarding binary/corrupt chunk (%d bytes)", payloadBytes.size)
+            return ByteArray(0)
+        }
+
+        return replaceReadOrder(text)
+    }
+
+    private fun replaceReadOrder(block: String): ByteArray {
+        val firstComma = block.indexOf(',')
+        if (firstComma < 0) return ByteArray(0)
+        val normalized = "${srtReadOrder++},${block.substring(firstComma + 1)}"
+        return normalized.toByteArray(Charsets.UTF_8)
     }
 
     private fun toAssColor(color: Int): String {
