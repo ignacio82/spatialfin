@@ -214,13 +214,13 @@ class JellyfinRepositoryOfflineImpl(
                 database
                     .getMoviesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 && !it.played && it.isDownloaded() }
+                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
             val episodes =
                 database
                     .getEpisodesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 && !it.played && it.isDownloaded() }
-            movies + episodes
+                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
+            ResumeFilter.keepResumable(movies + episodes)
         }
     }
 

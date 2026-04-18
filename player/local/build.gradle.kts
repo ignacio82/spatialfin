@@ -35,4 +35,5 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)
     implementation(libs.timber)
+    testImplementation(libs.junit4)
 }

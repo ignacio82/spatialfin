@@ -2371,30 +2371,11 @@ constructor(
         )
     }
 
-    private fun subtitleTrackSignature(group: Tracks.Group): String {
-        val format = group.getTrackFormat(0)
-        val label = format.label.orEmpty().trim().lowercase()
-        return listOf(
-            format.language.orEmpty().trim().lowercase(),
-            label,
-            format.roleFlags.toString(),
-            format.selectionFlags.toString(),
-            format.sampleMimeType.orEmpty().trim().lowercase(),
-        ).joinToString("|")
-    }
+    private fun subtitleTrackSignature(group: Tracks.Group): String =
+        PlayerTrackSignatures.subtitle(group)
 
-    private fun audioTrackSignature(group: Tracks.Group): String {
-        val format = group.getTrackFormat(0)
-        val label = format.label.orEmpty().trim().lowercase()
-        return listOf(
-            format.language.orEmpty().trim().lowercase(),
-            label,
-            format.roleFlags.toString(),
-            format.selectionFlags.toString(),
-            format.sampleMimeType.orEmpty().trim().lowercase(),
-            format.codecs.orEmpty().trim().lowercase(),
-        ).joinToString("|")
-    }
+    private fun audioTrackSignature(group: Tracks.Group): String =
+        PlayerTrackSignatures.audio(group)
 
     private fun scoreSubtitleGroup(
         group: Tracks.Group,

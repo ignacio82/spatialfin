@@ -201,6 +201,8 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Hand gesture activation | `player/xr/.../voice/SecondaryHandPinchDetector.kt` | detector |
 | Jellyfin gateway | `data/.../repository/JellyfinRepositoryImpl.kt` | repository |
 | Offline gateway | `data/.../repository/JellyfinRepositoryOfflineImpl.kt` | repository (partial — see [Known Gaps](#known-gaps)) |
+| Continue Watching filter | `data/.../repository/ResumeFilter.kt` | pure object (`ResumeFilterTest`) |
+| Track signature ids | `player/local/.../presentation/PlayerTrackSignatures.kt` | pure object (`PlayerTrackSignaturesTest`) |
 | SMB/NFS bridge | `data/.../network/{Smb,Nfs}FileClient.kt`, `NetworkStreamProxy.kt` | clients + local HTTP proxy |
 | mDNS discovery | `data/.../network/NetworkDiscovery.kt` | discovery |
 | Downloads | `core/.../work/` workers + `data/.../downloads/DownloadStorageManager.kt` | WorkManager |
@@ -468,7 +470,7 @@ These are the gaps a future contributor (human or AI) should know about. If you 
 - **`SpatialPlayerScreen.kt.orig`** — leftover backup file. Safe to delete; verify no script references it first.
 - **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — both are very large (>2000 lines). Split before adding major new player features; otherwise AI context windows and human reviewers both struggle.
 - **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` and pose persistence into `PanelPoseController`; the Activity now reads as pure orchestration (`~750` lines, mostly device-class branching and the FullSpace Subspace tree). Next size pressure is `SpatialPlayerScreen.kt` and `PlayerViewModel.kt` — both still >2k lines.
-- **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest` exist. The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — add tests when changing those areas. Note: only JUnit 4 is wired in (no Mockito/MockK/Robolectric), so prefer extracting pure helpers/policies for testability rather than mocking framework calls.
+- **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest`, `ResumeFilterTest`, `PlayerTrackSignaturesTest` exist. The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — add tests when changing those areas. Note: only JUnit 4 is wired in (no Mockito/MockK/Robolectric), so prefer extracting pure helpers/policies (taking primitive args, not framework types) for testability rather than mocking framework calls.
 - **`isMinifyEnabled = false` for release** — see [Build Quirks](#build-quirks). Long-term debt; revisit when androidx.xr fixes the R8 interaction.
 
 ---
