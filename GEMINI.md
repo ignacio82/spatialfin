@@ -63,7 +63,8 @@ These paths are usually not useful for code understanding and should be skipped 
 
 ### Important Entry Points
 
-- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only `Application`/`Activity` startup path. Branches on `DeviceClass` (XR/PHONE/TV) and orchestrates the entire XR session, voice pipeline, and panel placement.
+- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only `Application`/`Activity` startup path. Branches on `DeviceClass` (XR/PHONE/TV) and orchestrates the XR session, panel placement, and gesture wiring. Delegates voice to `HomeVoiceController`.
+- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` — owns Home-Space voice services (`SpatialVoiceService`, TTS, Gemini Nano/Cloud, command coordinator, chat engine), the request/interrupt state machine, telemetry, and the Compose effects that drive feedback timeouts, ERROR auto-reset, TTS bookkeeping, and follow-up auto-listen.
 - `app/unified/src/main/java/dev/spatialfin/unified/XrSpaceController.kt` — single source of truth for `HOME` ↔ `FULL` space transitions.
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/XrPlayerActivity.kt` — Full Space immersive player (separate Activity).
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/MultitaskPlayerActivity.kt` — Home Space side-by-side player.
@@ -84,7 +85,8 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SpatialVoiceSynthesizer.kt`
 - `player/session/src/main/java/dev/jdtech/jellyfin/player/session/voice/PlayerSessionController.kt`
 - `settings/src/main/java/dev/jdtech/jellyfin/settings/voice/VoiceTelemetryStore.kt`
-- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` (Home Space voice wiring lives here)
+- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` (Home-Space voice state machine + lazy LLM/TTS service creation)
+- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` (gesture wiring + navigation surface for the controller)
 
 ---
 
@@ -181,6 +183,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Subsystem | Where it lives | Owner type |
 |---|---|---|
 | App startup, device branching | `app/unified/.../UnifiedMainActivity.kt` | `Activity` + Compose |
+| Home-Space voice state machine | `app/unified/.../HomeVoiceController.kt` | Compose-aware controller |
 | XR space transitions (Home ↔ Full) | `app/unified/.../XrSpaceController.kt` | runtime controller |
 | XR immersive player Activity | `player/xr/.../XrPlayerActivity.kt` | `Activity` |
 | Home Space player | `player/xr/.../MultitaskPlayerActivity.kt` | `Activity` |
@@ -460,7 +463,7 @@ These are the gaps a future contributor (human or AI) should know about. If you 
 - **`core/.../utils/DownloaderImpl.kt`** — has a TODO noting that some download steps may abort if the user navigates away mid-flight; the long-term fix is to push everything onto WorkManager.
 - **`SpatialPlayerScreen.kt.orig`** — leftover backup file. Safe to delete; verify no script references it first.
 - **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — both are very large (>2000 lines). Split before adding major new player features; otherwise AI context windows and human reviewers both struggle.
-- **`UnifiedMainActivity.kt`** — `XrContent` composable is responsible for voice setup, follow-up windows, pose persistence, AND space switching. Worth extracting `VoiceController` / `PoseController` as plain holders so the Activity reads as orchestration only.
+- **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` (~330 LOC removed from `XrContent`). Pose persistence (`loadAppRootPose`/`saveAppRootPose`/`migrateLegacyCenteredAppPose` and the 1 Hz pose-tracking `LaunchedEffect` inside `FullSpaceContent`) is the next holder worth extracting so the Activity reads as orchestration only.
 - **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest` exist; the player UI, repositories, and offline mode are essentially untested. Add tests when changing those areas.
 - **`isMinifyEnabled = false` for release** — see [Build Quirks](#build-quirks). Long-term debt; revisit when androidx.xr fixes the R8 interaction.
 

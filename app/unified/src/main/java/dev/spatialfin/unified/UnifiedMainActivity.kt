@@ -18,8 +18,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,19 +66,8 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
-import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
-import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
-import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
-import dev.jdtech.jellyfin.player.xr.voice.AssistantReply
-import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
-import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
-import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
-import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
-import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
-import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.presentation.local.localVideoPermissions
@@ -105,7 +92,6 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.tv.TvNavigationRoot
 import dev.spatialfin.tv.TvTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -306,30 +292,21 @@ class UnifiedMainActivity : AppCompatActivity() {
         // ------------------------------------------------------------------
         // Voice setup (shared across both space modes)
         // ------------------------------------------------------------------
-        val voiceService = remember(context) {
-            SpatialVoiceService(context.applicationContext)
+        val voiceController = remember(context) {
+            HomeVoiceController(
+                applicationContext = context.applicationContext,
+                appPreferences = appPreferences,
+                repository = repository,
+                llmModelManager = llmModelManager,
+                voiceTelemetryStore = voiceTelemetryStore,
+            )
         }
-        val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
-        val isTtsSpeaking by tts.isSpeaking.collectAsState()
-        var geminiNanoService by remember { mutableStateOf<GeminiNanoService?>(null) }
-        var geminiCloudService by remember { mutableStateOf<GeminiCloudService?>(null) }
-        var commandCoordinator by remember { mutableStateOf<SpatialCommandCoordinator?>(null) }
-        var chatEngine by remember { mutableStateOf<SmartChatEngine?>(null) }
-        val voiceState by voiceService.state.collectAsState()
-        val partialTranscript by voiceService.partialTranscript.collectAsState()
-        var voiceFeedback by remember { mutableStateOf<String?>(null) }
-        var activeVoiceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-        var assistantSpeechPendingStart by remember { mutableStateOf(false) }
-        var assistantSpeechStarted by remember { mutableStateOf(false) }
-        val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
-        var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
-        var voiceGestureHint by remember { mutableStateOf<String?>(null) }
-        var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
-        var voiceSearchQuery by remember { mutableStateOf(initialSearchQueryExtra) }
-        var followUpPending by remember { mutableStateOf(false) }
-        var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
-        val followUpListenWindowMs = 12_000L
-        val followUpAutoStartDelayMs = 200L
+        LaunchedEffect(initialSearchQueryExtra) {
+            voiceController.setInitialSearchQuery(initialSearchQueryExtra)
+        }
+        val voiceState by voiceController.voiceService.state.collectAsState()
+        val partialTranscript by voiceController.voiceService.partialTranscript.collectAsState()
+        val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsState()
         // Reactive prefs: observe SharedPreferences changes so toggling a setting
         // from the Settings screen recomposes the Home Space voice UI immediately
         // instead of requiring the Activity to be recreated.
@@ -344,83 +321,6 @@ class UnifiedMainActivity : AppCompatActivity() {
         }
         val assistantVoicePreference by appPreferences.rememberPrefState(appPreferences.voiceAssistantVoice) {
             appPreferences.getValue(appPreferences.voiceAssistantVoice) ?: "male"
-        }
-
-        fun armFollowUpWindow(reason: String) {
-            followUpPending = true
-            followUpDeadlineMs = System.currentTimeMillis() + followUpListenWindowMs
-            voiceGestureHint = "Answer now"
-            Timber.i(
-                "VOICE: follow-up armed reason=%s windowMs=%d",
-                reason,
-                followUpListenWindowMs,
-            )
-        }
-
-        fun scheduleFollowUp(spokenReplyExpected: Boolean) {
-            if (spokenReplyExpected) {
-                followUpPending = true
-                followUpDeadlineMs = 0L
-                voiceGestureHint = "Wait for the reply, then answer"
-                Timber.i("VOICE: follow-up scheduled pending spoken reply")
-            } else {
-                armFollowUpWindow("text-only-reply")
-            }
-        }
-
-        fun navigateHomeVoiceItem(item: SpatialFinItem): Boolean {
-            if (navController.currentBackStackEntry?.lifecycle?.currentState != Lifecycle.State.RESUMED) {
-                return false
-            }
-            return when (item) {
-                is SpatialFinMovie -> {
-                    navController.navigate(MovieRoute(movieId = item.id.toString()))
-                    true
-                }
-                is SpatialFinShow -> {
-                    navController.navigate(ShowRoute(showId = item.id.toString()))
-                    true
-                }
-                is SpatialFinSeason -> {
-                    navController.navigate(SeasonRoute(seasonId = item.id.toString()))
-                    true
-                }
-                is SpatialFinEpisode -> {
-                    navController.navigate(EpisodeRoute(episodeId = item.id.toString()))
-                    true
-                }
-                else -> {
-                    voiceSearchQuery = item.name
-                    navController.navigate(MediaRoute) {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                    true
-                }
-            }
-        }
-
-        fun launchHomeVoiceItem(item: SpatialFinItem): Boolean {
-            val playbackIntent = XrPlayerActivity.createIntentForItem(context, item)
-            if (playbackIntent != null) {
-                val launched = runCatching {
-                    context.startActivity(playbackIntent)
-                }.isSuccess
-                if (launched) return true
-            }
-            return navigateHomeVoiceItem(item)
-        }
-
-        // A voice turn is "busy" when a recognition/processing/speech cycle is in flight.
-        // The same predicate answers both "is it safe to start a new turn?" (callers
-        // negate) and "is there something to interrupt right now?" (callers use directly).
-        fun isVoiceTurnBusy(): Boolean {
-            return voiceState != VoiceState.IDLE ||
-                activeVoiceJob?.isActive == true ||
-                assistantSpeechPendingStart ||
-                assistantSpeechStarted ||
-                isTtsSpeaking
         }
 
         var hasAudioPermission by remember {
@@ -456,248 +356,105 @@ class UnifiedMainActivity : AppCompatActivity() {
                     voiceControlEnabled &&
                         hasHandTrackingPermission &&
                         hasAudioPermission &&
-                        voiceService.isAvailable() &&
-                        !isVoiceTurnBusy()
+                        voiceController.voiceService.isAvailable() &&
+                        !voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)
                 },
                 shouldDetectInterrupt = {
                     voiceControlEnabled &&
                         hasHandTrackingPermission &&
-                        isVoiceTurnBusy()
+                        voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)
                 },
             )
         }
 
-        data class HomeVoiceActionOutcome(
-            val feedback: String,
-            val assistantReply: AssistantReply? = null,
-        )
-
-        suspend fun handleVoiceAction(action: XrPlayerAction, onToken: ((String) -> Unit)? = null): HomeVoiceActionOutcome {
-            return when (action) {
-                is XrPlayerAction.Search -> {
-                    if (action.autoPlay) {
-                        val matchedItem =
-                            runCatching { repository.getSearchItems(action.query) }
-                                .getOrDefault(emptyList())
-                                .firstOrNull()
-                        if (matchedItem != null && launchHomeVoiceItem(matchedItem)) {
-                            followUpPending = false
-                            return HomeVoiceActionOutcome("Playing ${matchedItem.name}")
+        // Navigation surface the controller invokes when a parsed voice intent
+        // resolves to a media item or a screen jump. Closure captures the latest
+        // navController/context so per-call lookups stay current.
+        val navigation = remember(navController, context) {
+            object : HomeVoiceNavigation {
+                private fun navigateToItem(item: SpatialFinItem): Boolean {
+                    if (navController.currentBackStackEntry?.lifecycle?.currentState !=
+                        Lifecycle.State.RESUMED
+                    ) {
+                        return false
+                    }
+                    return when (item) {
+                        is SpatialFinMovie -> {
+                            navController.navigate(MovieRoute(movieId = item.id.toString()))
+                            true
+                        }
+                        is SpatialFinShow -> {
+                            navController.navigate(ShowRoute(showId = item.id.toString()))
+                            true
+                        }
+                        is SpatialFinSeason -> {
+                            navController.navigate(SeasonRoute(seasonId = item.id.toString()))
+                            true
+                        }
+                        is SpatialFinEpisode -> {
+                            navController.navigate(EpisodeRoute(episodeId = item.id.toString()))
+                            true
+                        }
+                        else -> {
+                            voiceController.voiceSearchQuery = item.name
+                            navController.navigate(MediaRoute) {
+                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                            true
                         }
                     }
-                    voiceSearchQuery = action.query
-                    HomeVoiceActionOutcome("Searching for ${action.query}")
                 }
-                is XrPlayerAction.SelectOption -> {
-                    val selectedItem = recommendationContext?.items?.getOrNull(action.index)
-                    if (selectedItem != null && launchHomeVoiceItem(selectedItem)) {
-                        followUpPending = false
-                        HomeVoiceActionOutcome("Playing ${selectedItem.name}")
-                    } else {
-                        HomeVoiceActionOutcome("I couldn't match that recommendation")
+
+                override fun launchItem(item: SpatialFinItem): Boolean {
+                    val playbackIntent = XrPlayerActivity.createIntentForItem(context, item)
+                    if (playbackIntent != null) {
+                        if (runCatching { context.startActivity(playbackIntent) }.isSuccess) {
+                            return true
+                        }
                     }
+                    return navigateToItem(item)
                 }
-                is XrPlayerAction.ChatQuery -> {
-                    val nano = geminiNanoService
-                        ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
-                    val cloud = geminiCloudService
-                        ?: GeminiCloudService(context.applicationContext, appPreferences, repository)
-                            .also { geminiCloudService = it }
-                    val assistant = chatEngine
-                        ?: SmartChatEngine(nano, cloud, appPreferences, llmModelManager, repository)
-                            .also { it.initialize(); chatEngine = it }
-                    val response =
-                        assistant.query(
-                            question = action.query,
-                            playerState =
-                                PlayerStateSnapshot(
-                                    screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.HOME,
-                                    lastRecommendationQuery = recommendationContext?.query,
-                                    lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-                                    lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
-                                ),
-                            assistantPreferences =
-                                AssistantPreferences(
-                                    verbosity = appPreferences.getValue(appPreferences.voiceAssistantVerbosity),
-                                    spoilerPolicy = appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy),
-                                    spokenRepliesEnabled = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies),
-                                ),
-                            onSearchQuery = { query -> repository.getSearchItems(query) },
-                            conversationHistory = conversationHistory,
-                            recommendationContext = recommendationContext,
-                            onGetSuggestions = { repository.getSuggestions() },
-                            onTokenStream = onToken,
-                        )
-                    response.recommendedItems
-                        .takeIf { it.isNotEmpty() }
-                        ?.let { recommendationContext = RecommendationContext(action.query, it) }
-                    val feedback =
-                        response.text?.also { reply ->
-                            conversationHistory.add(action.query to reply)
-                            if (conversationHistory.size > 6) conversationHistory.removeAt(0)
-                            val willSpeakReply = assistantSpokenReplies && tts.canSpeak()
-                            scheduleFollowUp(willSpeakReply)
-                            if (willSpeakReply) {
-                                assistantSpeechPendingStart = true
-                                assistantSpeechStarted = false
-                                tts.speak(reply, null, assistantVoicePreference)
-                            }
-                        } ?: "Sorry, I couldn't process that."
-                    HomeVoiceActionOutcome(feedback, response)
-                }
-                is XrPlayerAction.CloseApp -> {
-                    onFinishAffinity()
-                    HomeVoiceActionOutcome("Closing SpatialFin")
-                }
-                is XrPlayerAction.GoBack -> {
-                    if (!navController.popBackStack()) onFinish()
-                    HomeVoiceActionOutcome("Going back")
-                }
-                is XrPlayerAction.GoHome -> {
+
+                override fun goHome() {
                     navController.navigate(HomeRoute) {
                         popUpTo(navController.graph.startDestinationId)
                         launchSingleTop = true
                     }
-                    HomeVoiceActionOutcome("Returning home")
                 }
-                is XrPlayerAction.Unrecognized -> HomeVoiceActionOutcome("I didn't catch that: ${action.transcript}")
-                else -> HomeVoiceActionOutcome("Command not available on home screen")
+
+                override fun goBack() {
+                    if (!navController.popBackStack()) onFinish()
+                }
+
+                override fun closeApp() {
+                    onFinishAffinity()
+                }
             }
         }
 
-        fun requestVoiceCommand(source: String = "manual") {
-            if (isVoiceTurnBusy()) {
-                Timber.i(
-                    "VOICE: request ignored source=%s state=%s speaking=%b pendingSpeech=%b startedSpeech=%b jobActive=%b",
-                    source,
-                    voiceState,
-                    isTtsSpeaking,
-                    assistantSpeechPendingStart,
-                    assistantSpeechStarted,
-                    activeVoiceJob?.isActive == true,
-                )
-                return
-            }
-            if (!voiceService.isAvailable()) {
-                voiceFeedback = "Speech recognition unavailable"
-                return
-            }
-            if (!hasAudioPermission) {
-                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                return
-            }
-            Timber.i(
-                "VOICE: request starting source=%s followUpPending=%b followUpDeadlineMs=%d",
-                source,
-                followUpPending,
-                followUpDeadlineMs,
-            )
-            followUpPending = false
-            followUpDeadlineMs = 0L
-            voiceGestureHint = null
-            voiceService.startListening { transcript ->
-                val job = coroutineScope.launch {
-                    try {
-                    val startedAtMs = System.currentTimeMillis()
-                    val nano = geminiNanoService
-                        ?: GeminiNanoService(context.applicationContext).also { geminiNanoService = it }
-                    val cloud = geminiCloudService
-                        ?: GeminiCloudService(context.applicationContext, appPreferences, repository)
-                            .also { geminiCloudService = it }
-                    val coordinator = commandCoordinator
-                        ?: SpatialCommandCoordinator(
-                            context.applicationContext,
-                            nano,
-                            cloud,
-                            appPreferences,
-                            llmModelManager,
-                        )
-                            .also { it.initialize(); commandCoordinator = it }
-                    val snapshot =
-                        PlayerStateSnapshot(
-                            screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.HOME,
-                            lastRecommendationQuery = recommendationContext?.query,
-                            lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-                            lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
-                        )
-                    val parseResult = coordinator.parse(transcript, snapshot)
-                    if (parseResult.action is XrPlayerAction.ChatQuery) {
-                        voiceFeedback = "…"
-                    }
-                    val outcome = handleVoiceAction(parseResult.action, onToken = { partial -> voiceFeedback = partial })
-                    voiceFeedback = outcome.feedback
-                    voiceTelemetryStore.record(
-                        VoiceTelemetryEntry(
-                            transcript = transcript,
-                            normalizedTranscript = parseResult.normalizedTranscript,
-                            action = parseResult.action::class.simpleName ?: "Unknown",
-                            strategy = parseResult.strategy.name,
-                            latencyMs = System.currentTimeMillis() - startedAtMs,
-                            success = parseResult.action !is XrPlayerAction.Unrecognized,
-                            details = parseResult.debugInfo,
-                        )
-                    )
-                    if (parseResult.action is XrPlayerAction.ChatQuery && outcome.assistantReply != null) {
-                        voiceTelemetryStore.record(
-                            VoiceTelemetryEntry(
-                                transcript = transcript,
-                                normalizedTranscript = parseResult.normalizedTranscript,
-                                action = "ChatQuery",
-                                strategy = outcome.assistantReply.strategy,
-                                latencyMs = System.currentTimeMillis() - startedAtMs,
-                                success = outcome.assistantReply.text != null,
-                                selectedSkill = outcome.assistantReply.selectedSkill,
-                                validatedInput = outcome.assistantReply.validatedInput,
-                                resultDisposition = outcome.assistantReply.resultDisposition,
-                                details = "parse=${parseResult.debugInfo}; reply=${outcome.assistantReply.debugInfo}",
-                            )
-                        )
-                    }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        voiceFeedback = null
-                        throw e
-                    } finally {
-                        activeVoiceJob = null
-                        voiceService.resetState()
-                    }
-                }
-                activeVoiceJob = job
-            }
-        }
+        // Captured environment for follow-up auto-listen; rememberUpdatedState keeps
+        // the latest values without re-keying the gesture coroutine collector.
+        val latestHasAudioPermission = rememberUpdatedState(hasAudioPermission)
+        val latestAssistantSpoken = rememberUpdatedState(assistantSpokenReplies)
+        val latestAssistantVoice = rememberUpdatedState(assistantVoicePreference)
+        val onAudioPermissionMissing = rememberUpdatedState({
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        })
 
-        fun interruptVoiceCommand(reason: String) {
-            if (!isVoiceTurnBusy()) return
-            val shouldResumeFollowUp =
-                followUpPending &&
-                    (isTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
-            Timber.i(
-                "VOICE: interrupt requested reason=%s state=%s speaking=%b jobActive=%b resumeFollowUp=%b",
-                reason,
-                voiceState,
-                isTtsSpeaking,
-                activeVoiceJob?.isActive == true,
-                shouldResumeFollowUp,
+        fun startVoiceCommand(source: String) {
+            voiceController.requestVoiceCommand(
+                scope = coroutineScope,
+                source = source,
+                currentVoiceState = voiceState,
+                currentTtsSpeaking = isTtsSpeaking,
+                hasAudioPermission = latestHasAudioPermission.value,
+                assistantSpokenReplies = latestAssistantSpoken.value,
+                assistantVoicePreference = latestAssistantVoice.value,
+                navigation = navigation,
+                onAudioPermissionMissing = { onAudioPermissionMissing.value() },
             )
-            voiceGestureArmingProgress = 0f
-            voiceGestureHint = null
-            voiceFeedback = null
-            assistantSpeechPendingStart = false
-            assistantSpeechStarted = false
-            activeVoiceJob?.cancel()
-            activeVoiceJob = null
-            tts.stop()
-            voiceService.cancelListening()
-            voiceService.resetState()
-            if (shouldResumeFollowUp) {
-                armFollowUpWindow("speech-interrupted")
-                coroutineScope.launch {
-                    delay(followUpAutoStartDelayMs)
-                    requestVoiceCommand("follow-up-interrupt")
-                }
-            } else {
-                followUpPending = false
-                followUpDeadlineMs = 0L
-            }
         }
 
         LaunchedEffect(session, hasHandTrackingPermission) {
@@ -716,134 +473,40 @@ class UnifiedMainActivity : AppCompatActivity() {
                 pinchDetector.gestureStates.collect { event ->
                     when (event) {
                         is SecondaryHandPinchDetector.GestureState.Arming -> {
-                            voiceGestureArmingProgress = event.progress
-                            voiceGestureHint = event.hint
+                            voiceController.onGestureUpdate(event.progress, event.hint)
                         }
                         is SecondaryHandPinchDetector.GestureState.Started -> {
-                            voiceGestureArmingProgress = 1f
-                            voiceGestureHint = null
+                            voiceController.onGestureUpdate(1f, null)
                             when (event.gestureType) {
-                                SecondaryHandPinchDetector.GestureType.ACTIVATE -> requestVoiceCommand()
+                                SecondaryHandPinchDetector.GestureType.ACTIVATE ->
+                                    startVoiceCommand("manual")
                                 SecondaryHandPinchDetector.GestureType.INTERRUPT ->
-                                    interruptVoiceCommand("fist-gesture")
+                                    voiceController.interruptVoiceCommand(
+                                        scope = coroutineScope,
+                                        reason = "fist-gesture",
+                                        currentVoiceState = voiceState,
+                                        currentTtsSpeaking = isTtsSpeaking,
+                                        requestFollowUp = { startVoiceCommand("follow-up-interrupt") },
+                                    )
                             }
                         }
-                        is SecondaryHandPinchDetector.GestureState.Ended -> {
-                            voiceGestureArmingProgress = 0f
-                            if (voiceState != VoiceState.LISTENING) {
-                                voiceGestureHint = null
-                            }
-                        }
-                        SecondaryHandPinchDetector.GestureState.Idle -> {
-                            voiceGestureArmingProgress = 0f
-                            if (voiceState != VoiceState.LISTENING) voiceGestureHint = null
-                        }
+                        is SecondaryHandPinchDetector.GestureState.Ended ->
+                            voiceController.clearGestureHintIfIdle(voiceState)
+                        SecondaryHandPinchDetector.GestureState.Idle ->
+                            voiceController.clearGestureHintIfIdle(voiceState)
                     }
                 }
             }
         }
 
-        LaunchedEffect(voiceFeedback, isTtsSpeaking) {
-            val feedback = voiceFeedback ?: return@LaunchedEffect
-            if (!isTtsSpeaking) {
-                // "…" is the in-progress indicator — give it a long timeout so it clears
-                // if inference never completes (e.g. job cancelled, GPU stuck).
-                val timeoutMs = if (feedback == "…") 60_000L
-                                else (feedback.length * 55L).coerceIn(4_000L, 10_000L)
-                delay(timeoutMs)
-                if (voiceFeedback == feedback && !isTtsSpeaking) {
-                    voiceFeedback = null
-                    voiceService.resetState()
-                }
-            }
-        }
+        // The controller owns the rest of the voice state machine (feedback timeout,
+        // ERROR auto-reset, TTS bookkeeping, follow-up auto-start).
+        voiceController.RegisterEffects(
+            requestFollowUp = { startVoiceCommand("follow-up-auto") },
+        )
 
-        LaunchedEffect(voiceState) {
-            if (voiceState == VoiceState.ERROR) {
-                delay(2_000L)
-                if (voiceState == VoiceState.ERROR) {
-                    voiceService.resetState()
-                }
-            }
-        }
-
-        LaunchedEffect(isTtsSpeaking, assistantSpeechPendingStart, assistantSpeechStarted, followUpPending) {
-            if (assistantSpeechPendingStart && isTtsSpeaking) {
-                assistantSpeechPendingStart = false
-                assistantSpeechStarted = true
-            } else if (assistantSpeechPendingStart && !isTtsSpeaking) {
-                delay(1_500L)
-                if (assistantSpeechPendingStart && !isTtsSpeaking) {
-                    assistantSpeechPendingStart = false
-                    assistantSpeechStarted = false
-                    if (followUpPending && followUpDeadlineMs == 0L) {
-                        armFollowUpWindow("spoken-reply-did-not-start")
-                    }
-                }
-            } else if (!isTtsSpeaking && assistantSpeechStarted) {
-                assistantSpeechStarted = false
-                if (followUpPending && followUpDeadlineMs == 0L) {
-                    armFollowUpWindow("spoken-reply-finished")
-                }
-            }
-        }
-
-        LaunchedEffect(
-            followUpPending,
-            followUpDeadlineMs,
-            isTtsSpeaking,
-            assistantSpeechPendingStart,
-            assistantSpeechStarted,
-            voiceState,
-            activeVoiceJob,
-        ) {
-            if (
-                !followUpPending ||
-                followUpDeadlineMs == 0L ||
-                isTtsSpeaking ||
-                assistantSpeechPendingStart ||
-                assistantSpeechStarted ||
-                voiceState != VoiceState.IDLE ||
-                activeVoiceJob?.isActive == true
-            ) {
-                return@LaunchedEffect
-            }
-            val remaining = followUpDeadlineMs - System.currentTimeMillis()
-            if (remaining <= 0L) {
-                followUpPending = false
-                voiceGestureHint = null
-                return@LaunchedEffect
-            }
-            delay(followUpAutoStartDelayMs)
-            if (
-                followUpPending &&
-                followUpDeadlineMs > 0L &&
-                !isTtsSpeaking &&
-                !assistantSpeechPendingStart &&
-                !assistantSpeechStarted &&
-                voiceState == VoiceState.IDLE &&
-                activeVoiceJob?.isActive != true
-            ) {
-                Timber.i("VOICE: auto-starting follow-up listening remainingMs=%d", followUpDeadlineMs - System.currentTimeMillis())
-                requestVoiceCommand("follow-up-auto")
-            }
-        }
-
-        DisposableEffect(session) {
-            onDispose {
-                voiceService.destroy()
-                tts.destroy()
-                // Release voice/AI services so their background work (OkHttp dispatcher,
-                // LiteRT/AICore handles, coroutine scopes) doesn't leak past the Activity.
-                runCatching { commandCoordinator?.destroy() }
-                commandCoordinator = null
-                runCatching { chatEngine?.destroy() }
-                chatEngine = null
-                runCatching { geminiNanoService?.destroy() }
-                geminiNanoService = null
-                runCatching { geminiCloudService?.destroy() }
-                geminiCloudService = null
-            }
+        DisposableEffect(voiceController) {
+            onDispose { voiceController.destroy() }
         }
 
         // ------------------------------------------------------------------
@@ -856,12 +519,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                 state = state,
                 appPreferences = appPreferences,
                 onboardingCompleted = onboardingCompleted,
-                voiceSearchQuery = voiceSearchQuery,
+                voiceSearchQuery = voiceController.voiceSearchQuery,
                 voiceState = voiceState,
                 partialTranscript = partialTranscript,
-                voiceFeedback = voiceFeedback,
-                voiceGestureArmingProgress = voiceGestureArmingProgress,
-                voiceGestureHint = voiceGestureHint,
+                voiceFeedback = voiceController.voiceFeedback,
+                voiceGestureArmingProgress = voiceController.voiceGestureArmingProgress,
+                voiceGestureHint = voiceController.voiceGestureHint,
                 onReconnect = viewModel::reconnect,
                 onEnterHomeSpace = { spaceController.enterHomeSpace() },
             )
@@ -871,12 +534,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                 state = state,
                 appPreferences = appPreferences,
                 onboardingCompleted = onboardingCompleted,
-                voiceSearchQuery = voiceSearchQuery,
+                voiceSearchQuery = voiceController.voiceSearchQuery,
                 voiceState = voiceState,
                 partialTranscript = partialTranscript,
-                voiceFeedback = voiceFeedback,
-                voiceGestureArmingProgress = voiceGestureArmingProgress,
-                voiceGestureHint = voiceGestureHint,
+                voiceFeedback = voiceController.voiceFeedback,
+                voiceGestureArmingProgress = voiceController.voiceGestureArmingProgress,
+                voiceGestureHint = voiceController.voiceGestureHint,
                 onReconnect = viewModel::reconnect,
                 onEnterFullSpace = { spaceController.enterFullSpace() },
             )
