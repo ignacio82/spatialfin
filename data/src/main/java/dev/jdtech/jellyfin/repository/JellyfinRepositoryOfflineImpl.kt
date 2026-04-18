@@ -27,9 +27,11 @@ import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
+import dev.jdtech.jellyfin.models.SpatialFinImages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -107,11 +109,24 @@ class JellyfinRepositoryOfflineImpl(
         sortBy: SortBy,
         sortOrder: SortOrder,
     ): Flow<PagingData<SpatialFinItem>> {
-        TODO("Not yet implemented")
+        // Library browsing by parentId is not meaningfully reachable offline:
+        // collection structure isn't fully cached, and the screens that consume
+        // this flow (genre browse, full-library lists) work against the live
+        // server. Return an empty page so consumers degrade gracefully instead
+        // of crashing.
+        return flowOf(PagingData.empty())
     }
 
     override suspend fun getPerson(personId: UUID): SpatialFinPerson {
-        TODO("Not yet implemented")
+        // The local DB does not store People metadata. Return a placeholder so
+        // detail screens can render without crashing; they will simply show no
+        // biography or filmography until reconnect.
+        return SpatialFinPerson(
+            id = personId,
+            name = "",
+            overview = "",
+            images = SpatialFinImages(),
+        )
     }
 
     override suspend fun getPersonItems(
@@ -119,7 +134,9 @@ class JellyfinRepositoryOfflineImpl(
         includeTypes: List<BaseItemKind>?,
         recursive: Boolean,
     ): List<SpatialFinItem> {
-        TODO("Not yet implemented")
+        // Person→items mapping isn't cached locally. Empty result is the
+        // honest answer offline.
+        return emptyList()
     }
 
     override suspend fun getFavoriteItems(): List<SpatialFinItem> {
@@ -172,12 +189,12 @@ class JellyfinRepositoryOfflineImpl(
                 database
                     .getMoviesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinMovie(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
+                    .filter { it.playbackPositionTicks > 0 && !it.played && it.isDownloaded() }
             val episodes =
                 database
                     .getEpisodesByServerId(appPreferences.getValue(appPreferences.currentServer)!!)
                     .map { it.toSpatialFinEpisode(database, jellyfinApi.userId!!) }
-                    .filter { it.playbackPositionTicks > 0 && it.isDownloaded() }
+                    .filter { it.playbackPositionTicks > 0 && !it.played && it.isDownloaded() }
             movies + episodes
         }
     }
@@ -244,7 +261,11 @@ class JellyfinRepositoryOfflineImpl(
         }
 
     override suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String {
-        TODO("Not yet implemented")
+        // Downloaded items play from local file URIs through DownloadStorageManager,
+        // so this should never be reached offline. If it is, the caller is trying
+        // to stream from a server we can't reach — fail loudly instead of returning
+        // a misleading URL.
+        error("getStreamUrl is not available in offline mode (item=$itemId)")
     }
 
     override suspend fun getMediaAttachment(

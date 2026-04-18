@@ -65,6 +65,8 @@ These paths are usually not useful for code understanding and should be skipped 
 
 - `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only `Application`/`Activity` startup path. Branches on `DeviceClass` (XR/PHONE/TV) and orchestrates the XR session, panel placement, and gesture wiring. Delegates voice to `HomeVoiceController`.
 - `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` — owns Home-Space voice services (`SpatialVoiceService`, TTS, Gemini Nano/Cloud, command coordinator, chat engine), the request/interrupt state machine, telemetry, and the Compose effects that drive feedback timeouts, ERROR auto-reset, TTS bookkeeping, and follow-up auto-listen.
+- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoicePolicy.kt` — pure decision helpers (`isVoiceTurnBusy`, `decideRequest`, `shouldResumeFollowUpAfterInterrupt`, `feedbackTimeoutMs`) that the controller delegates to. Tested by `HomeVoicePolicyTest`.
+- `app/unified/src/main/java/dev/spatialfin/unified/PanelPoseController.kt` — persists the user-placed XR app panel pose, performs legacy-default migration, and runs the 1 Hz pose-tracking loop. Pure logic lives in the sibling `PanelPosePolicy` object and is covered by `PanelPosePolicyTest`.
 - `app/unified/src/main/java/dev/spatialfin/unified/XrSpaceController.kt` — single source of truth for `HOME` ↔ `FULL` space transitions.
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/XrPlayerActivity.kt` — Full Space immersive player (separate Activity).
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/MultitaskPlayerActivity.kt` — Home Space side-by-side player.
@@ -183,7 +185,8 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Subsystem | Where it lives | Owner type |
 |---|---|---|
 | App startup, device branching | `app/unified/.../UnifiedMainActivity.kt` | `Activity` + Compose |
-| Home-Space voice state machine | `app/unified/.../HomeVoiceController.kt` | Compose-aware controller |
+| Home-Space voice state machine | `app/unified/.../HomeVoiceController.kt` (+ `HomeVoicePolicy.kt`) | Compose-aware controller + pure policy |
+| XR app panel pose persistence | `app/unified/.../PanelPoseController.kt` (+ `PanelPosePolicy.kt`) | controller + pure policy |
 | XR space transitions (Home ↔ Full) | `app/unified/.../XrSpaceController.kt` | runtime controller |
 | XR immersive player Activity | `player/xr/.../XrPlayerActivity.kt` | `Activity` |
 | Home Space player | `player/xr/.../MultitaskPlayerActivity.kt` | `Activity` |
@@ -459,12 +462,12 @@ User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoice
 
 These are the gaps a future contributor (human or AI) should know about. If you fix one, update or remove the line.
 
-- **`JellyfinRepositoryOfflineImpl.kt`** — `getItemsPaging`, `getPerson`, `getPersonItems`, and one more method still throw `TODO()`. Until they're implemented, those code paths only work online.
+- **`JellyfinRepositoryOfflineImpl.kt`** — `getItemsPaging`, `getPerson`, `getPersonItems` now return safe defaults (empty paging, placeholder person, empty list) instead of crashing. `getStreamUrl` raises a loud `error(...)` since downloaded items play from local file URIs and should never reach this path. `getPublicSystemInfo` still throws — onboarding/setup is online-only by design.
 - **`core/.../utils/DownloaderImpl.kt`** — has a TODO noting that some download steps may abort if the user navigates away mid-flight; the long-term fix is to push everything onto WorkManager.
 - **`SpatialPlayerScreen.kt.orig`** — leftover backup file. Safe to delete; verify no script references it first.
 - **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — both are very large (>2000 lines). Split before adding major new player features; otherwise AI context windows and human reviewers both struggle.
-- **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` (~330 LOC removed from `XrContent`). Pose persistence (`loadAppRootPose`/`saveAppRootPose`/`migrateLegacyCenteredAppPose` and the 1 Hz pose-tracking `LaunchedEffect` inside `FullSpaceContent`) is the next holder worth extracting so the Activity reads as orchestration only.
-- **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest` exist; the player UI, repositories, and offline mode are essentially untested. Add tests when changing those areas.
+- **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` and pose persistence into `PanelPoseController`; the Activity now reads as pure orchestration (`~750` lines, mostly device-class branching and the FullSpace Subspace tree). Next size pressure is `SpatialPlayerScreen.kt` and `PlayerViewModel.kt` — both still >2k lines.
+- **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest` exist. The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — add tests when changing those areas. Note: only JUnit 4 is wired in (no Mockito/MockK/Robolectric), so prefer extracting pure helpers/policies for testability rather than mocking framework calls.
 - **`isMinifyEnabled = false` for release** — see [Build Quirks](#build-quirks). Long-term debt; revisit when androidx.xr fixes the R8 interaction.
 
 ---

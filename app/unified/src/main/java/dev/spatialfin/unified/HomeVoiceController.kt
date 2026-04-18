@@ -115,11 +115,13 @@ class HomeVoiceController(
     }
 
     fun isVoiceTurnBusy(voiceState: VoiceState, isTtsSpeaking: Boolean): Boolean {
-        return voiceState != VoiceState.IDLE ||
-            activeVoiceJob?.isActive == true ||
-            assistantSpeechPendingStart ||
-            assistantSpeechStarted ||
-            isTtsSpeaking
+        return HomeVoicePolicy.isVoiceTurnBusy(
+            voiceState = voiceState,
+            isTtsSpeaking = isTtsSpeaking,
+            isJobActive = activeVoiceJob?.isActive == true,
+            assistantSpeechPendingStart = assistantSpeechPendingStart,
+            assistantSpeechStarted = assistantSpeechStarted,
+        )
     }
 
     fun onGestureUpdate(progress: Float, hint: String?) {
@@ -314,25 +316,33 @@ class HomeVoiceController(
         navigation: HomeVoiceNavigation,
         onAudioPermissionMissing: () -> Unit,
     ) {
-        if (isVoiceTurnBusy(currentVoiceState, currentTtsSpeaking)) {
-            Timber.i(
-                "VOICE: request ignored source=%s state=%s speaking=%b pendingSpeech=%b startedSpeech=%b jobActive=%b",
-                source,
-                currentVoiceState,
-                currentTtsSpeaking,
-                assistantSpeechPendingStart,
-                assistantSpeechStarted,
-                activeVoiceJob?.isActive == true,
-            )
-            return
-        }
-        if (!voiceService.isAvailable()) {
-            voiceFeedback = "Speech recognition unavailable"
-            return
-        }
-        if (!hasAudioPermission) {
-            onAudioPermissionMissing()
-            return
+        val decision = HomeVoicePolicy.decideRequest(
+            isBusy = isVoiceTurnBusy(currentVoiceState, currentTtsSpeaking),
+            isRecognitionAvailable = voiceService.isAvailable(),
+            hasAudioPermission = hasAudioPermission,
+        )
+        when (decision) {
+            HomeVoicePolicy.RequestDecision.Busy -> {
+                Timber.i(
+                    "VOICE: request ignored source=%s state=%s speaking=%b pendingSpeech=%b startedSpeech=%b jobActive=%b",
+                    source,
+                    currentVoiceState,
+                    currentTtsSpeaking,
+                    assistantSpeechPendingStart,
+                    assistantSpeechStarted,
+                    activeVoiceJob?.isActive == true,
+                )
+                return
+            }
+            HomeVoicePolicy.RequestDecision.SpeechRecognitionUnavailable -> {
+                voiceFeedback = "Speech recognition unavailable"
+                return
+            }
+            HomeVoicePolicy.RequestDecision.NeedsAudioPermission -> {
+                onAudioPermissionMissing()
+                return
+            }
+            HomeVoicePolicy.RequestDecision.Proceed -> Unit
         }
         Timber.i(
             "VOICE: request starting source=%s followUpPending=%b followUpDeadlineMs=%d",
@@ -414,8 +424,12 @@ class HomeVoiceController(
         requestFollowUp: () -> Unit,
     ) {
         if (!isVoiceTurnBusy(currentVoiceState, currentTtsSpeaking)) return
-        val shouldResumeFollowUp = followUpPending &&
-            (currentTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
+        val shouldResumeFollowUp = HomeVoicePolicy.shouldResumeFollowUpAfterInterrupt(
+            followUpPending = followUpPending,
+            isTtsSpeaking = currentTtsSpeaking,
+            assistantSpeechPendingStart = assistantSpeechPendingStart,
+            assistantSpeechStarted = assistantSpeechStarted,
+        )
         Timber.i(
             "VOICE: interrupt requested reason=%s state=%s speaking=%b jobActive=%b resumeFollowUp=%b",
             reason,
@@ -464,9 +478,7 @@ class HomeVoiceController(
         LaunchedEffect(voiceFeedback, isTtsSpeaking) {
             val feedback = voiceFeedback ?: return@LaunchedEffect
             if (!isTtsSpeaking) {
-                val timeoutMs = if (feedback == "…") 60_000L
-                else (feedback.length * 55L).coerceIn(4_000L, 10_000L)
-                delay(timeoutMs)
+                delay(HomeVoicePolicy.feedbackTimeoutMs(feedback))
                 if (voiceFeedback == feedback && !isTtsSpeaking) {
                     voiceFeedback = null
                     voiceService.resetState()

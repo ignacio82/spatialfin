@@ -52,9 +52,6 @@ import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateSuccess
-import androidx.xr.runtime.math.Pose
-import androidx.xr.runtime.math.Quaternion
-import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.GroupEntity
 import androidx.xr.scenecore.MovableComponent
 import androidx.xr.scenecore.scene
@@ -103,13 +100,6 @@ class UnifiedMainActivity : AppCompatActivity() {
         private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
         private const val PERMISSIONS_PREFS = "startup_permissions"
         private const val STARTUP_PERMISSIONS_REQUESTED_KEY = "startup_permissions_requested"
-        private const val XR_APP_PANEL_LEGACY_DEPTH_METERS = -5f
-        private const val XR_APP_PANEL_V2_DEPTH_METERS = -6f
-        private const val XR_APP_PANEL_V3_DEPTH_METERS = -9f
-        private const val XR_APP_PANEL_V4_DEPTH_METERS = -11f
-        private const val XR_APP_PANEL_DEFAULT_DEPTH_METERS = -1.75f
-        private const val XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE = 5
-        private const val XR_APP_PANEL_DEFAULT_POSE_EPSILON = 0.05f
         private const val XR_APP_PANEL_WIDTH_DP = 1792
         private const val XR_APP_PANEL_HEIGHT_DP = 1008
         private const val XR_APP_PANEL_WIDTH_METERS = 1.792f
@@ -608,6 +598,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         onReconnect: () -> Unit,
         onEnterHomeSpace: () -> Unit,
     ) {
+        val poseController = remember(appPreferences) { PanelPoseController(appPreferences) }
         val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
         val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
         var controlsVisible by remember { mutableStateOf(true) }
@@ -639,30 +630,19 @@ class UnifiedMainActivity : AppCompatActivity() {
 
         LaunchedEffect(rootEntity.value) {
             val root = rootEntity.value ?: return@LaunchedEffect
-            // Only commit to SharedPreferences when the pose actually changes. Writing
-            // every 1 s wears flash, burns battery, and can race the MovableComponent's
-            // final pose with a stale tick.
-            var lastSaved: Pose? = null
-            while (true) {
-                val current = safeGetAppRootPose(root)
-                if (current != null && !poseApproximatelyEqual(current, lastSaved)) {
-                    saveAppRootPose(current)
-                    lastSaved = current
-                }
-                delay(1_000L)
-            }
+            poseController.trackEntityPose(root)
         }
 
         DisposableEffect(session) {
             try {
-                val root = GroupEntity.create(session, "MainScreenRoot", loadAppRootPose())
+                val root = GroupEntity.create(session, "MainScreenRoot", poseController.loadPose())
                 rootEntity.value = root
             } catch (e: Exception) {
                 Timber.w(e, "Failed to create movable root for main screen")
             }
             onDispose {
                 latestRootEntity.value?.let { root ->
-                    safeGetAppRootPose(root)?.let(::saveAppRootPose)
+                    poseController.readEntityPose(root)?.let(poseController::savePose)
                 }
                 rootEntity.value?.dispose()
                 rootEntity.value = null
@@ -768,97 +748,6 @@ class UnifiedMainActivity : AppCompatActivity() {
             .enqueue()
     }
 
-    private fun loadAppRootPose(): Pose {
-        val poseVersion = appPreferences.getValue(appPreferences.xrAppPanelPoseVersion)
-        if (poseVersion < 1) {
-            return Pose(Vector3(0f, 0f, XR_APP_PANEL_DEFAULT_DEPTH_METERS), Quaternion.Identity)
-        }
-        val savedPose =
-            Pose(
-                Vector3(
-                    appPreferences.getValue(appPreferences.xrAppPanelX),
-                    appPreferences.getValue(appPreferences.xrAppPanelY),
-                    appPreferences.getValue(appPreferences.xrAppPanelZ),
-                ),
-                Quaternion(
-                    appPreferences.getValue(appPreferences.xrAppPanelRotX),
-                    appPreferences.getValue(appPreferences.xrAppPanelRotY),
-                    appPreferences.getValue(appPreferences.xrAppPanelRotZ),
-                    appPreferences.getValue(appPreferences.xrAppPanelRotW),
-                ),
-            )
-        if (poseVersion < XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE) {
-            val migratedPose = migrateLegacyCenteredAppPose(savedPose)
-            saveAppRootPose(migratedPose)
-            return migratedPose
-        }
-        return savedPose
-    }
-
-    private fun saveAppRootPose(pose: Pose) {
-        val translation = pose.translation
-        val rotation = pose.rotation
-        appPreferences.setValue(appPreferences.xrAppPanelX, translation.x)
-        appPreferences.setValue(appPreferences.xrAppPanelY, translation.y)
-        appPreferences.setValue(appPreferences.xrAppPanelZ, translation.z)
-        appPreferences.setValue(appPreferences.xrAppPanelRotX, rotation.x)
-        appPreferences.setValue(appPreferences.xrAppPanelRotY, rotation.y)
-        appPreferences.setValue(appPreferences.xrAppPanelRotZ, rotation.z)
-        appPreferences.setValue(appPreferences.xrAppPanelRotW, rotation.w)
-        appPreferences.setValue(
-            appPreferences.xrAppPanelPoseVersion,
-            XR_APP_PANEL_POSE_VERSION_DEFAULT_DISTANCE,
-        )
-    }
-
-    private fun safeGetAppRootPose(entity: GroupEntity): Pose? {
-        return runCatching { entity.getPose() }.getOrNull()
-    }
-
-    private fun poseApproximatelyEqual(a: Pose, b: Pose?): Boolean {
-        if (b == null) return false
-        val epsPos = 1e-4f
-        val epsRot = 1e-4f
-        val ta = a.translation
-        val tb = b.translation
-        if (kotlin.math.abs(ta.x - tb.x) > epsPos) return false
-        if (kotlin.math.abs(ta.y - tb.y) > epsPos) return false
-        if (kotlin.math.abs(ta.z - tb.z) > epsPos) return false
-        val ra = a.rotation
-        val rb = b.rotation
-        if (kotlin.math.abs(ra.x - rb.x) > epsRot) return false
-        if (kotlin.math.abs(ra.y - rb.y) > epsRot) return false
-        if (kotlin.math.abs(ra.z - rb.z) > epsRot) return false
-        if (kotlin.math.abs(ra.w - rb.w) > epsRot) return false
-        return true
-    }
-
-    private fun migrateLegacyCenteredAppPose(pose: Pose): Pose {
-        val translation = pose.translation
-        val rotation = pose.rotation
-        val usesLegacyDefaultPosition =
-            kotlin.math.abs(translation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
-                kotlin.math.abs(translation.y) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
-                (kotlin.math.abs(translation.z - XR_APP_PANEL_LEGACY_DEPTH_METERS) <=
-                    XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
-                    kotlin.math.abs(translation.z - XR_APP_PANEL_V2_DEPTH_METERS) <=
-                        XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
-                    kotlin.math.abs(translation.z - XR_APP_PANEL_V3_DEPTH_METERS) <=
-                        XR_APP_PANEL_DEFAULT_POSE_EPSILON ||
-                    kotlin.math.abs(translation.z - XR_APP_PANEL_V4_DEPTH_METERS) <=
-                        XR_APP_PANEL_DEFAULT_POSE_EPSILON)
-        val usesIdentityRotation =
-            kotlin.math.abs(rotation.x) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
-                kotlin.math.abs(rotation.y) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
-                kotlin.math.abs(rotation.z) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON &&
-                kotlin.math.abs(rotation.w - 1f) <= XR_APP_PANEL_DEFAULT_POSE_EPSILON
-
-        return if (usesLegacyDefaultPosition && usesIdentityRotation) {
-            Pose(Vector3(0f, 0f, XR_APP_PANEL_DEFAULT_DEPTH_METERS), Quaternion.Identity)
-        } else {
-            pose
-        }
-    }
 }
 
 /**

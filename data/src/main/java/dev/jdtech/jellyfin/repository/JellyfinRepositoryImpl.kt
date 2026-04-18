@@ -276,6 +276,10 @@ class JellyfinRepositoryImpl(
                 .content
                 .items
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
+                // Jellyfin's resume endpoint occasionally surfaces items that were
+                // marked as fully watched after pausing. Continue Watching should
+                // never show those.
+                .filterNot { it.played }
         }
 
     override suspend fun getLatestMedia(parentId: UUID): List<SpatialFinItem> =
