@@ -98,7 +98,7 @@ EOF
         -shared -fPIC -O3 \
         -I$PREFIX/include \
         -L$PREFIX/lib \
-        ../player/xr/src/main/cpp/libass_jni.c \
+        "$(pwd)/../player/xr/src/main/cpp/libass_jni.c" \
         -lass -lharfbuzz -lfribidi -lfreetype \
         -landroid -llog -lm -lz \
         -o "$OUT_DIR/$ABI/libass_jni.so"

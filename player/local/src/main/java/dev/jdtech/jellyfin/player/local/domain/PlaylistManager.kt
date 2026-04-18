@@ -2,6 +2,8 @@ package dev.jdtech.jellyfin.player.local.domain
 
 import androidx.core.net.toUri
 import androidx.media3.common.MimeTypes
+import java.net.HttpURLConnection
+import java.net.URL
 import dev.jdtech.jellyfin.models.SpatialFinChapter
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -326,6 +328,25 @@ class PlaylistManager @Inject internal constructor(
                         },
                     )
                 }
+                .filter { sub ->
+                    // Media3's SingleSampleMediaPeriod loads the entire subtitle into a
+                    // single ByteBuffer via Arrays.copyOf (doubles on grow), so an N-byte
+                    // track needs ~2N of heap. Anime "signs & songs" tracks with full
+                    // vector karaoke can be 200+ MB, which OOMs even on largeHeap=true
+                    // (cap ~512 MB on Quest, needs ~400 MB allocation). Probe Content-Length
+                    // upfront and drop tracks above MAX_SUBTITLE_BYTES so Media3 never
+                    // attempts the load — the alternative is a silent end-of-stream.
+                    val probedBytes = probeSubtitleSize(sub.uri.toString())
+                    if (probedBytes == null) return@filter true // unknown size, allow
+                    val tooBig = probedBytes > MAX_SUBTITLE_BYTES
+                    if (tooBig) {
+                        Timber.w(
+                            "Subtitle sideload DROPPED (too large %d bytes > cap %d): title=%s lang=%s uri=%s",
+                            probedBytes, MAX_SUBTITLE_BYTES, sub.title, sub.language, sub.uri,
+                        )
+                    }
+                    !tooBig
+                }
         val trickplayInfo =
             when (this) {
                 is SpatialFinSources -> {
@@ -493,5 +514,42 @@ class PlaylistManager @Inject internal constructor(
                 imageUri = person.image.uri?.toString(),
             )
         }
+    }
+
+    companion object {
+        // Skip subtitle tracks above this byte count. Anime typesetting-heavy ASS tracks
+        // (full vector karaoke, 34k+ Dialogue lines) can reach 200+ MB; Media3's
+        // SingleSampleMediaPeriod loads them into a single grown ByteBuffer (~2× size),
+        // which OOMs the player even with largeHeap=true. 50 MB comfortably covers the
+        // worst real "signs & songs" tracks while excluding the pathological ones.
+        private const val MAX_SUBTITLE_BYTES = 50L * 1024L * 1024L
+    }
+
+    /**
+     * Probe the byte size of a subtitle URL without downloading the body. Jellyfin's
+     * subtitle endpoint rejects HEAD with 405 but returns `Content-Length` on GET, so we
+     * start the GET, read the header, and close the stream before any body is consumed.
+     * Returns null on any network error — the caller treats unknown size as allowed.
+     */
+    private fun probeSubtitleSize(url: String): Long? {
+        return runCatching {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 3_000
+                readTimeout = 3_000
+                // Prevent Android's HttpURLConnection from transparently following
+                // gzip-encoded bodies — we only want the Content-Length header.
+                setRequestProperty("Accept-Encoding", "identity")
+            }
+            try {
+                conn.connect()
+                val len = conn.contentLengthLong
+                if (len >= 0) len else null
+            } finally {
+                // Closing the stream without reading stops the body transfer.
+                runCatching { conn.inputStream?.close() }
+                conn.disconnect()
+            }
+        }.onFailure { Timber.d(it, "probeSubtitleSize failed for %s", url) }.getOrNull()
     }
 }

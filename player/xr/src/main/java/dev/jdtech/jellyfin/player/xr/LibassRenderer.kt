@@ -169,11 +169,21 @@ class LibassRenderer(
     fun resize(newWidth: Int, newHeight: Int, storageW: Int = 0, storageH: Int = 0) {
         if (destroyed) return
         Timber.d("subtitle: resize %dx%d → %dx%d storage=%dx%d", width, height, newWidth, newHeight, storageW, storageH)
-        width = newWidth
-        height = newHeight
         postWork("resize") {
+            width = newWidth
+            height = newHeight
             if (nativeCtx != 0L) nativeResize(nativeCtx, newWidth, newHeight, storageW, storageH)
             cachedBitmap = null
+        }
+    }
+
+    /**
+     * Set the default font family for libass (used when the requested font is missing).
+     * e.g. "Roboto", "Noto Sans Arabic", etc.
+     */
+    fun setDefaultFamily(family: String) {
+        postWork("setDefaultFamily") {
+            if (nativeCtx != 0L) nativeSetDefaultFamily(nativeCtx, family)
         }
     }
 
@@ -268,6 +278,7 @@ class LibassRenderer(
     private external fun nativeRenderFrame(ctx: Long, timeMs: Long): IntArray?
     private external fun nativeGetBuffer(ctx: Long): ByteBuffer?
     private external fun nativeAddFont(ctx: Long, name: String, data: ByteArray)
+    private external fun nativeSetDefaultFamily(ctx: Long, family: String)
     private external fun nativeResize(ctx: Long, width: Int, height: Int, storageW: Int, storageH: Int)
     private external fun nativeClearCache(ctx: Long)
     private external fun nativeDestroy(ctx: Long)

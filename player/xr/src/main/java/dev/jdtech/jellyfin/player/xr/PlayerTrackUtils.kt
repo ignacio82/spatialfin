@@ -41,9 +41,23 @@ internal fun trackNames(player: Player, trackType: @C.TrackType Int): List<Strin
     return player.currentTracks.groups
         .filter { it.type == trackType && it.isSupported }
         .map { group ->
-            group.getTrackFormat(0).label
-                ?: group.getTrackFormat(0).language
+            val format = group.getTrackFormat(0)
+            val label = format.label
+                ?: format.language
                 ?: "Unknown"
+            
+            if (trackType == C.TRACK_TYPE_TEXT) {
+                val mime = format.sampleMimeType ?: ""
+                val suffix = when {
+                    mime.contains("subrip", ignoreCase = true) -> " (SRT)"
+                    mime.contains("vtt", ignoreCase = true) -> " (VTT)"
+                    mime.contains("ssa", ignoreCase = true) || mime.contains("ass", ignoreCase = true) -> " (ASS)"
+                    else -> ""
+                }
+                label + suffix
+            } else {
+                label
+            }
         }
 }
 
@@ -51,7 +65,21 @@ internal fun selectedTrackName(player: Player, trackType: @C.TrackType Int): Str
     return player.currentTracks.groups
         .firstOrNull { it.type == trackType && it.isSupported && groupIsSelected(it) }
         ?.let { group ->
-            group.getTrackFormat(0).label ?: group.getTrackFormat(0).language
+            val format = group.getTrackFormat(0)
+            val label = format.label ?: format.language ?: "Unknown"
+            
+            if (trackType == C.TRACK_TYPE_TEXT) {
+                val mime = format.sampleMimeType ?: ""
+                val suffix = when {
+                    mime.contains("subrip", ignoreCase = true) -> " (SRT)"
+                    mime.contains("vtt", ignoreCase = true) -> " (VTT)"
+                    mime.contains("ssa", ignoreCase = true) || mime.contains("ass", ignoreCase = true) -> " (ASS)"
+                    else -> ""
+                }
+                label + suffix
+            } else {
+                label
+            }
         }
 }
 

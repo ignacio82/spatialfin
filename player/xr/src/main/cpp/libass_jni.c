@@ -45,9 +45,9 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeInit(JNIEnv *env, jobjec
     // via nativeResize; without an initial value libass uses frame_size and applies a
     // neutral pixel aspect ratio, which shifts \pos coordinates before the first resize.
     ass_set_storage_size(ctx->renderer, width, height);
-    // NATIVE hinting preserves author-designed glyph metrics better than LIGHT for
-    // stylised anime fonts and for CJK scripts where LIGHT over-thins strokes.
-    ass_set_hinting(ctx->renderer, ASS_HINTING_NATIVE);
+    // Use LIGHT hinting as NATIVE can sometimes result in strange glyph spacing on
+    // Android system fonts. SHAPING_COMPLEX enables HarfBuzz for correct BiDi.
+    ass_set_hinting(ctx->renderer, ASS_HINTING_LIGHT);
     ass_set_shaper(ctx->renderer, ASS_SHAPING_COMPLEX);
 
     // Fallback font for glyphs not covered by any registered font, and the default
@@ -56,16 +56,16 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeInit(JNIEnv *env, jobjec
     // provider NONE = resolve purely from that in-memory registry (Android has no
     // fontconfig/CoreText/DirectWrite — AUTODETECT resolves to NONE anyway).
     //
-    // Most anime ASS scripts specify Fontname: Arial. The Quest has no Arial, so we
+    // Most anime ASS scripts specify Fontname: Arial. The Galaxy XR has no Arial, so we
     // steer the fallback to Roboto — it has Regular/Bold/Italic variants on the
-    // device, which matters because ASS Bold: -1 with no matching bold face produces
-    // thin "faux-regular" text. Passing "Roboto" as default_family means any unknown
-    // Fontname in the style resolves to Roboto too, and libass picks the correct
-    // weight automatically from the registered Roboto-Bold.ttf / Roboto-Medium.ttf.
+    // device. Passing "Roboto" as default_family means any unknown Fontname in the
+    // style resolves to Roboto too, and libass picks the correct weight automatically
+    // from the registered Roboto-Bold.ttf / Roboto-Medium.ttf.
     const char *font_noto_cjk = "/system/fonts/NotoSansCJK-Regular.ttc";
     const char *font_roboto = "/system/fonts/Roboto-Regular.ttf";
     const char *font_droid = "/system/fonts/DroidSans.ttf";
     const char *fallback = NULL;
+    // Prefer Roboto for Latin characters to avoid rendering English in Noto CJK.
     if (access(font_roboto, R_OK) == 0) fallback = font_roboto;
     else if (access(font_noto_cjk, R_OK) == 0) fallback = font_noto_cjk;
     else if (access(font_droid, R_OK) == 0) fallback = font_droid;
@@ -97,8 +97,38 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeAddFont(JNIEnv *env, job
 
     ass_add_font(ctx->library, (char *)font_name, (char *)font_data, len);
 
+    // If the font name contains "Roboto", also register it as "Roboto" to satisfy the default family
+    if (strstr(font_name, "Roboto") != NULL) {
+        ass_add_font(ctx->library, "Roboto", (char *)font_data, len);
+    }
+    // If it's the Noto Arabic font, also register it as "Noto Naskh Arabic"
+    if (strstr(font_name, "NotoNaskhArabic") != NULL) {
+        ass_add_font(ctx->library, "Noto Naskh Arabic", (char *)font_data, len);
+    }
+
     (*env)->ReleaseByteArrayElements(env, data, font_data, JNI_ABORT);
     (*env)->ReleaseStringUTFChars(env, name, font_name);
+}
+
+JNIEXPORT void JNICALL
+Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeSetDefaultFamily(JNIEnv *env, jobject thiz, jlong ctx_ptr, jstring family) {
+    LibassContext *ctx = (LibassContext *)(uintptr_t)ctx_ptr;
+    if (!ctx || !ctx->renderer) return;
+
+    const char *family_name = (*env)->GetStringUTFChars(env, family, NULL);
+    
+    const char *font_noto_cjk = "/system/fonts/NotoSansCJK-Regular.ttc";
+    const char *font_roboto = "/system/fonts/Roboto-Regular.ttf";
+    const char *font_droid = "/system/fonts/DroidSans.ttf";
+    const char *fallback = NULL;
+    if (access(font_noto_cjk, R_OK) == 0) fallback = font_noto_cjk;
+    else if (access(font_roboto, R_OK) == 0) fallback = font_roboto;
+    else if (access(font_droid, R_OK) == 0) fallback = font_droid;
+
+    LOGI("nativeSetDefaultFamily: family=%s fallback=%s", family_name, fallback ? fallback : "(none)");
+    ass_set_fonts(ctx->renderer, fallback, family_name, ASS_FONTPROVIDER_NONE, NULL, 1);
+
+    (*env)->ReleaseStringUTFChars(env, family, family_name);
 }
 
 JNIEXPORT void JNICALL
@@ -204,11 +234,8 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeRenderFrame(JNIEnv *env,
         uint8_t b = (cur->color >> 8)  & 0xFF;
         uint8_t a = 255 - (cur->color & 0xFF);
 
-        // Log non-white/non-black colors to detect color rendering issues
-        if ((r != g || g != b) || (r != 0 && r != 255)) {
-            LOGI("renderFrame: color r=%d g=%d b=%d a=%d raw=0x%08X pos=(%d,%d) size=%dx%d",
-                 r, g, b, a, cur->color, cur->dst_x, cur->dst_y, cur->w, cur->h);
-        }
+        LOGI("renderFrame: color r=%d g=%d b=%d a=%d raw=0x%08X pos=(%d,%d) size=%dx%d",
+             r, g, b, a, cur->color, cur->dst_x, cur->dst_y, cur->w, cur->h);
 
         for (int y = 0; y < cur->h; y++) {
             int dst_y = cur->dst_y + y;
