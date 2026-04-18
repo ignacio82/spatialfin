@@ -141,6 +141,19 @@ class LibassRenderer(
     }
 
     /**
+     * Replace the current track by parsing the ASS file at [filePath] natively.
+     * Libass reads and parses the file in a single C call using stdio — no Java
+     * heap pressure for strings/events regardless of file size. Used by
+     * [StreamingAssSubtitleSource] for full-typesetting ASS tracks that would
+     * otherwise take minutes to dispatch event-by-event through JNI.
+     */
+    fun loadAssFile(filePath: String) {
+        postWork("loadAssFile") {
+            if (nativeCtx != 0L) nativeLoadAssFile(nativeCtx, filePath)
+        }
+    }
+
+    /**
      * Feed a subtitle event (dialogue chunk) with its timing.
      */
     fun processChunk(data: ByteArray, startTimeMs: Long, durationMs: Long) {
@@ -273,6 +286,7 @@ class LibassRenderer(
     // --- Native methods ---
     private external fun nativeInit(width: Int, height: Int): Long
     private external fun nativeSetTrackData(ctx: Long, codecPrivate: ByteArray)
+    private external fun nativeLoadAssFile(ctx: Long, filePath: String)
     private external fun nativeProcessChunk(ctx: Long, data: ByteArray, startMs: Long, durationMs: Long)
     // Returns [hasContent, dirtyX, dirtyY, dirtyW, dirtyH] or null on error
     private external fun nativeRenderFrame(ctx: Long, timeMs: Long): IntArray?

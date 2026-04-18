@@ -16,15 +16,23 @@ import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.SubtitleParser
 
 /**
- * ExtractorsFactory wrapper that drops every text track exposed by MatroskaExtractor.
+ * ExtractorsFactory that drops embedded MKV text tracks so only sideloaded subtitle
+ * tracks (from Jellyfin's Subtitles endpoint) reach the player.
  *
- * Subtitles are sideloaded as separate [androidx.media3.common.MediaItem.SubtitleConfiguration]
- * media sources built from Jellyfin's per-stream delivery URL (or, for offline downloads, from
- * the pre-downloaded .ass/.srt alongside the media file). The embedded MKV subtitle tracks are
- * therefore redundant — and for files whose ContentEncoding declares an empty ContentCompression
- * element, Media3 1.10.0 forwards raw zlib-compressed block payloads as subtitle samples, which
- * renders as garbage on screen. Dropping the track at the extractor layer keeps only the clean
- * sideloaded track visible to the player.
+ * Media3 1.10's MatroskaExtractor has two broken interactions with ASS/SSA blocks:
+ *
+ *   1. It wraps each block in a synthetic "Dialogue: H:MM:SS:CC,H:MM:SS:CC," prefix
+ *      without first applying the MKV ContentEncoding. For tracks with zlib
+ *      ContentCompAlgo=0, the result is `Dialogue: ...,<raw zlib bytes>` — the zlib
+ *      stream survives but is sometimes truncated where the prefix synthesis bumps
+ *      against the block-size budget.
+ *   2. For files whose ContentEncoding declares an empty ContentCompression, Media3
+ *      forwards raw zlib-compressed block payloads as subtitle samples.
+ *
+ * Both paths produce garbage samples. Rather than decompressing on the fly (which
+ * requires reaching inside Media3's private extractor output), we drop the text
+ * tracks and rely on Jellyfin's `/Subtitles/{streamIndex}/{startTimeTicks}/Stream.ass`
+ * endpoint, which serves fully-decompressed ASS.
  */
 @UnstableApi
 class ZlibSubtitleExtractorsFactory(
@@ -69,18 +77,11 @@ class ZlibSubtitleExtractorsFactory(
 @UnstableApi
 internal class DropTextTracksExtractor(private val delegate: Extractor) : Extractor {
     override fun sniff(input: ExtractorInput): Boolean = delegate.sniff(input)
-
-    override fun init(output: ExtractorOutput) {
-        delegate.init(DropTextExtractorOutput(output))
-    }
-
+    override fun init(output: ExtractorOutput) = delegate.init(DropTextExtractorOutput(output))
     override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int =
         delegate.read(input, seekPosition)
-
     override fun seek(position: Long, timeUs: Long) = delegate.seek(position, timeUs)
-
     override fun release() = delegate.release()
-
     override fun getUnderlyingImplementation(): Extractor = delegate
 }
 
@@ -89,16 +90,13 @@ private class DropTextExtractorOutput(private val delegate: ExtractorOutput) : E
     override fun track(id: Int, type: Int): TrackOutput {
         return if (type == C.TRACK_TYPE_TEXT) NoOpTrackOutput else delegate.track(id, type)
     }
-
     override fun endTracks() = delegate.endTracks()
-
     override fun seekMap(seekMap: SeekMap) = delegate.seekMap(seekMap)
 }
 
 @UnstableApi
 private object NoOpTrackOutput : TrackOutput {
     override fun format(format: Format) = Unit
-
     override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean): Int {
         val skip = ByteArray(length)
         val n = input.read(skip, 0, length)
@@ -108,27 +106,9 @@ private object NoOpTrackOutput : TrackOutput {
         }
         return n
     }
-
-    override fun sampleData(
-        input: DataReader,
-        length: Int,
-        allowEndOfInput: Boolean,
-        sampleDataPart: Int,
-    ): Int = sampleData(input, length, allowEndOfInput)
-
-    override fun sampleData(data: ParsableByteArray, length: Int) {
-        data.skipBytes(length)
-    }
-
-    override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
-        data.skipBytes(length)
-    }
-
-    override fun sampleMetadata(
-        timeUs: Long,
-        flags: Int,
-        size: Int,
-        offset: Int,
-        cryptoData: TrackOutput.CryptoData?,
-    ) = Unit
+    override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int =
+        sampleData(input, length, allowEndOfInput)
+    override fun sampleData(data: ParsableByteArray, length: Int) { data.skipBytes(length) }
+    override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) { data.skipBytes(length) }
+    override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) = Unit
 }

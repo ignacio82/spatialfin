@@ -139,14 +139,24 @@ internal fun TrackSelectionDialogContent(
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
     visualSubtitlesEnabled: Boolean = true,
+    /** Extra out-of-band tracks displayed after the Media3 tracks (e.g. streaming ASS). */
+    extraTrackNames: List<String> = emptyList(),
+    /** Index within [extraTrackNames] of the currently-active extra track, or -1 if none. */
+    extraSelectedIndex: Int = -1,
+    /** Invoked when the user picks one of [extraTrackNames]. */
+    onExtraTrackSelected: (Int) -> Unit = {},
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
     val trackNames = trackGroups.getTrackNames()
-    val selectedIndex = if (trackType == C.TRACK_TYPE_TEXT && !visualSubtitlesEnabled) {
+    val mediaSelectedIndex = if (trackType == C.TRACK_TYPE_TEXT && !visualSubtitlesEnabled) {
         -1
     } else {
         trackGroups.indexOfFirst { it.isSelected }
     }
+    // Only one selection across both lists is active at a time. If an extra track is
+    // selected, suppress Media3's own highlight so the radio buttons are mutually exclusive.
+    val effectiveMediaSelected = if (extraSelectedIndex >= 0) -1 else mediaSelectedIndex
+    val noneSelected = effectiveMediaSelected == -1 && extraSelectedIndex == -1
 
     Surface(
         modifier = Modifier
@@ -172,7 +182,7 @@ internal fun TrackSelectionDialogContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(
-                        selected = selectedIndex == -1,
+                        selected = noneSelected,
                         onClick = { onTrackSelected(-1); onDismiss() },
                         modifier = Modifier.size(48.dp),
                     )
@@ -188,8 +198,30 @@ internal fun TrackSelectionDialogContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = index == selectedIndex,
+                            selected = index == effectiveMediaSelected,
                             onClick = { onTrackSelected(index); onDismiss() },
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            name,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    }
+                }
+                extraTrackNames.forEachIndexed { index, name ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onExtraTrackSelected(index); onDismiss() }
+                            .padding(vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = index == extraSelectedIndex,
+                            onClick = { onExtraTrackSelected(index); onDismiss() },
                             modifier = Modifier.size(48.dp),
                         )
                         Spacer(Modifier.width(16.dp))

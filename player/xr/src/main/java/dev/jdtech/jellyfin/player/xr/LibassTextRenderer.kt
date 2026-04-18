@@ -48,7 +48,12 @@ class LibassTextRenderer(
     private var inputFormatReceived = false
     private var dialogueFormatLine: String? = null
     private val formatHolder = FormatHolder()
-    private val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL)
+    // DIRECT replacement mode → ByteBuffer is allocated off-heap via
+    // ByteBuffer.allocateDirect. Heavy typesetting ASS tracks arrive as one 200+ MB
+    // sample; a HeapByteBuffer of that size OOMs the 512 MB Java heap before the
+    // renderer's render() ever runs (observed at DecoderInputBuffer.createReplacementByteBuffer).
+    // Native memory for direct buffers is much larger on Android, so the same file fits.
+    private val buffer = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT)
     // Monotonically increasing ReadOrder for SRT events. libass deduplicates events that share
     // the same ReadOrder value, so every SRT chunk must get a unique counter. Reset on seek.
     private var srtReadOrder = 0
@@ -175,48 +180,137 @@ class LibassTextRenderer(
             buffer.flip()
             val data = buffer.data ?: continue
             val size = data.remaining()
-            // Anime sign/karaoke tracks with full vector typesetting can exceed 200 MB
-            // as a single sideloaded sample. Allocating that much Java heap silently
-            // OOMs inside ExoPlayer's render thread and the track falls off — the user
-            // sees "no subtitles for this track". Log and skip instead of crashing.
-            if (size > MAX_ASS_SAMPLE_BYTES) {
-                Timber.e(
-                    "subtitle: sample too large — %d bytes exceeds %d cap; skipping track " +
-                        "(typesetting-heavy ASS; pick a smaller track)",
-                    size,
-                    MAX_ASS_SAMPLE_BYTES,
-                )
-                buffer.clear()
-                break
-            }
-            val bytes = try {
-                ByteArray(size).also { data.get(it) }
-            } catch (e: OutOfMemoryError) {
-                Timber.e(e, "subtitle: OOM allocating %d bytes for ASS sample", size)
-                buffer.clear()
-                break
-            }
-            Timber.i("subtitle: render() read sample %d bytes at %dms", bytes.size, buffer.timeUs / 1000)
-
-            // Timestamps from readSource include the stream offset; subtract it to match
-            // the window-relative position used by the UI render polling loop.
+            // Full-typesetting anime tracks (e.g. JJK signs pass) can exceed 200 MB as a
+            // single sideloaded sample. We must NOT copy that into a Java ByteArray —
+            // that path OOMs the 512 MB app heap (seen at LibassTextRenderer.render:168).
+            // Instead, peek 256 bytes to classify, then stream-parse the ByteBuffer
+            // line-by-line. Peak heap stays around one line (tens of KB).
             val sampleStartMs = (buffer.timeUs - getStreamOffsetUs()) / 1000
+            val peekLen = minOf(size, 256)
+            val peek = ByteArray(peekLen)
+            val startPos = data.position()
+            data.get(peek)
+            data.position(startPos)
 
-            if (isFullAssFile(bytes)) {
-                processFullAssFile(bytes)
-            } else if (isSrtOrVtt && isFullSrtOrVttFile(bytes)) {
+            if (isFullAssFile(peek)) {
+                Timber.i("subtitle: streaming full-file ASS sample (%d bytes)", size)
+                try {
+                    processFullAssFileStreaming(data)
+                } catch (e: OutOfMemoryError) {
+                    Timber.e(e, "subtitle: OOM while streaming ASS sample (%d bytes)", size)
+                }
+            } else if (isSrtOrVtt && isFullSrtOrVttFile(peek)) {
+                val bytes = try {
+                    ByteArray(size).also { data.get(it) }
+                } catch (e: OutOfMemoryError) {
+                    Timber.e(e, "subtitle: OOM allocating %d bytes for SRT/VTT sample", size)
+                    buffer.clear()
+                    break
+                }
                 processFullSrtOrVttFile(bytes)
             } else {
+                // Per-event chunk. Samples are small (a few KB at most).
+                val bytes = ByteArray(size).also { data.get(it) }
                 if (!inputFormatReceived) {
                     Timber.w("subtitle: ASS track stream missing header and not a full file — injecting synthetic fallback")
                     libassRenderer.setTrackData(buildSyntheticAssHeader())
                     inputFormatReceived = true
                     onTrackInitialized()
                 }
+                if (bytes.size <= 120) {
+                    val hex = bytes.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                    val asc = bytes.joinToString("") { b ->
+                        val v = b.toInt() and 0xFF
+                        if (v in 0x20..0x7E) v.toChar().toString() else "."
+                    }
+                    Timber.d("subtitle: RAW chunk %d bytes hex=[%s] asc=[%s]", bytes.size, hex, asc)
+                }
                 processSingleChunk(bytes, sampleStartMs)
             }
             buffer.clear()
         }
+    }
+
+    /**
+     * Minimal InputStream view over a ByteBuffer, so BufferedReader can stream-decode
+     * UTF-8 from a huge Media3 sample without a full-file ByteArray copy.
+     */
+    private class ByteBufferInputStream(private val buf: java.nio.ByteBuffer) : java.io.InputStream() {
+        override fun read(): Int {
+            if (!buf.hasRemaining()) return -1
+            return buf.get().toInt() and 0xFF
+        }
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (!buf.hasRemaining()) return -1
+            val n = minOf(len, buf.remaining())
+            buf.get(b, off, n)
+            return n
+        }
+        override fun available(): Int = buf.remaining()
+    }
+
+    /**
+     * Stream-parse a full-file ASS sample straight out of the Media3 DecoderInputBuffer
+     * without materializing the whole file as a Java String. Dispatches each Dialogue
+     * line as it is read. Works for multi-hundred-megabyte typesetting tracks that
+     * the ByteArray path OOMs on.
+     */
+    private fun processFullAssFileStreaming(data: java.nio.ByteBuffer) {
+        val reader = java.io.BufferedReader(
+            java.io.InputStreamReader(ByteBufferInputStream(data), Charsets.UTF_8),
+            16 * 1024,
+        )
+        val header = StringBuilder(4096)
+        var sawEventsMarker = false
+        var formatLineSeen = false
+        var fieldOrder: List<String> = DEFAULT_ASS_EVENT_FIELDS
+        var dispatched = 0
+
+        fun flushHeader(appendFallbackFormat: Boolean) {
+            if (inputFormatReceived) return
+            if (appendFallbackFormat) {
+                header.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            }
+            libassRenderer.setTrackData(header.toString().toByteArray(Charsets.UTF_8))
+            inputFormatReceived = true
+            onTrackInitialized()
+            Timber.i("subtitle: streaming ASS header loaded (%d bytes)", header.length)
+        }
+
+        reader.useLines { lines ->
+            for (line in lines) {
+                if (!sawEventsMarker) {
+                    header.append(line).append('\n')
+                    if (line.trim().equals("[Events]", ignoreCase = true)) {
+                        sawEventsMarker = true
+                    }
+                    continue
+                }
+                val trimmed = line.trimStart()
+                if (!formatLineSeen && trimmed.startsWith("Format:", ignoreCase = true)) {
+                    formatLineSeen = true
+                    fieldOrder = parseEventFieldOrder(trimmed)
+                    header.append(trimmed.trimEnd()).append('\n')
+                    dialogueFormatLine = trimmed
+                    flushHeader(appendFallbackFormat = false)
+                    continue
+                }
+                if (!trimmed.startsWith("Dialogue:", ignoreCase = true)) continue
+                if (!inputFormatReceived) flushHeader(appendFallbackFormat = true)
+
+                val body = trimmed.substringAfter(':').trimStart()
+                val chunk = assEventToChunk(body, fieldOrder) ?: continue
+                val bodyBytes = chunk.body.toByteArray(Charsets.UTF_8)
+                val plainText = extractPlainText(bodyBytes)
+                if (plainText.isNotBlank()) onSubtitleText?.invoke(chunk.startMs, plainText)
+                if (displayEnabled) {
+                    libassRenderer.processChunk(bodyBytes, chunk.startMs, chunk.durationMs)
+                }
+                dispatched++
+            }
+        }
+        if (!inputFormatReceived) flushHeader(appendFallbackFormat = true)
+        Timber.i("subtitle: streaming ASS dispatched %d events", dispatched)
     }
 
     private fun processSingleChunk(bytes: ByteArray, startMs: Long) {
@@ -412,12 +506,6 @@ class LibassTextRenderer(
             "Layer", "Start", "End", "Style", "Name",
             "MarginL", "MarginR", "MarginV", "Effect", "Text",
         )
-        // 64 MB ceiling for a single sideloaded ASS sample. Typical anime dialogue-only
-        // tracks are well under 1 MB; typesetting-heavy "Signs & Songs" tracks with full
-        // vector art are usually 5–40 MB. 200+ MB tracks exist (e.g. karaoke subs where
-        // every song line is vector-drawn) but those overwhelm the render pipeline and
-        // can't realistically be processed in real time, so we reject them.
-        const val MAX_ASS_SAMPLE_BYTES = 64 * 1024 * 1024
     }
 
     /**

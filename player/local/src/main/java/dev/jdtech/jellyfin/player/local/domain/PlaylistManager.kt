@@ -300,10 +300,12 @@ class PlaylistManager @Inject internal constructor(
             mediaSource.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO && languageMatches(it.language, preferredAudioLanguage) }?.codec,
             effectiveMaxBitrate,
         )
-        // Include BOTH external and embedded subtitle streams. Jellyfin exposes a deliveryUrl
-        // (mediaStream.path) for every text track, so we sideload all of them via
-        // MediaItem.SubtitleConfiguration and bypass MatroskaExtractor's buggy handling of
-        // zlib-compressed ContentEncoding subtitle blocks.
+        // Include both embedded and truly-external subtitle streams. Use Jellyfin's
+        // server-provided deliveryUrl as-is: Jellyfin's index-mapping behavior varies per
+        // file (server-side bugs in some Jellyfin versions produce mismatched content for
+        // some tracks), but rewriting the URL client-side fixes one file while breaking
+        // another. Passing the path Jellyfin itself returned is the most consistent
+        // behavior.
         val subtitleStreams = mediaSource.mediaStreams.filter { mediaStream ->
             mediaStream.type == MediaStreamType.SUBTITLE && !mediaStream.path.isNullOrBlank()
         }
@@ -331,13 +333,10 @@ class PlaylistManager @Inject internal constructor(
                 .filter { sub ->
                     // Media3's SingleSampleMediaPeriod loads the entire subtitle into a
                     // single ByteBuffer via Arrays.copyOf (doubles on grow), so an N-byte
-                    // track needs ~2N of heap. Anime "signs & songs" tracks with full
-                    // vector karaoke can be 200+ MB, which OOMs even on largeHeap=true
-                    // (cap ~512 MB on Quest, needs ~400 MB allocation). Probe Content-Length
-                    // upfront and drop tracks above MAX_SUBTITLE_BYTES so Media3 never
-                    // attempts the load — the alternative is a silent end-of-stream.
+                    // track needs ~2N of heap. Probe Content-Length and drop tracks above
+                    // MAX_SUBTITLE_BYTES so Media3 never attempts the load.
                     val probedBytes = probeSubtitleSize(sub.uri.toString())
-                    if (probedBytes == null) return@filter true // unknown size, allow
+                    if (probedBytes == null) return@filter true
                     val tooBig = probedBytes > MAX_SUBTITLE_BYTES
                     if (tooBig) {
                         Timber.w(
