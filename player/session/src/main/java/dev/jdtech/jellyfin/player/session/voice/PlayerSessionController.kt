@@ -188,7 +188,7 @@ class PlayerSessionController(
             }
             is XrPlayerAction.ResetScreenPlacement -> {
                 onResetScreenPlacement()
-                "Resetting screen to the default IMAX position"
+                "Resetting screen to the default position"
             }
             is XrPlayerAction.GoHome -> {
                 if (onGoHome()) "Returning to home" else "Home unavailable"

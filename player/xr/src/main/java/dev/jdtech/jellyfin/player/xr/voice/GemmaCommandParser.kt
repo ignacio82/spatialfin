@@ -98,7 +98,7 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
             - If the user is refining recommendations with phrases like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one", use action "chat".
             - If recommendation results are visible and the user says "play the first one" or "open the second result", use action "select_option" with the matching index.
             - If the request is for version selection (e.g. "the 3D one", "the smaller one"), use "select_version" with a query.
-            - If the user asks to recenter the screen or restore the default IMAX placement, use action "reset_screen_placement".
+            - If the user asks to recenter the screen or restore the default cinematic placement, use action "reset_screen_placement".
             - If the request specifies both audio and subtitles, pick one as the primary action and put the other in "secondary_action".
             - $screenGuidance
             $retryGuidance
@@ -125,7 +125,7 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
             - "recommend something for me" -> {"action": "chat", "query": "recommend something for me"}
             - "what should i watch next" -> {"action": "chat", "query": "what should i watch next"}
             - "play the 3D one" -> {"action": "select_version", "query": "3d"}
-            - "reset the screen to the default imax position" -> {"action": "reset_screen_placement"}
+            - "reset the screen to the default cinema position" -> {"action": "reset_screen_placement"}
             - "pause the video" -> {"action": "pause"}
             - "seek forward 30 seconds" -> {"action": "seek_forward", "seconds": 30}
             - "switch to japanese with english subtitles" -> {"action": "select_audio", "language": "japanese", "secondary_action": {"action": "select_subtitles", "language": "english"}}

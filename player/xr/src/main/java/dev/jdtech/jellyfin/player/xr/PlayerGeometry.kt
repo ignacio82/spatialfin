@@ -15,8 +15,8 @@ import timber.log.Timber
  * every caller combines them with a projection computation.
  */
 
-// The default "IMAX-centered" distance from the user to the video panel. Chosen
-// to match Android XR design guidance for cinema-scale content.
+// The default cinema-scale distance from the user to the video panel. Chosen
+// to match Android XR design guidance for theater-scale content.
 internal const val VIDEO_DEPTH_METERS = 6.0f
 
 // UI (controls, dialogs, subtitles) sits much closer so text stays readable.

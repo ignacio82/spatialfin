@@ -223,7 +223,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 ### UI Best Practices & Ergonomics
 - **Material 3 for XR:** `NavigationRail`, `NavigationBar`, `TopAppBar` adapt to **XR Orbiters** automatically.
 - **Adaptive layouts:** `ListDetailPaneScaffold` / `SupportingPaneScaffold` map panes 1:1 to spatial panels.
-- **IMAX scale:** Use large `SpatialPanel` dimensions (≥1400dp) for cinematic feel. The unified main panel is `1792dp × 1008dp` (`UnifiedMainActivity` constants).
+- **Cinema scale:** Use large `SpatialPanel` dimensions (≥1400dp) for cinematic feel. The unified main panel is `1792dp × 1008dp` (`UnifiedMainActivity` constants).
 - **Depth & focus:** `SpatialDialog` / `SpatialPopup` push the parent panel back **125dp**.
 - **User agency:** `MovableComponent` + `ResizableComponent` for workspace customization.
 
@@ -480,7 +480,7 @@ These are the gaps a future contributor (human or AI) should know about. If you 
 If you're asking the model for new features or fixes, use these as shorthand — they map to the established patterns above:
 
 - **"Spatialize the player"** → `Subspace` + `SpatialPanel` + `Orbiter`.
-- **"IMAX experience"** → Full Space Mode + ≥1400dp panels.
+- **"Cinematic experience"** → Full Space Mode + ≥1400dp panels.
 - **"Hierarchy movement"** → SceneCore parenting for the player root, `MovableComponent` only on the root.
 - **"Surface-level subtitles"** → Move rendering from Compose panels to the playback surface.
 - **"Bridge preferences"** → Map `AppPreferences` to `CaptionStyleCompat` for Media3 views.

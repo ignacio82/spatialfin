@@ -575,7 +575,7 @@ class SpatialCommandCoordinator(
             - Use "chat" for questions, recommendations, clarifications, recaps, or metadata questions.
             - Recommendation refinements like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one" are always "chat".
             - Use "search" for find/search/show me requests.
-            - Use "reset_screen_placement" when the user asks to recenter the screen or restore the default IMAX position.
+            - Use "reset_screen_placement" when the user asks to recenter the screen or restore the default cinematic position.
             - If unsure, use "chat" rather than "unrecognized".
             - Include only fields that matter for the chosen action.
             - $screenGuidance
@@ -841,7 +841,7 @@ class SpatialCommandCoordinator(
         return when {
             text.matches(
                 Regex(
-                    ".*((reset|restore) ((the )?(screen|video) )?(position|placement)|recenter (the )?(screen|video)|center (the )?(screen|video)|default imax( experience)?( position| placement)?|imax( experience)? position|(put|move) (it|the screen|the video) back (to )?(the )?(default|center|middle)).*",
+                    ".*((reset|restore) ((the )?(screen|video) )?(position|placement)|recenter (the )?(screen|video)|center (the )?(screen|video)|default cinema( experience)?( position| placement)?|cinema( experience)? position|theater position|(put|move) (it|the screen|the video) back (to )?(the )?(default|center|middle)).*",
                 ),
             ) -> XrPlayerAction.ResetScreenPlacement
             text.matches(Regex(".*(make it|make the video|make screen|make the screen).*bigger.*")) ||

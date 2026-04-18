@@ -16,7 +16,7 @@ internal const val XR_PLAYER_POSE_VERSION_VIDEO_CENTER = 1
 
 // Restore guardrails — a persisted pose outside these bounds is treated as stale
 // (e.g. the user removed the headset while the panel was at an awkward angle) and
-// the default IMAX-centered pose is used instead.
+// the default cinema-centered pose is used instead.
 internal const val MIN_RESTORABLE_VIDEO_DEPTH_METERS = 3.5f
 internal const val MAX_RESTORABLE_VIDEO_YAW_DEGREES = 18f
 internal const val MAX_RESTORABLE_VIDEO_PITCH_DEGREES = 14f
@@ -24,7 +24,7 @@ internal const val MAX_RESTORABLE_VIDEO_PITCH_DEGREES = 14f
 internal fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
     val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
     // Persisted XR placement has repeatedly restored uncomfortable launch poses. Always
-    // spawn the player at the centered IMAX baseline, while still allowing movement during
+    // spawn the player at the centered cinema baseline, while still allowing movement during
     // the current session.
     savePlayerRootPose(viewModel, defaultPose)
     savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)

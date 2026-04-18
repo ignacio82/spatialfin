@@ -209,7 +209,7 @@ private fun Cue.debugSummary(): String {
 }
 
 /**
- * SpatialPlayerScreen — IMAX-style immersive XR playback experience.
+ * SpatialPlayerScreen — cinematic immersive XR playback experience.
  *
  * Architecture:
  *  - GroupEntity (SceneCore): high-fidelity video root, user-movable
@@ -1526,7 +1526,7 @@ fun SpatialPlayerScreen(
 
             // SceneCore can briefly re-home the movable root until the first interaction.
             // Re-apply the intended launch layout after the movable component attaches so the
-            // screen starts in the IMAX baseline instead of snapping there on first tap.
+            // screen starts in the cinema baseline instead of snapping there on first tap.
             runCatching {
                 videoRoot.setPose(savedPose)
                 videoRoot.setScale(videoPanelScale)
@@ -1737,7 +1737,7 @@ fun SpatialPlayerScreen(
     LaunchedEffect(player.videoSize, currentStereoMode) {
         // 1. Recalculate video dimensions from the player if available.
         val videoSize = player.videoSize
-        
+
         if (videoSize.width > 0 && videoSize.height > 0) {
             var aspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
             if (currentStereoMode == "sbs" && aspectRatio > 3.0f) aspectRatio /= 2f
@@ -1972,7 +1972,7 @@ fun SpatialPlayerScreen(
 
                 // ── Control Panel ────────────────────────────────────────────────────────────
                 // Floats below the video. Secondary controls are in an Orbiter on the right
-                // so the main panel stays uncluttered (IMAX principle: screen first, UI second).
+                // so the main panel stays uncluttered (cinema principle: screen first, UI second).
                 SpatialPanel(
                     modifier = SubspaceModifier
                         .width(1800.dp)
