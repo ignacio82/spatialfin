@@ -70,7 +70,8 @@ These paths are usually not useful for code understanding and should be skipped 
 - `app/unified/src/main/java/dev/spatialfin/unified/XrSpaceController.kt` — single source of truth for `HOME` ↔ `FULL` space transitions.
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/XrPlayerActivity.kt` — Full Space immersive player (separate Activity).
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/MultitaskPlayerActivity.kt` — Home Space side-by-side player.
-- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/SpatialPlayerScreen.kt` — main player Composable (large; decomposed into sibling `Player*.kt` files).
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/SpatialPlayerScreen.kt` — main player Composable (large; decomposed into sibling `Player*.kt` files — see the comment block near the bottom of the file for the index of what was lifted out).
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerVoiceCapture.kt` — `startVoiceCapture` + helpers. Builds the `PlayerStateSnapshot`, decides character-ID vs general visual context for chat queries, pauses/resumes playback around GPU-bound on-device inference, dispatches non-chat actions through `PlayerSessionController`, and records telemetry.
 - `data/src/main/java/dev/jdtech/jellyfin/repository/JellyfinRepositoryImpl.kt` — primary Jellyfin/DB gateway.
 
 ### Voice / AI Entry Points

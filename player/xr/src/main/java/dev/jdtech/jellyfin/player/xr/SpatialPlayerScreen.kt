@@ -129,11 +129,9 @@ import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
 import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
-import dev.jdtech.jellyfin.player.xr.capture.PlayerFrameCapture
 import dev.jdtech.jellyfin.player.xr.voice.CharacterScanOverlay
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
-import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dagger.hilt.android.EntryPointAccessors
@@ -489,8 +487,12 @@ fun SpatialPlayerScreen(
 
     // --- Next episode panel state ---
     var nextEpisodePanelDismissed by remember { mutableStateOf(false) }
-    // Reset dismissal whenever the title changes (user started a new episode).
-    LaunchedEffect(uiState.currentItemTitle) { nextEpisodePanelDismissed = false }
+    // Reset dismissal whenever the playing item changes (user started a new episode).
+    // Keyed on item id, not title — back-to-back episodes can share a title
+    // ("Pilot", "Part 1") and the panel must still re-arm.
+    LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) {
+        nextEpisodePanelDismissed = false
+    }
     // Show the panel during the last NEXT_EPISODE_THRESHOLD_MS of an episode when a next
     // episode exists — but not for movies, very short content, or when controls are locked.
     val showNextEpisodePanel = !nextEpisodePanelDismissed &&
@@ -945,8 +947,10 @@ fun SpatialPlayerScreen(
         }
     }
 
-    // Reset conversation history when the playing item changes
-    LaunchedEffect(uiState.currentItemTitle) {
+    // Reset conversation history when the playing item changes. Key on item id
+    // (with title fallback) — two adjacent episodes can share a title and the
+    // assistant must drop stale context when the actual item flips.
+    LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) {
         conversationHistory.clear()
         recommendationContext = null
     }
@@ -2342,263 +2346,7 @@ fun SpatialPlayerScreen(
 
 // SecondaryControlsOrbiter / SyncPlayDialogContent → PlayerSecondaryControls.kt
 
-private fun startVoiceCapture(
-    voiceService: SpatialVoiceService,
-    commandCoordinatorProvider: () -> SpatialCommandCoordinator,
-    chatEngineProvider: () -> SmartChatEngine,
-    recentSubtitles: List<Pair<Long, String>>,
-    player: Player,
-    viewModel: PlayerViewModel,
-    uiState: PlayerViewModel.UiState,
-    controlsVisible: Boolean,
-    controller: PlayerSessionController,
-    telemetryStore: VoiceTelemetryStore,
-    onSearchQuery: suspend (String) -> List<SpatialFinItem>,
-    assistantPreferences: AssistantPreferences,
-    passthroughEnabled: Boolean,
-    responseLanguageHint: String?,
-    conversationHistory: List<Pair<String, String>>,
-    onConversationTurn: (String, String) -> Unit,
-    voiceSearchOpen: Boolean,
-    voiceSearchQuery: String,
-    voiceSearchResults: List<SpatialFinItem>,
-    recommendationContext: RecommendationContext?,
-    onRecommendationContextUpdated: (RecommendationContext) -> Unit,
-    onScheduleFollowUp: () -> Unit,
-    onGetSuggestions: suspend () -> List<SpatialFinItem>,
-    onResult: (String) -> Unit,
-    onSpokenReply: (String, String?) -> Unit,
-    onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
-    subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
-    scope: kotlinx.coroutines.CoroutineScope,
-    lastPointerPosition: androidx.compose.ui.geometry.Offset?,
-    onJobStarted: ((kotlinx.coroutines.Job) -> Unit)? = null,
-) {
-    val startedAtMs = System.currentTimeMillis()
-    voiceService.startListening { transcript ->
-        val job = scope.launch {
-            try {
-                val snapshot =
-                    PlayerStateSnapshot(
-                        screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.PLAYER,
-                        isPlaying = player.isPlaying,
-                        positionSeconds = player.currentPosition / 1_000L,
-                        durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
-                        controlsVisible = controlsVisible,
-                        currentItemTitle = uiState.currentItemTitle,
-                        currentOverview = uiState.currentOverview,
-                        currentSeriesName = uiState.currentSeriesName,
-                        currentSeasonNumber = uiState.currentSeasonNumber,
-                        currentEpisodeNumber = uiState.currentEpisodeNumber,
-                        currentSegmentType = uiState.currentSegment?.type?.toString(),
-                        currentChapterName = currentChapterName(uiState, player.currentPosition),
-                        nextEpisodeTitle = uiState.nextEpisode?.name,
-                        currentGenres = uiState.currentGenres,
-                        currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" },
-                        castNames = uiState.currentPeople
-                            .filter { it.type.equals("Actor", ignoreCase = true) }
-                            .map { it.name },
-                        directors = uiState.currentPeople
-                            .filter { it.type.equals("Director", ignoreCase = true) }
-                            .map { it.name },
-                        writers = uiState.currentPeople
-                            .filter { it.type.equals("Writer", ignoreCase = true) }
-                            .map { it.name },
-                        productionYear = uiState.currentProductionYear,
-                        officialRating = uiState.currentOfficialRating,
-                        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
-                        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
-                        chapterNames = uiState.currentChapters.mapNotNull { it.name },
-                        currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
-                        currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
-                        currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
-                        currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
-                        inVoiceSearch = voiceSearchOpen,
-                        voiceSearchQuery = voiceSearchQuery.ifBlank { null },
-                        voiceSearchResultsCount = voiceSearchResults.size,
-                        lastRecommendationQuery = recommendationContext?.query,
-                        lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-                        lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
-                        passthroughEnabled = passthroughEnabled,
-                        castWithCharacters = uiState.currentPeople
-                            .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
-                            .map { it.name to it.role },
-                    )
-                val commandCoordinator = commandCoordinatorProvider()
-                val parseResult = commandCoordinator.parse(transcript, snapshot)
-                val action = parseResult.action
-                if (action is XrPlayerAction.ChatQuery) {
-                    onResult("…")
-                    val chatEngine = chatEngineProvider()
-                    
-                    val visualContexts = mutableListOf<android.graphics.Bitmap>()
-                    val ownedBitmaps = mutableListOf<android.graphics.Bitmap>()
-                    val trickplay = uiState.currentTrickplay
-
-                    // Detect "who is this/him/her/the character" style queries.
-                    val normalizedQuery = action.query.lowercase()
-                    val isCharacterIDQuery = (normalizedQuery.startsWith("who is") || normalizedQuery.startsWith("who was")) &&
-                        run {
-                            val afterWho = normalizedQuery.removePrefix("who is ").removePrefix("who was ").trim()
-                            afterWho in setOf(
-                                "this", "that", "him", "her", "he", "she", "they",
-                                "this character", "this person", "this actor", "this actress",
-                                "the character", "this guy", "this man", "this woman",
-                                "this girl", "this boy",
-                            ) || afterWho.startsWith("this ") || afterWho.startsWith("the ")
-                        }
-
-                    if (isCharacterIDQuery) {
-                        // Single high-res frame via MediaMetadataRetriever; falls back to trickplay.
-                        val streamUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
-                        val frame = PlayerFrameCapture.bestFrameForCharacterID(
-                            streamUri = streamUri,
-                            positionMs = player.currentPosition,
-                            trickplayImages = trickplay?.images.orEmpty(),
-                            trickplayIntervalSeconds = trickplay?.interval?.toLong() ?: 0L,
-                            ownedBitmapOut = ownedBitmaps,
-                        )
-                        if (frame != null) visualContexts.add(frame)
-                        onCharacterScanActiveChanged?.invoke(true)
-                    } else if (trickplay != null && trickplay.images.isNotEmpty() && trickplay.interval > 0) {
-                        // Temporal sequence of trickplay frames for general queries.
-                        val currentIdx = (player.currentPosition / 1000 / trickplay.interval).toInt()
-                            .coerceIn(0, trickplay.images.size - 1)
-                        val indices = listOf(
-                            (currentIdx - 3).coerceAtLeast(0),
-                            (currentIdx - 1).coerceAtLeast(0),
-                            currentIdx,
-                        ).distinct()
-                        indices.forEach { idx -> visualContexts.add(trickplay.images[idx]) }
-                    }
-
-                    val isGpu = chatEngine.modelManager.instance?.backendName == "GPU"
-                    val shouldPauseForGemma = isGpu && chatEngine.shouldUseGemma()
-                    var wasPlaying = false
-                    if (shouldPauseForGemma) {
-                        wasPlaying = player.isPlaying
-                        if (wasPlaying) {
-                            player.pause()
-                        }
-                    }
-
-                    val response = try {
-                        chatEngine.query(
-                            question = action.query,
-                            playerState = snapshot,
-                            storySoFarContext = uiState.storySoFarContext,
-                            recentSubtitleLines = recentSubtitles,
-                            currentPositionMs = player.currentPosition,
-                            assistantPreferences = assistantPreferences,
-                            onSearchQuery = onSearchQuery,
-                            conversationHistory = conversationHistory,
-                            recommendationContext = recommendationContext,
-                            onGetSuggestions = onGetSuggestions,
-                            visualContexts = visualContexts,
-                            lastPointerPosition = lastPointerPosition,
-                            subtitleCacheFallback = subtitleCacheFallback,
-                            onTokenStream = { partial -> onResult(partial) },
-                        )
-                    } finally {
-                        if (isCharacterIDQuery) onCharacterScanActiveChanged?.invoke(false)
-                        ownedBitmaps.forEach { it.recycle() }
-                        ownedBitmaps.clear()
-                    }
-
-                    if (wasPlaying) {
-                        player.play()
-                    }
-
-                    if (response.text != null) {
-                        Timber.i(
-                            "VOICE: chat reply strategy=%s skill=%s recommendations=%d disposition=%s spokenReplies=%b",
-                            response.strategy,
-                            response.selectedSkill,
-                            response.recommendedItems.size,
-                            response.resultDisposition,
-                            assistantPreferences.spokenRepliesEnabled,
-                        )
-                        onResult(response.text)
-                        onConversationTurn(action.query, response.text)
-                        onScheduleFollowUp()
-                        if (assistantPreferences.spokenRepliesEnabled) {
-                            Timber.i("VOICE: speaking chat reply chars=%d", response.text.length)
-                            onSpokenReply(response.text, responseLanguageHint)
-                        }
-                        if (response.recommendedItems.isNotEmpty()) {
-                            Timber.i(
-                                "VOICE: showing recommendation results query=%s count=%d first=%s",
-                                action.query,
-                                response.recommendedItems.size,
-                                response.recommendedItems.firstOrNull()?.name,
-                            )
-                            onRecommendationContextUpdated(
-                                RecommendationContext(
-                                    query = action.query,
-                                    items = response.recommendedItems,
-                                ),
-                            )
-                            controller.showRecommendations(action.query, response.recommendedItems)
-                        }
-                    } else {
-                        Timber.w("VOICE: chat reply was null")
-                        onResult("Sorry, I couldn't process that.")
-                    }
-                    telemetryStore.record(
-                        VoiceTelemetryEntry(
-                            transcript = transcript,
-                            normalizedTranscript = parseResult.normalizedTranscript,
-                            action = "ChatQuery",
-                            strategy = response.strategy,
-                            latencyMs = System.currentTimeMillis() - startedAtMs,
-                            success = response.text != null,
-                            selectedSkill = response.selectedSkill,
-                            validatedInput = response.validatedInput,
-                            resultDisposition = response.resultDisposition,
-                            details = "parse=${parseResult.debugInfo}; reply=${response.debugInfo}",
-                        )
-                    )
-                } else {
-                    val feedback = dispatchVoiceParseResult(controller, parseResult)
-                    onResult(feedback)
-                    if (assistantPreferences.spokenRepliesEnabled && shouldSpeakVoiceFeedback(action)) {
-                        onSpokenReply(feedback, responseLanguageHint)
-                    }
-                    telemetryStore.record(
-                        VoiceTelemetryEntry(
-                            transcript = transcript,
-                            normalizedTranscript = parseResult.normalizedTranscript,
-                            action = parseResult.action::class.simpleName ?: "Unknown",
-                            strategy = parseResult.strategy.name,
-                            latencyMs = System.currentTimeMillis() - startedAtMs,
-                            success = parseResult.action !is XrPlayerAction.Unrecognized,
-                            details = parseResult.debugInfo,
-                        )
-                    )
-                }
-            } finally {
-                voiceService.resetState()
-            }
-        }
-        onJobStarted?.invoke(job)
-    }
-}
-
-private suspend fun dispatchVoiceParseResult(
-    controller: PlayerSessionController,
-    parseResult: VoiceParseResult,
-): String = controller.dispatch(parseResult.action)
-
-private fun shouldSpeakVoiceFeedback(action: XrPlayerAction): Boolean {
-    return when (action) {
-        is XrPlayerAction.ReportCurrentTime,
-        is XrPlayerAction.ReportRemainingTime,
-        is XrPlayerAction.ReportEndTime,
-        is XrPlayerAction.ReportCurrentMedia,
-        is XrPlayerAction.ReportPassthroughStatus -> true
-        else -> false
-    }
-}
+// startVoiceCapture / dispatchVoiceParseResult / shouldSpeakVoiceFeedback → PlayerVoiceCapture.kt
 
 // currentChapterName, trackNames, selectedTrackName, selectedTrackLanguage,
 //   groupIsSelected → PlayerTrackUtils.kt
