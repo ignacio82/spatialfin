@@ -228,36 +228,41 @@ Current scope:
 
 ## Architecture
 
-SpatialFin is a multi-module Android project:
+SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV).
 
 | Module | Description |
 |--------|-------------|
-| `app/unified` | Unified Android application entry point, manifest, and packaging layer |
-| `player/xr` | Immersive XR player with spatial UI |
-| `player/local` | Local playback engine (ExoPlayer) |
-| `player/session` | Player/session command layer for voice, SyncPlay, and XR session orchestration |
-| `player/core` | Player abstractions and interfaces |
-| `modes/film` | Browse movies, shows, and episodes |
-| `data` | Jellyfin API client, database, repository |
-| `core` | Shared UI components and utilities |
-| `settings` | User preferences |
-| `setup` | Server onboarding flow |
+| `:app:unified` | The only application module. Application id `dev.spatialfin`. Stages the legacy `app/xr`, `app/tv`, and `app/beam` source trees into the build. |
+| `:player:xr` | Immersive XR player, libass JNI subtitle pipeline, voice subsystem, spatial UI. |
+| `:player:local` | Media3 / ExoPlayer wrapper for local and Jellyfin playback. |
+| `:player:session` | Typed player actions, voice command execution, SyncPlay orchestration. |
+| `:player:core` | Player abstractions and domain models. |
+| `:player:beam` | Phone-form-factor player (re-exports `:player:xr` for the libass libs). |
+| `:player:tv` | TV-form-factor (Leanback) player. |
+| `:modes:film` | Browse and detail screens for movies, shows, episodes, and collections. |
+| `:data` | Jellyfin / TMDB / Seerr API clients, Room database, downloads, network shares (SMB/NFS), mDNS discovery. |
+| `:core` | Shared UI components, LLM model manager, WorkManager workers. |
+| `:settings` | DataStore-based preferences and voice telemetry. |
+| `:setup` | Server onboarding and login flows. |
 
-The device-specific UI/navigation sources still live under `app/xr`, `app/beam`, and `app/tv`, and are staged into `app/unified` during the build.
+The directories `app/xr/`, `app/beam/`, and `app/tv/` exist on disk but are **not** Gradle modules. Their Kotlin sources are staged into `:app:unified` at build time by the `StageSourcesTask` in `app/unified/build.gradle.kts`. Editing those files affects the unified APK on the next build; no extra Gradle wiring is required.
 
 ## AI Usage
 
-If you are using this repository with an LLM, focus on source files, Gradle files, and the architecture notes in `GEMINI.md`.
+If you are using this repository with an LLM (Claude, Gemini, Codex, etc.), the canonical technical context is in **[`GEMINI.md`](GEMINI.md)**. It contains the architecture, voice/AI pipeline notes, build quirks, and known footguns that are easy to miss from source alone.
 
-Usually ignore these paths unless the task explicitly targets them:
+`GEMINI.md` includes a self-update mandate: any AI assistant making non-trivial changes to SpatialFin should update `GEMINI.md` in the same change when its content drifts (modules added/removed, new debugging recipes, repeated bugs worked around, etc.). Keeping that file fresh keeps every future AI session productive.
 
-- `.git/`
+When pointing an AI at this repo, focus it on source files, Gradle files, and `GEMINI.md`. Usually ignore these paths unless the task explicitly targets them:
+
+- `.git/`, `.kotlin/`
 - `**/build/`
 - `build_native_work/`
 - `release/`
 - `fastlane/metadata/android/en-US/images/`
+- `androidx/`
 
-Note: `player/xr/src/main/jniLibs/` contains intentionally checked-in prebuilt native libraries so a fresh clone can still build without native toolchain setup.
+Note: `player/xr/src/main/jniLibs/` contains intentionally checked-in prebuilt `libass_jni.so` binaries so a fresh clone still builds without an NDK toolchain.
 
 ## Building
 
@@ -265,21 +270,27 @@ Note: `player/xr/src/main/jniLibs/` contains intentionally checked-in prebuilt n
 ./gradlew :app:unified:assembleLibreDebug
 ```
 
-### Native Subtitle Library
-
-SpatialFin currently keeps the prebuilt `libass_jni.so` binaries under `player/xr/src/main/jniLibs` so a fresh clone still builds without requiring a native toolchain setup.
-
-The `build_native_work/` directory is not required in Git. If you need to rebuild the subtitle JNI library, use:
-
-```bash
-./player/xr/build_native.sh /path/to/android-ndk
-```
-
 The debug APK is generated at:
 
 ```text
 app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
 ```
+
+There is one product flavor (`libre`). Build types are `debug`, `staging`, and `release`. Release is currently shipped unminified — see `GEMINI.md` for the R8 / `androidx.xr` rationale and the keep rules that must stay in `app/unified/proguard-rules.pro`.
+
+### Native Subtitle Library
+
+SpatialFin keeps prebuilt `libass_jni.so` binaries under `player/xr/src/main/jniLibs` so a fresh clone builds without native toolchain setup. To rebuild from source:
+
+```bash
+./player/xr/build_native.sh /path/to/android-ndk
+```
+
+`build_native_work/` is reproducible scratch output for the subtitle toolchain and is not required in Git.
+
+### Versioning
+
+`buildSrc/src/main/kotlin/Versions.kt` is the source of truth. Increment **both** `APP_CODE` (integer) and `APP_NAME` (semver) before producing a Play Store bundle.
 
 ## License
 
