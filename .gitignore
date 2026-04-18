@@ -2,6 +2,11 @@
 .gradle/
 build/
 **/build/
+.kotlin/
+
+# Editor / merge leftovers
+*.orig
+*.rej
 
 # Local configuration file (sdk path, etc)
 local.properties

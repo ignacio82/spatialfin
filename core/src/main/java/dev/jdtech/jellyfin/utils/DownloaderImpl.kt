@@ -87,8 +87,9 @@ class DownloaderImpl(
         request: DownloadRequest,
     ): UiText? {
         try {
-            val source =
-                jellyfinRepository.getMediaSources(item.id, true).first { it.id == request.sourceId }
+            val source = jellyfinRepository.getMediaSources(item.id, true)
+                .firstOrNull { it.id == request.sourceId }
+                ?: return UiText.StringResource(CoreR.string.unknown_error)
             val segments = jellyfinRepository.getSegments(item.id)
             val trickplayInfo =
                 if (item is SpatialFinSources) {

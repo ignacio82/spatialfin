@@ -108,13 +108,38 @@ class JellyfinRepositoryOfflineImpl(
         recursive: Boolean,
         sortBy: SortBy,
         sortOrder: SortOrder,
-    ): Flow<PagingData<SpatialFinItem>> {
-        // Library browsing by parentId is not meaningfully reachable offline:
-        // collection structure isn't fully cached, and the screens that consume
-        // this flow (genre browse, full-library lists) work against the live
-        // server. Return an empty page so consumers degrade gracefully instead
-        // of crashing.
-        return flowOf(PagingData.empty())
+    ): Flow<PagingData<SpatialFinItem>> = withContext(Dispatchers.IO) {
+        // Collection structure (libraries / parent folders) isn't cached locally,
+        // so `parentId` is ignored. We surface every downloaded item the user
+        // could conceivably play, filtered by `includeTypes` so callers asking
+        // for only movies don't get episodes back.
+        val serverId = appPreferences.getValue(appPreferences.currentServer)
+            ?: return@withContext flowOf(PagingData.empty())
+        val userId = jellyfinApi.userId ?: return@withContext flowOf(PagingData.empty())
+        val wantsAll = includeTypes.isNullOrEmpty()
+        val items = buildList<SpatialFinItem> {
+            if (wantsAll || includeTypes!!.contains(BaseItemKind.MOVIE)) {
+                addAll(
+                    database.getMoviesByServerId(serverId)
+                        .map { it.toSpatialFinMovie(database, userId) }
+                        .filter { it.isDownloaded() }
+                )
+            }
+            if (wantsAll || includeTypes!!.contains(BaseItemKind.SERIES)) {
+                addAll(
+                    database.getShowsByServerId(serverId)
+                        .map { it.toSpatialFinShow(database, userId) }
+                )
+            }
+            if (wantsAll || includeTypes!!.contains(BaseItemKind.EPISODE)) {
+                addAll(
+                    database.getEpisodesByServerId(serverId)
+                        .map { it.toSpatialFinEpisode(database, userId) }
+                        .filter { it.isDownloaded() }
+                )
+            }
+        }
+        flowOf(PagingData.from(items))
     }
 
     override suspend fun getPerson(personId: UUID): SpatialFinPerson {
