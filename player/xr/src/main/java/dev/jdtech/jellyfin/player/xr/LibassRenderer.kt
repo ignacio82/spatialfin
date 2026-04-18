@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import java.nio.ByteBuffer
-import java.util.concurrent.TimeUnit
 import timber.log.Timber
 
 /**
@@ -89,7 +88,37 @@ class LibassRenderer(
         postWork("init") {
             nativeCtx = nativeInit(width, height)
             Timber.i("init: nativeCtx=%d", nativeCtx)
+            if (nativeCtx != 0L) registerSystemFonts()
         }
+    }
+
+    /**
+     * Register every TTF/OTF/TTC under /system/fonts/ with libass. Without this,
+     * `Fontname:` directives in ASS styles resolve only to the single fallback font
+     * we passed to ass_set_fonts — every anime renders in Noto CJK regardless of
+     * the author's intent. MKV-embedded fonts are registered later in
+     * LibassTextRenderer.ensureFontsLoaded(); those take priority automatically
+     * because libass matches by family name.
+     */
+    private fun registerSystemFonts() {
+        val dir = java.io.File("/system/fonts")
+        val files = dir.listFiles { f ->
+            val lower = f.name.lowercase()
+            lower.endsWith(".ttf") || lower.endsWith(".otf") || lower.endsWith(".ttc")
+        } ?: return
+        var ok = 0
+        var bytes = 0L
+        for (file in files) {
+            runCatching {
+                val data = file.readBytes()
+                nativeAddFont(nativeCtx, file.nameWithoutExtension, data)
+                ok++
+                bytes += data.size
+            }.onFailure {
+                Timber.w(it, "registerSystemFonts: failed %s", file.name)
+            }
+        }
+        Timber.i("registerSystemFonts: registered %d fonts (%d KB)", ok, bytes / 1024)
     }
 
     /**
@@ -148,86 +177,64 @@ class LibassRenderer(
         }
     }
 
+    // Latest async render output. Updated by the renderer thread, read by callers on
+    // the UI thread. @Volatile gives a torn-free reference read across threads.
+    @Volatile private var lastResult: RenderResult = RenderResult(hasContent = false)
+    // Single-slot dedup: if a render is already in flight, skip posting another. Without
+    // this, heavy karaoke frames (50–70 ms native) queue up faster than they complete
+    // and the handler backlog grows unboundedly.
+    @Volatile private var renderInFlight: Boolean = false
+
     /**
-     * Render the subtitle frame at the given playback time.
-     * Returns a RenderResult indicating whether content is visible.
+     * Request a subtitle frame render at the given playback time.
+     *
+     * Non-blocking: posts work to the renderer thread and returns the most recently
+     * completed frame. A 16 ms caller-side budget is not viable — heavy anime karaoke
+     * and sign lines can produce 200–900 image blits and take 40–70 ms to composite
+     * on the CPU, which would cause every single frame to be dropped. Callers poll
+     * this method on a loop; the cached [lastResult] is updated by the render thread
+     * as new frames complete.
      */
     fun renderFrame(timeMs: Long): RenderResult {
         if (destroyed) return RenderResult(hasContent = false)
-        // Default to the last known content state so that when the native layer returns null
-        // ("no change — reuse cached frame"), we preserve visibility instead of hiding the panel.
-        var result = RenderResult(hasContent = hasActiveSubtitles)
-        val latch = java.util.concurrent.CountDownLatch(1)
-        // Subtitle tracks with many ASS events can enqueue thousands of chunk updates at start.
-        // Rendering must preempt that backlog or the panel will freeze on the first visible line.
-        val posted =
-            handler.postAtFrontOfQueue {
+        if (!renderInFlight) {
+            renderInFlight = true
+            val posted = handler.postAtFrontOfQueue {
                 try {
-                    if (!destroyed && nativeCtx != 0L) {
-                        val nativeResult = nativeRenderFrame(nativeCtx, timeMs)
-                        if (nativeResult != null) {
-                            val hasContent = nativeResult[0] != 0
-                            hasActiveSubtitles = hasContent
-                            if (hasContent) {
-                                val buffer = nativeGetBuffer(nativeCtx)
-                                if (buffer != null) {
-                                    buffer.rewind()
-                                    val bitmap = cachedBitmap?.let {
-                                        if (it.width == width && it.height == height) it
-                                        else {
-                                            Timber.w(
-                                                "renderFrame: bitmap size mismatch %dx%d vs %dx%d — replacing without recycle",
-                                                it.width,
-                                                it.height,
-                                                width,
-                                                height,
-                                            )
-                                            null
-                                        }
-                                    } ?: Bitmap.createBitmap(
-                                        width,
-                                        height,
-                                        Bitmap.Config.ARGB_8888,
-                                    ).also {
-                                        it.setHasAlpha(true)
-                                        cachedBitmap = it
-                                    }
-                                    bitmap.copyPixelsFromBuffer(buffer)
-                                    val dirtyW = nativeResult[3]
-                                    val dirtyH = nativeResult[4]
-                                    result = RenderResult(
-                                        hasContent = true,
-                                        bitmap = bitmap,
-                                        dirtyX = nativeResult[1],
-                                        dirtyY = nativeResult[2],
-                                        dirtyW = dirtyW,
-                                        dirtyH = dirtyH,
-                                    )
-                                }
-                            } else {
-                                result = RenderResult(hasContent = false)
-                            }
-                        }
+                    if (destroyed || nativeCtx == 0L) return@postAtFrontOfQueue
+                    val nativeResult = nativeRenderFrame(nativeCtx, timeMs) ?: return@postAtFrontOfQueue
+                    val hasContent = nativeResult[0] != 0
+                    hasActiveSubtitles = hasContent
+                    if (!hasContent) {
+                        lastResult = RenderResult(hasContent = false)
+                        return@postAtFrontOfQueue
                     }
+                    val buffer = nativeGetBuffer(nativeCtx) ?: return@postAtFrontOfQueue
+                    buffer.rewind()
+                    val bitmap = cachedBitmap?.takeIf { it.width == width && it.height == height }
+                        ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                            it.setHasAlpha(true)
+                            cachedBitmap = it
+                        }
+                    bitmap.copyPixelsFromBuffer(buffer)
+                    lastResult = RenderResult(
+                        hasContent = true,
+                        bitmap = bitmap,
+                        dirtyX = nativeResult[1],
+                        dirtyY = nativeResult[2],
+                        dirtyW = nativeResult[3],
+                        dirtyH = nativeResult[4],
+                    )
                 } finally {
-                    latch.countDown()
+                    renderInFlight = false
                 }
             }
-        if (!posted) {
-            hasActiveSubtitles = false
-            Timber.w("renderFrame: skipped because renderer thread is unavailable")
-            return RenderResult(hasContent = false)
+            if (!posted) {
+                renderInFlight = false
+                Timber.w("renderFrame: skipped because renderer thread is unavailable")
+            }
         }
-        // Bounded wait: if the native render stalls (font loader deadlock, corrupted
-        // track), the UI thread must not hang until ANR. One frame (~16 ms) is enough
-        // that a healthy native side always completes, and a stall degrades to a
-        // dropped subtitle frame rather than an ANR.
-        if (!latch.await(16L, TimeUnit.MILLISECONDS)) {
-            Timber.w("renderFrame: native render exceeded 16ms budget — dropping frame")
-            return RenderResult(hasContent = hasActiveSubtitles)
-        }
-        if (destroyed) return RenderResult(hasContent = false)
-        return result
+        return lastResult
     }
 
     fun destroy() {

@@ -107,9 +107,16 @@ class LibassTextRenderer(
             libassRenderer.setTrackData(codecPrivate)
             inputFormatReceived = true
             onTrackInitialized()
-        } else if (initData.isEmpty()) {
-            // SRT/VTT tracks have no ASS header. Synthesize a minimal one so libass
-            // creates a valid track and processChunk() calls are not silently dropped.
+        } else if (initData.isEmpty() && isSrtOrVtt) {
+            // SRT/VTT tracks have no ASS header of their own. Synthesize a minimal one
+            // so libass creates a valid track and processChunk() calls are not silently
+            // dropped. ASS tracks fall through deliberately: sideloaded .ass files arrive
+            // as a single full-file sample where initializationData is empty but the
+            // first render() buffer contains [Script Info] + [V4+ Styles]. processFullAssFile
+            // parses the real header and calls setTrackData() itself. Injecting a synthetic
+            // header here would replace every real style (colors, fonts, PlayRes,
+            // alignment, margins) with generic Arial 72 at 1920x1080 — the exact cause
+            // of "anime subtitles render as plain white Arial, wrong position/size".
             if (!inputFormatReceived) {
                 val syntheticHeader = buildSyntheticAssHeader()
                 Timber.i("subtitle: SRT/VTT track — injecting synthetic ASS header (%d bytes, fontSize=%d)", syntheticHeader.size, srtFontSize)
@@ -117,6 +124,8 @@ class LibassTextRenderer(
                 inputFormatReceived = true
                 onTrackInitialized()
             }
+        } else if (initData.isEmpty()) {
+            Timber.i("subtitle: ASS track with empty initData — deferring header; expecting full-file sample")
         }
     }
 

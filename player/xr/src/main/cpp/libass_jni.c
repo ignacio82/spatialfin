@@ -41,24 +41,36 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeInit(JNIEnv *env, jobjec
 
     // Set high-fidelity rendering options
     ass_set_frame_size(ctx->renderer, width, height);
-    ass_set_hinting(ctx->renderer, ASS_HINTING_LIGHT);
+    // Default storage size = frame size. Overridden once the video resolution is known
+    // via nativeResize; without an initial value libass uses frame_size and applies a
+    // neutral pixel aspect ratio, which shifts \pos coordinates before the first resize.
+    ass_set_storage_size(ctx->renderer, width, height);
+    // NATIVE hinting preserves author-designed glyph metrics better than LIGHT for
+    // stylised anime fonts and for CJK scripts where LIGHT over-thins strokes.
+    ass_set_hinting(ctx->renderer, ASS_HINTING_NATIVE);
     ass_set_shaper(ctx->renderer, ASS_SHAPING_COMPLEX);
-    
-    // Set fonts for Android with multiple fallbacks
-    const char *font_noto = "/system/fonts/NotoSansCJK-Regular.ttc";
+
+    // Fallback font for glyphs not covered by any registered font, and the default
+    // family name libass resolves when the ASS style's Fontname is unknown.
+    // Kotlin registers /system/fonts/* and embedded attachments via nativeAddFont;
+    // provider NONE = resolve purely from that in-memory registry (Android has no
+    // fontconfig/CoreText/DirectWrite — AUTODETECT resolves to NONE anyway).
+    //
+    // Most anime ASS scripts specify Fontname: Arial. The Quest has no Arial, so we
+    // steer the fallback to Roboto — it has Regular/Bold/Italic variants on the
+    // device, which matters because ASS Bold: -1 with no matching bold face produces
+    // thin "faux-regular" text. Passing "Roboto" as default_family means any unknown
+    // Fontname in the style resolves to Roboto too, and libass picks the correct
+    // weight automatically from the registered Roboto-Bold.ttf / Roboto-Medium.ttf.
+    const char *font_noto_cjk = "/system/fonts/NotoSansCJK-Regular.ttc";
     const char *font_roboto = "/system/fonts/Roboto-Regular.ttf";
-    const char *font_droid = "/system/fonts/DroidSans-Bold.ttf";
-    
-    if (access(font_noto, R_OK) == 0) {
-        LOGI("nativeInit: using font %s", font_noto);
-        ass_set_fonts(ctx->renderer, font_noto, "Noto Sans", ASS_FONTPROVIDER_AUTODETECT, NULL, 1);
-    } else if (access(font_roboto, R_OK) == 0) {
-        LOGI("nativeInit: using font %s", font_roboto);
-        ass_set_fonts(ctx->renderer, font_roboto, "Roboto", ASS_FONTPROVIDER_AUTODETECT, NULL, 1);
-    } else {
-        LOGI("nativeInit: using font %s", font_droid);
-        ass_set_fonts(ctx->renderer, font_droid, "Droid Sans Bold", ASS_FONTPROVIDER_AUTODETECT, NULL, 1);
-    }
+    const char *font_droid = "/system/fonts/DroidSans.ttf";
+    const char *fallback = NULL;
+    if (access(font_roboto, R_OK) == 0) fallback = font_roboto;
+    else if (access(font_noto_cjk, R_OK) == 0) fallback = font_noto_cjk;
+    else if (access(font_droid, R_OK) == 0) fallback = font_droid;
+    LOGI("nativeInit: fallback font %s (default family: Roboto)", fallback ? fallback : "(none)");
+    ass_set_fonts(ctx->renderer, fallback, "Roboto", ASS_FONTPROVIDER_NONE, NULL, 1);
 
     ctx->frame_w = width;
     ctx->frame_h = height;
@@ -104,7 +116,13 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeSetTrackData(JNIEnv *env
         jsize len = (*env)->GetArrayLength(env, codecPrivate);
         jbyte *data = (*env)->GetByteArrayElements(env, codecPrivate, NULL);
         LOGI("nativeSetTrackData: codec_private %d bytes", (int)len);
-        LOGD("nativeSetTrackData: header=%.200s", (char *)data);
+        // Split into 900-char chunks so logcat doesn't truncate the style/format rows.
+        int offset = 0;
+        while (offset < len) {
+            int chunk = len - offset > 900 ? 900 : (int)(len - offset);
+            LOGD("nativeSetTrackData: header[%d..%d]=%.*s", offset, offset + chunk, chunk, (char *)data + offset);
+            offset += chunk;
+        }
         ass_process_codec_private(ctx->track, (char *)data, len);
         (*env)->ReleaseByteArrayElements(env, codecPrivate, data, JNI_ABORT);
     }
@@ -228,10 +246,12 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeRenderFrame(JNIEnv *env,
     }
 
     if (has_content) {
-        LOGD("renderFrame: dirty (%d,%d) %dx%d",
+        LOGD("renderFrame: dirty (%d,%d) %dx%d in frame %dx%d (bottom=%d)",
              dirty_x1, dirty_y1,
              dirty_x2 > dirty_x1 ? dirty_x2 - dirty_x1 : 0,
-             dirty_y2 > dirty_y1 ? dirty_y2 - dirty_y1 : 0);
+             dirty_y2 > dirty_y1 ? dirty_y2 - dirty_y1 : 0,
+             ctx->frame_w, ctx->frame_h,
+             ctx->frame_h - dirty_y2);
     }
 
     ctx->has_cached_frame = has_content;

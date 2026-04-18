@@ -1830,8 +1830,21 @@ fun SpatialPlayerScreen(
     val uiAnchorZDp = 0f
 
     LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
-        val renderWidth = (subtitlePanelWidthDp * density.density).toInt().coerceIn(1280, 7680)
-        val renderHeight = (subtitlePanelHeightDp * density.density).toInt().coerceIn(720, 4320)
+        // Preserve panel aspect ratio in the render buffer. Clamping each axis
+        // independently (coerceIn per-axis) silently distorts aspect for ultra-wide
+        // or ultra-tall panels — and any bitmap/panel aspect mismatch shifts every
+        // \pos/\an positioned subtitle because Image uses FillBounds downstream.
+        val targetW = (subtitlePanelWidthDp * density.density).coerceAtLeast(1f)
+        val targetH = (subtitlePanelHeightDp * density.density).coerceAtLeast(1f)
+        val maxScale = minOf(7680f / targetW, 4320f / targetH)
+        val minScale = maxOf(1280f / targetW, 720f / targetH)
+        val scale = when {
+            maxScale < 1f -> maxScale // oversize — shrink uniformly to stay under memory caps
+            minScale > 1f -> minScale // undersize — enlarge uniformly to hit min quality floor
+            else -> 1f
+        }
+        val renderWidth = (targetW * scale).toInt().coerceIn(1280, 7680)
+        val renderHeight = (targetH * scale).toInt().coerceIn(720, 4320)
         val videoW = player.videoSize.width
         val videoH = player.videoSize.height
         Timber.d(
@@ -1848,11 +1861,13 @@ fun SpatialPlayerScreen(
             finalSubtitleSize,
             subtitlePanelZDp,
         )
-        // Only resize when we have valid video dimensions so storage size is set correctly.
-        // Without storage size, libass misscales fonts authored at a different resolution.
-        if (videoW > 0 && videoH > 0) {
-            libassRenderer?.resize(renderWidth, renderHeight, videoW, videoH)
-        }
+        // Always resize so the frame buffer tracks the panel. When the video dimensions
+        // aren't reported yet (pre-first-frame), reuse the render size as a neutral
+        // storage size; nativeInit has already seeded this, and nativeResize will update
+        // it once videoW/H arrive. Passing 0 here would leave storage_size stale.
+        val storageW = if (videoW > 0) videoW else renderWidth
+        val storageH = if (videoH > 0) videoH else renderHeight
+        libassRenderer?.resize(renderWidth, renderHeight, storageW, storageH)
     }
 
     // Controls at same depth as UI anchor.
@@ -1893,7 +1908,8 @@ fun SpatialPlayerScreen(
                                 Image(
                                     painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
                                     contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.FillBounds,
                                 )
                             }
                         }
