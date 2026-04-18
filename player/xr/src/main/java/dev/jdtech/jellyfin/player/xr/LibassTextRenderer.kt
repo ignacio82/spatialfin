@@ -168,6 +168,12 @@ class LibassTextRenderer(
             } else if (isSrtOrVtt && isFullSrtOrVttFile(bytes)) {
                 processFullSrtOrVttFile(bytes)
             } else {
+                if (!inputFormatReceived) {
+                    Timber.w("subtitle: ASS track stream missing header and not a full file — injecting synthetic fallback")
+                    libassRenderer.setTrackData(buildSyntheticAssHeader())
+                    inputFormatReceived = true
+                    onTrackInitialized()
+                }
                 processSingleChunk(bytes, sampleStartMs)
             }
             buffer.clear()
