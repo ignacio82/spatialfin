@@ -1,11 +1,11 @@
-package dev.jdtech.jellyfin.presentation.settings.components
+package dev.spatialfin.presentation.settings.components
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,7 +17,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,8 +30,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.jdtech.jellyfin.player.xr.LibassRenderer
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.presentation.theme.spacings
@@ -63,9 +62,7 @@ fun SubtitlePreviewCard(
             modifier = Modifier.padding(start = MaterialTheme.spacings.medium),
             style = MaterialTheme.typography.headlineSmall,
         )
-        androidx.compose.foundation.layout.Spacer(
-            modifier = Modifier.padding(MaterialTheme.spacings.small),
-        )
+        Spacer(modifier = Modifier.padding(MaterialTheme.spacings.small))
         Card(
             modifier = modifier,
             colors = CardDefaults.cardColors(
@@ -99,9 +96,7 @@ fun SubtitlePreviewCard(
                         )
                     }
                 }
-                androidx.compose.foundation.layout.Spacer(
-                    modifier = Modifier.padding(MaterialTheme.spacings.small),
-                )
+                Spacer(modifier = Modifier.padding(MaterialTheme.spacings.small))
                 Text(
                     text = if (useLibass) {
                         "Rendered with libass (usage: $libassUsage, size: ${subtitleSizeSp}sp)"
@@ -123,7 +118,6 @@ private fun LibassPreviewLayer(
 ) {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    // Re-keyed whenever size changes so the renderer resizes and re-renders.
     val width = 1280
     val height = 720
 

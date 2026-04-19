@@ -41,7 +41,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
  * Extracted from SpatialPlayerScreen.kt.
  */
 @Composable
-internal fun ProgressSection(
+fun ProgressSection(
     uiState: PlayerViewModel.UiState,
     player: Player,
     currentPosition: Long,

@@ -116,12 +116,18 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import androidx.lifecycle.lifecycleScope
 import timber.log.Timber
 import java.util.ArrayList
 import java.util.Locale
 import java.util.UUID
 import dev.jdtech.jellyfin.player.xr.LibassTextRenderer as XrLibassTextRenderer
+import dev.jdtech.jellyfin.player.xr.ProgressSection
+import dev.jdtech.jellyfin.player.xr.voice.VoiceOrbOverlay
+import dev.jdtech.jellyfin.player.xr.voice.VoiceState as XrVoiceState
 
 @AndroidEntryPoint
 class BeamPlayerActivity : AppCompatActivity() {
@@ -231,13 +237,23 @@ class BeamPlayerActivity : AppCompatActivity() {
         )
 
         val itemIdUuid = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        val preloadedLibassFonts: List<Pair<String, ByteArray>> = itemIdUuid?.let { id ->
-            runCatching { runBlocking(Dispatchers.IO) { loadLibassFonts(id, maxBitrate) } }
-                .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
-                .getOrDefault(emptyList())
-        }.orEmpty()
+        // Fetch embedded ASS fonts off the main thread. The libass renderer's font loader
+        // closure is invoked on the Media3 text-renderer thread at track init, so it can
+        // block on this deferred without freezing the UI. Previously this was a
+        // runBlocking(IO) call in onCreate, which triggered a 5+s ANR on video start
+        // because getMediaSources + per-attachment fetches were chained synchronously.
+        val libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? =
+            itemIdUuid?.let { CompletableDeferred() }
+        if (itemIdUuid != null && libassFontsDeferred != null) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val fonts = runCatching { loadLibassFonts(itemIdUuid, maxBitrate) }
+                    .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
+                    .getOrDefault(emptyList())
+                libassFontsDeferred.complete(fonts)
+            }
+        }
         val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
-            if (itemIdUuid != null) ({ preloadedLibassFonts }) else null
+            libassFontsDeferred?.let { deferred -> { runBlocking { deferred.await() } } }
 
         replacePlayerForBeamSubtitles(libassFontLoader)
 
@@ -537,6 +553,12 @@ private fun BeamPlayerScreen(
     var useLibass by remember { mutableStateOf(false) }
     var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(voiceFeedback) {
+        if (voiceFeedback != null) {
+            delay(4_000L)
+            voiceFeedback = null
+        }
+    }
     var voiceResults by remember { mutableStateOf<List<SpatialFinItem>>(emptyList()) }
     var voiceSearchQuery by remember { mutableStateOf<String?>(null) }
     var voiceSearchError by remember { mutableStateOf<String?>(null) }
@@ -555,6 +577,7 @@ private fun BeamPlayerScreen(
     }
     val voiceState by voiceService.state.collectAsStateWithLifecycle()
     val partialTranscript by voiceService.partialTranscript.collectAsStateWithLifecycle()
+    val voiceMicLevel by voiceService.micLevel.collectAsStateWithLifecycle()
     val conversationHistory = remember { androidx.compose.runtime.mutableStateListOf<Pair<String, String>>() }
     LaunchedEffect(uiState.currentItemTitle) { conversationHistory.clear() }
     val latestContext by rememberUpdatedState(context)
@@ -825,10 +848,16 @@ private fun BeamPlayerScreen(
                 )
             }
 
-            BeamVoiceOverlay(
-                state = voiceState,
+            VoiceOrbOverlay(
+                state = when (voiceState) {
+                    BeamVoiceState.IDLE -> XrVoiceState.IDLE
+                    BeamVoiceState.LISTENING -> XrVoiceState.LISTENING
+                    BeamVoiceState.PROCESSING -> XrVoiceState.PROCESSING
+                    BeamVoiceState.ERROR -> XrVoiceState.ERROR
+                },
                 partialTranscript = partialTranscript,
-                feedback = voiceFeedback,
+                feedbackText = voiceFeedback,
+                micLevel = voiceMicLevel,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp),
             )
         }
@@ -1092,27 +1121,18 @@ private fun BeamControllerOverlay(
                     Text("Play Next: $nextLabel")
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(formatTime(currentPosition), color = Color.White, style = MaterialTheme.typography.labelMedium)
-                Text(formatTime(duration), color = Color.White, style = MaterialTheme.typography.labelMedium)
-            }
-            Slider(
-                value = if (duration > 0L) currentPosition.toFloat() / duration.toFloat() else 0f,
-                onValueChange = { fraction ->
-                    player.seekTo((fraction * duration).toLong())
-                },
-                modifier = Modifier.fillMaxWidth(),
+            ProgressSection(
+                uiState = uiState,
+                player = player,
+                currentPosition = currentPosition,
+                duration = duration,
+                resetAutoHide = {},
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                val chapterLabel = currentChapterLabel(uiState.currentChapters, currentPosition)
-                Text(chapterLabel ?: "", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall)
-                if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
+            if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (availableSources.size > 1) {
                             TextButton(onClick = { onOpenDialog(BeamPlayerDialog.Source) }) {
@@ -1123,48 +1143,6 @@ private fun BeamControllerOverlay(
                             Text("Auto Quality", color = Color.White)
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamVoiceOverlay(
-    state: BeamVoiceState,
-    partialTranscript: String,
-    feedback: String?,
-    modifier: Modifier = Modifier,
-) {
-    AnimatedVisibility(
-        visible = state != BeamVoiceState.IDLE || !feedback.isNullOrBlank(),
-        enter = fadeIn(),
-        exit = fadeOut(),
-        modifier = modifier,
-    ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color.Black.copy(alpha = 0.82f),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    when (state) {
-                        BeamVoiceState.LISTENING -> "Listening"
-                        BeamVoiceState.PROCESSING -> "Processing"
-                        BeamVoiceState.ERROR -> "Voice Error"
-                        BeamVoiceState.IDLE -> "Voice"
-                    },
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (partialTranscript.isNotBlank()) {
-                    Text(partialTranscript, color = Color.White)
-                } else if (!feedback.isNullOrBlank()) {
-                    Text(feedback, color = Color.White)
                 }
             }
         }

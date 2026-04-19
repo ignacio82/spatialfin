@@ -59,7 +59,7 @@ import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsTextInputDialog
 import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
-import dev.jdtech.jellyfin.presentation.settings.components.SubtitlePreviewCard
+import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect

@@ -100,6 +100,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.player.beam.LibassRenderer
 import dev.jdtech.jellyfin.player.beam.LibassSubtitleHelper
 import dev.jdtech.jellyfin.player.beam.LibassTextRenderer
+import dev.jdtech.jellyfin.player.xr.ProgressSection
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
@@ -884,30 +885,17 @@ private fun TvControllerOverlay(
                     modifier = Modifier.align(Alignment.End),
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(formatTime(currentPosition), color = Color.White)
-                Text(formatTime(duration), color = Color.White)
-            }
-            Slider(
-                value = if (duration > 0L) currentPosition.toFloat() / duration.toFloat() else 0f,
-                onValueChange = { fraction ->
-                    onInteraction()
-                    player.seekTo((fraction * duration).toLong())
-                },
-                modifier = Modifier.fillMaxWidth(),
+            ProgressSection(
+                uiState = uiState,
+                player = player,
+                currentPosition = currentPosition,
+                duration = duration,
+                resetAutoHide = onInteraction,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
             ) {
-                Text(
-                    text = currentChapterLabel(uiState.currentChapters, currentPosition) ?: "",
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.bodySmall,
-                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (availableSources.size > 1) {
                         TvOverlayTextButton(

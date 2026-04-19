@@ -33,6 +33,12 @@ class BeamVoiceService(private val context: Context) {
     private val _partialTranscript = MutableStateFlow("")
     val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
 
+    // Normalized 0..1 microphone level from the recognizer's onRmsChanged callback.
+    // Drives the listening-state waveform in VoiceOrbOverlay without any extra
+    // audio capture.
+    private val _micLevel = MutableStateFlow(0f)
+    val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
     private var recognizer: SpeechRecognizer? = null
     private var onResult: ((String) -> Unit)? = null
     private var originalNotificationVolume: Int = -1
@@ -51,6 +57,7 @@ class BeamVoiceService(private val context: Context) {
         onResult = onTranscript
         _state.value = BeamVoiceState.LISTENING
         _partialTranscript.value = ""
+        _micLevel.value = 0f
         muteSystemBeep()
 
         recognizer?.destroy()
@@ -82,7 +89,11 @@ class BeamVoiceService(private val context: Context) {
 
                         override fun onReadyForSpeech(params: Bundle?) = Unit
                         override fun onBeginningOfSpeech() = Unit
-                        override fun onRmsChanged(rmsdB: Float) = Unit
+                        override fun onRmsChanged(rmsdB: Float) {
+                            // Android's recognizer reports RMS roughly in the range [-2, 10] dB.
+                            // Map to [0, 1] so the UI can use it directly as a waveform amplitude.
+                            _micLevel.value = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                        }
                         override fun onBufferReceived(buffer: ByteArray?) = Unit
                         override fun onEndOfSpeech() = Unit
                         override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -112,6 +123,7 @@ class BeamVoiceService(private val context: Context) {
 
     fun stopListening() {
         recognizer?.stopListening()
+        _micLevel.value = 0f
         if (_state.value == BeamVoiceState.LISTENING) {
             _state.value = BeamVoiceState.PROCESSING
         }
@@ -119,12 +131,14 @@ class BeamVoiceService(private val context: Context) {
 
     fun resetState() {
         _state.value = BeamVoiceState.IDLE
+        _micLevel.value = 0f
     }
 
     fun destroy() {
         recognizer?.destroy()
         recognizer = null
         _state.value = BeamVoiceState.IDLE
+        _micLevel.value = 0f
     }
 
     private fun muteSystemBeep() {

@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 
 @Composable
 fun BeamSettingsScreen(
@@ -298,6 +299,12 @@ fun BeamSettingsScreen(
                     },
                 )
             }
+        }
+        item {
+            SubtitlePreviewCard(
+                appPreferences = appPreferences,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         item {
             BeamSettingsSection(title = "Subtitles") {

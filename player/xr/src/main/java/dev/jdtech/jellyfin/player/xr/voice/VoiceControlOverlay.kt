@@ -87,48 +87,95 @@ fun VoiceControlOverlay(
         alignment = Alignment.CenterHorizontally,
         offset = 40.dp,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = modifier.widthIn(max = 400.dp),
+        VoiceOrbOverlay(
+            state = state,
+            partialTranscript = partialTranscript,
+            feedbackText = feedbackText,
+            gestureArmingProgress = gestureArmingProgress,
+            gestureHint = gestureHint,
+            micLevel = micLevel,
+            modifier = modifier,
+        )
+    }
+}
+
+/**
+ * Non-spatial variant of the voice overlay. Renders the orb + text capsule in a
+ * plain Column the caller can align anywhere — meant for Beam phone / TV, which
+ * don't have an Orbiter to anchor off the active panel.
+ *
+ * Visibility rules and accent color match [VoiceControlOverlay]; the caller is
+ * responsible for positioning (e.g. `Modifier.align(Alignment.TopCenter)`).
+ */
+@Composable
+fun VoiceOrbOverlay(
+    state: VoiceState,
+    partialTranscript: String,
+    feedbackText: String? = null,
+    gestureArmingProgress: Float = 0f,
+    gestureHint: String? = null,
+    micLevel: Float = 0f,
+    modifier: Modifier = Modifier,
+) {
+    val isVisible =
+        state == VoiceState.LISTENING ||
+            state == VoiceState.PROCESSING ||
+            state == VoiceState.ERROR ||
+            gestureHint != null ||
+            !feedbackText.isNullOrBlank()
+
+    val accentColor =
+        when {
+            state == VoiceState.LISTENING -> Color(0xFF4FC3F7)
+            state == VoiceState.PROCESSING -> Color(0xFFFFB74D)
+            state == VoiceState.ERROR -> Color(0xFFEF5350)
+            !feedbackText.isNullOrBlank() -> Color(0xFF66BB6A)
+            else -> Color(0xFF5E7486)
+        }
+
+    if (!isVisible) return
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.widthIn(max = 400.dp),
+    ) {
+        VoiceOrb(
+            state = state,
+            accentColor = accentColor,
+            micLevel = micLevel,
+        )
+
+        val textToShow = when {
+            state == VoiceState.LISTENING && partialTranscript.isNotEmpty() -> partialTranscript
+            state == VoiceState.LISTENING -> "Listening"
+            !feedbackText.isNullOrBlank() -> feedbackText
+            state == VoiceState.PROCESSING -> "Thinking"
+            state == VoiceState.ERROR -> "Couldn't hear that. Try again."
+            gestureHint != null && gestureArmingProgress > 0f ->
+                "$gestureHint ${(gestureArmingProgress * 100).toInt()}%"
+            gestureHint != null -> gestureHint
+            else -> null
+        }
+
+        AnimatedVisibility(
+            visible = textToShow != null,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
         ) {
-            VoiceOrb(
-                state = state,
-                accentColor = accentColor,
-                micLevel = micLevel,
-            )
-
-            val textToShow = when {
-                state == VoiceState.LISTENING && partialTranscript.isNotEmpty() -> partialTranscript
-                state == VoiceState.LISTENING -> "Listening"
-                !feedbackText.isNullOrBlank() -> feedbackText
-                state == VoiceState.PROCESSING -> "Thinking"
-                state == VoiceState.ERROR -> "Couldn't hear that. Try again."
-                gestureHint != null && gestureArmingProgress > 0f ->
-                    "$gestureHint ${(gestureArmingProgress * 100).toInt()}%"
-                gestureHint != null -> gestureHint
-                else -> null
-            }
-
-            AnimatedVisibility(
-                visible = textToShow != null,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                textToShow?.let { text ->
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = accentColor.copy(alpha = 0.22f),
-                        modifier = Modifier.padding(top = 12.dp),
-                    ) {
-                        Text(
-                            text = text,
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                        )
-                    }
+            textToShow?.let { text ->
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = accentColor.copy(alpha = 0.22f),
+                    modifier = Modifier.padding(top = 12.dp),
+                ) {
+                    Text(
+                        text = text,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    )
                 }
             }
         }
