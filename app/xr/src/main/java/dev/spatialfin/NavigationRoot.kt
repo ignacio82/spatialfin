@@ -689,6 +689,7 @@ fun NavigationRoot(
                     navigateToUsers = { navController.safeNavigate(UsersRoute) },
                     navigateToAbout = { navController.safeNavigate(AboutRoute) },
                     navigateBack = { navController.safePopBackStack() },
+                    appPreferences = appPreferences,
                 )
             }
             composable<AboutRoute> {

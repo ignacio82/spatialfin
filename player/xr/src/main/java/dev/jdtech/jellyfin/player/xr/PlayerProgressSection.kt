@@ -3,12 +3,15 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -73,21 +76,45 @@ internal fun ProgressSection(
             val trickplay = uiState.currentTrickplay!!
             val totalThumbnails = trickplay.images.size
             val index = (sliderValue * (totalThumbnails - 1)).toInt().coerceIn(0, totalThumbnails - 1)
+            // Spatial strip of thumbnails centered on the scrub position. Neighboring
+            // frames are dimmed/shrunk so the user sees temporal context at a glance
+            // instead of a single isolated image.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(220.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Image(
-                    bitmap = trickplay.images[index].asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.DarkGray),
-                    contentScale = ContentScale.Fit,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    for (offset in -2..2) {
+                        val neighborIndex = index + offset
+                        if (neighborIndex in 0 until totalThumbnails) {
+                            val isCenter = offset == 0
+                            val thumbHeight = if (isCenter) 200.dp else 120.dp
+                            val alpha = if (isCenter) 1f else 0.55f
+                            Image(
+                                bitmap = trickplay.images[neighborIndex].asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .height(thumbHeight)
+                                    .clip(RoundedCornerShape(if (isCenter) 16.dp else 10.dp))
+                                    .background(Color.DarkGray.copy(alpha = alpha)),
+                                contentScale = ContentScale.Fit,
+                                alpha = alpha,
+                            )
+                        } else {
+                            // Keep layout stable at the ends of the trickplay range so the
+                            // center thumbnail never jumps sideways mid-scrub.
+                            Spacer(Modifier.width(if (offset == 0) 200.dp else 120.dp))
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
             }
         }
 

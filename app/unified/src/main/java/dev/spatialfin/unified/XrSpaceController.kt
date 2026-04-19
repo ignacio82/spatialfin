@@ -1,5 +1,7 @@
 package dev.spatialfin.unified
 
+import android.os.Handler
+import android.os.Looper
 import androidx.xr.runtime.Session
 import androidx.xr.scenecore.SpatialCapability
 import androidx.xr.scenecore.scene
@@ -12,10 +14,18 @@ import timber.log.Timber
 /** The two XR browsing/playback modes supported by SpatialFin. */
 enum class XrSpaceMode { HOME, FULL }
 
-/** Runtime state exposed to Compose. */
+/**
+ * Runtime state exposed to Compose.
+ *
+ * [transitioning] flips true briefly around a mode switch so the UI can fade the
+ * main surface instead of popping straight into the new layout. The controller
+ * clears it on a short timer; Compose is expected to animate alpha when it
+ * changes.
+ */
 data class XrSpaceUiState(
     val mode: XrSpaceMode = XrSpaceMode.HOME,
     val spatialUiAvailable: Boolean = false,
+    val transitioning: Boolean = false,
 )
 
 /**
@@ -50,10 +60,16 @@ class XrSpaceController(
     }
 
     fun enterHomeSpace() {
+        // Flip the mode atomically together with the transitioning flag so the
+        // outgoing composable (FullSpaceContent) disposes immediately. Fading the
+        // old tree while the Subspace is already tearing down raced the XR
+        // SpatialPanel node teardown on device. Only the incoming HomeSpaceContent
+        // animates alpha from 0 → 1.
         runCatching { session.scene.requestHomeSpaceMode() }
             .onFailure { Timber.w(it, "XrSpaceController: requestHomeSpaceMode failed") }
-        _uiState.value = _uiState.value.copy(mode = XrSpaceMode.HOME)
+        _uiState.value = _uiState.value.copy(mode = XrSpaceMode.HOME, transitioning = true)
         appPreferences.setValue(appPreferences.xrLastUsedMode, "home")
+        scheduleEndTransition()
     }
 
     fun enterFullSpace() {
@@ -63,10 +79,25 @@ class XrSpaceController(
         // cannot honor it, requestFullSpaceMode() will throw and we log + stay in HOME.
         runCatching { session.scene.requestFullSpaceMode() }
             .onSuccess {
-                _uiState.value = _uiState.value.copy(mode = XrSpaceMode.FULL, spatialUiAvailable = true)
+                _uiState.value = _uiState.value.copy(
+                    mode = XrSpaceMode.FULL,
+                    spatialUiAvailable = true,
+                    transitioning = true,
+                )
                 appPreferences.setValue(appPreferences.xrLastUsedMode, "full")
+                scheduleEndTransition()
             }
-            .onFailure { Timber.w(it, "XrSpaceController: requestFullSpaceMode failed — staying in Home Space") }
+            .onFailure {
+                Timber.w(it, "XrSpaceController: requestFullSpaceMode failed — staying in Home Space")
+            }
+    }
+
+    private fun scheduleEndTransition() {
+        transitionHandler.removeCallbacksAndMessages(null)
+        transitionHandler.postDelayed(
+            { _uiState.value = _uiState.value.copy(transitioning = false) },
+            TRANSITION_FADE_MS,
+        )
     }
 
     fun toggleSpace() = when (currentMode) {
@@ -82,4 +113,11 @@ class XrSpaceController(
     private fun checkSpatialCapability(): Boolean = runCatching {
         session.scene.spatialCapabilities.contains(SpatialCapability.SPATIAL_3D_CONTENT)
     }.getOrDefault(false)
+
+    private val transitionHandler = Handler(Looper.getMainLooper())
+
+    companion object {
+        /** How long the fade overlay stays on-screen after a mode switch. */
+        const val TRANSITION_FADE_MS = 320L
+    }
 }

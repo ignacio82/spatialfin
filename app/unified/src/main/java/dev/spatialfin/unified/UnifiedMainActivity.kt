@@ -9,9 +9,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -66,6 +70,7 @@ import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
+import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.presentation.local.localVideoPermissions
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
@@ -296,6 +301,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         }
         val voiceState by voiceController.voiceService.state.collectAsState()
         val partialTranscript by voiceController.voiceService.partialTranscript.collectAsState()
+        val voiceMicLevel by voiceController.voiceService.micLevel.collectAsState()
         val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsState()
         // Reactive prefs: observe SharedPreferences changes so toggling a setting
         // from the Settings screen recomposes the Home Space voice UI immediately
@@ -502,6 +508,14 @@ class UnifiedMainActivity : AppCompatActivity() {
         // ------------------------------------------------------------------
         // Mode-specific rendering
         // ------------------------------------------------------------------
+        val recommendationContext = voiceController.recommendationContext
+        val onSelectRecommendation: (Int, SpatialFinItem) -> Unit = { _, item ->
+            if (navigation.launchItem(item)) {
+                voiceController.clearRecommendationContext()
+            }
+        }
+        val onDismissRecommendation: () -> Unit = { voiceController.clearRecommendationContext() }
+
         if (spaceUiState.mode == XrSpaceMode.FULL && spaceUiState.spatialUiAvailable) {
             FullSpaceContent(
                 session = session,
@@ -515,6 +529,11 @@ class UnifiedMainActivity : AppCompatActivity() {
                 voiceFeedback = voiceController.voiceFeedback,
                 voiceGestureArmingProgress = voiceController.voiceGestureArmingProgress,
                 voiceGestureHint = voiceController.voiceGestureHint,
+                voiceMicLevel = voiceMicLevel,
+                transitioning = spaceUiState.transitioning,
+                recommendationContext = recommendationContext,
+                onSelectRecommendation = onSelectRecommendation,
+                onDismissRecommendation = onDismissRecommendation,
                 onReconnect = viewModel::reconnect,
                 onEnterHomeSpace = { spaceController.enterHomeSpace() },
             )
@@ -530,6 +549,11 @@ class UnifiedMainActivity : AppCompatActivity() {
                 voiceFeedback = voiceController.voiceFeedback,
                 voiceGestureArmingProgress = voiceController.voiceGestureArmingProgress,
                 voiceGestureHint = voiceController.voiceGestureHint,
+                voiceMicLevel = voiceMicLevel,
+                transitioning = spaceUiState.transitioning,
+                recommendationContext = recommendationContext,
+                onSelectRecommendation = onSelectRecommendation,
+                onDismissRecommendation = onDismissRecommendation,
                 onReconnect = viewModel::reconnect,
                 onEnterFullSpace = { spaceController.enterFullSpace() },
             )
@@ -552,10 +576,20 @@ class UnifiedMainActivity : AppCompatActivity() {
         voiceFeedback: String?,
         voiceGestureArmingProgress: Float,
         voiceGestureHint: String?,
+        voiceMicLevel: Float,
+        transitioning: Boolean,
+        recommendationContext: RecommendationContext?,
+        onSelectRecommendation: (Int, SpatialFinItem) -> Unit,
+        onDismissRecommendation: () -> Unit,
         onReconnect: () -> Unit,
         onEnterFullSpace: () -> Unit,
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        val surfaceAlpha by animateFloatAsState(
+            targetValue = if (transitioning) 0f else 1f,
+            animationSpec = tween(durationMillis = 260),
+            label = "home-space-fade",
+        )
+        Box(modifier = Modifier.fillMaxSize().alpha(surfaceAlpha)) {
             NavigationRoot(
                 navController = navController,
                 hasServers = state.hasServers,
@@ -574,7 +608,25 @@ class UnifiedMainActivity : AppCompatActivity() {
                 feedbackText = voiceFeedback,
                 gestureArmingProgress = voiceGestureArmingProgress,
                 gestureHint = voiceGestureHint,
+                micLevel = voiceMicLevel,
             )
+            recommendationContext?.let { ctx ->
+                if (ctx.items.size > 1) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 96.dp),
+                        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+                    ) {
+                        DisambiguationCarousel(
+                            query = ctx.query,
+                            items = ctx.items,
+                            onSelect = onSelectRecommendation,
+                            onDismiss = onDismissRecommendation,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -595,9 +647,19 @@ class UnifiedMainActivity : AppCompatActivity() {
         voiceFeedback: String?,
         voiceGestureArmingProgress: Float,
         voiceGestureHint: String?,
+        voiceMicLevel: Float,
+        @Suppress("UNUSED_PARAMETER") transitioning: Boolean,
+        recommendationContext: RecommendationContext?,
+        onSelectRecommendation: (Int, SpatialFinItem) -> Unit,
+        onDismissRecommendation: () -> Unit,
         onReconnect: () -> Unit,
         onEnterHomeSpace: () -> Unit,
     ) {
+        // Full Space entry deliberately doesn't animate alpha on its inner Box:
+        // applying Modifier.alpha to a child of an XR SpatialPanel raced the
+        // panel teardown during Full→Home transitions on device. Only the
+        // HomeSpaceContent fades in; Full Space entry snaps (still bearable,
+        // since the XR compositor does its own brief cross-fade on mode switch).
         val poseController = remember(appPreferences) { PanelPoseController(appPreferences) }
         val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
         val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
@@ -698,7 +760,25 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 feedbackText = voiceFeedback,
                                 gestureArmingProgress = voiceGestureArmingProgress,
                                 gestureHint = voiceGestureHint,
+                                micLevel = voiceMicLevel,
                             )
+                            recommendationContext?.let { ctx ->
+                                if (ctx.items.size > 1) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(top = 80.dp),
+                                        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+                                    ) {
+                                        DisambiguationCarousel(
+                                            query = ctx.query,
+                                            items = ctx.items,
+                                            onSelect = onSelectRecommendation,
+                                            onDismiss = onDismissRecommendation,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

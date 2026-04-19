@@ -38,6 +38,12 @@ class SpatialVoiceService(private val context: Context) {
     private val _partialTranscript = MutableStateFlow("")
     val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
 
+    // Normalized 0..1 microphone level (from the recognizer's onRmsChanged callback).
+    // Feeds the listening-state waveform in VoiceControlOverlay without any extra
+    // audio capture.
+    private val _micLevel = MutableStateFlow(0f)
+    val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
     private var recognizer: SpeechRecognizer? = null
     private var onResult: ((String) -> Unit)? = null
     private var originalNotificationVolume: Int = -1
@@ -122,6 +128,7 @@ class SpatialVoiceService(private val context: Context) {
         recognizer?.cancel()
         unmuteSystemBeep()
         _partialTranscript.value = ""
+        _micLevel.value = 0f
         _state.value = VoiceState.IDLE
     }
 
@@ -141,6 +148,7 @@ class SpatialVoiceService(private val context: Context) {
         suppressNextError = false
         _state.value = VoiceState.IDLE
         _partialTranscript.value = ""
+        _micLevel.value = 0f
     }
 
     private fun startListeningInternal() {
@@ -203,7 +211,12 @@ class SpatialVoiceService(private val context: Context) {
                             Timber.i("VOICE: beginning of speech")
                         }
 
-                        override fun onRmsChanged(rmsdB: Float) = Unit
+                        override fun onRmsChanged(rmsdB: Float) {
+                            // Android's recognizer reports RMS roughly in the range [-2, 10] dB.
+                            // Map to [0, 1] so the UI can use it directly as a waveform amplitude.
+                            val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                            _micLevel.value = normalized
+                        }
 
                         override fun onBufferReceived(buffer: ByteArray?) = Unit
 

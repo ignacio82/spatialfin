@@ -21,36 +21,20 @@ class PanelPoseController(
     private val appPreferences: AppPreferences,
 ) {
     /**
-     * Read the saved pose, performing legacy-default migration if needed. Always
-     * returns a usable pose; first-launch falls back to the centered default.
+     * Always spawn the panel at the centered default — the Full Space session
+     * origin shifts on every Home→Full transition, so a persisted world pose
+     * from a previous session lands on the user's face or behind them. The
+     * MovableComponent still lets the user reposition during the current
+     * session; we just don't restore across transitions. Mirrors the
+     * player's loadSavedPlayerRootPose for the same reason.
      */
     fun loadPose(): Pose {
-        val poseVersion = appPreferences.getValue(appPreferences.xrAppPanelPoseVersion)
-        if (poseVersion < 1) {
-            return Pose(
-                Vector3(0f, 0f, PanelPosePolicy.DEFAULT_DEPTH_METERS),
-                Quaternion.Identity,
-            )
-        }
-        val savedPose = Pose(
-            Vector3(
-                appPreferences.getValue(appPreferences.xrAppPanelX),
-                appPreferences.getValue(appPreferences.xrAppPanelY),
-                appPreferences.getValue(appPreferences.xrAppPanelZ),
-            ),
-            Quaternion(
-                appPreferences.getValue(appPreferences.xrAppPanelRotX),
-                appPreferences.getValue(appPreferences.xrAppPanelRotY),
-                appPreferences.getValue(appPreferences.xrAppPanelRotZ),
-                appPreferences.getValue(appPreferences.xrAppPanelRotW),
-            ),
+        val defaultPose = Pose(
+            Vector3(0f, 0f, PanelPosePolicy.DEFAULT_DEPTH_METERS),
+            Quaternion.Identity,
         )
-        if (poseVersion < PanelPosePolicy.CURRENT_POSE_VERSION) {
-            val migratedPose = PanelPosePolicy.migrateLegacyDefault(savedPose)
-            savePose(migratedPose)
-            return migratedPose
-        }
-        return savedPose
+        savePose(defaultPose)
+        return defaultPose
     }
 
     /** Persist the entity pose into preferences and stamp the current version. */
@@ -76,25 +60,36 @@ class PanelPoseController(
     }
 
     /**
-     * Long-running pose tracking loop. Polls the entity once per second and only
-     * persists when the pose actually changes — writing every tick would wear
-     * flash, burn battery, and race the MovableComponent's final pose with a
-     * stale tick.
+     * Long-running pose tracking loop. Polls quickly while the user is moving the
+     * panel, but only persists the pose after motion settles — writing on every
+     * tick raced the MovableComponent's final pose with a stale intermediate
+     * sample, so the user's resting position could be overwritten.
      */
     suspend fun trackEntityPose(entity: GroupEntity) {
+        var lastSampled: Pose? = null
         var lastSaved: Pose? = null
+        var stillSinceMs: Long = 0L
         while (true) {
             val current = readEntityPose(entity)
-            if (current != null && !PanelPosePolicy.approximatelyEqual(current, lastSaved)) {
-                savePose(current)
-                lastSaved = current
+            if (current != null) {
+                if (!PanelPosePolicy.approximatelyEqual(current, lastSampled)) {
+                    lastSampled = current
+                    stillSinceMs = System.currentTimeMillis()
+                } else if (
+                    !PanelPosePolicy.approximatelyEqual(current, lastSaved) &&
+                    System.currentTimeMillis() - stillSinceMs >= POSE_STILL_DEBOUNCE_MS
+                ) {
+                    savePose(current)
+                    lastSaved = current
+                }
             }
-            delay(POSE_TRACK_INTERVAL_MS)
+            delay(POSE_SAMPLE_INTERVAL_MS)
         }
     }
 
     companion object {
-        const val POSE_TRACK_INTERVAL_MS = 1_000L
+        const val POSE_SAMPLE_INTERVAL_MS = 100L
+        const val POSE_STILL_DEBOUNCE_MS = 300L
     }
 }
 

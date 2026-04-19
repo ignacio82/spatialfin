@@ -305,6 +305,7 @@ fun SpatialPlayerScreen(
 
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
+    val voiceMicLevel by voiceService.micLevel.collectAsState()
     var voiceFeedback by remember { mutableStateOf<String?>(null) }
     val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
     var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
@@ -1678,16 +1679,26 @@ fun SpatialPlayerScreen(
 
     LaunchedEffect(videoRootEntity.value) {
         val root = videoRootEntity.value ?: return@LaunchedEffect
-        // Only commit to SharedPreferences when pose or scale actually changes. Writing
-        // every 1 s wears flash, burns battery, and can race the MovableComponent's
-        // final pose with a stale tick.
+        // Debounce writes to the last-known-still pose: poll fast so we catch when
+        // the user lets go, but only commit after the pose stops changing for a
+        // short window. Writing on every tick raced MovableComponent's final pose
+        // with a stale sample and could overwrite the resting position.
+        var lastSampledPose: Pose? = null
         var lastSavedPose: Pose? = null
         var lastSavedScale: Float = Float.NaN
+        var stillSinceMs: Long = 0L
+        val stillDebounceMs = 300L
         while (true) {
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
             if (poseToSave != null) {
                 lastReportedMovePose.value = poseToSave
-                if (!posesApproximatelyEqual(poseToSave, lastSavedPose)) {
+                if (!posesApproximatelyEqual(poseToSave, lastSampledPose)) {
+                    lastSampledPose = poseToSave
+                    stillSinceMs = System.currentTimeMillis()
+                } else if (
+                    !posesApproximatelyEqual(poseToSave, lastSavedPose) &&
+                    System.currentTimeMillis() - stillSinceMs >= stillDebounceMs
+                ) {
                     savePlayerRootPose(viewModel, poseToSave)
                     lastSavedPose = poseToSave
                 }
@@ -1696,7 +1707,7 @@ fun SpatialPlayerScreen(
                 savePlayerRootScale(viewModel, videoPanelScale)
                 lastSavedScale = videoPanelScale
             }
-            delay(1_000L)
+            delay(100L)
         }
     }
 
@@ -1958,6 +1969,7 @@ fun SpatialPlayerScreen(
                     feedbackText = if (characterScanActive) null else voiceFeedback,
                     gestureArmingProgress = voiceGestureArmingProgress,
                     gestureHint = voiceGestureHint,
+                    micLevel = voiceMicLevel,
                 )
                 CharacterScanOverlay(visible = characterScanActive)
             }

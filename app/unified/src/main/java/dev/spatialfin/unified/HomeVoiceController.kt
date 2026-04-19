@@ -107,7 +107,17 @@ class HomeVoiceController(
 
     private var activeVoiceJob by mutableStateOf<Job?>(null)
     private val conversationHistory = mutableListOf<Pair<String, String>>()
-    private var recommendationContext: RecommendationContext? = null
+
+    /**
+     * Current assistant recommendation. Exposed to Compose so the UI can surface
+     * a disambiguation carousel anchored in space; the dialog-style flow was
+     * unreliable in Home Space where the feedback panel could sit off-screen.
+     */
+    var recommendationContext by mutableStateOf<RecommendationContext?>(null)
+        private set
+
+    /** Clears the active recommendation (e.g. when the user navigates away). */
+    fun clearRecommendationContext() { recommendationContext = null }
 
     /** Seed the search query from an Activity intent extra. Idempotent. */
     fun setInitialSearchQuery(query: String?) {

@@ -52,6 +52,10 @@ import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsTextInputDialog
+import dev.jdtech.jellyfin.presentation.settings.components.SubtitlePreviewCard
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -83,6 +87,7 @@ fun SettingsScreen(
     navigateToUsers: () -> Unit,
     navigateToAbout: () -> Unit,
     navigateBack: () -> Unit,
+    appPreferences: AppPreferences? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
     companionViewModel: CompanionViewModel = hiltViewModel(),
 ) {
@@ -394,6 +399,7 @@ fun SettingsScreen(
     SettingsScreenLayout(
         title = indexes.last(),
         state = state,
+        appPreferences = appPreferences,
         onAction = { action ->
             when (action) {
                 is SettingsAction.OnBackClick -> navigateBack()
@@ -409,7 +415,16 @@ private fun SettingsScreenLayout(
     @StringRes title: Int,
     state: SettingsState,
     onAction: (SettingsAction) -> Unit,
+    appPreferences: AppPreferences? = null,
 ) {
+    val hasSubtitlePreferences = remember(state.preferenceGroups) {
+        state.preferenceGroups.any { group ->
+            group.preferences.any { pref ->
+                (pref is PreferenceIntInput && pref.nameStringResource == SettingsR.string.xr_subtitle_size) ||
+                    (pref is PreferenceSelect && pref.nameStringResource == SettingsR.string.libass_subtitle_usage)
+            }
+        }
+    }
     val safePadding = rememberSafePadding()
     val contentPadding =
         PaddingValues(
@@ -449,6 +464,14 @@ private fun SettingsScreenLayout(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if (hasSubtitlePreferences && appPreferences != null) {
+                item {
+                    SubtitlePreviewCard(
+                        appPreferences = appPreferences,
+                        modifier = Modifier.widthIn(max = 860.dp),
+                    )
+                }
+            }
             items(state.preferenceGroups) { group ->
                 SettingsGroupCard(
                     group = group,
