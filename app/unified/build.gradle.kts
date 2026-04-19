@@ -111,6 +111,10 @@ android {
         val xrSpatialFeatureRequired =
             (project.findProperty("XR_SPATIAL_FEATURE_REQUIRED") as String?) ?: "false"
         manifestPlaceholders["xrSpatialFeatureRequired"] = xrSpatialFeatureRequired
+        // Default for the universal (phone / XR / Beam Pro) bundle — the `tv`
+        // flavor overrides this to "true" because Google Play's Android TV
+        // track rejects bundles where android.software.leanback is optional.
+        manifestPlaceholders["leanbackRequired"] = "false"
     }
 
     signingConfigs {
@@ -166,6 +170,20 @@ android {
     productFlavors {
         create("libre") {
             dimension = "variant"
+        }
+        // TV-only variant for Google Play's Android TV track. Google TV
+        // Streamer and other Leanback devices install this bundle; XR and
+        // Beam Pro continue to receive the `libre` bundle unchanged.
+        create("tv") {
+            dimension = "variant"
+            // Upstream library modules only publish a `libre` flavor, so resolve
+            // their artifacts against that one when building the TV variant.
+            matchingFallbacks += "libre"
+            manifestPlaceholders["leanbackRequired"] = "true"
+            // Offset keeps the TV bundle's versionCode disjoint from the
+            // libre bundle's so both can coexist on one Play listing.
+            versionCode = Versions.APP_CODE + 1_000_000
+            versionNameSuffix = "-tv"
         }
     }
 
