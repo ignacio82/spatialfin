@@ -10,6 +10,13 @@ data class CompanionConfig(
     val networkShares: List<CompanionNetworkShare> = emptyList(),
     @SerialName("globalPreferences")
     val preferences: Map<String, String?> = emptyMap(),
+    /**
+     * Per-device preference overrides keyed by `deviceId` (the same ID the
+     * device sends in X-Companion-Device header / log uploads). When applying
+     * config on device D, overrides under `devicePreferences[D]` win over
+     * entries in the global `preferences` map.
+     */
+    val devicePreferences: Map<String, Map<String, String?>> = emptyMap(),
     val setup_token: String
 )
 

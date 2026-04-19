@@ -32,4 +32,14 @@
         <item>COMMERCIAL</item>
         <item>UNKNOWN</item>
     </string-array>
+    <string-array name="app_lock_mode">
+        <item>@string/app_lock_mode_off</item>
+        <item>@string/app_lock_mode_biometric</item>
+        <item>@string/app_lock_mode_pin</item>
+    </string-array>
+    <string-array name="app_lock_mode_values">
+        <item>off</item>
+        <item>biometric</item>
+        <item>pin</item>
+    </string-array>
 </resources>

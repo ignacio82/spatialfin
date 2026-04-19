@@ -13,14 +13,21 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
+import android.util.Base64
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.DownloadTaskKind
+import dev.jdtech.jellyfin.security.ContentKeyManager
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -34,6 +41,8 @@ constructor(
     @Assisted private val appContext: Context,
     @Assisted private val params: WorkerParameters,
     private val database: ServerDatabaseDao,
+    private val appPreferences: AppPreferences,
+    private val contentKeyManager: ContentKeyManager,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result =
         withContext(Dispatchers.IO) {
@@ -264,6 +273,21 @@ constructor(
             markFailed(taskId, bytesDownloaded, task?.totalBytes, task?.eTag, task?.lastModified, "Failed to finalize download")
             return
         }
+        // Subtitle files aren't encrypted — libass reads them directly with no
+        // cipher hook, and they're not sensitive content. Only primary video
+        // downloads are subject to content encryption.
+        if (task.kind == DownloadTaskKind.PRIMARY &&
+            appPreferences.getValue(appPreferences.contentEncryptionEnabled)
+        ) {
+            val encryptedOk = runCatching { encryptFileInPlace(taskId, finalFile) }
+                .onFailure { Timber.e(it, "Resumable worker: encryption failed taskId=%s", taskId) }
+                .getOrDefault(false)
+            if (!encryptedOk) {
+                // Encryption failure must not leave a plaintext file masquerading as encrypted.
+                // The file itself is already fine (untouched); flag the task plain and continue.
+                Timber.w("Resumable worker: finalized taskId=%s WITHOUT encryption", taskId)
+            }
+        }
         Timber.i("Resumable worker finalized taskId=%s final=%s bytes=%s kind=%s", taskId, finalPath, bytesDownloaded, task.kind)
         when (task.kind) {
             DownloadTaskKind.PRIMARY -> {
@@ -291,6 +315,73 @@ constructor(
 
         if (task.kind == DownloadTaskKind.PRIMARY) {
             showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
+        }
+    }
+
+    /**
+     * AES-CTR-encrypt [finalFile] in place using the DEK from [ContentKeyManager]
+     * and a fresh random 16-byte IV. Writes the ciphertext to a sibling `.enc`
+     * file first, then atomically renames it over the original. On success the
+     * [taskId] row is updated with `isEncrypted = true` and the base64 IV.
+     *
+     * Returns true on success; false if something went wrong (in which case
+     * [finalFile] is left untouched in its plaintext form).
+     */
+    private fun encryptFileInPlace(taskId: String, finalFile: File): Boolean {
+        val dek = contentKeyManager.getDekOrNull()
+        if (dek == null) {
+            // Lock mode is Biometric or PIN and the user hasn't unlocked in
+            // this session, so the DEK is unavailable. Leave the file plain
+            // and let the user re-encrypt (via re-download) after unlock.
+            Timber.i("encryptFileInPlace: DEK locked, leaving taskId=%s plain", taskId)
+            return false
+        }
+        val iv = ByteArray(AES_IV_BYTES).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance(AES_CTR_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dek, "AES"), IvParameterSpec(iv))
+        val encFile = File(finalFile.parent, finalFile.name + ".enc")
+        try {
+            finalFile.inputStream().use { input ->
+                encFile.outputStream().use { raw ->
+                    val buf = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read <= 0) break
+                        val out = cipher.update(buf, 0, read)
+                        if (out != null && out.isNotEmpty()) raw.write(out)
+                    }
+                    val tail = cipher.doFinal()
+                    if (tail != null && tail.isNotEmpty()) raw.write(tail)
+                    raw.flush()
+                }
+            }
+            // Atomically replace the plaintext file with ciphertext. Use
+            // delete-then-rename rather than renameTo(finalFile) directly to
+            // avoid filesystems that reject rename-over-existing.
+            if (!finalFile.delete()) {
+                Timber.w("encryptFileInPlace: could not delete plaintext %s", finalFile)
+                encFile.delete()
+                return false
+            }
+            if (!encFile.renameTo(finalFile)) {
+                Timber.e("encryptFileInPlace: rename of %s -> %s failed", encFile, finalFile)
+                return false
+            }
+            database.setDownloadTaskEncryption(
+                id = taskId,
+                isEncrypted = true,
+                encryptionIv = Base64.encodeToString(iv, Base64.NO_WRAP),
+                updatedAt = System.currentTimeMillis(),
+            )
+            Timber.i(
+                "encryptFileInPlace: encrypted taskId=%s size=%d ivLen=%d",
+                taskId, finalFile.length(), iv.size,
+            )
+            return true
+        } catch (e: Exception) {
+            Timber.e(e, "encryptFileInPlace: failed for %s", finalFile)
+            encFile.delete()
+            return false
         }
     }
 
@@ -420,6 +511,10 @@ constructor(
         private const val NOTIFICATION_CHANNEL_ID = "resumable_downloads"
         private const val PROGRESS_UPDATE_BYTES = 512L * 1024L
         private const val MAX_AUTO_RETRIES = 5
+        // AES-CTR: 16-byte block, 16-byte IV. The cipher is the same shape
+        // Media3's AesCipherDataSource uses, so it can decrypt on playback.
+        private const val AES_CTR_TRANSFORMATION = "AES/CTR/NoPadding"
+        private const val AES_IV_BYTES = 16
 
         fun uniqueWorkName(taskId: String): String = "resumable-download:$taskId"
     }

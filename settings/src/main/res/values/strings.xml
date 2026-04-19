@@ -63,6 +63,33 @@
     <string name="settings_app_lock_device_not_secure">Set up a screen lock (PIN, pattern, password, or biometric) on this device before enabling app lock.</string>
     <string name="settings_app_lock_enroll_failed">Could not create passkey: %1$s</string>
     <string name="settings_app_lock_enroll_cancelled">Passkey setup cancelled.</string>
+
+    <!-- App lock: mode selector and PIN wipe policy -->
+    <string name="settings_app_lock_mode_title">App lock</string>
+    <string name="settings_app_lock_mode_summary">Choose how SpatialFin verifies you when the app resumes.</string>
+    <string name="app_lock_mode_off">Off</string>
+    <string name="app_lock_mode_biometric">Biometric / device PIN</string>
+    <string name="app_lock_mode_pin">SpatialFin PIN</string>
+    <string name="settings_app_lock_pin_change_title">Set or change PIN</string>
+    <string name="settings_app_lock_pin_change_summary">Tap to create or change your SpatialFin PIN.</string>
+    <string name="settings_app_lock_wipe_title">Wipe data on failed PIN</string>
+    <string name="settings_app_lock_wipe_summary">If enabled, SpatialFin permanently deletes its data after too many wrong PIN entries. Only applies to PIN mode.</string>
+    <string name="settings_app_lock_attempts_title">Allowed PIN attempts</string>
+    <string name="settings_app_lock_attempts_summary">Consecutive wrong entries before data is wiped (1–3). Only applies when wipe-on-fail is enabled.</string>
+    <string name="settings_app_lock_pin_set_ok">PIN saved.</string>
+    <string name="settings_app_lock_pin_set_failed">Could not save PIN. It must be 4–8 digits.</string>
+
+    <!-- Content encryption -->
+    <string name="settings_content_encryption_title">Encrypt new downloads</string>
+    <string name="settings_content_encryption_summary">Downloads finished after this is turned on are stored AES-256 encrypted with a device-local key. Existing files stay readable until replaced or deleted.</string>
+    <string name="settings_delete_unencrypted_title">Delete unencrypted downloads</string>
+    <string name="settings_delete_unencrypted_summary">Tap to see how many local files are still stored unencrypted, and delete them. You can re-download them afterwards.</string>
+    <string name="settings_delete_unencrypted_dialog_title">Delete %1$d unencrypted file(s)?</string>
+    <string name="settings_delete_unencrypted_dialog_body">This removes the local files and their download entries. Streaming is unaffected and you can re-download any time.</string>
+    <string name="settings_delete_unencrypted_dialog_confirm">Delete</string>
+    <string name="settings_delete_unencrypted_dialog_cancel">Keep</string>
+    <string name="settings_delete_unencrypted_none">No unencrypted downloads found.</string>
+    <string name="settings_delete_unencrypted_done">Deleted %1$d file(s).</string>
     <string name="settings_category_cache">Cache</string>
     <string name="settings_use_cache_title">Cache images</string>
     <string name="settings_use_cache_summary">Cache images on disk to speed up loading times. Will take effect after app restart.</string>

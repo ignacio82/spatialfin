@@ -37,7 +37,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockMode
+import dev.spatialfin.unified.applock.PinSetupScreen
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,6 +115,8 @@ fun SettingsScreen(
 
     val appLockManager = remember(context) { AppLockManager.from(context) }
     val appLockScope = rememberCoroutineScope()
+    var pinSetupVisible by remember { mutableStateOf(false) }
+    var deleteUnencryptedCount by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
 
@@ -187,6 +192,78 @@ fun SettingsScreen(
                     (context as Activity).restart()
                 } catch (_: Exception) {}
             }
+            is SettingsEvent.ShowAppLockPinSetup -> {
+                pinSetupVisible = true
+            }
+            is SettingsEvent.ShowDeleteUnencryptedDialog -> {
+                appLockScope.launch {
+                    val count = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { getServerDatabaseDao(context).countUnencryptedDownloads() }
+                            .getOrDefault(0)
+                    }
+                    if (count == 0) {
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(SettingsR.string.settings_delete_unencrypted_none),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    } else {
+                        deleteUnencryptedCount = count
+                    }
+                }
+            }
+            is SettingsEvent.ChangeAppLockMode -> {
+                val activity = context as? androidx.fragment.app.FragmentActivity
+                when (AppLockMode.fromKey(event.mode)) {
+                    AppLockMode.Off -> {
+                        appLockManager.disable()
+                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                    }
+                    AppLockMode.Biometric -> {
+                        if (activity != null) {
+                            appLockScope.launch {
+                                when (val r = appLockManager.enroll(activity)) {
+                                    is AppLockManager.EnrollResult.Success -> Unit
+                                    is AppLockManager.EnrollResult.DeviceNotSecure -> {
+                                        appLockManager.disable()
+                                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            context.getString(SettingsR.string.settings_app_lock_device_not_secure),
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                    is AppLockManager.EnrollResult.Cancelled -> {
+                                        appLockManager.disable()
+                                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                                    }
+                                    is AppLockManager.EnrollResult.Failed -> {
+                                        appLockManager.disable()
+                                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            context.getString(
+                                                SettingsR.string.settings_app_lock_enroll_failed,
+                                                r.message,
+                                            ),
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppLockMode.Pin -> {
+                        // Mode is already persisted by the PreferenceSelect handler;
+                        // only require a PIN setup if one isn't stored yet.
+                        if (!appLockManager.isConfigured()) {
+                            pinSetupVisible = true
+                        } else {
+                            viewModel.loadPreferences(indexes, DeviceType.XR)
+                        }
+                    }
+                }
+            }
             is SettingsEvent.ConfigureAppLock -> {
                 val activity = context as? androidx.fragment.app.FragmentActivity
                 if (activity != null) {
@@ -232,6 +309,81 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+    }
+
+    deleteUnencryptedCount?.let { count ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deleteUnencryptedCount = null },
+            title = {
+                androidx.compose.material3.Text(
+                    stringResource(SettingsR.string.settings_delete_unencrypted_dialog_title, count)
+                )
+            },
+            text = {
+                androidx.compose.material3.Text(
+                    stringResource(SettingsR.string.settings_delete_unencrypted_dialog_body)
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    deleteUnencryptedCount = null
+                    appLockScope.launch {
+                        val deleted = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { deleteUnencryptedDownloads(context) }
+                                .getOrDefault(0)
+                        }
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(SettingsR.string.settings_delete_unencrypted_done, deleted),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }) {
+                    androidx.compose.material3.Text(
+                        stringResource(SettingsR.string.settings_delete_unencrypted_dialog_confirm)
+                    )
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { deleteUnencryptedCount = null }) {
+                    androidx.compose.material3.Text(
+                        stringResource(SettingsR.string.settings_delete_unencrypted_dialog_cancel)
+                    )
+                }
+            },
+        )
+    }
+
+    if (pinSetupVisible) {
+        SpatialDialog(onDismissRequest = { pinSetupVisible = false }) {
+            PinSetupScreen(
+                onConfirmed = { newPin ->
+                    appLockScope.launch {
+                        val ok = appLockManager.setPin(newPin)
+                        pinSetupVisible = false
+                        val msg =
+                            if (ok) SettingsR.string.settings_app_lock_pin_set_ok
+                            else SettingsR.string.settings_app_lock_pin_set_failed
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(msg),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                    }
+                },
+                onCancel = {
+                    pinSetupVisible = false
+                    // If PIN mode was selected but user bailed without a PIN, revert to Off.
+                    if (appLockManager.mode() == AppLockMode.Pin &&
+                        !appLockManager.isConfigured()
+                    ) {
+                        appLockManager.disable()
+                        viewModel.loadPreferences(indexes, DeviceType.XR)
+                    }
+                },
+            )
         }
     }
 
@@ -600,4 +752,41 @@ private fun SettingsScreenLayoutPreview() {
             onAction = {},
         )
     }
+}
+
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+private interface SettingsDbEntryPoint {
+    fun serverDatabaseDao(): dev.jdtech.jellyfin.database.ServerDatabaseDao
+}
+
+private fun getServerDatabaseDao(context: android.content.Context): dev.jdtech.jellyfin.database.ServerDatabaseDao =
+    dagger.hilt.android.EntryPointAccessors
+        .fromApplication(context.applicationContext, SettingsDbEntryPoint::class.java)
+        .serverDatabaseDao()
+
+/**
+ * Deletes all rows in `downloadtasks` where `isEncrypted == 0` along with the
+ * underlying file on disk. Returns the number of files actually removed.
+ * Safe to run even after a partial failure — rows for files that could not
+ * be deleted (e.g. because they don't exist) are still removed from the DB
+ * so the "unencrypted count" stays honest.
+ */
+private fun deleteUnencryptedDownloads(context: android.content.Context): Int {
+    val dao = getServerDatabaseDao(context)
+    val rows = dao.getUnencryptedDownloads()
+    var count = 0
+    rows.forEach { task ->
+        runCatching {
+            val f = java.io.File(task.finalPath)
+            if (f.exists() && f.delete()) count++
+            // Clear the row so repeated taps on the Settings card reflect the new state.
+            if (task.kind == dev.jdtech.jellyfin.models.DownloadTaskKind.PRIMARY) {
+                dao.deleteDownloadTask(task.itemId, task.sourceId)
+            } else {
+                task.mediaStreamId?.let { dao.deleteDownloadTaskByMediaStreamId(it) }
+            }
+        }
+    }
+    return count
 }

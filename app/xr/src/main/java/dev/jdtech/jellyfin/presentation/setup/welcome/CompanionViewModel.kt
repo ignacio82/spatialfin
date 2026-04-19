@@ -15,6 +15,7 @@ import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
+import dev.jdtech.jellyfin.models.companion.DeviceIdentity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 import kotlinx.coroutines.Dispatchers
@@ -135,9 +136,20 @@ class CompanionViewModel @Inject constructor(
     }
 
     private suspend fun applyConfig(config: CompanionConfig) = withContext(Dispatchers.IO) {
-        // Apply Global Preferences first
+        // Apply Global Preferences first, then this device's per-device overrides so
+        // they win over globals. User-level prefs (below) still override both.
         Timber.d("COMPANION: Applying ${config.preferences.size} global preferences")
         applyPreferences(config.preferences)
+
+        val myDeviceId = DeviceIdentity.deviceId(context)
+        val deviceOverrides = config.devicePreferences[myDeviceId]
+        if (!deviceOverrides.isNullOrEmpty()) {
+            Timber.d(
+                "COMPANION: Applying %d device-level overrides for deviceId=%s",
+                deviceOverrides.size, myDeviceId,
+            )
+            applyPreferences(deviceOverrides)
+        }
 
         val importedSessions = mutableListOf<ImportedSession>()
         val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()

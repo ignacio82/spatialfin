@@ -47,7 +47,7 @@ import dev.jdtech.jellyfin.models.User
             NetworkVideoDto::class,
             NetworkPlaybackStateDto::class,
         ],
-    version = 17,
+    version = 18,
     autoMigrations =
         [
             AutoMigration(from = 2, to = 3),
@@ -71,6 +71,16 @@ abstract class ServerDatabase : RoomDatabase() {
 
     @DeleteTable(tableName = "intros") class IntrosMigration : AutoMigrationSpec
 }
+
+val MIGRATION_17_18 =
+    object : Migration(startVersion = 17, endVersion = 18) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE downloadtasks ADD COLUMN isEncrypted INTEGER NOT NULL DEFAULT 0"
+            )
+            db.execSQL("ALTER TABLE downloadtasks ADD COLUMN encryptionIv TEXT")
+        }
+    }
 
 val MIGRATION_16_17 =
     object : Migration(startVersion = 16, endVersion = 17) {

@@ -23,6 +23,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.spatialfin.BuildConfig
+import dev.spatialfin.CompanionLiveSyncClient
 import dev.spatialfin.CompanionLogUploader
 import dev.spatialfin.DiagnosticsExport
 import dev.spatialfin.LogFileTree
@@ -54,6 +55,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 }
             } else if (key == appPreferences.theme.backendName) {
                 applyNightMode()
+            } else if (key == appPreferences.companionUrl.backendName ||
+                key == appPreferences.companionToken.backendName
+            ) {
+                CompanionLiveSyncClient.from(this).refreshConnection()
             }
         }
 
@@ -72,6 +77,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         applyNightMode()
         reportPendingPlayerLaunch()
         eagerInitializeLlmIfNeeded()
+        CompanionLiveSyncClient.from(this).start()
     }
 
     private fun applyNightMode() {

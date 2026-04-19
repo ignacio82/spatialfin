@@ -35,4 +35,13 @@ sealed interface SettingsEvent {
     data object RestartActivity : SettingsEvent
 
     data class ConfigureAppLock(val enable: Boolean) : SettingsEvent
+
+    /** User picked a new auth mode (off / biometric / pin). */
+    data class ChangeAppLockMode(val mode: String) : SettingsEvent
+
+    /** Open the PIN setup flow — either first-time or a change while PIN mode is active. */
+    data object ShowAppLockPinSetup : SettingsEvent
+
+    /** User tapped "Delete unencrypted downloads". The UI layer handles counting + delete. */
+    data object ShowDeleteUnencryptedDialog : SettingsEvent
 }

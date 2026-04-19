@@ -60,6 +60,9 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockMode
+import dev.spatialfin.unified.applock.PinSetupScreen
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoStatus
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
@@ -75,6 +78,7 @@ private enum class WelcomeStep {
     Connection,
     CompanionDiscovery,
     Languages,
+    Security,
     Ai,
 }
 
@@ -97,6 +101,12 @@ fun WelcomeScreen(
         mutableStateOf(appPreferences.getSmartLanguageSettings(context))
     }
     var showLanguageDialog by remember { mutableStateOf(false) }
+    val appLockManager = remember(context) { AppLockManager.from(context) }
+    val scope = rememberCoroutineScope()
+    var securityMode by rememberSaveable { mutableStateOf(appLockManager.mode().backendKey) }
+    var pinConfigured by remember { mutableStateOf(appLockManager.isConfigured() && appLockManager.mode() == AppLockMode.Pin) }
+    var showPinSetup by remember { mutableStateOf(false) }
+    var securityError by remember { mutableStateOf<String?>(null) }
     var wantsApiKey by rememberSaveable {
         mutableStateOf(!appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank())
     }
@@ -155,7 +165,63 @@ fun WelcomeScreen(
         if (connectToServer) onContinueToServerSetup() else onContinueToLocalLibrary()
     }
 
+    fun applySecurityOrAdvance() {
+        val activity = context as? androidx.fragment.app.FragmentActivity
+        when (AppLockMode.fromKey(securityMode)) {
+            AppLockMode.Off -> {
+                appLockManager.disable()
+                securityError = null
+                currentStepIndex += 1
+            }
+            AppLockMode.Biometric -> {
+                if (activity == null) {
+                    securityError = null
+                    currentStepIndex += 1
+                    return
+                }
+                scope.launch {
+                    when (val r = appLockManager.enroll(activity)) {
+                        is AppLockManager.EnrollResult.Success -> {
+                            securityError = null
+                            currentStepIndex += 1
+                        }
+                        is AppLockManager.EnrollResult.DeviceNotSecure -> {
+                            appLockManager.disable()
+                            securityMode = AppLockMode.Off.backendKey
+                            securityError =
+                                context.getString(SettingsR.string.settings_app_lock_device_not_secure)
+                        }
+                        is AppLockManager.EnrollResult.Cancelled -> {
+                            appLockManager.disable()
+                            securityMode = AppLockMode.Off.backendKey
+                        }
+                        is AppLockManager.EnrollResult.Failed -> {
+                            appLockManager.disable()
+                            securityMode = AppLockMode.Off.backendKey
+                            securityError = context.getString(
+                                SettingsR.string.settings_app_lock_enroll_failed,
+                                r.message,
+                            )
+                        }
+                    }
+                }
+            }
+            AppLockMode.Pin -> {
+                if (!pinConfigured || !appLockManager.isConfigured()) {
+                    securityError = context.getString(SetupR.string.welcome_security_pin_required)
+                } else {
+                    securityError = null
+                    currentStepIndex += 1
+                }
+            }
+        }
+    }
+
     fun goNext() {
+        if (currentStep == WelcomeStep.Security) {
+            applySecurityOrAdvance()
+            return
+        }
         if (currentStepIndex == steps.lastIndex || (currentStep == WelcomeStep.CompanionDiscovery && companionState is CompanionState.Success)) {
             completeOnboarding(saveChoices = true)
         } else {
@@ -184,6 +250,23 @@ fun WelcomeScreen(
         }
     }
 
+    if (showPinSetup) {
+        SpatialDialog(onDismissRequest = { showPinSetup = false }) {
+            PinSetupScreen(
+                onConfirmed = { newPin ->
+                    scope.launch {
+                        val ok = appLockManager.setPin(newPin)
+                        showPinSetup = false
+                        pinConfigured = ok
+                        securityError = if (ok) null
+                        else "Could not save PIN. It must be 4–8 digits."
+                    }
+                },
+                onCancel = { showPinSetup = false },
+            )
+        }
+    }
+
     WelcomeScreenLayout(
         currentStep = currentStep,
         currentStepIndex = currentStepIndex,
@@ -206,6 +289,19 @@ fun WelcomeScreen(
         onWantsApiKeyChange = { wantsApiKey = it },
         cloudApiKey = cloudApiKey,
         onCloudApiKeyChange = { cloudApiKey = it },
+        securityMode = securityMode,
+        onSecurityModeChange = {
+            securityMode = it
+            securityError = null
+            // Changing away from PIN clears any staged PIN; we only honor a
+            // configured PIN when the user commits on goNext.
+            if (AppLockMode.fromKey(it) != AppLockMode.Pin) {
+                pinConfigured = false
+            }
+        },
+        onConfigurePinClick = { showPinSetup = true },
+        pinConfigured = pinConfigured,
+        securityError = securityError,
         onLearnMoreClick = { uriHandler.openUri("https://jellyfin.org/") },
         onOpenAiStudioClick = { uriHandler.openUri("https://aistudio.google.com/app/apikey") },
         onBackClick = { currentStepIndex = (currentStepIndex - 1).coerceAtLeast(0) },
@@ -236,6 +332,11 @@ private fun WelcomeScreenLayout(
     companionState: CompanionState,
     onStartScanning: () -> Unit,
     onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
+    securityMode: String,
+    onSecurityModeChange: (String) -> Unit,
+    onConfigurePinClick: () -> Unit,
+    pinConfigured: Boolean,
+    securityError: String?,
     onLearnMoreClick: () -> Unit,
     onOpenAiStudioClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -251,6 +352,7 @@ private fun WelcomeScreenLayout(
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_title)
             WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_title)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_title)
+            WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_title)
             WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_title)
         }
     val stepBody =
@@ -258,6 +360,7 @@ private fun WelcomeScreenLayout(
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_body)
             WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_body)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_body)
+            WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_body)
             WelcomeStep.Ai -> stringResource(SetupR.string.welcome_ai_body)
         }
     val primaryActionText =
@@ -367,6 +470,15 @@ private fun WelcomeScreenLayout(
                                 spokenLanguagesSummary = spokenLanguagesSummary,
                                 onPreferOriginalAudioChange = onPreferOriginalAudioChange,
                                 onEditLanguages = onEditLanguages,
+                            )
+                        }
+                        WelcomeStep.Security -> {
+                            SecurityStep(
+                                selectedMode = securityMode,
+                                onModeChange = onSecurityModeChange,
+                                onConfigurePinClick = onConfigurePinClick,
+                                pinConfigured = pinConfigured,
+                                errorMessage = securityError,
                             )
                         }
                         WelcomeStep.Ai -> {
@@ -606,6 +718,58 @@ private fun LanguagesStep(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SecurityStep(
+    selectedMode: String,
+    onModeChange: (String) -> Unit,
+    onConfigurePinClick: () -> Unit,
+    pinConfigured: Boolean,
+    errorMessage: String?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        StepChoiceCard(
+            title = stringResource(SetupR.string.welcome_security_off),
+            body = stringResource(SetupR.string.welcome_security_off_body),
+            selected = selectedMode == AppLockMode.Off.backendKey,
+            onClick = { onModeChange(AppLockMode.Off.backendKey) },
+        )
+        StepChoiceCard(
+            title = stringResource(SetupR.string.welcome_security_biometric),
+            body = stringResource(SetupR.string.welcome_security_biometric_body),
+            selected = selectedMode == AppLockMode.Biometric.backendKey,
+            onClick = { onModeChange(AppLockMode.Biometric.backendKey) },
+        )
+        StepChoiceCard(
+            title = stringResource(SetupR.string.welcome_security_pin),
+            body = stringResource(SetupR.string.welcome_security_pin_body),
+            selected = selectedMode == AppLockMode.Pin.backendKey,
+            onClick = { onModeChange(AppLockMode.Pin.backendKey) },
+        )
+        if (selectedMode == AppLockMode.Pin.backendKey) {
+            OutlinedButton(
+                onClick = onConfigurePinClick,
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+            ) {
+                Text(stringResource(SetupR.string.welcome_security_configure_pin))
+            }
+            if (pinConfigured) {
+                Text(
+                    text = stringResource(SetupR.string.welcome_security_pin_ready),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (errorMessage != null) {
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }
@@ -870,6 +1034,11 @@ private fun WelcomeScreenLayoutPreview() {
             onWantsApiKeyChange = {},
             cloudApiKey = "",
             onCloudApiKeyChange = {},
+            securityMode = "off",
+            onSecurityModeChange = {},
+            onConfigurePinClick = {},
+            pinConfigured = false,
+            securityError = null,
             onLearnMoreClick = {},
             onOpenAiStudioClick = {},
             onBackClick = {},

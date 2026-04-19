@@ -48,6 +48,8 @@ import timber.log.Timber
 @AndroidEntryPoint
 class XrPlayerActivity : AppCompatActivity() {
     @Inject lateinit var repository: JellyfinRepository
+    @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
+    @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
 
     @Inject lateinit var voiceTelemetryStore: VoiceTelemetryStore
 
@@ -245,7 +247,13 @@ class XrPlayerActivity : AppCompatActivity() {
         // embedded text tracks inside MKV containers so Media3's buggy zlib handling never
         // surfaces as garbage subtitles on screen.
         val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
-        val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
+        val encryptedDataSourceFactory =
+            dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                contentKeyManager = contentKeyManager,
+                database = serverDatabase,
+            )
+        val mediaSourceFactory = DefaultMediaSourceFactory(encryptedDataSourceFactory, extractorsFactory)
             .experimentalParseSubtitlesDuringExtraction(stereoPlayback)
         if (stereoPlayback) {
             Timber.i("subtitle: stereo playback — using Media3 subtitle parsing/transcoding for fallback renderer")

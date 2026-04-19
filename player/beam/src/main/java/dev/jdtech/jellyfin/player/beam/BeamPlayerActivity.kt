@@ -183,6 +183,8 @@ class BeamPlayerActivity : AppCompatActivity() {
     }
 
     @Inject lateinit var repository: JellyfinRepository
+    @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
+    @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
@@ -405,8 +407,14 @@ class BeamPlayerActivity : AppCompatActivity() {
         // Disable Media3 in-pipeline subtitle transcoding so raw ASS/SSA bytes reach libass.
         // Transcoding converts tracks to application/x-media3-cues, which libass rejects —
         // the result was plain white text with no colors/fonts/typesetting on anime subs.
+        val encryptedDataSourceFactory =
+            dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                contentKeyManager = contentKeyManager,
+                database = serverDatabase,
+            )
         val mediaSourceFactory =
-            DefaultMediaSourceFactory(this, extractorsFactory)
+            DefaultMediaSourceFactory(encryptedDataSourceFactory, extractorsFactory)
                 .experimentalParseSubtitlesDuringExtraction(false)
 
         val trackSelector = DefaultTrackSelector(this)

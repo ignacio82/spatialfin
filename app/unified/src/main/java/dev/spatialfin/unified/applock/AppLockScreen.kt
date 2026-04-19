@@ -35,11 +35,18 @@ import kotlinx.coroutines.launch
 
 /**
  * Full-screen blocker rendered while [AppLockManager.lockState] is LOCKED.
- * Automatically kicks off one authentication attempt on first composition;
- * the user can retry after a cancel or failure.
+ * Routes to biometric prompt or PIN entry depending on the configured mode.
  */
 @Composable
 fun AppLockScreen(lockManager: AppLockManager) {
+    when (lockManager.mode()) {
+        AppLockMode.Pin -> PinLockHost(lockManager)
+        else -> BiometricLockHost(lockManager)
+    }
+}
+
+@Composable
+private fun BiometricLockHost(lockManager: AppLockManager) {
     val context = LocalContext.current
     val activity = remember(context) {
         var ctx: android.content.Context = context
@@ -124,4 +131,41 @@ fun AppLockScreen(lockManager: AppLockManager) {
             }
         }
     }
+}
+
+@Composable
+private fun PinLockHost(lockManager: AppLockManager) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var remaining by remember { mutableStateOf<Int?>(null) }
+
+    PinLockScreen(
+        onSubmit = { attempt ->
+            if (busy) return@PinLockScreen
+            busy = true
+            errorMessage = null
+            scope.launch {
+                when (val r = lockManager.verifyPin(attempt)) {
+                    is AppLockManager.PinAuthResult.Success -> Unit
+                    is AppLockManager.PinAuthResult.Failed -> {
+                        errorMessage = context.getString(R.string.app_lock_pin_incorrect)
+                        remaining = r.remaining
+                    }
+                    is AppLockManager.PinAuthResult.Wiped -> {
+                        // clearApplicationUserData() will kill the process; no UI update needed.
+                    }
+                }
+                busy = false
+            }
+        },
+        errorMessage = errorMessage,
+        busy = busy,
+        remainingAttempts = remaining,
+        wipeOnFail = lockManager.wipeOnFailEnabled(),
+        onWipeRequested = {
+            scope.launch { lockManager.wipeNow() }
+        },
+    )
 }

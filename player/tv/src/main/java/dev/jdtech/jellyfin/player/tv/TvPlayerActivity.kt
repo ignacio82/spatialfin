@@ -113,6 +113,8 @@ import java.util.UUID
 
 @AndroidEntryPoint
 class TvPlayerActivity : AppCompatActivity() {
+    @javax.inject.Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
+    @javax.inject.Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
     companion object {
         private const val EXTRA_ITEM_ID = "itemId"
         private const val EXTRA_ITEM_KIND = "itemKind"
@@ -338,8 +340,14 @@ class TvPlayerActivity : AppCompatActivity() {
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
 
+        val encryptedDataSourceFactory =
+            dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                contentKeyManager = contentKeyManager,
+                database = serverDatabase,
+            )
         val mediaSourceFactory =
-            DefaultMediaSourceFactory(this)
+            DefaultMediaSourceFactory(encryptedDataSourceFactory)
                 .experimentalParseSubtitlesDuringExtraction(true)
 
         val trackSelector = DefaultTrackSelector(this)

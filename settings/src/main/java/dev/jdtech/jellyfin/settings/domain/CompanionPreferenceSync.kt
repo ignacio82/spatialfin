@@ -85,6 +85,22 @@ fun AppPreferences.applyCompanionPreference(key: String, value: String?): Boolea
             true
         }
         tmdbAutoMatch.backendName -> applyBoolean(tmdbAutoMatch, value)
+        appLockMode.backendName -> applyString(appLockMode, value)
+        appLockPinHash.backendName -> {
+            setValue(appLockPinHash, value)
+            true
+        }
+        appLockPinSalt.backendName -> {
+            setValue(appLockPinSalt, value)
+            true
+        }
+        appLockPinKdfParams.backendName -> {
+            setValue(appLockPinKdfParams, value)
+            true
+        }
+        appLockWipeOnFail.backendName -> applyBoolean(appLockWipeOnFail, value)
+        appLockMaxAttempts.backendName -> applyInt(appLockMaxAttempts, value)
+        contentEncryptionEnabled.backendName -> applyBoolean(contentEncryptionEnabled, value)
         else -> false
     }
 
@@ -102,6 +118,12 @@ private fun AppPreferences.applyBoolean(preference: Preference<Boolean>, value: 
 
 private fun AppPreferences.applyLong(preference: Preference<Long>, value: String?): Boolean {
     val parsed = value?.toLongOrNull() ?: return false
+    setValue(preference, parsed)
+    return true
+}
+
+private fun AppPreferences.applyInt(preference: Preference<Int>, value: String?): Boolean {
+    val parsed = value?.toIntOrNull() ?: return false
     setValue(preference, parsed)
     return true
 }

@@ -25,6 +25,11 @@ data class DownloadTaskDto(
     val progress: Int,
     val errorMessage: String?,
     val updatedAt: Long,
+    // Phase 2 encryption. Existing rows default to false (plain file on disk).
+    // New rows set this to true after finalize if content encryption is enabled.
+    @ColumnInfo(defaultValue = "0") val isEncrypted: Boolean = false,
+    // 16-byte AES-CTR IV, base64-encoded (no wrap). Null for unencrypted downloads.
+    val encryptionIv: String? = null,
 )
 
 fun downloadTaskId(itemId: UUID, sourceId: String): String = "$itemId:$sourceId"

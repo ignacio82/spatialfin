@@ -162,6 +162,20 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val appLockEnabled = Preference("pref_app_lock_enabled", false)
     val appLockCredentialId = Preference<String?>("pref_app_lock_credential_id", null)
     val appLockUserHandle = Preference<String?>("pref_app_lock_user_handle", null)
+    // "off" | "biometric" | "pin". appLockEnabled stays true whenever mode != off
+    // so older code paths keep working without a data migration.
+    val appLockMode = Preference("pref_app_lock_mode", "off")
+    val appLockPinHash = Preference<String?>("pref_app_lock_pin_hash", null)
+    val appLockPinSalt = Preference<String?>("pref_app_lock_pin_salt", null)
+    val appLockPinKdfParams = Preference<String?>("pref_app_lock_pin_kdf_params", null)
+    val appLockWipeOnFail = Preference("pref_app_lock_wipe_on_fail", true)
+    val appLockMaxAttempts = Preference("pref_app_lock_max_attempts", 1)
+    /**
+     * When true, new downloads are AES-CTR-encrypted at finalize time. Pre-existing
+     * downloads remain readable — users can re-download them via the Settings
+     * warning card to get them encrypted. Not retroactive.
+     */
+    val contentEncryptionEnabled = Preference("pref_content_encryption_enabled", false)
 
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)

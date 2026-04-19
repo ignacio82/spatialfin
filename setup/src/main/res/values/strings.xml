@@ -44,6 +44,18 @@
    <string name="welcome_languages_summary_title">Current spoken languages</string>
    <string name="welcome_languages_hint">Open the language picker to add, remove, and reorder languages. The first language in the list has the highest priority.</string>
    <string name="welcome_languages_edit">Choose spoken languages</string>
+   <string name="welcome_security_title">App security</string>
+   <string name="welcome_security_body">Lock SpatialFin behind a passkey when the app resumes. You can change this any time in Settings.</string>
+   <string name="welcome_security_off">No lock</string>
+   <string name="welcome_security_off_body">Anyone with access to this device can open SpatialFin.</string>
+   <string name="welcome_security_biometric">Biometric / device credential</string>
+   <string name="welcome_security_biometric_body">Use the device\'s biometric sensor or screen-lock PIN every time SpatialFin resumes. Requires a screen lock.</string>
+   <string name="welcome_security_pin">SpatialFin PIN</string>
+   <string name="welcome_security_pin_body">Set a dedicated numeric PIN with optional data-wipe on repeated wrong entries.</string>
+   <string name="welcome_security_configure_pin">Set up PIN</string>
+   <string name="welcome_security_pin_ready">PIN saved. You can change it later in Settings.</string>
+   <string name="welcome_security_pin_required">Tap “Set up PIN” before continuing.</string>
+
    <string name="welcome_ai_title">AI setup</string>
    <string name="welcome_ai_body">SpatialFin can use on-device AI when available. If it is unavailable on this device, you can optionally add a Gemini API key for cloud fallback.</string>
    <string name="welcome_ai_checking">Checking local AI availability…</string>

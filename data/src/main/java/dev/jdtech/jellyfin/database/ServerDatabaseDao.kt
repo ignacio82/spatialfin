@@ -198,6 +198,25 @@ interface ServerDatabaseDao {
         updatedAt: Long,
     )
 
+    @Query(
+        "UPDATE downloadtasks SET isEncrypted = :isEncrypted, encryptionIv = :encryptionIv, updatedAt = :updatedAt WHERE id = :id"
+    )
+    fun setDownloadTaskEncryption(
+        id: String,
+        isEncrypted: Boolean,
+        encryptionIv: String?,
+        updatedAt: Long,
+    )
+
+    @Query("SELECT * FROM downloadtasks WHERE finalPath = :finalPath LIMIT 1")
+    fun getDownloadTaskByFinalPath(finalPath: String): DownloadTaskDto?
+
+    @Query("SELECT COUNT(*) FROM downloadtasks WHERE isEncrypted = 0 AND finalPath != ''")
+    fun countUnencryptedDownloads(): Int
+
+    @Query("SELECT * FROM downloadtasks WHERE isEncrypted = 0 AND finalPath != ''")
+    fun getUnencryptedDownloads(): List<DownloadTaskDto>
+
     @Query("DELETE FROM downloadtasks WHERE itemId = :itemId")
     fun deleteDownloadTasksByItemId(itemId: UUID)
 

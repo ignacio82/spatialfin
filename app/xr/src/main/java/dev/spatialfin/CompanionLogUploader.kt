@@ -2,8 +2,8 @@ package dev.spatialfin
 
 import android.content.Context
 import android.os.Build
-import android.provider.Settings
 import android.util.Log
+import dev.jdtech.jellyfin.models.companion.DeviceIdentity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -135,10 +135,7 @@ object CompanionLogUploader {
             else -> "?"
         }
 
-    private fun deviceId(): String =
-        Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
-            ?.takeIf { it.isNotBlank() }
-            ?: "spatialfin-${Build.MODEL}-${Build.VERSION.SDK_INT}"
+    private fun deviceId(): String = DeviceIdentity.deviceId(appContext)
 
     private fun deviceName(): String = listOfNotNull(Build.MANUFACTURER, Build.MODEL).joinToString(" ")
 

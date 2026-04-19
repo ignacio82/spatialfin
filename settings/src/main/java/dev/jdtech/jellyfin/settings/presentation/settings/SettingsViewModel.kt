@@ -748,14 +748,71 @@ class SettingsViewModel @Inject constructor(
                                     PreferenceGroup(
                                         preferences =
                                             listOf(
-                                                PreferenceSwitch(
+                                                PreferenceSelect(
                                                     nameStringResource =
-                                                        R.string.settings_app_lock_title,
+                                                        R.string.settings_app_lock_mode_title,
                                                     descriptionStringRes =
-                                                        R.string.settings_app_lock_summary,
+                                                        R.string.settings_app_lock_mode_summary,
                                                     iconDrawableId = R.drawable.ic_lock,
                                                     backendPreference =
-                                                        appPreferences.appLockEnabled,
+                                                        appPreferences.appLockMode,
+                                                    options = R.array.app_lock_mode,
+                                                    optionValues = R.array.app_lock_mode_values,
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource =
+                                                        R.string.settings_app_lock_pin_change_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_app_lock_pin_change_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(
+                                                                SettingsEvent.ShowAppLockPinSetup
+                                                            )
+                                                        }
+                                                    },
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource =
+                                                        R.string.settings_app_lock_wipe_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_app_lock_wipe_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    backendPreference =
+                                                        appPreferences.appLockWipeOnFail,
+                                                ),
+                                                PreferenceIntInput(
+                                                    nameStringResource =
+                                                        R.string.settings_app_lock_attempts_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_app_lock_attempts_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    backendPreference =
+                                                        appPreferences.appLockMaxAttempts,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource =
+                                                        R.string.settings_content_encryption_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_content_encryption_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    backendPreference =
+                                                        appPreferences.contentEncryptionEnabled,
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource =
+                                                        R.string.settings_delete_unencrypted_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_delete_unencrypted_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(
+                                                                SettingsEvent.ShowDeleteUnencryptedDialog
+                                                            )
+                                                        }
+                                                    },
                                                 ),
                                             )
                                     )
@@ -1033,6 +1090,16 @@ class SettingsViewModel @Inject constructor(
                                 action.preference.backendPreference,
                                 action.preference.value,
                             )
+                        }
+                        if (action.preference.backendPreference.backendName ==
+                            appPreferences.appLockMode.backendName) {
+                            viewModelScope.launch {
+                                eventsChannel.send(
+                                    SettingsEvent.ChangeAppLockMode(
+                                        action.preference.value ?: "off"
+                                    )
+                                )
+                            }
                         }
                     }
                     is PreferenceMultiSelect ->
