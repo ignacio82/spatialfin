@@ -14,8 +14,14 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var isInitialized = false
 
+    private var cachedVoiceName: String? = null
+    private var cachedVoice: Voice? = null
+
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
     init {
         tts = TextToSpeech(context, this)
@@ -29,6 +35,7 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
                     Timber.w("TTS: Language not supported")
                 } else {
                     isInitialized = true
+                    _isReady.value = true
                     it.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
                             Timber.i("TTS: utterance started id=%s", utteranceId)
@@ -56,25 +63,26 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
     fun speak(
         text: String,
         languageHint: String? = null,
-        voicePreference: String = "male",
+        voiceName: String? = null,
     ) {
         if (!isInitialized) {
             Timber.w("TTS: speak ignored because engine is not initialized")
             return
         }
-        val locale = resolveLocale(languageHint)
-        locale?.let {
-            applyVoiceSelection(locale, voicePreference)
+        val engine = tts ?: return
+        val applied = applyVoiceSelection(engine, voiceName)
+        if (!applied) {
+            resolveLocale(languageHint)?.let { engine.setLanguage(it) }
         }
         val utteranceId = "spatialfin_chat_${System.currentTimeMillis()}"
         Timber.i(
-            "TTS: speak requested id=%s chars=%d locale=%s voicePreference=%s",
+            "TTS: speak requested id=%s chars=%d voiceName=%s appliedVoice=%b",
             utteranceId,
             text.length,
-            locale,
-            voicePreference,
+            voiceName,
+            applied,
         )
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
     fun canSpeak(): Boolean = isInitialized && tts != null
@@ -89,35 +97,35 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        cachedVoice = null
+        cachedVoiceName = null
+        _isReady.value = false
     }
 
-    private fun applyVoiceSelection(locale: Locale, voicePreference: String) {
-        val engine = tts ?: return
-        val languageResult = engine.setLanguage(locale)
-        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-            Timber.w("TTS: Requested locale %s is not supported", locale)
-            return
-        }
+    /**
+     * Snapshot of the voices the underlying TTS engine exposes. Empty until
+     * [isReady] flips true. Safe to call from the UI layer — the enumeration
+     * itself is a Binder call, so avoid invoking on a hot path.
+     */
+    fun availableVoices(): List<Voice> {
+        val engine = tts ?: return emptyList()
+        return runCatching { engine.voices }.getOrNull()?.filterNotNull().orEmpty()
+    }
 
-        if (voicePreference == "system") return
+    private fun applyVoiceSelection(engine: TextToSpeech, voiceName: String?): Boolean {
+        if (voiceName.isNullOrBlank()) return false
+        val voice = resolveVoice(engine, voiceName) ?: return false
+        return runCatching { engine.voice = voice }.isSuccess
+    }
 
-        val preferredVoice =
-            engine.voices
-                ?.asSequence()
-                ?.filter { voiceMatchesLocale(it, locale) }
-                ?.sortedWith(
-                    compareBy<Voice>(
-                        { if (voiceMatchesPreference(it, voicePreference)) 0 else 1 },
-                        { if (it.isNetworkConnectionRequired) 1 else 0 },
-                        { it.latency },
-                        { -it.quality },
-                    )
-                )
-                ?.firstOrNull()
-
-        if (preferredVoice != null && voiceMatchesPreference(preferredVoice, voicePreference)) {
-            engine.voice = preferredVoice
-        }
+    private fun resolveVoice(engine: TextToSpeech, voiceName: String): Voice? {
+        cachedVoice?.takeIf { cachedVoiceName == voiceName }?.let { return it }
+        val match = runCatching { engine.voices }.getOrNull()
+            ?.firstOrNull { it?.name == voiceName }
+            ?: return null
+        cachedVoiceName = voiceName
+        cachedVoice = match
+        return match
     }
 
     private fun resolveLocale(languageHint: String?): Locale? {
@@ -152,26 +160,5 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
                 "ru" to Locale("ru"),
             )
         return keywordMap.entries.firstOrNull { normalized.contains(it.key) }?.value ?: Locale.getDefault()
-    }
-
-    private fun voiceMatchesLocale(voice: Voice, locale: Locale): Boolean {
-        val voiceLocale = voice.locale ?: return false
-        return voiceLocale.language.equals(locale.language, ignoreCase = true)
-    }
-
-    private fun voiceMatchesPreference(voice: Voice, voicePreference: String): Boolean {
-        val haystack =
-            buildString {
-                append(voice.name.lowercase())
-                append(' ')
-                append(voice.features.joinToString(" ").lowercase())
-            }
-        val maleMarkers = listOf("male", "man", "boy", "masculine")
-        val femaleMarkers = listOf("female", "woman", "girl", "feminine")
-        return when (voicePreference) {
-            "male" -> maleMarkers.any(haystack::contains) && femaleMarkers.none(haystack::contains)
-            "female" -> femaleMarkers.any(haystack::contains) && maleMarkers.none(haystack::contains)
-            else -> true
-        }
     }
 }

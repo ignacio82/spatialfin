@@ -341,8 +341,8 @@ class UnifiedMainActivity : AppCompatActivity() {
         val assistantSpokenReplies by appPreferences.rememberPrefState(appPreferences.voiceAssistantSpokenReplies) {
             appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
         }
-        val assistantVoicePreference by appPreferences.rememberPrefState(appPreferences.voiceAssistantVoice) {
-            appPreferences.getValue(appPreferences.voiceAssistantVoice) ?: "male"
+        val assistantVoiceName by appPreferences.rememberPrefState(appPreferences.voiceAssistantVoice) {
+            appPreferences.getValue(appPreferences.voiceAssistantVoice)
         }
 
         var hasAudioPermission by remember {
@@ -460,7 +460,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         // the latest values without re-keying the gesture coroutine collector.
         val latestHasAudioPermission = rememberUpdatedState(hasAudioPermission)
         val latestAssistantSpoken = rememberUpdatedState(assistantSpokenReplies)
-        val latestAssistantVoice = rememberUpdatedState(assistantVoicePreference)
+        val latestAssistantVoice = rememberUpdatedState(assistantVoiceName)
         val onAudioPermissionMissing = rememberUpdatedState({
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         })
@@ -473,7 +473,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 currentTtsSpeaking = isTtsSpeaking,
                 hasAudioPermission = latestHasAudioPermission.value,
                 assistantSpokenReplies = latestAssistantSpoken.value,
-                assistantVoicePreference = latestAssistantVoice.value,
+                assistantVoiceName = latestAssistantVoice.value,
                 navigation = navigation,
                 onAudioPermissionMissing = { onAudioPermissionMissing.value() },
             )

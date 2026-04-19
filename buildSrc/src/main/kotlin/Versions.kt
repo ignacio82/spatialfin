@@ -1,7 +1,7 @@
 import org.gradle.api.JavaVersion
 
 object Versions {
-    const val APP_CODE = 87
+    const val APP_CODE = 88
     const val APP_NAME = "2.5.0"
 
     const val COMPILE_SDK = 36

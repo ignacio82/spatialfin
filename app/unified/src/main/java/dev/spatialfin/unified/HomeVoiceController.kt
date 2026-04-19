@@ -233,7 +233,7 @@ class HomeVoiceController(
         action: XrPlayerAction,
         navigation: HomeVoiceNavigation,
         assistantSpokenReplies: Boolean,
-        assistantVoicePreference: String,
+        assistantVoiceName: String?,
         onToken: ((String) -> Unit)? = null,
     ): HomeVoiceActionOutcome {
         return when (action) {
@@ -288,7 +288,7 @@ class HomeVoiceController(
                     if (willSpeakReply) {
                         assistantSpeechPendingStart = true
                         assistantSpeechStarted = false
-                        tts.speak(reply, null, assistantVoicePreference)
+                        tts.speak(reply, null, assistantVoiceName)
                     }
                 } ?: "Sorry, I couldn't process that."
                 HomeVoiceActionOutcome(feedback, response)
@@ -322,7 +322,7 @@ class HomeVoiceController(
         currentTtsSpeaking: Boolean,
         hasAudioPermission: Boolean,
         assistantSpokenReplies: Boolean,
-        assistantVoicePreference: String,
+        assistantVoiceName: String?,
         navigation: HomeVoiceNavigation,
         onAudioPermissionMissing: () -> Unit,
     ) {
@@ -378,7 +378,7 @@ class HomeVoiceController(
                         action = parseResult.action,
                         navigation = navigation,
                         assistantSpokenReplies = assistantSpokenReplies,
-                        assistantVoicePreference = assistantVoicePreference,
+                        assistantVoiceName = assistantVoiceName,
                         onToken = { partial -> voiceFeedback = partial },
                     )
                     voiceFeedback = outcome.feedback

@@ -241,7 +241,16 @@
     <string name="voice_assistant_spoken_replies">Spoken AI replies</string>
     <string name="voice_assistant_spoken_replies_summary">Read AI answers aloud with text-to-speech by default</string>
     <string name="voice_assistant_voice">Assistant voice</string>
-    <string name="voice_assistant_voice_summary">Choose how SpatialFin selects the Android text-to-speech voice for spoken replies. Prefer male is the default when supported by the installed TTS engine.</string>
+    <string name="voice_assistant_voice_summary">Pick a specific text-to-speech voice from the engine installed on this device. Available voices depend on your Android TTS engine.</string>
+    <string name="voice_assistant_voice_system_default">System default</string>
+    <string name="voice_assistant_voice_dialog_title">Assistant voice</string>
+    <string name="voice_assistant_voice_dialog_system_default_summary">Use whatever voice your Android text-to-speech engine picks</string>
+    <string name="voice_assistant_voice_dialog_preview">Preview</string>
+    <string name="voice_assistant_voice_dialog_preview_text">This is how the assistant voice will sound.</string>
+    <string name="voice_assistant_voice_dialog_no_voices">No text-to-speech voices are available. Install or enable an Android TTS engine in system settings.</string>
+    <string name="voice_assistant_voice_dialog_loading">Loading voices…</string>
+    <string name="voice_assistant_voice_dialog_network_required">Network required</string>
+    <string name="voice_assistant_voice_dialog_quality_label">Quality: %1$d</string>
     <string name="voice_permissions">App permissions</string>
     <string name="voice_permissions_summary">Open app settings to review microphone and hand-tracking permissions</string>
     <string name="voice_cloud_api_key">Cloud AI API key</string>
@@ -280,16 +289,6 @@
         <item>strict</item>
         <item>cautious</item>
         <item>open</item>
-    </string-array>
-    <string-array name="voice_assistant_voice_options">
-        <item>Prefer male</item>
-        <item>Prefer female</item>
-        <item>System default</item>
-    </string-array>
-    <string-array name="voice_assistant_voice_values">
-        <item>male</item>
-        <item>female</item>
-        <item>system</item>
     </string-array>
 
     <!-- XR Space Mode -->

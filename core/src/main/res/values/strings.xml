@@ -96,9 +96,10 @@
     <string name="delete_download">Delete download</string>
     <string name="delete_download_message">Are you sure you want to delete this download from you device?</string>
     <string name="stop_download">Stop download</string>
-    <string name="privacy_policy_notice">By using SpatialFin you agree with the <a href='https://raw.githubusercontent.com/jarnedemeulemeester/spatialfin/main/PRIVACY'>Privacy Policy</a> which states that we do not collect any data</string>
+    <string name="privacy_policy_notice">By using SpatialFin you agree with the <a href='https://raw.githubusercontent.com/ignacio82/spatialfin/refs/heads/main/PRIVACY'>Privacy Policy</a> which states that we do not collect any data</string>
     <string name="live_tv">Live TV</string>
     <string name="play">Play</string>
+    <string name="play_pending">Opening…</string>
     <string name="watch_trailer">Watch trailer</string>
     <string name="mark_as_played">Mark as played</string>
     <string name="unmark_as_played">Unmark as played</string>

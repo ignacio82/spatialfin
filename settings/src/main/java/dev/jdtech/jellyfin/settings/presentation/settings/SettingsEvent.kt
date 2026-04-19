@@ -28,6 +28,8 @@ sealed interface SettingsEvent {
 
     data class ShowSmartLanguageDialog(val settings: SmartLanguageSettings) : SettingsEvent
 
+    data class ShowVoicePickerDialog(val currentVoiceName: String?) : SettingsEvent
+
     data object ShowCompanionDiscoveryDialog : SettingsEvent
 
     data object RestartActivity : SettingsEvent

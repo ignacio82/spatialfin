@@ -1,16 +1,21 @@
 package dev.jdtech.jellyfin.presentation.film.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
-import androidx.compose.foundation.layout.height
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -20,6 +25,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyEpisode
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyMovie
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.presentation.utils.rememberTapPending
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 
@@ -35,16 +41,36 @@ fun PlayButton(
             mutableLongStateOf((item.runtimeTicks - item.playbackPositionTicks) / 600000000)
         }
 
-    Button(onClick = onClick, modifier = modifier.height(68.dp), enabled = enabled) {
-        Icon(
-            painter = painterResource(CoreR.drawable.ic_play),
-            contentDescription = null,
-            modifier = Modifier,
-        )
+    val pending = rememberTapPending()
+
+    Button(
+        onClick = {
+            pending.begin()
+            onClick()
+        },
+        modifier = modifier.height(68.dp),
+        enabled = enabled && !pending.value,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(24.dp)) {
+            if (pending.value) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = LocalContentColor.current,
+                )
+            } else {
+                Icon(
+                    painter = painterResource(CoreR.drawable.ic_play),
+                    contentDescription = null,
+                )
+            }
+        }
         Spacer(modifier = Modifier.width(MaterialTheme.spacings.small))
         Text(
             text =
-                if (item.playbackPositionTicks > 0) {
+                if (pending.value) {
+                    stringResource(CoreR.string.play_pending)
+                } else if (item.playbackPositionTicks > 0) {
                     stringResource(CoreR.string.runtime_minutes_left, runtimeMinutesLeft)
                 } else {
                     stringResource(CoreR.string.play)

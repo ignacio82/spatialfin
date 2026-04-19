@@ -13,12 +13,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSmartLanguage
+import androidx.compose.ui.res.stringResource
+import dev.jdtech.jellyfin.settings.presentation.models.SummaryPreference
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
-fun SettingsSmartLanguageCard(
-    preference: PreferenceSmartLanguage,
+fun SettingsSummaryCard(
+    preference: SummaryPreference,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -40,13 +41,13 @@ fun SettingsSmartLanguageCard(
             Spacer(modifier = Modifier.width(MaterialTheme.spacings.default))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = androidx.compose.ui.res.stringResource(preference.nameStringResource),
+                    text = stringResource(preference.nameStringResource),
                     style = MaterialTheme.typography.titleLarge,
                 )
                 preference.descriptionStringRes?.let {
                     Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
                     Text(
-                        text = androidx.compose.ui.res.stringResource(it),
+                        text = stringResource(it),
                         style = MaterialTheme.typography.bodyLarge,
                     )
                 }

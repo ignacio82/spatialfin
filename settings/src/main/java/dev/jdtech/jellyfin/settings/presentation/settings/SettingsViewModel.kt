@@ -30,15 +30,18 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSmartLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceVoicePicker
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.SmartLanguageSettings
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -817,7 +820,24 @@ class SettingsViewModel @Inject constructor(
 
     private fun refreshLoadedPreferences() {
         viewModelScope.launch {
-            var preferences = topLevelPreferences
+            val wasPopulated = _state.value.preferenceGroups.isNotEmpty()
+            if (!wasPopulated) {
+                _state.emit(_state.value.copy(isLoading = true))
+            }
+            val computed = withContext(Dispatchers.Default) { computePreferences() }
+            _state.emit(
+                _state.value.copy(
+                    isLoading = false,
+                    preferenceGroups = computed,
+                    companionSyncStatus = appPreferences.getValue(appPreferences.companionUrl),
+                    lastSyncTime = appPreferences.getValue(appPreferences.lastCompanionSyncTime),
+                )
+            )
+        }
+    }
+
+    private fun computePreferences(): List<PreferenceGroup> {
+        var preferences = topLevelPreferences
 
             // Show preferences based on the name of the parent
             for (index in currentIndexes) {
@@ -937,6 +957,16 @@ class SettingsViewModel @Inject constructor(
                                                     summary = smartLanguageSummary(),
                                                 )
                                             }
+                                            is PreferenceVoicePicker -> {
+                                                preference.copy(
+                                                    enabled =
+                                                        preference.enabled &&
+                                                            preference.dependencies.all {
+                                                                appPreferences.getValue(it)
+                                                            },
+                                                    summary = voiceAssistantVoiceSummary(),
+                                                )
+                                            }
                                             is PreferenceCategory -> {
                                                 preference.copy(
                                                     enabled =
@@ -953,14 +983,7 @@ class SettingsViewModel @Inject constructor(
                     }
                     .filter { it.preferences.isNotEmpty() }
 
-            _state.emit(
-                _state.value.copy(
-                    preferenceGroups = preferences,
-                    companionSyncStatus = appPreferences.getValue(appPreferences.companionUrl),
-                    lastSyncTime = appPreferences.getValue(appPreferences.lastCompanionSyncTime),
-                )
-            )
-        }
+            return preferences
     }
 
     fun onAction(action: SettingsAction) {
@@ -969,6 +992,7 @@ class SettingsViewModel @Inject constructor(
                 when (action.preference) {
                     is PreferenceCategory -> action.preference.onClick(action.preference)
                     is PreferenceSmartLanguage -> action.preference.onClick(action.preference)
+                    is PreferenceVoicePicker -> action.preference.onClick(action.preference)
                     else -> Unit
                 }
             }
@@ -1158,6 +1182,35 @@ class SettingsViewModel @Inject constructor(
         return "$audioMode. $spokenLanguages."
     }
 
+    fun showVoicePickerDialog() {
+        viewModelScope.launch {
+            eventsChannel.send(
+                SettingsEvent.ShowVoicePickerDialog(
+                    appPreferences.getValue(appPreferences.voiceAssistantVoice)
+                )
+            )
+        }
+    }
+
+    fun saveVoiceAssistantVoice(voiceName: String?) {
+        appPreferences.setValue(
+            appPreferences.voiceAssistantVoice,
+            voiceName?.trim()?.takeIf { it.isNotEmpty() },
+        )
+        refreshLoadedPreferences()
+    }
+
+    private fun voiceAssistantVoiceSummary(): String {
+        val saved = appPreferences.getValue(appPreferences.voiceAssistantVoice)
+        return if (saved.isNullOrBlank() || saved in legacyVoiceValues) {
+            context.getString(R.string.voice_assistant_voice_system_default)
+        } else {
+            saved
+        }
+    }
+
+    private val legacyVoiceValues = setOf("male", "female", "system")
+
     private fun voicePreferenceGroups(): List<PreferenceGroup> {
         val handTrackingPermission = "android.permission.HAND_TRACKING"
         val hasMicPermission =
@@ -1241,15 +1294,14 @@ class SettingsViewModel @Inject constructor(
                             iconDrawableId = R.drawable.ic_microphone,
                             backendPreference = appPreferences.voiceAssistantSpokenReplies,
                         ),
-                        PreferenceSelect(
+                        PreferenceVoicePicker(
                             nameStringResource = R.string.voice_assistant_voice,
                             descriptionStringRes = R.string.voice_assistant_voice_summary,
                             iconDrawableId = R.drawable.ic_microphone,
                             backendPreference = appPreferences.voiceAssistantVoice,
-                            options = R.array.voice_assistant_voice_options,
-                            optionValues = R.array.voice_assistant_voice_values,
-                            value = appPreferences.getValue(appPreferences.voiceAssistantVoice),
+                            summary = voiceAssistantVoiceSummary(),
                             dependencies = listOf(appPreferences.voiceControlEnabled),
+                            onClick = { showVoicePickerDialog() },
                         ),
                         PreferenceCategory(
                             nameStringResource = R.string.voice_cloud_api_key,

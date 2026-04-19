@@ -1,9 +1,126 @@
-This privacy policy pertains to the SpatialFin app.
+SpatialFin Privacy Policy
 
-SpatialFin does not collect or access any personal information. No identifying information or user data of any kind is made available to third-parties.
+Effective: April 19th, 2026
+Last updated: April 19th, 2026
 
-SpatialFin connects exclusively to Jellyfin servers that are configured by the user. All media data, credentials, and server communication remain solely between the user's device and the user's own Jellyfin server. SpatialFin does not transmit any data to the developer or any external service.
+This Privacy Policy applies to the SpatialFin application ("SpatialFin", "the App") published by Ignacio Martinez ("the Developer"). This is not legal advice; it describes how the App handles information.
 
-This Privacy Policy is effective as of March 14th, 2025 and will remain in effect except with respect to any changes in its provisions in the future, which will be in effect immediately after being posted on this page. We reserve the right to update or change our Privacy Policy at any time and you should check this Privacy Policy periodically. Your continued use of the Service after we post any modifications to the Privacy Policy on this page will constitute your acknowledgment of the modifications and your consent to abide and be bound by the modified Privacy Policy.
 
-SpatialFin is published by Ignacio Martinez. Inquiries can be submitted to ignacio@martinez.fyi.
+1. SUMMARY
+
+SpatialFin is a free, open-source Jellyfin client for Android. The Developer does not operate any backend server for the App, does not collect personal information, and does not use analytics, telemetry uploads, crash reporting, advertising identifiers, or any other form of tracking. Everything the App stores lives on your device, and everything the App transmits goes directly to services you have explicitly configured yourself.
+
+
+2. INFORMATION COLLECTED BY THE DEVELOPER
+
+None. The Developer has no servers, databases, analytics pipelines, or other infrastructure that receives data from the App. The Developer therefore does not collect, store, process, share, sell, rent, trade, or otherwise make use of any information from users of the App.
+
+
+3. INFORMATION THE APP STORES LOCALLY ON YOUR DEVICE
+
+The App stores the following data in Android's standard private application sandbox on your device. None of this is transmitted to the Developer:
+
+  - Jellyfin server addresses, user accounts, and authentication tokens you provide.
+  - API keys you provide for optional third-party services (e.g. TMDB, OMDb, Google Gemini, Jellyseerr).
+  - User preferences (language, playback, display, voice, XR layout, and similar settings).
+  - Cached images and metadata from your Jellyfin server.
+  - Downloaded media you have explicitly chosen to download.
+  - Optional local voice-command telemetry (latencies, command classifications) used only to render the in-app voice diagnostics screen.
+  - Optional diagnostic log file in your device's Downloads folder, created only if you enable logging in settings.
+  - Optional on-device credentials for the App-lock feature, managed by the Android system and not accessible to the App.
+
+
+4. THIRD-PARTY SERVICES YOU MAY CHOOSE TO ENABLE
+
+The App can, at your option, communicate with third-party services. When you enable any of them, communication occurs directly between your device and that service under credentials you supply. The Developer is not a party to those exchanges and has no access to their contents. You are responsible for reviewing each service's own privacy policy and terms before enabling it.
+
+  - Jellyfin server: the self-hosted media server whose address and credentials you provide. All library, metadata, streaming, and playback-state communication happens between your device and your Jellyfin server.
+  - Jellyseerr / Overseerr: optional media-request integration.
+  - The Movie Database (TMDB): optional metadata enrichment using a TMDB API key you supply.
+  - OMDb (Open Movie Database): optional IMDb-backed ratings using an OMDb API key you supply.
+  - Google Gemini / Generative Language API: optional cloud AI assistant fallback using a Gemini API key you supply. Voice prompts and the conversation context the App sends will be transmitted to Google under your own API credentials and subject to Google's privacy policy.
+  - Companion hub: optional synchronization of preferences and bookmarks with another SpatialFin installation you control. Sync traffic travels over the local network or the endpoint you configure; it does not reach the Developer.
+
+The Developer neither receives nor has access to your credentials, API keys, session tokens, or any data transmitted to these services.
+
+
+5. ANDROID SYSTEM FEATURES INVOKED BY THE APP
+
+The App uses standard Android platform features. Some of these are fully on-device; others may involve your device vendor's services outside the Developer's control.
+
+  - Text-to-speech: the App uses the Android system TTS engine to read assistant replies. Some voices are marked "Network required" by the engine and, if you select one, the text to be spoken is transmitted to that engine's provider (typically Google). You can select a local-only voice from the voice picker in settings.
+  - Speech recognition: when you invoke voice controls, the App uses the Android system SpeechRecognizer. Depending on the device and the recognizer implementation installed, audio may be processed entirely on-device or transmitted to the recognizer's provider (for example, Google).
+  - On-device generative AI (AICore, Gemini Nano, LiteRT Gemma): when enabled, inference runs locally on supported devices. Prompts and outputs handled by these on-device engines are not transmitted outside your device by the App.
+  - Biometric app lock: when enabled, the App uses the Android BiometricPrompt API. Biometric credentials are managed entirely by the Android system and are never accessible to the App or the Developer.
+  - Media downloads: downloaded media is stored in your device's storage and is not transmitted anywhere by the App.
+
+
+6. ANDROID PERMISSIONS
+
+The App requests Android permissions only for the corresponding in-app features, including but not limited to internet access, microphone access for voice controls, hand-tracking on XR devices, storage access for downloads, biometric authentication for App lock, and foreground service permissions for downloads and playback. Permissions are not used for any purpose other than operating the feature that requested them.
+
+
+7. CHILDREN'S PRIVACY
+
+The App is not directed to children under the age of 13 (or the equivalent minimum age in your jurisdiction, such as 16 under the European Union's General Data Protection Regulation). Because the Developer does not collect information from anyone, the Developer does not knowingly collect information from children.
+
+
+8. INTERNATIONAL USERS
+
+Because the Developer does not receive data from users, no cross-border transfer of personal data to the Developer occurs. Any cross-border transfers that may occur to third-party services you configure are governed by those services' own policies and legal frameworks.
+
+
+9. SECURITY
+
+Data stored by the App resides in Android's standard private application storage on your device. The App does not transmit this data to the Developer. The Developer does not warrant that your device or this storage is impenetrable. You are responsible for securing your device (screen lock, device encryption, operating-system updates, etc.). The optional App-lock feature adds a biometric gate at the application level but does not replace device-level security and does not protect data already extracted from the device by other means.
+
+
+10. OPEN-SOURCE CODE AND VERIFIABILITY
+
+SpatialFin's source code is publicly available. You can verify the accuracy of the statements in this Privacy Policy by inspecting the code at the public repository linked from within the App.
+
+
+11. NO WARRANTY
+
+THE APP IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND THE ACCURACY, COMPLETENESS, OR RELIABILITY OF ANY DATA, METADATA, IMAGE, RATING, RECOMMENDATION, SUBTITLE, OR OTHER CONTENT SURFACED BY THE APP OR BY ANY THIRD-PARTY SERVICE THE APP CONNECTS TO. THE DEVELOPER DOES NOT WARRANT THAT THE APP WILL BE UNINTERRUPTED, TIMELY, SECURE, ERROR-FREE, OR COMPATIBLE WITH ANY PARTICULAR DEVICE OR OPERATING-SYSTEM VERSION.
+
+
+12. LIMITATION OF LIABILITY
+
+TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE DEVELOPER BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, CONSEQUENTIAL, SPECIAL, EXEMPLARY, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOSS OF PROFITS, LOSS OF GOODWILL, BUSINESS INTERRUPTION, OR ANY OTHER COMMERCIAL DAMAGES OR LOSSES, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF OR INABILITY TO USE THE APP, YOUR RELIANCE ON ANY CONTENT OR DATA SURFACED BY THE APP OR ANY THIRD-PARTY SERVICE IT CONNECTS TO, OR ANY CONDUCT OR CONTENT OF ANY THIRD-PARTY SERVICE YOU CHOOSE TO CONNECT TO THE APP, REGARDLESS OF THE LEGAL THEORY ON WHICH SUCH LIABILITY IS BASED AND EVEN IF THE DEVELOPER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. NOTHING IN THIS POLICY EXCLUDES OR LIMITS ANY LIABILITY THAT CANNOT LAWFULLY BE EXCLUDED OR LIMITED UNDER APPLICABLE CONSUMER-PROTECTION OR OTHER MANDATORY LAW.
+
+
+13. INDEMNIFICATION
+
+To the fullest extent permitted by applicable law, you agree to defend, indemnify, and hold harmless the Developer from and against any claims, damages, liabilities, costs, and expenses (including reasonable attorneys' fees) arising out of or relating to: (a) your misuse of the App; (b) your violation of this Privacy Policy or of any third-party service's terms; (c) any content or data you transmit through the App to a third-party service; or (d) any infringement of another party's rights caused by your use of the App.
+
+
+14. THIRD-PARTY CONTENT AND LINKS
+
+The App may display metadata, images, ratings, trailers, subtitles, and other content originating from your Jellyfin server or from third-party services. The Developer does not endorse, create, control, or verify any such content and is not responsible for its legality, accuracy, or availability.
+
+
+15. CHANGES TO THIS POLICY
+
+The Developer may update this Privacy Policy from time to time. Updates take effect when posted at the canonical location:
+
+  https://raw.githubusercontent.com/ignacio82/spatialfin/refs/heads/main/PRIVACY
+
+Your continued use of the App after changes are posted constitutes acknowledgement and acceptance of the updated policy. Material changes may also be surfaced in the App's release notes or About screen.
+
+
+16. GOVERNING LAW AND VENUE
+
+This Privacy Policy and any dispute arising out of or relating to it or to the App shall be governed by the laws of the jurisdiction in which the Developer resides, without regard to conflict-of-law principles. To the extent permitted by applicable law, any such dispute shall be brought exclusively in the courts of that jurisdiction, except where mandatory consumer-protection law of your country of residence provides otherwise.
+
+
+17. SEVERABILITY
+
+If any provision of this Privacy Policy is held to be unenforceable or invalid by a court of competent jurisdiction, the remaining provisions shall remain in full force and effect, and the unenforceable or invalid provision shall be modified only to the minimum extent necessary to make it enforceable.
+
+
+18. CONTACT
+
+SpatialFin is published by Ignacio Martinez. Inquiries regarding this Privacy Policy can be submitted to:
+
+  ignacio@martinez.fyi

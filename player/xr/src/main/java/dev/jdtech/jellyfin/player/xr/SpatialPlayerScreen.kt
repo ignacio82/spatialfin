@@ -271,7 +271,7 @@ fun SpatialPlayerScreen(
     val assistantVerbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity)
     val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
     val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
-    val assistantVoicePreference = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVoice) ?: "male"
+    val assistantVoiceName = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVoice)
     val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
     val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
     val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences, viewModel.repository) }
@@ -799,7 +799,7 @@ fun SpatialPlayerScreen(
         if (resumePlaybackAfterAssistantSpeech) {
             player.pause()
         }
-        tts.speak(text, languageHint, assistantVoicePreference)
+        tts.speak(text, languageHint, assistantVoiceName)
     }
 
     fun requestVoiceAssetsWarmup() {

@@ -32,6 +32,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
+import dev.jdtech.jellyfin.presentation.utils.rememberTapPending
 
 private val HomeHeaderHeight = 72.dp
 
@@ -159,8 +160,14 @@ fun HomeHeader(
                 }
             }
 
+            val settingsPending = rememberTapPending()
             Surface(
-                onClick = onUserClick,
+                onClick = {
+                    if (!settingsPending.value) {
+                        settingsPending.begin()
+                        onUserClick()
+                    }
+                },
                 modifier = Modifier.height(HomeHeaderHeight),
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -170,11 +177,21 @@ fun HomeHeader(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        painter = painterResource(CoreR.drawable.ic_user),
-                        contentDescription = null,
-                    )
-                    Text("Settings")
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(24.dp)) {
+                        if (settingsPending.value) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(CoreR.drawable.ic_user),
+                                contentDescription = null,
+                            )
+                        }
+                    }
+                    Text(if (settingsPending.value) "Opening…" else "Settings")
                 }
             }
 

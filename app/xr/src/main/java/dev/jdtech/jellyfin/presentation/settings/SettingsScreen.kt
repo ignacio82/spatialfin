@@ -55,6 +55,7 @@ import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsTextInputDialog
+import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
 import dev.jdtech.jellyfin.presentation.settings.components.SubtitlePreviewCard
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
@@ -106,6 +107,8 @@ fun SettingsScreen(
     var tmdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var omdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
+    var voicePickerVisible by remember { mutableStateOf(false) }
+    var voicePickerInitial by remember { mutableStateOf<String?>(null) }
 
     val appLockManager = remember(context) { AppLockManager.from(context) }
     val appLockScope = rememberCoroutineScope()
@@ -170,6 +173,10 @@ fun SettingsScreen(
             }
             is SettingsEvent.ShowSmartLanguageDialog -> {
                 smartLanguageDraft = event.settings
+            }
+            is SettingsEvent.ShowVoicePickerDialog -> {
+                voicePickerInitial = event.currentVoiceName
+                voicePickerVisible = true
             }
             is SettingsEvent.ShowCompanionDiscoveryDialog -> {
                 showCompanionDiscovery = true
@@ -267,6 +274,19 @@ fun SettingsScreen(
                     smartLanguageDraft = null
                 },
                 onDismissRequest = { smartLanguageDraft = null },
+            )
+        }
+    }
+
+    if (voicePickerVisible) {
+        SpatialDialog(onDismissRequest = { voicePickerVisible = false }) {
+            VoicePickerDialog(
+                initialVoiceName = voicePickerInitial,
+                onSave = { selected ->
+                    viewModel.saveVoiceAssistantVoice(selected)
+                    voicePickerVisible = false
+                },
+                onDismissRequest = { voicePickerVisible = false },
             )
         }
     }
@@ -509,26 +529,35 @@ private fun SettingsScreenLayout(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = contentPadding,
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (hasSubtitlePreferences && appPreferences != null) {
-                item {
-                    SubtitlePreviewCard(
-                        appPreferences = appPreferences,
+        if (state.preferenceGroups.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = contentPadding,
+                verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (hasSubtitlePreferences && appPreferences != null) {
+                    item {
+                        SubtitlePreviewCard(
+                            appPreferences = appPreferences,
+                            modifier = Modifier.widthIn(max = 860.dp),
+                        )
+                    }
+                }
+                items(state.preferenceGroups) { group ->
+                    SettingsGroupCard(
+                        group = group,
+                        onAction = onAction,
                         modifier = Modifier.widthIn(max = 860.dp),
                     )
                 }
-            }
-            items(state.preferenceGroups) { group ->
-                SettingsGroupCard(
-                    group = group,
-                    onAction = onAction,
-                    modifier = Modifier.widthIn(max = 860.dp),
-                )
             }
         }
     }

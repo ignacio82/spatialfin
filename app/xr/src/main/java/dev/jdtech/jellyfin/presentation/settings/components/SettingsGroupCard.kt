@@ -28,8 +28,8 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceMultiSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
-import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSmartLanguage
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
+import dev.jdtech.jellyfin.settings.presentation.models.SummaryPreference
 import dev.jdtech.jellyfin.settings.presentation.settings.SettingsAction
 
 @Composable
@@ -89,8 +89,8 @@ fun SettingsGroupCard(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
-                    is PreferenceSmartLanguage ->
-                        SettingsSmartLanguageCard(
+                    is SummaryPreference ->
+                        SettingsSummaryCard(
                             preference = preference,
                             onClick = {
                                 onAction(SettingsAction.OnPreferenceClick(preference))
