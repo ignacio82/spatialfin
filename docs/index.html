@@ -47,6 +47,7 @@
                 </div>
                 <div class="hero-highlights" aria-label="Key features">
                     <span>Home + Full Space</span>
+                    <span>Encrypted Downloads</span>
                     <span>Companion Hub</span>
                     <span>Voice + AI Search</span>
                     <span>Smart Language Memory</span>
@@ -324,23 +325,42 @@
 
                         <!-- Security -->
                         <div class="explorer-pane" id="pane-security">
+                            <p style="margin: 0 0 20px; color: var(--text-muted);">
+                                SpatialFin is, to our knowledge, the only Jellyfin client that offers on-device encryption for downloaded media. The feature is off by default — enabling it is a deliberate decision about your threat model.
+                            </p>
                             <div class="explorer-grid">
                                 <div class="explorer-group">
-                                    <h4>App Lock</h4>
+                                    <h4>App Lock Modes</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>Local-only Gate:</strong> Optional lock that blocks SpatialFin behind your device passkey, biometric (iris / face / fingerprint), or screen-lock PIN. No servers, no accounts.</li>
-                                        <li><strong>Off by Default:</strong> Existing users are never prompted. Enable from <em>Settings → Security → App Lock</em>, confirm with your device credential, and disable any time while the app is unlocked.</li>
-                                        <li><strong>Re-auth on Resume:</strong> The app re-locks when backgrounded; returning from the launcher or cold-start shows the blocking unlock screen before the UI renders.</li>
-                                        <li><strong>No Prompt on Rotation:</strong> Orientation, theme, and similar Android config changes do not trigger a new system prompt.</li>
+                                        <li><strong>Off:</strong> No prompt on launch. Default state; existing users are never prompted.</li>
+                                        <li><strong>Biometric / device credential:</strong> Android <code>BiometricPrompt</code> with <code>BIOMETRIC_STRONG | DEVICE_CREDENTIAL</code>. When encryption is on, the Keystore key is gated by the biometric prompt via <code>CryptoObject</code>.</li>
+                                        <li><strong>SpatialFin PIN:</strong> A 4–8 digit PIN you manage, hashed with PBKDF2-HMAC-SHA256 (600 000 iterations, random salt). The PIN also derives the encryption key — a forgotten PIN is unrecoverable by design.</li>
+                                        <li><strong>Wipe-on-wrong-PIN:</strong> Configurable 1–3 attempts, then full data wipe via <code>ActivityManager.clearApplicationUserData()</code> plus deletion of the downloads folder.</li>
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
-                                    <h4>Implementation</h4>
+                                    <h4>Encrypted Downloads</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>System-backed:</strong> Uses Android's <code>BiometricPrompt</code> with <code>BIOMETRIC_STRONG | DEVICE_CREDENTIAL</code>. The OS handles enrollment and verification end-to-end.</li>
-                                        <li><strong>No Custom Crypto:</strong> SpatialFin stores no passwords or keys of its own; the device's existing credential enrollment is the passkey.</li>
-                                        <li><strong>Requires a Screen Lock:</strong> If no biometric or PIN is set up on the device, enabling the feature surfaces an error and leaves it off.</li>
-                                        <li><strong>Preserves Background Audio:</strong> The lock only gates the app UI — audio or video already streaming in the background is not interrupted when the lock engages.</li>
+                                        <li><strong>AES-256-CTR per file:</strong> Each new primary-video download is encrypted at finalize time with a random 16-byte IV. Subtitles and pre-existing downloads stay plain.</li>
+                                        <li><strong>Keystore-wrapped DEK:</strong> A random 32-byte data-encryption key, wrapped on disk by a key-encryption key that matches the app-lock mode. Hardware-backed in the Keystore on capable devices.</li>
+                                        <li><strong>DEK in memory only:</strong> Decryption happens on-the-fly through a custom Media3 <code>DataSource</code>; the plaintext DEK is zeroed when the app is backgrounded.</li>
+                                        <li><strong>Delete unencrypted downloads:</strong> A Settings action lists pre-existing plaintext files and removes them in bulk. Re-download to get them encrypted.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Companion Enforcement</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Global or per-device:</strong> Administrators can enforce the app-lock mode and encryption setting globally, or per device via the new <code>devicePreferences</code> map in the companion config.</li>
+                                        <li><strong>Live push over WebSocket:</strong> When the admin changes a preference, the companion broadcasts <code>config_changed</code> and SpatialFin re-syncs within seconds.</li>
+                                        <li><strong>Onboarding step:</strong> First-run asks the user to pick an app-lock mode before finishing setup, so security posture is set intentionally.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Threat Model</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Protects against offline file dump</strong> of the app's private storage or the <code>Downloads/SpatialFin</code> folder — ciphertext is useless without the KEK.</li>
+                                        <li><strong>Protects against process-level execution while locked</strong> — the DEK is not in memory; unwrapping requires biometric auth or the correct PIN.</li>
+                                        <li><strong>Does not protect against</strong> a rooted device actively running SpatialFin with the DEK already in memory, or against streaming playback (only downloaded content is encrypted).</li>
                                     </ul>
                                 </div>
                             </div>

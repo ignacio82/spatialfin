@@ -43,7 +43,7 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
 - **SpatialFin Companion Support** — Effortlessly configure your headset by scanning a QR code from the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app. Centrally manage servers, users, and network shares without using the XR keyboard.
-- **App Lock (Biometric / PIN)** — Optional local-only gate that blocks the app until you confirm with your device passkey, biometric (iris / face / fingerprint), or screen-lock PIN. Off by default. No servers, no accounts — the Android system credential enrollment is the passkey.
+- **Privacy-First App Lock & Encrypted Downloads** — Unique among Jellyfin clients (as of this writing): optional AES-256-CTR encryption of downloaded video, tied to an app-lock mode you choose. Three modes — **Off**, **Biometric / device credential**, or a **SpatialFin-managed PIN** (4–8 digits, PBKDF2-HMAC-SHA256, 600 000 iterations) with configurable wipe-on-wrong-PIN (1–3 attempts). Companion admins can enforce the mode globally or per device. Off by default; the encryption key stays hardware-backed in Keystore and, in Biometric/PIN modes, is unwrappable only after you authenticate.
 
 ## SpatialFin Companion
 
@@ -227,18 +227,50 @@ Current scope:
 - SyncPlay is available for Jellyfin streams, not local-only files.
 - Group management currently lives inside the player rather than the media detail screens.
 
-## App Lock
+## App Lock & Encrypted Downloads
 
-SpatialFin includes an optional local-only app lock that blocks access to the UI behind your device's system authenticator.
+SpatialFin is the only Jellyfin client known to us that offers on-device content encryption for downloaded media, tied to an app-lock gate you choose. The feature is off by default — enabling it is a deliberate choice about your threat model.
 
-- **Off by default** — existing users are never prompted.
-- **Enable from Settings → Security → App Lock** and confirm with your biometric or PIN to turn it on. Disable from the same toggle at any time while the app is unlocked.
-- **Re-auth on resume** — the app re-locks when backgrounded. Returning from the launcher (or a cold start) shows a blocking unlock screen; the real UI only renders after the system authenticator succeeds.
-- **No re-auth on rotation / config changes** — orientation, theme, and similar Android config changes do not trigger a new prompt.
-- **No backend, no custom crypto** — the lock is implemented with Android's `BiometricPrompt` using `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. Enrollment and verification happen entirely in the OS; SpatialFin stores no secrets of its own.
-- **Requires a device screen lock** — if no biometric or device credential is enrolled on the device, enabling the feature surfaces an error and leaves it off.
-- **Does not interrupt background playback** — the lock only gates the app UI. Audio/video that is already streaming in the background is not paused when the lock engages.
-- **Toggle lives in the XR settings** — on the current build, the App Lock switch is exposed through the XR settings screen. The lock still gates TV and phone access once enabled, but toggling it from those form factors is a future wiring task.
+### Three authentication modes
+
+Configured under **Settings → Security → App lock**:
+
+- **Off** (default) — no prompt on launch. Stored data is readable by anyone with device access.
+- **Biometric / device credential** — the app unlocks via Android's `BiometricPrompt` with `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. When content encryption is also on, the Keystore key that wraps the data-encryption key (DEK) requires a successful biometric authentication to be usable, via `BiometricPrompt.CryptoObject`. The plaintext DEK is cached in process memory only for the current session and is zeroed when the app is backgrounded.
+- **SpatialFin PIN** — a numeric PIN (4–8 digits) managed by SpatialFin, hashed with PBKDF2-HMAC-SHA256 (600 000 iterations, random per-user salt). The PIN is *also* the encryption-key-derivation material: the DEK is wrapped with a KEK derived from `PBKDF2(pin, salt)`, and the Keystore aliases are deleted on transition into this mode. There is no recovery path. You can configure how many consecutive wrong PIN entries (1–3) trigger a full data wipe via `ActivityManager.clearApplicationUserData()` plus deletion of the external `Downloads/SpatialFin` folder.
+
+### Encrypted downloads
+
+Independent toggle under **Settings → Security → Encrypt new downloads**:
+
+- Newly finalized primary-video downloads are encrypted with AES-256-CTR using a random 16-byte IV per file. The IV is stored on the `downloadtasks` row.
+- The content DEK is a random 32-byte key, wrapped on disk by a KEK chosen by the app-lock mode (see above). The wrapped DEK file is useless without the matching KEK.
+- Playback uses a custom Media3 `DataSource` in `player/core/security` that reads the IV from the DB row and performs on-the-fly AES-CTR decryption with proper seek support. Plaintext video bytes never hit disk.
+- Pre-existing (unencrypted) downloads stay playable. A Settings action shows how many are still plain and can delete them in bulk — re-download to get them encrypted.
+- Subtitle downloads are not encrypted; they are not considered sensitive and go through `libass` JNI which reads files directly.
+
+### Centrally enforced via the companion
+
+`pref_content_encryption_enabled`, `pref_app_lock_mode`, `pref_app_lock_wipe_on_fail`, and `pref_app_lock_max_attempts` flow through the normal SpatialFin Companion sync. Administrators can enforce encryption globally, or per device using the `devicePreferences` map in the companion config. When the admin changes a setting the companion broadcasts `{ type: "config_changed" }` over WebSocket, and SpatialFin's live-sync client triggers an immediate re-pull.
+
+### What this protects
+
+- **Offline file-dump** against `Downloads/SpatialFin` or the app's private data directory — the ciphertext is meaningless without the KEK (hardware-backed in Keystore on capable devices) or the PIN (never stored; only the PBKDF2 hash is).
+- **Process-level execution while the app is locked** (Biometric or PIN mode) — the DEK is not in memory; an attacker would need the PIN or a valid biometric auth to unwrap it.
+
+### What this does not protect
+
+- **A rooted device actively running SpatialFin with the DEK already in memory.** No app-level encryption defends against arbitrary code execution inside its own process. Backgrounding zeroes the DEK to shrink the attack window.
+- **Streaming playback.** Encryption applies to downloaded content; Jellyfin streams and local (non-downloaded) files pass through unchanged.
+
+### Behavior notes
+
+- **Existing users upgrade cleanly** — the feature stays off until opted into.
+- **Re-auth on resume** — the app re-locks on background. Returning from the launcher (or cold start) shows a blocking unlock screen before the UI renders.
+- **No re-auth on rotation / config changes.**
+- **Does not interrupt background audio** — the lock gates the UI only; audio/video already streaming in the background is not paused.
+- **Mode transitions rekey the wrapped DEK atomically**, so previously-encrypted downloads remain playable across mode changes — *except* transitioning *into* PIN mode, which is one-way: the Keystore aliases are deleted, and a forgotten PIN is unrecoverable by design.
+- **Toggle lives in the XR settings screen.** The lock still gates TV and phone access once enabled, but toggling it from those form factors is a future wiring task.
 
 ## Architecture
 
