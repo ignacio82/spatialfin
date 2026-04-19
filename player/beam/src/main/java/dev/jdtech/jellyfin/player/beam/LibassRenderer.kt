@@ -22,6 +22,10 @@ class LibassRenderer(
 
     private val delegate = NativeLibassRenderer(width, height)
 
+    /** Underlying XR libass renderer — exposed for direct use with xr.LibassTextRenderer. */
+    val native: NativeLibassRenderer
+        get() = delegate
+
     val hasActiveSubtitles: Boolean
         get() = delegate.hasActiveSubtitles
 

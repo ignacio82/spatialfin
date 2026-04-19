@@ -111,12 +111,17 @@ import dev.jdtech.jellyfin.player.beam.voice.BeamGeminiCloudService
 import dev.jdtech.jellyfin.player.beam.voice.BeamGeminiNanoService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
+import dev.jdtech.jellyfin.repository.JellyfinRepository
+import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import java.util.ArrayList
 import java.util.Locale
 import java.util.UUID
+import dev.jdtech.jellyfin.player.xr.LibassTextRenderer as XrLibassTextRenderer
 
 @AndroidEntryPoint
 class BeamPlayerActivity : AppCompatActivity() {
@@ -177,6 +182,8 @@ class BeamPlayerActivity : AppCompatActivity() {
             }
     }
 
+    @Inject lateinit var repository: JellyfinRepository
+
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
     private var libassRenderer: LibassRenderer? = null
@@ -221,7 +228,16 @@ class BeamPlayerActivity : AppCompatActivity() {
             intent.extras,
         )
 
-        replacePlayerForBeamSubtitles()
+        val itemIdUuid = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val preloadedLibassFonts: List<Pair<String, ByteArray>> = itemIdUuid?.let { id ->
+            runCatching { runBlocking(Dispatchers.IO) { loadLibassFonts(id, maxBitrate) } }
+                .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
+                .getOrDefault(emptyList())
+        }.orEmpty()
+        val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
+            if (itemIdUuid != null) ({ preloadedLibassFonts }) else null
+
+        replacePlayerForBeamSubtitles(libassFontLoader)
 
         when {
             localMediaId != null -> {
@@ -336,11 +352,11 @@ class BeamPlayerActivity : AppCompatActivity() {
     }
 
     @OptIn(UnstableApi::class)
-    private fun replacePlayerForBeamSubtitles() {
+    private fun replacePlayerForBeamSubtitles(
+        libassFontLoader: (() -> List<Pair<String, ByteArray>>)?,
+    ) {
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val subtitleTextSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
-        val subtitleTextColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor)
-        val subtitleBackgroundColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor)
         Timber.i("Replacing Beam player for subtitles libassPref=%s", libassUsagePref)
         libassRenderer =
             runCatching {
@@ -363,29 +379,35 @@ class BeamPlayerActivity : AppCompatActivity() {
                     out: ArrayList<Renderer>,
                 ) {
                     val renderer = libassRenderer
-                    // Always add default text renderers first (handles PGS, DVB-SUB, etc.)
-                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
                     if (renderer != null) {
-                        // Add LibassTextRenderer for styled ASS/SSA/SRT/VTT rendering
+                        // libass claims text tracks exclusively. Parsing is disabled below,
+                        // so ASS/SRT/VTT bytes arrive raw and full-file sideloaded samples
+                        // get exploded into per-event chunks. Skipping the default
+                        // TextRenderer prevents it from claiming tracks ahead of libass.
                         out.add(
-                            LibassTextRenderer(
-                                libassRenderer = renderer,
+                            XrLibassTextRenderer(
+                                renderer.native,
                                 onTrackInitialized = {},
+                                fontLoader = libassFontLoader,
                                 usagePref = libassUsagePref,
                                 srtFontSize = subtitleTextSize.coerceIn(28, 96),
-                                subtitleTextColor = subtitleTextColor,
-                                subtitleBackgroundColor = subtitleBackgroundColor,
                             )
                         )
+                        Timber.i("beam subtitle: XrLibassTextRenderer registered (pref=%s)", libassUsagePref)
+                    } else {
+                        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
                     }
                 }
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
 
         val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
+        // Disable Media3 in-pipeline subtitle transcoding so raw ASS/SSA bytes reach libass.
+        // Transcoding converts tracks to application/x-media3-cues, which libass rejects —
+        // the result was plain white text with no colors/fonts/typesetting on anime subs.
         val mediaSourceFactory =
             DefaultMediaSourceFactory(this, extractorsFactory)
-                .experimentalParseSubtitlesDuringExtraction(true)
+                .experimentalParseSubtitlesDuringExtraction(false)
 
         val trackSelector = DefaultTrackSelector(this)
         trackSelector.setParameters(
@@ -443,6 +465,42 @@ class BeamPlayerActivity : AppCompatActivity() {
                     startFromBeginning = false,
                 )
         }
+
+    private suspend fun loadLibassFonts(
+        itemId: UUID,
+        maxBitrate: Long?,
+    ): List<Pair<String, ByteArray>> {
+        val sources = repository.getMediaSources(itemId, includePath = false, maxBitrate = maxBitrate)
+        val fontAttachments = sources.flatMap { source ->
+            source.mediaAttachments.map { attachment -> source to attachment }
+        }.filter { (_, attachment) ->
+            isFontAttachment(attachment.fileName, attachment.mimeType, attachment.codec)
+        }
+        Timber.i("beam subtitle: candidate embedded ASS fonts=%d itemId=%s", fontAttachments.size, itemId)
+        val loadedFonts = fontAttachments.mapNotNull { (source, attachment) ->
+            val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
+            repository.getMediaAttachment(itemId, source.id, attachment.index)?.let { bytes ->
+                fileName to bytes
+            }
+        }
+        Timber.i("beam subtitle: loaded embedded ASS fonts=%d itemId=%s", loadedFonts.size, itemId)
+        return loadedFonts
+    }
+
+    private fun isFontAttachment(fileName: String, mimeType: String, codec: String): Boolean {
+        val normalizedName = fileName.lowercase()
+        val normalizedMime = mimeType.lowercase()
+        val normalizedCodec = codec.lowercase()
+        return normalizedMime.contains("font") ||
+            normalizedMime.contains("truetype") ||
+            normalizedMime.contains("opentype") ||
+            normalizedName.endsWith(".ttf") ||
+            normalizedName.endsWith(".otf") ||
+            normalizedName.endsWith(".ttc") ||
+            normalizedName.endsWith(".otc") ||
+            normalizedCodec.contains("ttf") ||
+            normalizedCodec.contains("otf")
+    }
 }
 
 @Composable
