@@ -3,7 +3,9 @@ package dev.spatialfin.unified
 import android.Manifest
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.Bundle
+import android.view.Display
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -140,14 +142,36 @@ class UnifiedMainActivity : AppCompatActivity() {
     private val startupPermissionsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
+    // Listens for external-display hot-plug (Beam Pro ↔ Xreal glasses).
+    // When glasses attach we lock landscape so the virtual display orientation
+    // matches what the app is rendering; when they detach we hand orientation
+    // back to the system so the handheld rotates normally.
+    private var displayListener: DisplayManager.DisplayListener? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Lock landscape for TV and phone; XR adapts to the window freely.
+        // TV is always landscape. XR adapts to the window freely. Phone
+        // (including Beam Pro handheld) only locks landscape when an external
+        // display is attached (Xreal glasses); otherwise we follow the user's
+        // rotation preference so held-vertical → portrait works.
         when (deviceClass) {
-            DeviceClass.TV, DeviceClass.PHONE ->
+            DeviceClass.TV ->
                 requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            DeviceClass.PHONE -> {
+                applyPhoneOrientation()
+                val dm = getSystemService(DisplayManager::class.java)
+                if (dm != null) {
+                    val listener = object : DisplayManager.DisplayListener {
+                        override fun onDisplayAdded(displayId: Int) = applyPhoneOrientation()
+                        override fun onDisplayRemoved(displayId: Int) = applyPhoneOrientation()
+                        override fun onDisplayChanged(displayId: Int) = Unit
+                    }
+                    dm.registerDisplayListener(listener, null)
+                    displayListener = listener
+                }
+            }
             DeviceClass.XR -> Unit
         }
 
@@ -277,6 +301,25 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appLockManager.refreshState()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        displayListener?.let { listener ->
+            getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(listener)
+        }
+        displayListener = null
+    }
+
+    private fun applyPhoneOrientation() {
+        if (deviceClass != DeviceClass.PHONE) return
+        val dm = getSystemService(DisplayManager::class.java)
+        val hasExternal = dm?.displays?.any { it.displayId != Display.DEFAULT_DISPLAY } == true
+        requestedOrientation = if (hasExternal) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_USER
+        }
     }
 
     // ---------------------------------------------------------------------------

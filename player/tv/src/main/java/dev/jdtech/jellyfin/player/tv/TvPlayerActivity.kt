@@ -42,6 +42,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -65,6 +66,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.painterResource
+import dev.jdtech.jellyfin.core.R as CoreR
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -303,7 +306,12 @@ class TvPlayerActivity : AppCompatActivity() {
     @OptIn(UnstableApi::class)
     private fun replacePlayerForTvSubtitles() {
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
-        val subtitleTextSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
+        // xrSubtitleSize defaults to 72 because XR renders subtitles onto a
+        // virtual panel where that size reads well. On a real 1080p TV that's
+        // oversized — scale down to roughly 55% so the on-screen text is a
+        // comfortable reading size without changing the user's chosen pref.
+        val subtitleTextSize = (viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize) * 55 / 100)
+            .coerceAtLeast(18)
         val subtitleTextColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor)
         val subtitleBackgroundColor = viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor)
         libassRenderer =
@@ -331,7 +339,7 @@ class TvPlayerActivity : AppCompatActivity() {
                                 libassRenderer = renderer,
                                 onTrackInitialized = {},
                                 usagePref = libassUsagePref,
-                                srtFontSize = subtitleTextSize.coerceIn(28, 96),
+                                srtFontSize = subtitleTextSize.coerceIn(18, 72),
                                 subtitleTextColor = subtitleTextColor,
                                 subtitleBackgroundColor = subtitleBackgroundColor,
                             )
@@ -384,7 +392,11 @@ private fun TvPlayerScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
     val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
-    val subtitleSizeSp = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).coerceIn(28, 96).toFloat() }
+    // Scale XR's default 72sp down to ~55% for 1080p TVs (see replacePlayerForTvSubtitles).
+    val subtitleSizeSp = remember(viewModel.appPreferences) {
+        ((viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize) * 55) / 100)
+            .coerceIn(18, 72).toFloat()
+    }
     var activeDialog by remember { mutableStateOf<TvPlayerDialog?>(null) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -514,15 +526,11 @@ private fun TvPlayerScreen(
                                 false
                             }
                         }
-                        Key.Back,
-                        Key.Escape -> {
-                            if (!controlsVisible) {
-                                revealControls()
-                                true
-                            } else {
-                                false
-                            }
-                        }
+                        // Don't intercept Back/Escape — let BackHandler decide:
+                        // first press hides any open dialog or the controls, second
+                        // press (nothing to close) falls through to the system which
+                        // finishes the activity. Intercepting here to "reveal
+                        // controls" trapped the user with no way out of playback.
                         Key.MediaPlayPause -> {
                             revealControls()
                             if (isPlaying) player.pause() else player.play()
@@ -833,23 +841,27 @@ private fun TvControllerOverlay(
                         },
                     )
                 }
-                TvTransportButton(
-                    label = "Rewind",
+                TvTransportIconButton(
+                    iconRes = CoreR.drawable.ic_rewind,
+                    contentDescription = "Rewind",
                     onClick = {
                         onInteraction()
                         player.seekBack()
                     },
                 )
-                TvTransportButton(
-                    label = if (isPlaying) "Pause" else "Play",
+                TvTransportIconButton(
+                    iconRes = if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
                     modifier = Modifier.focusRequester(playPauseFocusRequester),
+                    large = true,
                     onClick = {
                         onInteraction()
                         if (isPlaying) player.pause() else player.play()
                     },
                 )
-                TvTransportButton(
-                    label = "Forward",
+                TvTransportIconButton(
+                    iconRes = CoreR.drawable.ic_fast_forward,
+                    contentDescription = "Forward",
                     onClick = {
                         onInteraction()
                         player.seekForward()
@@ -955,29 +967,38 @@ private fun TvOverlayTextButton(
 }
 
 @Composable
-private fun TvTransportButton(
-    label: String,
+private fun TvTransportIconButton(
+    iconRes: Int,
+    contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    large: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    Button(
+    val size = if (large) 72.dp else 56.dp
+    val iconSize = if (large) 36.dp else 26.dp
+    val background =
+        if (isFocused) MaterialTheme.colorScheme.primary
+        else Color.White.copy(alpha = 0.12f)
+    val contentColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.92f)
+    Surface(
         onClick = onClick,
-        modifier = modifier.focusable(interactionSource = interactionSource),
+        modifier = modifier
+            .size(size)
+            .focusable(interactionSource = interactionSource),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = background,
+        contentColor = contentColor,
         interactionSource = interactionSource,
-        colors =
-            ButtonDefaults.buttonColors(
-                containerColor =
-                    if (isFocused) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.84f)
-                    },
-                contentColor = Color.White,
-            ),
     ) {
-        Text(label)
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = contentDescription,
+                modifier = Modifier.size(iconSize),
+            )
+        }
     }
 }
 

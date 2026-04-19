@@ -28,7 +28,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
@@ -105,7 +110,6 @@ private enum class TvRoute {
     Detail,
     Show,
     Season,
-    Downloads,
     Companion,
     Settings,
 }
@@ -121,7 +125,6 @@ private val tvNavItems =
         TvNavItem(TvRoute.Home, "Home", Icons.Rounded.Home),
         TvNavItem(TvRoute.Search, "Search", Icons.AutoMirrored.Rounded.ManageSearch),
         TvNavItem(TvRoute.Library, "Libraries", Icons.Rounded.LiveTv),
-        TvNavItem(TvRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
         TvNavItem(TvRoute.Companion, "Companion", Icons.Rounded.Link),
         TvNavItem(TvRoute.Settings, "Settings", Icons.Rounded.Settings),
     )
@@ -148,17 +151,6 @@ fun TvNavigationRoot(
         homeViewModel.loadData()
     }
 
-    // When going offline, redirect away from Home/Search (unusable without server).
-    // When coming back online from Downloads, return to Home.
-    LaunchedEffect(state.isOfflineMode) {
-        if (state.isOfflineMode && (currentRoute == TvRoute.Home || currentRoute == TvRoute.Search)) {
-            currentRoute = TvRoute.Downloads
-        } else if (!state.isOfflineMode && currentRoute == TvRoute.Downloads) {
-            currentRoute = TvRoute.Home
-            homeViewModel.loadData()
-        }
-    }
-
     fun openItem(item: SpatialFinItem) {
         when (item) {
             is SpatialFinShow -> {
@@ -183,40 +175,33 @@ fun TvNavigationRoot(
             Scaffold(
                 containerColor = Color.Transparent,
             ) { innerPadding ->
-                Row(
+                Column(
                     modifier =
                         Modifier
                             .fillMaxSize()
-                            .padding(innerPadding)
-                            .padding(horizontal = 26.dp, vertical = 22.dp),
+                            .padding(innerPadding),
                 ) {
-                    TvSidebar(
+                    TvTopBar(
                         currentRoute = currentRoute,
                         serverName = homeState.server?.name,
-                        companionConfigured = companionConfigured,
                         hasCurrentUser = state.hasCurrentUser,
                         isOfflineMode = state.isOfflineMode,
                         onNavigate = { route ->
-                            if (route == TvRoute.Library && selectedView == null) {
-                                selectedView = homeState.views.firstOrNull()?.view
-                            }
+                            // Tapping the Libraries nav should land on the library picker,
+                            // not auto-dive into the most recent view — users expect to see
+                            // every library (Movies, Shows, etc.) plus Favorites first.
+                            if (route == TvRoute.Library) selectedView = null
                             currentRoute = route
                         },
                         onReconnect = onReconnect,
                     )
-                    Spacer(Modifier.width(22.dp))
-                    Card(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0x4D0E1924)),
-                        shape = RoundedCornerShape(36.dp),
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(horizontal = 48.dp, vertical = 12.dp),
                     ) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .background(Color.White.copy(alpha = 0.015f))
-                                    .padding(horizontal = 30.dp, vertical = 28.dp),
-                        ) {
                             when (currentRoute) {
                                 TvRoute.Home -> TvHomeScreen(
                                     homeState = homeState,
@@ -265,9 +250,6 @@ fun TvNavigationRoot(
                                         currentRoute = TvRoute.Detail
                                     },
                                 )
-                                TvRoute.Downloads -> TvDownloadsScreen(
-                                    onOpenItem = ::openItem,
-                                )
                                 TvRoute.Settings -> TvSettingsScreen(
                                     state = state,
                                     appPreferences = appPreferences,
@@ -285,7 +267,6 @@ fun TvNavigationRoot(
             }
         }
     }
-}
 
 @Composable
 private fun TvAmbientBackground(backgroundModel: Any?) {
@@ -477,6 +458,240 @@ private fun TvSidebar(
 }
 
 @Composable
+private fun TvOnboardingHero(
+    hasServers: Boolean,
+    companionConfigured: Boolean,
+    onOpenCompanion: () -> Unit,
+) {
+    val primaryFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    // Grab focus on first composition so a single D-pad OK press activates
+    // "Pair companion" — without this the first OK just moves focus to the
+    // tile and the user has to press again.
+    LaunchedEffect(Unit) {
+        runCatching { primaryFocusRequester.requestFocus() }
+    }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(340.dp)
+                .background(
+                    androidx.compose.ui.graphics.Brush.radialGradient(
+                        colors = listOf(
+                            Color(0x664FC3F7),
+                            Color(0x331A2A3A),
+                            Color.Transparent,
+                        ),
+                        radius = 620f,
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(28.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                    contentDescription = null,
+                    modifier = Modifier.size(88.dp).clip(RoundedCornerShape(20.dp)),
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Welcome to SpatialFin",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = if (hasServers) {
+                            "Choose a user to start playback. Continue watching, Next Up, and library shelves appear once you're signed in."
+                        } else {
+                            "Pair your phone companion to push your Jellyfin server, user, and preferences — or set up a server manually on the TV."
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.widthIn(max = 780.dp),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                TvOnboardingTile(
+                    title = if (companionConfigured) "Open companion" else "Pair companion",
+                    body = if (companionConfigured) {
+                        "Push the latest server, user, and playback prefs from your phone."
+                    } else {
+                        "Show a QR code and finish setup from your SpatialFin phone app — fastest path to live content."
+                    },
+                    icon = Icons.Rounded.Link,
+                    primary = true,
+                    modifier = Modifier.weight(1f),
+                    focusRequester = primaryFocusRequester,
+                    onClick = onOpenCompanion,
+                )
+                TvOnboardingTile(
+                    title = "Manual setup",
+                    body = "Enter a Jellyfin server URL and credentials from the TV using the on-screen keyboard.",
+                    icon = Icons.Rounded.Dns,
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenCompanion,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvOnboardingTile(
+    title: String,
+    body: String,
+    icon: ImageVector,
+    primary: Boolean,
+    modifier: Modifier = Modifier,
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    onClick: () -> Unit,
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(targetValue = if (isFocused) 1.04f else 1f, label = "tvOnboardingScale")
+    val container = if (primary) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f)
+    val onContainer = if (primary) MaterialTheme.colorScheme.onPrimaryContainer
+                      else MaterialTheme.colorScheme.onSurface
+    val focusMod = if (focusRequester != null) {
+        Modifier.focusRequester(focusRequester)
+    } else {
+        Modifier
+    }
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .then(focusMod)
+            .onFocusChanged { isFocused = it.isFocused }
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = container, contentColor = onContainer),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(40.dp))
+            Text(text = title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyLarge,
+                color = onContainer.copy(alpha = 0.82f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvTopBar(
+    currentRoute: TvRoute,
+    serverName: String?,
+    hasCurrentUser: Boolean,
+    isOfflineMode: Boolean,
+    onNavigate: (TvRoute) -> Unit,
+    onReconnect: () -> Unit,
+) {
+    val visibleNavItems = if (isOfflineMode) {
+        tvNavItems.filter { it.route != TvRoute.Home && it.route != TvRoute.Search }
+    } else {
+        tvNavItems
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 36.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+            contentDescription = "SpatialFin",
+            modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)),
+        )
+        Text(
+            text = "SpatialFin",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 6.dp, end = 18.dp),
+        )
+        visibleNavItems.forEach { item ->
+            TvTopBarButton(
+                item = item,
+                selected = currentRoute == item.route,
+                onClick = { onNavigate(item.route) },
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        if (isOfflineMode) {
+            TextButton(
+                onClick = onReconnect,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ),
+            ) {
+                Icon(Icons.Rounded.WifiOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Offline", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+            }
+        } else {
+            Text(
+                text = serverName ?: if (hasCurrentUser) "Signed in" else "Sign in",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvTopBarButton(
+    item: TvNavItem,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    var isFocused by rememberSaveable(item.route) { mutableStateOf(false) }
+    val scale by animateFloatAsState(targetValue = if (isFocused) 1.05f else 1f, label = "tvTopBarScale")
+    val highlight =
+        when {
+            selected -> MaterialTheme.colorScheme.primaryContainer
+            isFocused -> Color.White.copy(alpha = 0.10f)
+            else -> Color.Transparent
+        }
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .onFocusChanged { isFocused = it.isFocused }
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.textButtonColors(
+            containerColor = highlight,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            imageVector = item.icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(text = item.label, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
 private fun TvSidebarButton(
     item: TvNavItem,
     selected: Boolean,
@@ -497,7 +712,6 @@ private fun TvSidebarButton(
             Modifier
                 .fillMaxWidth()
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(18.dp),
         colors =
@@ -539,64 +753,23 @@ private fun TvHomeScreen(
 ) {
     val context = LocalContext.current
     val companionConfigured = tvCompanionConfigured(appPreferences)
-    val featuredPair =
-        when {
-            !homeState.resumeSection?.homeSection?.items.isNullOrEmpty() ->
-                "Continue watching" to homeState.resumeSection!!.homeSection.items.first()
-            !homeState.nextUpSection?.homeSection?.items.isNullOrEmpty() ->
-                "Play next" to homeState.nextUpSection!!.homeSection.items.first()
-            !homeState.suggestionsSection?.items.isNullOrEmpty() ->
-                "Featured for this room" to homeState.suggestionsSection!!.items.first()
-            else -> null
-        }
 
+    val showOnboardingHero = !state.hasCurrentUser || !state.hasServers
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(24.dp),
         contentPadding = PaddingValues(bottom = 42.dp),
     ) {
-        item {
-            TvPageHeaderCard(
-                title = homeState.server?.name ?: "SpatialFin TV",
-                body =
-                    if (state.hasCurrentUser) {
-                        "Wholphin-inspired media rails, a stronger hero focus, and SpatialFin companion controls built for D-pad browsing."
-                    } else {
-                        "Sign in to a Jellyfin server to unlock live shelves, resume rows, and companion-driven setup."
-                    },
-            )
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                TvStatusCard(
-                    title = "Servers",
-                    value = if (state.hasServers) "Ready" else "Missing",
-                    detail = if (state.hasServers) "A Jellyfin server is configured" else "Add a server to populate TV shelves",
-                    modifier = Modifier.weight(1f),
-                )
-                TvStatusCard(
-                    title = "Session",
-                    value = if (state.hasCurrentUser) "Signed in" else "Waiting",
-                    detail = if (state.hasCurrentUser) "Playback and search are fully enabled" else "Choose a user to continue",
-                    modifier = Modifier.weight(1f),
-                )
-                TvStatusCard(
-                    title = "Companion",
-                    value = if (companionConfigured) "Linked" else "Available",
-                    detail =
-                        if (companionConfigured) {
-                            "Phone-driven setup and sync are active"
-                        } else {
-                            "Pair from your phone for fast onboarding"
-                        },
-                    modifier = Modifier.weight(1f),
+        if (showOnboardingHero) {
+            item {
+                TvOnboardingHero(
+                    hasServers = state.hasServers,
+                    companionConfigured = companionConfigured,
+                    onOpenCompanion = onOpenCompanion,
                 )
             }
+            return@LazyColumn
         }
-
         if (homeState.isLoading) {
             item {
                 TvPlaceholderScreen(
@@ -642,62 +815,6 @@ private fun TvHomeScreen(
             return@LazyColumn
         }
 
-        featuredPair?.let { (eyebrow, item) ->
-            item {
-                TvHomeHeroCard(
-                    item = item,
-                    eyebrow = eyebrow,
-                    companionConfigured = companionConfigured,
-                    onPrimaryAction = {
-                        if (item.canPlay) {
-                            TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
-                        } else {
-                            onOpenItem(item)
-                        }
-                    },
-                    onDetails = { onOpenItem(item) },
-                    onOpenSearch = onOpenSearch,
-                    onOpenCompanion = onOpenCompanion,
-                )
-            }
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                TvActionTile(
-                    title = "Search",
-                    body = "Find movies, series, seasons, episodes, and people without leaving the TV shell.",
-                    icon = Icons.AutoMirrored.Rounded.ManageSearch,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenSearch,
-                )
-                TvActionTile(
-                    title = "Libraries",
-                    body = "Browse the latest rows from every Jellyfin collection and jump into any library.",
-                    icon = Icons.Rounded.LiveTv,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        homeState.views.firstOrNull()?.view?.let(onOpenLibrary) ?: onOpenSearch()
-                    },
-                )
-                TvActionTile(
-                    title = if (companionConfigured) "Companion linked" else "Pair companion",
-                    body =
-                        if (companionConfigured) {
-                            "Push preferences, users, and diagnostics from your phone companion."
-                        } else {
-                            "Open the TV pairing QR and sync setup from your phone."
-                        },
-                    icon = Icons.Rounded.Link,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenCompanion,
-                )
-            }
-        }
-
         homeState.resumeSection?.let { section ->
             item {
                 TvContentShelf(
@@ -718,12 +835,11 @@ private fun TvHomeScreen(
             }
         }
         homeState.suggestionsSection?.let { section ->
-            val items = section.items.filterNot { it.id == featuredPair?.second?.id }
-            if (items.isNotEmpty()) {
+            if (section.items.isNotEmpty()) {
                 item {
                     TvContentShelf(
                         title = "Suggestions",
-                        items = items,
+                        items = section.items,
                         onOpenItem = onOpenItem,
                     )
                 }
@@ -793,12 +909,6 @@ private fun TvSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(24.dp),
         contentPadding = PaddingValues(bottom = 38.dp),
     ) {
-        item {
-            TvPageHeaderCard(
-                title = "Settings & connectivity",
-                body = "Keep the SpatialFin TV shell distinct: your companion lives here, but so do search, playback readiness, and TV-specific setup state.",
-            )
-        }
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -895,7 +1005,6 @@ private fun TvActionTile(
             modifier
                 .height(152.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -955,15 +1064,16 @@ private fun TvActionTile(
 private fun TvHomeHeroCard(
     item: SpatialFinItem,
     eyebrow: String,
-    companionConfigured: Boolean,
     onPrimaryAction: () -> Unit,
     onDetails: () -> Unit,
-    onOpenSearch: () -> Unit,
-    onOpenCompanion: () -> Unit,
 ) {
     val onFocusChange = LocalFocusedBackground.current
+    val primaryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(item.id) {
         onFocusChange(tvBackdropArtwork(item))
+        // Park focus on the Resume/Play button so a single OK press starts
+        // playback — without this the first OK just moves focus onto it.
+        runCatching { primaryFocus.requestFocus() }
     }
 
     Card(
@@ -971,7 +1081,7 @@ private fun TvHomeHeroCard(
         shape = RoundedCornerShape(32.dp),
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().height(368.dp),
+            modifier = Modifier.fillMaxWidth().height(280.dp),
         ) {
             AsyncImage(
                 model = tvBackdropArtwork(item),
@@ -1024,24 +1134,27 @@ private fun TvHomeHeroCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = item.overview.ifBlank { "Open this title to browse details and playback options." },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color(0xFFD6E2EE),
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (item.overview.isNotBlank()) {
+                    Text(
+                        text = item.overview,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color(0xFFD6E2EE),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    tvFeaturedMetadata(item, companionConfigured).forEach { token ->
+                    tvFeaturedMetadata(item, companionConfigured = false).forEach { token ->
                         TvMetadataPill(text = token)
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TextButton(
                         onClick = onPrimaryAction,
+                        modifier = Modifier.focusRequester(primaryFocus),
                         colors =
                             ButtonDefaults.textButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -1059,26 +1172,6 @@ private fun TvHomeHeroCard(
                             ),
                     ) {
                         Text("Details")
-                    }
-                    TextButton(
-                        onClick = onOpenSearch,
-                        colors =
-                            ButtonDefaults.textButtonColors(
-                                containerColor = Color.White.copy(alpha = 0.10f),
-                                contentColor = Color.White,
-                            ),
-                    ) {
-                        Text("Search")
-                    }
-                    TextButton(
-                        onClick = onOpenCompanion,
-                        colors =
-                            ButtonDefaults.textButtonColors(
-                                containerColor = Color.White.copy(alpha = 0.10f),
-                                contentColor = Color.White,
-                            ),
-                    ) {
-                        Text(if (companionConfigured) "Companion" else "Pair companion")
                     }
                 }
             }
@@ -1115,7 +1208,6 @@ private fun TvShelfCard(title: String) {
                 .width(240.dp)
                 .height(150.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -1164,13 +1256,14 @@ private fun TvContentShelf(
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(
+            modifier = Modifier.focusGroup(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(items.take(12), key = { it.id }) { item ->
                 TvMediaCard(
                     item = item,
                     showProgress = showProgress,
-                    modifier = Modifier.width(214.dp),
+                    modifier = Modifier.width(160.dp),
                     onClick = { onOpenItem(item) },
                 )
             }
@@ -1192,7 +1285,10 @@ private fun TvLibraryShelf(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyRow(
+            modifier = Modifier.focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             items(views, key = { it.id }) { view ->
                 TvLibraryCard(
                     view = view,
@@ -1223,9 +1319,11 @@ private fun TvMediaCard(
     Card(
         modifier =
             modifier
-                .height(338.dp)
+                .height(250.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
+                // Card(onClick) is already focusable; stacking .focusable() on top
+                // creates a second focus target that swallowed the first D-pad
+                // OK press, forcing users to click twice to activate cards.
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -1350,7 +1448,6 @@ private fun TvLibraryCard(
                 .width(320.dp)
                 .height(188.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -1433,12 +1530,6 @@ private fun TvLibraryScreen(
     ) {
         if (view == null) {
             item {
-                TvPageHeaderCard(
-                    title = "Library hub",
-                    body = "Pick a library rail and jump directly into the latest media available on this TV profile.",
-                )
-            }
-            item {
                 TvLibraryShelf(
                     title = "Available libraries",
                     views = availableViews,
@@ -1448,12 +1539,6 @@ private fun TvLibraryScreen(
             return@LazyColumn
         }
 
-        item {
-            TvPageHeaderCard(
-                title = view.name,
-                body = "${view.items.size} items ready for TV browsing. Use the rail to change sections or keep moving down for the full grid.",
-            )
-        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TextButton(onClick = onBackToHome) {
@@ -1510,10 +1595,7 @@ private fun TvSearchScreen(
         contentPadding = PaddingValues(bottom = 36.dp),
     ) {
         item {
-            TvPageHeaderCard(
-                title = "Search the full library",
-                body = "Wholphin-style direct access, but tuned for SpatialFin: type once, browse a full TV grid, and jump into details or playback.",
-            )
+            Spacer(Modifier.height(0.dp))
         }
         item {
             Card(
@@ -1766,6 +1848,7 @@ private fun TvDetailHeroCard(
     metadata: List<String>,
     overview: String,
     actions: @Composable RowScope.() -> Unit,
+    footer: @Composable (ColumnScope.() -> Unit)? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1775,7 +1858,7 @@ private fun TvDetailHeroCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(430.dp),
+                .height(340.dp),
         ) {
             AsyncImage(
                 model = tvBackdropArtwork(item),
@@ -1812,7 +1895,7 @@ private fun TvDetailHeroCard(
                 verticalAlignment = Alignment.Bottom,
             ) {
                 Card(
-                    modifier = Modifier.width(250.dp).height(372.dp),
+                    modifier = Modifier.width(200.dp).height(300.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xAA111821)),
                     shape = RoundedCornerShape(24.dp),
                 ) {
@@ -1870,6 +1953,15 @@ private fun TvDetailHeroCard(
                 }
             }
         }
+        if (footer != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                content = footer,
+            )
+        }
     }
 }
 
@@ -1919,7 +2011,6 @@ private fun TvSeasonCard(
                 .width(250.dp)
                 .height(132.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -1995,7 +2086,6 @@ private fun TvEpisodeHighlightCard(
                 .fillMaxWidth()
                 .height(176.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .border(
                     width = if (isFocused) 2.dp else 0.dp,
@@ -2068,7 +2158,6 @@ private fun TvHeroCard(
             .fillMaxWidth()
             .height(280.dp)
             .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
@@ -2169,9 +2258,18 @@ private fun TvItemDetailScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
 
     LaunchedEffect(itemId) {
         viewModel.load(itemId)
+    }
+    // Park focus on the Play/Resume button whenever a new item loads so the
+    // first D-pad OK press starts playback instead of activating whichever
+    // nav-bar tab was last focused.
+    LaunchedEffect(state.item?.id) {
+        if (state.item != null) {
+            runCatching { playFocus.requestFocus() }
+        }
     }
 
     when {
@@ -2251,6 +2349,7 @@ private fun TvItemDetailScreen(
                                     onClick = {
                                         TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
                                     },
+                                    modifier = Modifier.focusRequester(playFocus),
                                     colors =
                                         ButtonDefaults.textButtonColors(
                                             containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -2289,46 +2388,44 @@ private fun TvItemDetailScreen(
                                 Text("Back")
                             }
                         },
-                    )
-                }
-                if (versions.size > 1) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(
-                                text = "Versions",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                versions.forEach { version ->
-                                    val selected = version.id == item.id
-                                    TextButton(
-                                        onClick = { if (!selected) viewModel.load(version.id) },
-                                        colors =
-                                            ButtonDefaults.textButtonColors(
-                                                containerColor =
-                                                    if (selected) {
-                                                        MaterialTheme.colorScheme.primaryContainer
-                                                    } else {
-                                                        Color(0x55131A24)
-                                                    },
-                                                contentColor =
-                                                    if (selected) {
-                                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                                    } else {
-                                                        MaterialTheme.colorScheme.onSurface
-                                                    },
-                                            ),
-                                    ) {
-                                        Text(version.versionChipLabel())
+                        footer = if (versions.size > 1) {
+                            {
+                                Text(
+                                    text = "Versions",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    versions.forEach { version ->
+                                        val selected = version.id == item.id
+                                        TextButton(
+                                            onClick = { if (!selected) viewModel.load(version.id) },
+                                            colors =
+                                                ButtonDefaults.textButtonColors(
+                                                    containerColor =
+                                                        if (selected) {
+                                                            MaterialTheme.colorScheme.primaryContainer
+                                                        } else {
+                                                            Color(0x55131A24)
+                                                        },
+                                                    contentColor =
+                                                        if (selected) {
+                                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                                        } else {
+                                                            MaterialTheme.colorScheme.onSurface
+                                                        },
+                                                ),
+                                        ) {
+                                            Text(version.versionChipLabel())
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
+                        } else null,
+                    )
                 }
             }
         }
@@ -2353,30 +2450,15 @@ private fun TvShowScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
+    val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
     }
-
-    LaunchedEffect(state.bulkDownload.result) {
-        val result = state.bulkDownload.result ?: return@LaunchedEffect
-        result.storageShortfallBytes?.let { shortfall ->
-            val mb = shortfall / (1024 * 1024)
-            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
+    LaunchedEffect(state.show?.id) {
+        if (state.show != null) {
+            runCatching { playFocus.requestFocus() }
         }
-        val msg = buildString {
-            if (result.queued > 0) append("${result.queued} episodes queued")
-            if (result.skipped > 0) {
-                if (isNotEmpty()) append(", ")
-                append("${result.skipped} already downloaded")
-            }
-            if (result.failed > 0) {
-                if (isNotEmpty()) append(", ")
-                append("${result.failed} failed")
-            }
-        }
-        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     when {
@@ -2431,6 +2513,7 @@ private fun TvShowScreen(
                                     onClick = {
                                         TvPlayerActivity.createIntentForSpatialItem(context, nextEpisode)?.let(context::startActivity)
                                     },
+                                    modifier = Modifier.focusRequester(playFocus),
                                     colors =
                                         ButtonDefaults.textButtonColors(
                                             containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -2439,16 +2522,6 @@ private fun TvShowScreen(
                                 ) {
                                     Text(if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next")
                                 }
-                            }
-                            TextButton(
-                                onClick = { showBulkDownloadDialog = true },
-                                colors =
-                                    ButtonDefaults.textButtonColors(
-                                        containerColor = Color.White.copy(alpha = 0.12f),
-                                        contentColor = Color.White,
-                                    ),
-                            ) {
-                                Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show")
                             }
                             TextButton(
                                 onClick = onBack,
@@ -2480,19 +2553,6 @@ private fun TvShowScreen(
                     }
                 }
             }
-
-            if (showBulkDownloadDialog) {
-                TvBulkDownloadDialog(
-                    title = "Download Show",
-                    description = "All episodes across ${state.seasons.size} season(s) will be queued.",
-                    confirmLabel = "Download All",
-                    onConfirm = { settings ->
-                        viewModel.downloadShow(showId, settings)
-                        showBulkDownloadDialog = false
-                    },
-                    onDismiss = { showBulkDownloadDialog = false },
-                )
-            }
         }
     }
 }
@@ -2513,31 +2573,8 @@ private fun TvSeasonScreen(
     }
 
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
-
     LaunchedEffect(seasonId) {
         viewModel.load(seasonId)
-    }
-
-    LaunchedEffect(state.bulkDownload.result) {
-        val result = state.bulkDownload.result ?: return@LaunchedEffect
-        result.storageShortfallBytes?.let { shortfall ->
-            val mb = shortfall / (1024 * 1024)
-            Toast.makeText(context, "Low storage: need ~${mb}MB more space", Toast.LENGTH_LONG).show()
-        }
-        val msg = buildString {
-            if (result.queued > 0) append("${result.queued} queued")
-            if (result.skipped > 0) {
-                if (isNotEmpty()) append(", ")
-                append("${result.skipped} already downloaded")
-            }
-            if (result.failed > 0) {
-                if (isNotEmpty()) append(", ")
-                append("${result.failed} failed")
-            }
-        }
-        if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
 
     when {
@@ -2556,25 +2593,13 @@ private fun TvSeasonScreen(
         else -> {
             val season = state.season ?: return
             val rows = remember(state.episodes) { state.episodes.chunked(5) }
-            val downloadableEpisodes = remember(state.episodes) { state.episodes.filter { !it.isDownloaded() } }
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
                 contentPadding = PaddingValues(bottom = 36.dp),
             ) {
                 item {
-                    TvPageHeaderCard(
-                        title = season.name,
-                        body = listOf(season.seriesName, "${state.episodes.size} visible episodes").joinToString(" • "),
-                    )
-                }
-                item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (downloadableEpisodes.isNotEmpty()) {
-                            TextButton(onClick = { showBulkDownloadDialog = true }) {
-                                Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season")
-                            }
-                        }
                         TextButton(onClick = onBack) {
                             Text("Back")
                         }
@@ -2600,302 +2625,7 @@ private fun TvSeasonScreen(
                     }
                 }
             }
-
-            if (showBulkDownloadDialog) {
-                TvBulkDownloadDialog(
-                    title = "Download Season",
-                    description = "${downloadableEpisodes.size} episodes will be queued for download.",
-                    confirmLabel = "Download ${downloadableEpisodes.size} Episodes",
-                    onConfirm = { settings ->
-                        viewModel.downloadEpisodes(downloadableEpisodes, settings)
-                        showBulkDownloadDialog = false
-                    },
-                    onDismiss = { showBulkDownloadDialog = false },
-                )
-            }
         }
     }
 }
 
-@Composable
-private fun TvDownloadsScreen(
-    onOpenItem: (SpatialFinItem) -> Unit = {},
-    viewModel: DownloadsViewModel = hiltViewModel(),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
-    val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
-    val continueWatchingItems by viewModel.continueWatchingItems.collectAsStateWithLifecycle()
-    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) {
-        viewModel.loadItems()
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-        contentPadding = PaddingValues(bottom = 42.dp),
-    ) {
-        item {
-            val storageLabel = if (storageUsedBytes > 0L)
-                android.text.format.Formatter.formatFileSize(context, storageUsedBytes)
-            else null
-            TvPageHeaderCard(
-                title = "Downloads",
-                body = storageLabel
-                    ?.let { "Movies and shows saved for offline playback. Using $it." }
-                    ?: "Movies and shows saved for offline playback.",
-            )
-        }
-        if (activeDownloads.isNotEmpty()) {
-            item {
-                Text(
-                    text = "In Progress",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(activeDownloads, key = { it.taskId }) { entry ->
-                TvActiveDownloadCard(
-                    entry = entry,
-                    onPause = { viewModel.pauseDownload(entry.itemId) },
-                    onResume = { viewModel.resumeDownload(entry.itemId) },
-                    onCancel = { viewModel.cancelActiveDownload(entry.itemId) },
-                )
-            }
-        }
-        if (continueWatchingItems.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Continue Watching",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            val rows = continueWatchingItems.chunked(4)
-            items(rows) { rowItems ->
-                TvPosterGridRow(items = rowItems, onOpenItem = onOpenItem)
-            }
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = viewModel::setSearchQuery,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Search downloads...") },
-                    singleLine = true,
-                )
-                TextButton(
-                    onClick = {
-                        viewModel.setSortOrder(
-                            if (sortOrder == DownloadSortOrder.NAME) DownloadSortOrder.DATE_ADDED
-                            else DownloadSortOrder.NAME
-                        )
-                    },
-                ) {
-                    Text(if (sortOrder == DownloadSortOrder.NAME) "A–Z" else "Recent")
-                }
-            }
-        }
-        when {
-            state.isLoading -> item {
-                TvPlaceholderScreen(title = "Loading", body = "Loading downloaded items…")
-            }
-            state.error != null -> item {
-                TvPlaceholderScreen(
-                    title = "Error",
-                    body = state.error?.localizedMessage ?: "Could not load downloads.",
-                )
-            }
-            state.sections.isEmpty() && activeDownloads.isEmpty() -> item {
-                TvPlaceholderScreen(
-                    title = "Nothing here yet",
-                    body = "Download movies or episodes from their detail screen to watch them offline.",
-                )
-            }
-            else -> {
-                state.sections.forEach { section ->
-                    item {
-                        Text(
-                            text = section.name.asString(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    val rows = section.items.chunked(4)
-                    items(rows) { rowItems ->
-                        TvPosterGridRow(
-                            items = rowItems,
-                            onOpenItem = onOpenItem,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TvActiveDownloadCard(
-    entry: ActiveDownloadEntry,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val context = LocalContext.current
-    val statusLabel = when (entry.status) {
-        android.app.DownloadManager.STATUS_RUNNING -> {
-            val total = entry.totalBytes
-            val sizeStr = if (total != null && total > 0) {
-                "${android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)} / ${android.text.format.Formatter.formatFileSize(context, total)}"
-            } else {
-                "${entry.progress}%"
-            }
-            val speed = entry.downloadSpeedBytesPerSec
-            if (speed != null && speed > 0) {
-                "$sizeStr · ${android.text.format.Formatter.formatFileSize(context, speed)}/s"
-            } else sizeStr
-        }
-        android.app.DownloadManager.STATUS_PAUSED -> "Paused"
-        android.app.DownloadManager.STATUS_FAILED -> "Failed"
-        else -> "Pending"
-    }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    text = entry.itemName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (entry.status == android.app.DownloadManager.STATUS_RUNNING || entry.status == android.app.DownloadManager.STATUS_PAUSED) {
-                LinearProgressIndicator(
-                    progress = { entry.progress / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = if (entry.status == android.app.DownloadManager.STATUS_PAUSED)
-                        MaterialTheme.colorScheme.outline
-                    else
-                        MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (entry.status) {
-                    android.app.DownloadManager.STATUS_RUNNING -> {
-                        TextButton(onClick = onPause) { Text("Pause") }
-                        TextButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                    android.app.DownloadManager.STATUS_PAUSED,
-                    android.app.DownloadManager.STATUS_FAILED -> {
-                        TextButton(onClick = onResume) { Text("Resume") }
-                        TextButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                    else -> {
-                        TextButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private val TV_DOWNLOAD_BITRATES =
-    listOf(
-        8_000_000 to "8 Mbps",
-        5_000_000 to "5 Mbps",
-        3_000_000 to "3 Mbps",
-        2_000_000 to "2 Mbps",
-        1_000_000 to "1 Mbps",
-    )
-
-@Composable
-private fun TvBulkDownloadDialog(
-    title: String,
-    description: String,
-    confirmLabel: String,
-    onConfirm: (BulkDownloadSettings) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var selectedMode by remember { mutableStateOf(DownloadMode.ORIGINAL) }
-    var selectedBitrate by remember { mutableStateOf(TV_DOWNLOAD_BITRATES.first().first) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(
-                        BulkDownloadSettings(
-                            mode = selectedMode,
-                            videoBitrate = if (selectedMode == DownloadMode.TRANSCODED) selectedBitrate else null,
-                        )
-                    )
-                },
-            ) { Text(confirmLabel) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text("Download Mode", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = { selectedMode = DownloadMode.ORIGINAL },
-                        colors = if (selectedMode == DownloadMode.ORIGINAL)
-                            ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                        else ButtonDefaults.textButtonColors(),
-                    ) { Text("Original") }
-                    TextButton(
-                        onClick = { selectedMode = DownloadMode.TRANSCODED },
-                        colors = if (selectedMode == DownloadMode.TRANSCODED)
-                            ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                        else ButtonDefaults.textButtonColors(),
-                    ) { Text("Transcoded") }
-                }
-                if (selectedMode == DownloadMode.TRANSCODED) {
-                    Text("Video Quality", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TV_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
-                            TextButton(
-                                onClick = { selectedBitrate = bitrate },
-                                colors = if (selectedBitrate == bitrate)
-                                    ButtonDefaults.textButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                                else ButtonDefaults.textButtonColors(),
-                            ) { Text(label) }
-                        }
-                    }
-                }
-            }
-        },
-    )
-}

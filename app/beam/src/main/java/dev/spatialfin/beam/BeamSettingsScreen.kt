@@ -1,6 +1,7 @@
 package dev.spatialfin.beam
 
 import android.graphics.Color as AndroidColor
+import android.widget.Toast
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,10 +10,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -21,15 +24,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.fragment.app.FragmentActivity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockMode
+import dev.spatialfin.unified.applock.PinSetupScreen
+import kotlinx.coroutines.launch
 
 @Composable
 fun BeamSettingsScreen(
@@ -123,6 +135,17 @@ fun BeamSettingsScreen(
         mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
     }
     var loggingEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.loggingEnabled)) }
+    val context = LocalContext.current
+    val appLockManager = remember(context) { AppLockManager.from(context) }
+    val appLockScope = rememberCoroutineScope()
+    var appLockMode by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.appLockMode))
+    }
+    var contentEncryption by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.contentEncryptionEnabled))
+    }
+    var pinSetupVisible by rememberSaveable { mutableStateOf(false) }
+
     val companionConnected =
         remember(appPreferences.getValue(appPreferences.companionUrl), appPreferences.getValue(appPreferences.companionToken)) {
             appPreferences.getValue(appPreferences.companionUrl).isNotBlank() &&
@@ -357,6 +380,83 @@ fun BeamSettingsScreen(
             }
         }
         item {
+            BeamSettingsSection(title = "Security") {
+                Text(
+                    "Lock the app behind biometrics or a PIN, and optionally encrypt downloaded media on disk.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val modeLabel = when (AppLockMode.fromKey(appLockMode)) {
+                    AppLockMode.Off -> "Off"
+                    AppLockMode.Biometric -> "Biometric"
+                    AppLockMode.Pin -> "PIN"
+                }
+                BeamSettingChoiceRow(
+                    title = "App lock",
+                    value = modeLabel,
+                    actions = listOf("Off", "Biometric", "PIN"),
+                    onAction = { choice ->
+                        val targetMode = when (choice) {
+                            "Biometric" -> AppLockMode.Biometric
+                            "PIN" -> AppLockMode.Pin
+                            else -> AppLockMode.Off
+                        }
+                        when (targetMode) {
+                            AppLockMode.Off -> {
+                                appLockManager.disable()
+                                appLockMode = AppLockMode.Off.backendKey
+                            }
+                            AppLockMode.Biometric -> {
+                                val activity = context as? FragmentActivity
+                                if (activity == null) {
+                                    Toast.makeText(context, "Biometric not available on this screen.", Toast.LENGTH_SHORT).show()
+                                    return@BeamSettingChoiceRow
+                                }
+                                appLockScope.launch {
+                                    val result = appLockManager.enroll(activity)
+                                    when (result) {
+                                        is AppLockManager.EnrollResult.Success -> {
+                                            appLockMode = AppLockMode.Biometric.backendKey
+                                        }
+                                        is AppLockManager.EnrollResult.DeviceNotSecure -> {
+                                            appLockManager.disable()
+                                            appLockMode = AppLockMode.Off.backendKey
+                                            Toast.makeText(context, "Set a device screen lock first.", Toast.LENGTH_LONG).show()
+                                        }
+                                        is AppLockManager.EnrollResult.Cancelled -> {
+                                            appLockManager.disable()
+                                            appLockMode = AppLockMode.Off.backendKey
+                                        }
+                                        is AppLockManager.EnrollResult.Failed -> {
+                                            appLockManager.disable()
+                                            appLockMode = AppLockMode.Off.backendKey
+                                            Toast.makeText(context, "Biometric setup failed: ${result.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            }
+                            AppLockMode.Pin -> {
+                                pinSetupVisible = true
+                            }
+                        }
+                    },
+                )
+                if (AppLockMode.fromKey(appLockMode) == AppLockMode.Pin && appLockManager.isConfigured()) {
+                    TextButton(onClick = { pinSetupVisible = true }) {
+                        Text("Change PIN")
+                    }
+                }
+                BeamSettingSwitchRow(
+                    title = "Encrypt downloads on disk",
+                    checked = contentEncryption,
+                    onCheckedChange = { enabled ->
+                        contentEncryption = enabled
+                        appPreferences.setValue(appPreferences.contentEncryptionEnabled, enabled)
+                    },
+                )
+            }
+        }
+        item {
             BeamSettingsSection(title = "Jellyseerr") {
                 BeamSettingSwitchRow(
                     title = "Enable Jellyseerr",
@@ -460,6 +560,41 @@ fun BeamSettingsScreen(
                 ) {
                     Text("Upload Logs Now")
                 }
+            }
+        }
+    }
+
+    if (pinSetupVisible) {
+        Dialog(
+            onDismissRequest = { pinSetupVisible = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.95f),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                PinSetupScreen(
+                    onConfirmed = { newPin ->
+                        appLockScope.launch {
+                            val ok = appLockManager.setPin(newPin)
+                            pinSetupVisible = false
+                            if (ok) {
+                                appLockMode = AppLockMode.Pin.backendKey
+                                Toast.makeText(context, "PIN saved.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Couldn't save PIN.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onCancel = {
+                        pinSetupVisible = false
+                        // If the user bailed without configuring a PIN, roll back to Off.
+                        if (appLockManager.mode() == AppLockMode.Pin && !appLockManager.isConfigured()) {
+                            appLockManager.disable()
+                            appLockMode = AppLockMode.Off.backendKey
+                        }
+                    },
+                )
             }
         }
     }

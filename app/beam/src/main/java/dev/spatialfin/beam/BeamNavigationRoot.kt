@@ -1,6 +1,7 @@
 package dev.spatialfin.beam
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -46,8 +47,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.draw.blur
@@ -61,6 +69,9 @@ import androidx.compose.ui.text.font.FontWeight
 import coil3.compose.AsyncImage
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
+import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
+import dev.jdtech.jellyfin.player.beam.isCompact
+import dev.jdtech.jellyfin.player.beam.rememberBeamWidth
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
 import androidx.compose.ui.text.style.TextAlign
@@ -177,7 +188,38 @@ fun BeamNavigationRoot(
     val showPrimaryNavigation =
         !state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)
 
-    CompositionLocalProvider(LocalBeamBackground provides { beamBackgroundUrl = it }) {
+    val beamWidth = rememberBeamWidth()
+    val useBottomNav = beamWidth.isCompact && showPrimaryNavigation
+
+    val sidebarContent: @Composable () -> Unit = {
+        BeamSidebar(
+            currentRoute = currentRoute,
+            isOfflineMode = state.isOfflineMode,
+            onNavigate = { route -> currentRoute = route },
+            onReconnect = onReconnect,
+            voiceState = voiceState,
+            voicePartial = voicePartial,
+            onVoiceClick = {
+                if (voiceState == BeamVoiceState.LISTENING) {
+                    voiceService.stopListening()
+                } else {
+                    voiceService.resetState()
+                    voiceService.startListening { transcript ->
+                        if (transcript.isNotBlank()) {
+                            voiceQuery = transcript
+                            currentRoute = BeamRoute.Search
+                        }
+                        voiceService.resetState()
+                    }
+                }
+            },
+        )
+    }
+
+    CompositionLocalProvider(
+        LocalBeamBackground provides { beamBackgroundUrl = it },
+        LocalBeamWidth provides beamWidth,
+    ) {
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {
             AsyncImage(
                 model = beamBackgroundUrl,
@@ -188,37 +230,45 @@ fun BeamNavigationRoot(
             )
             Scaffold(
                 containerColor = Color.Transparent,
+                bottomBar = {
+                    if (useBottomNav) {
+                        BeamBottomNavigationRow(
+                            currentRoute = currentRoute,
+                            isOfflineMode = state.isOfflineMode,
+                            onNavigate = { currentRoute = it },
+                            voiceState = voiceState,
+                            onVoiceClick = {
+                                if (voiceState == BeamVoiceState.LISTENING) {
+                                    voiceService.stopListening()
+                                } else {
+                                    voiceService.resetState()
+                                    voiceService.startListening { transcript ->
+                                        if (transcript.isNotBlank()) {
+                                            voiceQuery = transcript
+                                            currentRoute = BeamRoute.Search
+                                        }
+                                        voiceService.resetState()
+                                    }
+                                }
+                            },
+                        )
+                    }
+                },
             ) { innerPadding ->
                 Row(
                     modifier =
                         Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
-                            .padding(18.dp),
+                            .padding(
+                                start = if (useBottomNav) 12.dp else 18.dp,
+                                end = if (useBottomNav) 12.dp else 18.dp,
+                                top = if (useBottomNav) 12.dp else 18.dp,
+                                bottom = 0.dp,
+                            ),
                 ) {
-            if (showPrimaryNavigation) {
-                BeamSidebar(
-                    currentRoute = currentRoute,
-                    isOfflineMode = state.isOfflineMode,
-                    onNavigate = { currentRoute = it },
-                    onReconnect = onReconnect,
-                    voiceState = voiceState,
-                    voicePartial = voicePartial,
-                    onVoiceClick = {
-                        if (voiceState == BeamVoiceState.LISTENING) {
-                            voiceService.stopListening()
-                        } else {
-                            voiceService.resetState()
-                            voiceService.startListening { transcript ->
-                                if (transcript.isNotBlank()) {
-                                    voiceQuery = transcript
-                                    currentRoute = BeamRoute.Search
-                                }
-                                voiceService.resetState()
-                            }
-                        }
-                    },
-                )
+            if (showPrimaryNavigation && !useBottomNav) {
+                sidebarContent()
                 Spacer(Modifier.width(18.dp))
             }
             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
@@ -528,6 +578,75 @@ fun BeamNavigationRoot(
 }
 
 @Composable
+private fun BeamBottomNavigationRow(
+    currentRoute: BeamRoute,
+    isOfflineMode: Boolean = false,
+    onNavigate: (BeamRoute) -> Unit,
+    voiceState: BeamVoiceState = BeamVoiceState.IDLE,
+    onVoiceClick: () -> Unit = {},
+) {
+    val visibleTabs = if (isOfflineMode) {
+        primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
+    } else {
+        primaryTabs
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f),
+        tonalElevation = 4.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            visibleTabs.forEach { tab ->
+                val selected = currentRoute == tab.route
+                Surface(
+                    onClick = { onNavigate(tab.route) },
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Icon(
+                            imageVector = tab.icon,
+                            contentDescription = tab.label,
+                            modifier = Modifier.size(22.dp),
+                            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = tab.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            softWrap = false,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = onVoiceClick) {
+                Icon(
+                    imageVector = Icons.Rounded.Mic,
+                    contentDescription = "Voice",
+                    modifier = Modifier.size(22.dp),
+                    tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7)
+                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun BeamSidebar(
     currentRoute: BeamRoute,
     isOfflineMode: Boolean = false,
@@ -536,6 +655,7 @@ private fun BeamSidebar(
     voiceState: BeamVoiceState = BeamVoiceState.IDLE,
     voicePartial: String = "",
     onVoiceClick: () -> Unit = {},
+    forceExpanded: Boolean = false,
 ) {
     val visibleTabs = if (isOfflineMode) {
         primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
@@ -543,14 +663,19 @@ private fun BeamSidebar(
         primaryTabs
     }
 
-    var isExpanded by rememberSaveable { mutableStateOf(false) }
+    var userExpanded by rememberSaveable { mutableStateOf(false) }
+    val isExpanded = forceExpanded || userExpanded
     val sidebarWidth by androidx.compose.animation.core.animateDpAsState(
         targetValue = if (isExpanded) 200.dp else 80.dp,
         label = "sidebarWidth"
     )
 
     Surface(
-        modifier = Modifier.width(sidebarWidth).fillMaxHeight(),
+        modifier = if (forceExpanded) {
+            Modifier.fillMaxWidth().fillMaxHeight()
+        } else {
+            Modifier.width(sidebarWidth).fillMaxHeight()
+        },
         color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.7f),
         shape = RoundedCornerShape(24.dp),
         tonalElevation = 2.dp,
@@ -574,7 +699,7 @@ private fun BeamSidebar(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { isExpanded = !isExpanded },
+                        .clickable { if (!forceExpanded) userExpanded = !userExpanded },
                 )
                 if (isExpanded) {
                     Spacer(Modifier.width(10.dp))

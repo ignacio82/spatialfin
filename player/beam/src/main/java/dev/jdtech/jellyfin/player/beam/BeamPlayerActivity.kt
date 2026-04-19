@@ -31,11 +31,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
@@ -995,18 +998,27 @@ private fun BeamControllerOverlay(
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.42f)),
     ) {
+        val topBarCompact = LocalBeamWidth.current.isCompact
+        val topBarScroll = rememberScrollState()
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .let { if (topBarCompact) it.horizontalScroll(topBarScroll) else it },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBackClick) {
                 Icon(painterResource(CoreR.drawable.ic_arrow_left), "Back", tint = Color.White)
             }
-            Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+            Column(
+                modifier = if (topBarCompact) {
+                    Modifier.widthIn(max = 160.dp).padding(start = 8.dp)
+                } else {
+                    Modifier.weight(1f).padding(start = 8.dp)
+                },
+            ) {
                 Text(
                     text = uiState.currentItemTitle,
                     style = MaterialTheme.typography.titleMedium,
@@ -1264,11 +1276,12 @@ private fun BeamSyncPlayDialog(
     onLeaveGroup: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier =
                 Modifier
-                    .width(520.dp)
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth(0.95f)
                     .heightIn(max = 680.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
@@ -1385,11 +1398,12 @@ private fun BeamTrackSelectionDialog(
     val trackNames = trackGroups.getTrackNames()
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier =
                 Modifier
-                    .width(420.dp)
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth(0.95f)
                     .heightIn(max = 480.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
@@ -1458,11 +1472,12 @@ private fun BeamChapterDialog(
     onSelectChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier =
                 Modifier
-                    .width(420.dp)
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth(0.95f)
                     .heightIn(max = 480.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
@@ -1512,11 +1527,12 @@ private fun BeamSourceDialog(
     onSelectSource: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier =
                 Modifier
-                    .width(480.dp)
+                    .widthIn(max = 480.dp)
+                    .fillMaxWidth(0.95f)
                     .heightIn(max = 520.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
@@ -1595,11 +1611,12 @@ private fun BeamQualityDialog(
             40_000_000L to "40 Mbps",
         )
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier =
                 Modifier
-                    .width(360.dp)
+                    .widthIn(max = 360.dp)
+                    .fillMaxWidth(0.95f)
                     .heightIn(max = 420.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
@@ -1705,7 +1722,8 @@ private fun BeamSubtitleSearchDialogContent(
 
     Surface(
         modifier = Modifier
-            .width(420.dp)
+            .widthIn(max = 420.dp)
+            .fillMaxWidth(0.95f)
             .heightIn(max = 480.dp),
         shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1C1C1C),

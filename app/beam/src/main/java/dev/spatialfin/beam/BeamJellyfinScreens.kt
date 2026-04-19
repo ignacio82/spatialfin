@@ -1,6 +1,8 @@
 package dev.spatialfin.beam
 
 import android.content.Context
+import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
+import dev.jdtech.jellyfin.player.beam.isCompact
 import android.app.DownloadManager
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
@@ -614,9 +616,10 @@ private fun BeamPosterCard(
     showProgress: Boolean = false,
 ) {
     val imageModel = item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
+    val cardWidth = if (LocalBeamWidth.current.isCompact) 120.dp else 152.dp
     Card(
         onClick = onClick,
-        modifier = Modifier.width(152.dp),
+        modifier = Modifier.width(cardWidth),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp, hoveredElevation = 8.dp, focusedElevation = 8.dp, pressedElevation = 4.dp),
@@ -2264,56 +2267,76 @@ private fun BeamDetailHeroCard(
                             )
                         )
             )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 26.dp),
-                horizontalArrangement = Arrangement.spacedBy(22.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                BeamPosterArtwork(
-                    item = item,
-                    modifier = Modifier.width(180.dp).aspectRatio(0.67f),
+            val stacked = LocalBeamWidth.current.isCompact
+            val info: @Composable ColumnScope.() -> Unit = {
+                BeamBadge(text = eyebrow)
+                Text(
+                    text = item.name,
+                    style = if (stacked) MaterialTheme.typography.headlineSmall
+                            else MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    BeamBadge(text = eyebrow)
+                supportingLine?.takeIf { it.isNotBlank() }?.let {
                     Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        text = it,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFFE6EBF2),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    supportingLine?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color(0xFFE6EBF2),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (metadata.isNotEmpty()) {
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            metadata.forEach { token ->
-                                BeamDetailPill(text = token)
-                            }
+                }
+                if (metadata.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        metadata.forEach { token ->
+                            BeamDetailPill(text = token)
                         }
                     }
-                    Text(
-                        text = item.overview.ifBlank { "No overview available." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFD7DDE6),
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
+                }
+                Text(
+                    text = item.overview.ifBlank { "No overview available." },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFD7DDE6),
+                    maxLines = if (stacked) 6 else 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                actions()
+            }
+            if (stacked) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    BeamPosterArtwork(
+                        item = item,
+                        modifier = Modifier.width(150.dp).aspectRatio(0.67f),
                     )
-                    Spacer(Modifier.height(4.dp))
-                    actions()
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) { info() }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 26.dp),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    BeamPosterArtwork(
+                        item = item,
+                        modifier = Modifier.width(180.dp).aspectRatio(0.67f),
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) { info() }
                 }
             }
         }
@@ -2528,7 +2551,7 @@ private fun BeamPrimaryActionButton(
     onClick: () -> Unit,
 ) {
     Button(onClick = onClick) {
-        Text(label)
+        Text(label, maxLines = 1, softWrap = false)
     }
 }
 
@@ -2538,7 +2561,7 @@ private fun BeamSecondaryActionButton(
     onClick: () -> Unit,
 ) {
     OutlinedButton(onClick = onClick) {
-        Text(label)
+        Text(label, maxLines = 1, softWrap = false)
     }
 }
 

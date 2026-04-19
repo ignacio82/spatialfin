@@ -3,6 +3,8 @@ package dev.spatialfin.tv
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -78,6 +80,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -89,6 +92,8 @@ import timber.log.Timber
 
 private const val TV_COMPANION_PORT = 41230
 private const val TV_COMPANION_PAIRING_DURATION_MS = 10 * 60 * 1000L
+private const val TV_COMPANION_NSD_TYPE = "_spatialfin-tv._tcp."
+private const val TV_COMPANION_NSD_NAME = "SpatialFin TV"
 
 private data class ImportedSession(
     val serverId: String,
@@ -124,6 +129,7 @@ constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
     private var pairingServer: TvCompanionPairingServer? = null
+    private var nsdRegistrationListener: NsdManager.RegistrationListener? = null
 
     fun startPairing() {
         pairingServer?.close()
@@ -188,6 +194,7 @@ constructor(
                     )
             }
             .onSuccess {
+                registerNsdService(manualCode)
                 _state.value =
                     TvCompanionState.Ready(
                         payload = payload,
@@ -198,6 +205,40 @@ constructor(
             }
     }
 
+    private fun registerNsdService(manualCode: String) {
+        unregisterNsdService()
+        val nsd = context.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
+        val info = NsdServiceInfo().apply {
+            serviceName = TV_COMPANION_NSD_NAME
+            serviceType = TV_COMPANION_NSD_TYPE
+            port = TV_COMPANION_PORT
+            // Attributes require API 21+ for setAttribute; values are UTF-8 bytes.
+            runCatching { setAttribute("manual_code", manualCode) }
+            runCatching { setAttribute("device_name", buildDeviceName()) }
+        }
+        val listener = object : NsdManager.RegistrationListener {
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {
+                Timber.w("NSD register failed: %d", errorCode)
+            }
+            override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) = Unit
+            override fun onServiceRegistered(serviceInfo: NsdServiceInfo?) {
+                Timber.i("NSD registered: %s", serviceInfo?.serviceName)
+            }
+            override fun onServiceUnregistered(serviceInfo: NsdServiceInfo?) = Unit
+        }
+        runCatching { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
+            .onSuccess { nsdRegistrationListener = listener }
+            .onFailure { Timber.w(it, "NSD registration threw") }
+    }
+
+    private fun unregisterNsdService() {
+        val nsd = context.getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return
+        nsdRegistrationListener?.let {
+            runCatching { nsd.unregisterService(it) }
+            nsdRegistrationListener = null
+        }
+    }
+
     fun reset() {
         _state.value = TvCompanionState.Idle
     }
@@ -205,6 +246,7 @@ constructor(
     override fun onCleared() {
         pairingServer?.close()
         pairingServer = null
+        unregisterNsdService()
         super.onCleared()
     }
 
@@ -415,8 +457,21 @@ private class TvCompanionPairingServer(
         acceptJob =
             scope.launch {
                 while (true) {
-                    val socket = serverSocket?.accept() ?: break
-                    scope.launch { handleClient(socket) }
+                    val socket =
+                        try {
+                            serverSocket?.accept() ?: break
+                        } catch (_: java.net.SocketException) {
+                            // close() calls ServerSocket.close() which makes accept() throw
+                            // on its blocked thread. That's our normal stop signal — exit
+                            // cleanly instead of letting the uncaught exception crash the app.
+                            break
+                        } catch (_: java.io.IOException) {
+                            break
+                        }
+                    scope.launch {
+                        runCatching { handleClient(socket) }
+                            .onFailure { Timber.w(it, "TV pairing client handler failed") }
+                    }
                 }
             }
     }
@@ -523,6 +578,19 @@ fun TvCompanionScreen(
 
     LaunchedEffect(Unit) {
         viewModel.startPairing()
+    }
+
+    // Auto-rotate the pairing code ~2s before it expires so the user never
+    // sees a stale code. Re-keyed on each new Ready state so the next rotation
+    // schedules itself automatically.
+    LaunchedEffect(state) {
+        val current = state
+        if (current is TvCompanionState.Ready) {
+            val msUntilExpiry = current.payload.expires_at_epoch_ms - System.currentTimeMillis()
+            val delayMs = (msUntilExpiry - 2_000L).coerceAtLeast(0L)
+            delay(delayMs)
+            viewModel.startPairing()
+        }
     }
 
     Column(
