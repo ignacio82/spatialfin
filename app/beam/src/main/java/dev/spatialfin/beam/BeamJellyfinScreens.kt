@@ -556,15 +556,29 @@ private fun BeamHomeSectionHeader(
     onAction: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(20.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(2.dp),
+                    )
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         if (actionLabel != null && onAction != null) {
             TextButton(onClick = onAction) {
                 Text(actionLabel)
@@ -580,7 +594,8 @@ private fun BeamPosterCarousel(
     showProgress: Boolean = false,
 ) {
     LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(vertical = 4.dp),
     ) {
         items(items, key = { it.id }) { item ->
             BeamPosterCard(
@@ -601,9 +616,10 @@ private fun BeamPosterCard(
     val imageModel = item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
     Card(
         onClick = onClick,
-        modifier = Modifier.width(140.dp),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.width(152.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp, hoveredElevation = 8.dp, focusedElevation = 8.dp, pressedElevation = 4.dp),
     ) {
         Column {
             Box(
@@ -644,13 +660,13 @@ private fun BeamPosterCard(
                 }
             }
             Column(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
                     text = item.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -733,10 +749,10 @@ private fun BeamPosterGrid(
     onItemClick: (SpatialFinItem) -> Unit,
 ) {
     val chunked = remember(items) { items.chunked(5) }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         chunked.forEach { rowItems ->
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 rowItems.forEach { item ->
                     Box(modifier = Modifier.weight(1f)) {
@@ -831,7 +847,11 @@ fun BeamShowScreen(
                         eyebrow = "Series",
                         supportingLine = supportingLine,
                         metadata = metadata,
-                        actions = {
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
                             state.nextUp?.let { nextEpisode ->
                                 BeamPrimaryActionButton(
                                     label = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
@@ -843,8 +863,8 @@ fun BeamShowScreen(
                                 onClick = { showBulkDownloadDialog = true },
                             )
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
-                        },
-                    )
+                        }
+                    }
                 }
                 if (state.seasons.isNotEmpty()) {
                     item {
@@ -1093,7 +1113,11 @@ fun BeamItemDetailScreen(
                         eyebrow = buildPrimaryBadge(itemData),
                         supportingLine = supportingLine,
                         metadata = metadata,
-                        actions = {
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
                             if (itemData.canPlay) {
                                 BeamPrimaryActionButton(
                                     label = if (itemData.playbackPositionTicks > 0L) "Resume" else "Play",
@@ -1102,33 +1126,19 @@ fun BeamItemDetailScreen(
                                 BeamSecondaryActionButton(label = "From Start") {
                                     launchServerItem(context = context, item = itemData, startFromBeginning = true)
                                 }
-                            }
-                            BeamSecondaryActionButton(label = "Back", onClick = onBack)
-                        },
-                    )
-                }
-                if (state.availableVersions.size > 1) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Version", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                state.availableVersions.forEach { version ->
-                                    FilterChip(
-                                        selected = version.id == itemData.id,
-                                        onClick = { if (version.id != itemData.id) viewModel.load(version.id) },
-                                        label = { Text(version.versionChipLabel()) },
-                                    )
+                                OutlinedButton(onClick = { showPlaybackOptions = true }) {
+                                    Text("Playback Options")
                                 }
                             }
-                        }
-                    }
-                }
-                if (itemData.canPlay) {
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = { showPlaybackOptions = true }) {
-                                Text("Playback Options")
+                            if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
+                                BeamPrimaryActionButton(
+                                    label = "Open Collection",
+                                    onClick = { openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {}) },
+                                )
                             }
+                            BeamSecondaryActionButton(label = "Back", onClick = onBack)
+                        }
+                        if (itemData.canPlay) {
                             BeamDownloadActions(
                                 item = itemData,
                                 downloaderState = downloaderState,
@@ -1147,14 +1157,26 @@ fun BeamItemDetailScreen(
                                 },
                             )
                         }
-                    }
-                }
-                if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
-                    item {
-                        Button(
-                            onClick = { openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {}) }
-                        ) {
-                            Text("Open Collection")
+                        if (state.availableVersions.size > 1) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Version",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD7DDE6),
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                state.availableVersions.forEach { version ->
+                                    FilterChip(
+                                        selected = version.id == itemData.id,
+                                        onClick = { if (version.id != itemData.id) viewModel.load(version.id) },
+                                        label = { Text(version.versionChipLabel()) },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2202,55 +2224,58 @@ private fun BeamDetailHeroCard(
     eyebrow: String,
     supportingLine: String?,
     metadata: List<String>,
-    actions: @Composable RowScope.() -> Unit,
+    actions: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().height(340.dp),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.55f)),
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxWidth()) {
             AsyncImage(
                 model = beamBackdropArtwork(item),
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
-                alpha = 0.55f,
+                alpha = 0.45f,
             )
             Box(
                 modifier =
                     Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .background(
                             androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                colors = listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent),
-                                startX = 0f,
-                                endX = 900f,
+                                colors = listOf(
+                                    Color(0xF2080A10),
+                                    Color(0xD0080A10),
+                                    Color(0x80080A10),
+                                    Color.Transparent,
+                                ),
                             )
                         )
             )
             Box(
                 modifier =
                     Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .background(
                             androidx.compose.ui.graphics.Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color(0xCC0F141C)),
+                                colors = listOf(Color(0x660C1016), Color.Transparent, Color(0xCC0C1016)),
                             )
                         )
             )
             Row(
-                modifier = Modifier.fillMaxSize().padding(22.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 26.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalAlignment = Alignment.Top,
             ) {
                 BeamPosterArtwork(
                     item = item,
-                    modifier = Modifier.width(156.dp).aspectRatio(0.67f),
+                    modifier = Modifier.width(180.dp).aspectRatio(0.67f),
                 )
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     BeamBadge(text = eyebrow)
                     Text(
@@ -2287,7 +2312,8 @@ private fun BeamDetailHeroCard(
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), content = actions)
+                    Spacer(Modifier.height(4.dp))
+                    actions()
                 }
             }
         }
@@ -2497,7 +2523,7 @@ private fun BeamBadge(text: String) {
 }
 
 @Composable
-private fun RowScope.BeamPrimaryActionButton(
+private fun BeamPrimaryActionButton(
     label: String,
     onClick: () -> Unit,
 ) {
@@ -2507,7 +2533,7 @@ private fun RowScope.BeamPrimaryActionButton(
 }
 
 @Composable
-private fun RowScope.BeamSecondaryActionButton(
+private fun BeamSecondaryActionButton(
     label: String,
     onClick: () -> Unit,
 ) {
