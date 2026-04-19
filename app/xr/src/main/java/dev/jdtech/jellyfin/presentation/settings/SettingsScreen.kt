@@ -34,7 +34,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import dev.spatialfin.unified.applock.AppLockManager
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,6 +106,9 @@ fun SettingsScreen(
     var tmdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var omdbApiKeyDraft by remember { mutableStateOf<String?>(null) }
     var smartLanguageDraft by remember { mutableStateOf<SmartLanguageSettings?>(null) }
+
+    val appLockManager = remember(context) { AppLockManager.from(context) }
+    val appLockScope = rememberCoroutineScope()
 
     LaunchedEffect(true) { viewModel.loadPreferences(indexes, DeviceType.XR) }
 
@@ -173,6 +179,51 @@ fun SettingsScreen(
                 try {
                     (context as Activity).restart()
                 } catch (_: Exception) {}
+            }
+            is SettingsEvent.ConfigureAppLock -> {
+                val activity = context as? androidx.fragment.app.FragmentActivity
+                if (activity != null) {
+                    appLockScope.launch {
+                        if (event.enable) {
+                            when (val result = appLockManager.enroll(activity)) {
+                                is AppLockManager.EnrollResult.Success -> Unit
+                                is AppLockManager.EnrollResult.DeviceNotSecure -> {
+                                    appLockManager.rollbackEnable()
+                                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        context.getString(SettingsR.string.settings_app_lock_device_not_secure),
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                                is AppLockManager.EnrollResult.Cancelled -> {
+                                    appLockManager.rollbackEnable()
+                                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        context.getString(SettingsR.string.settings_app_lock_enroll_cancelled),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                is AppLockManager.EnrollResult.Failed -> {
+                                    appLockManager.rollbackEnable()
+                                    viewModel.loadPreferences(indexes, DeviceType.XR)
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        context.getString(
+                                            SettingsR.string.settings_app_lock_enroll_failed,
+                                            result.message,
+                                        ),
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            }
+                        } else {
+                            appLockManager.disable()
+                            viewModel.loadPreferences(indexes, DeviceType.XR)
+                        }
+                    }
+                }
             }
         }
     }

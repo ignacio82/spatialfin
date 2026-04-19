@@ -158,6 +158,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // OMDb (IMDb-backed)
     val omdbApiKey = Preference<String?>("pref_omdb_api_key", null)
 
+    // App lock (local-only passkey gate)
+    val appLockEnabled = Preference("pref_app_lock_enabled", false)
+    val appLockCredentialId = Preference<String?>("pref_app_lock_credential_id", null)
+    val appLockUserHandle = Preference<String?>("pref_app_lock_user_handle", null)
+
     // Logging
     val loggingEnabled = Preference("pref_logging_enabled", false)
     inline fun <reified T> getValue(preference: Preference<T>): T {

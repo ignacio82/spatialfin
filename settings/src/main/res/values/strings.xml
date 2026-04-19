@@ -56,6 +56,13 @@
     <string name="settings_category_appearance">Appearance</string>
     <string name="settings_category_interface">Interface</string>
     <string name="settings_category_device">Device</string>
+    <string name="settings_category_security">Security</string>
+    <string name="settings_category_security_summary">App lock and device credential settings</string>
+    <string name="settings_app_lock_title">Require passkey to open app</string>
+    <string name="settings_app_lock_summary">Block access to SpatialFin until you verify with your device passkey or biometric. A screen lock (PIN, pattern, password, or biometric) must be set up on this device.</string>
+    <string name="settings_app_lock_device_not_secure">Set up a screen lock (PIN, pattern, password, or biometric) on this device before enabling app lock.</string>
+    <string name="settings_app_lock_enroll_failed">Could not create passkey: %1$s</string>
+    <string name="settings_app_lock_enroll_cancelled">Passkey setup cancelled.</string>
     <string name="settings_category_cache">Cache</string>
     <string name="settings_use_cache_title">Cache images</string>
     <string name="settings_use_cache_summary">Cache images on disk to speed up loading times. Will take effect after app restart.</string>

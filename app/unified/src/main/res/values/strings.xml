@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SpatialFin</string>
+    <string name="app_lock_unlock_title">Unlock SpatialFin</string>
+    <string name="app_lock_unlock_subtitle">Authentication required to continue</string>
+    <string name="app_lock_unlock_action">Unlock</string>
+    <string name="app_lock_unlock_cancelled">Unlock cancelled. Tap Unlock to try again.</string>
+    <string name="app_lock_unlock_failed">Could not verify passkey. Try again.</string>
+    <string name="app_lock_setup_title">Enable app lock</string>
+    <string name="app_lock_setup_subtitle">Confirm it\'s you to turn on app lock.</string>
+    <string name="app_lock_no_credential">No screen lock is set up on this device.</string>
 </resources>

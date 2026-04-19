@@ -91,6 +91,8 @@ import dev.spatialfin.ShowRoute
 import dev.spatialfin.beam.BeamNavigationRoot
 import dev.spatialfin.beam.BeamTheme
 import dev.spatialfin.presentation.theme.SpatialFinTheme
+import dev.spatialfin.unified.applock.AppLockManager
+import dev.spatialfin.unified.applock.AppLockScreen
 import dev.spatialfin.tv.TvNavigationRoot
 import dev.spatialfin.tv.TvTheme
 import kotlinx.coroutines.delay
@@ -126,6 +128,9 @@ class UnifiedMainActivity : AppCompatActivity() {
     @Inject
     lateinit var voiceTelemetryStore: VoiceTelemetryStore
 
+    @Inject
+    lateinit var appLockManager: AppLockManager
+
     private val llmModelManager: LlmModelManager by lazy(LazyThreadSafetyMode.NONE) {
         modelManager.get()
     }
@@ -155,7 +160,14 @@ class UnifiedMainActivity : AppCompatActivity() {
 
         val initialSearchQueryExtra = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
 
+        appLockManager.refreshState()
+
         setContent {
+            val lockState by appLockManager.lockState.collectAsStateWithLifecycle()
+            if (lockState == AppLockManager.LockState.LOCKED) {
+                AppLockScreen(lockManager = appLockManager)
+                return@setContent
+            }
             val state by viewModel.state.collectAsStateWithLifecycle()
             val onboardingCompleted by rememberBooleanPreferenceState(
                 appPreferences = appPreferences,
@@ -251,6 +263,20 @@ class UnifiedMainActivity : AppCompatActivity() {
         }
 
         scheduleUserDataSync()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Skip re-locking on configuration changes (rotation, theme, etc.);
+        // only arm the lock when the user genuinely leaves the app.
+        if (!isChangingConfigurations) {
+            appLockManager.onAppBackgrounded()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appLockManager.refreshState()
     }
 
     // ---------------------------------------------------------------------------

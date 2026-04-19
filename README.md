@@ -43,6 +43,7 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
 - **SpatialFin Companion Support** — Effortlessly configure your headset by scanning a QR code from the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app. Centrally manage servers, users, and network shares without using the XR keyboard.
+- **App Lock (Biometric / PIN)** — Optional local-only gate that blocks the app until you confirm with your device passkey, biometric (iris / face / fingerprint), or screen-lock PIN. Off by default. No servers, no accounts — the Android system credential enrollment is the passkey.
 
 ## SpatialFin Companion
 
@@ -225,6 +226,19 @@ Current scope:
 
 - SyncPlay is available for Jellyfin streams, not local-only files.
 - Group management currently lives inside the player rather than the media detail screens.
+
+## App Lock
+
+SpatialFin includes an optional local-only app lock that blocks access to the UI behind your device's system authenticator.
+
+- **Off by default** — existing users are never prompted.
+- **Enable from Settings → Security → App Lock** and confirm with your biometric or PIN to turn it on. Disable from the same toggle at any time while the app is unlocked.
+- **Re-auth on resume** — the app re-locks when backgrounded. Returning from the launcher (or a cold start) shows a blocking unlock screen; the real UI only renders after the system authenticator succeeds.
+- **No re-auth on rotation / config changes** — orientation, theme, and similar Android config changes do not trigger a new prompt.
+- **No backend, no custom crypto** — the lock is implemented with Android's `BiometricPrompt` using `BIOMETRIC_STRONG | DEVICE_CREDENTIAL`. Enrollment and verification happen entirely in the OS; SpatialFin stores no secrets of its own.
+- **Requires a device screen lock** — if no biometric or device credential is enrolled on the device, enabling the feature surfaces an error and leaves it off.
+- **Does not interrupt background playback** — the lock only gates the app UI. Audio/video that is already streaming in the background is not paused when the lock engages.
+- **Toggle lives in the XR settings** — on the current build, the App Lock switch is exposed through the XR settings screen. The lock still gates TV and phone access once enabled, but toggling it from those form factors is a future wiring task.
 
 ## Architecture
 

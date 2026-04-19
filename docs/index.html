@@ -164,6 +164,7 @@
                         <button class="explorer-tab" onclick="showPane('network')">Network & Local</button>
                         <button class="explorer-tab" onclick="showPane('offline')">Offline Engine</button>
                         <button class="explorer-tab" onclick="showPane('companion')">Companion Hub</button>
+                        <button class="explorer-tab" onclick="showPane('security')">Security</button>
                     </nav>
                     <div class="explorer-content">
                         <!-- Immersive XR -->
@@ -316,6 +317,30 @@
                                         <li><strong>Network Share Sync:</strong> Direct import of SMB/NFS share details including credentials.</li>
                                         <li><strong>PWA Support:</strong> Install the dashboard as a standalone app for fast access.</li>
                                         <li><strong>Secure Discovery:</strong> unique setup tokens protect your local configuration.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Security -->
+                        <div class="explorer-pane" id="pane-security">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>App Lock</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Local-only Gate:</strong> Optional lock that blocks SpatialFin behind your device passkey, biometric (iris / face / fingerprint), or screen-lock PIN. No servers, no accounts.</li>
+                                        <li><strong>Off by Default:</strong> Existing users are never prompted. Enable from <em>Settings → Security → App Lock</em>, confirm with your device credential, and disable any time while the app is unlocked.</li>
+                                        <li><strong>Re-auth on Resume:</strong> The app re-locks when backgrounded; returning from the launcher or cold-start shows the blocking unlock screen before the UI renders.</li>
+                                        <li><strong>No Prompt on Rotation:</strong> Orientation, theme, and similar Android config changes do not trigger a new system prompt.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Implementation</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>System-backed:</strong> Uses Android's <code>BiometricPrompt</code> with <code>BIOMETRIC_STRONG | DEVICE_CREDENTIAL</code>. The OS handles enrollment and verification end-to-end.</li>
+                                        <li><strong>No Custom Crypto:</strong> SpatialFin stores no passwords or keys of its own; the device's existing credential enrollment is the passkey.</li>
+                                        <li><strong>Requires a Screen Lock:</strong> If no biometric or PIN is set up on the device, enabling the feature surfaces an error and leaves it off.</li>
+                                        <li><strong>Preserves Background Audio:</strong> The lock only gates the app UI — audio or video already streaming in the background is not interrupted when the lock engages.</li>
                                     </ul>
                                 </div>
                             </div>

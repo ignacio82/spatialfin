@@ -211,6 +211,7 @@ dependencies {
     implementation(project(":player:beam"))
 
     // AndroidX core
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.core)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)

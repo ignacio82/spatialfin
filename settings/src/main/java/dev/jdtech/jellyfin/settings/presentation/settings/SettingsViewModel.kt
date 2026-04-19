@@ -728,6 +728,42 @@ class SettingsViewModel @Inject constructor(
                 preferences =
                     listOf(
                         PreferenceCategory(
+                            nameStringResource = R.string.settings_category_security,
+                            descriptionStringRes = R.string.settings_category_security_summary,
+                            iconDrawableId = R.drawable.ic_lock,
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups =
+                                listOf(
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOf(
+                                                PreferenceSwitch(
+                                                    nameStringResource =
+                                                        R.string.settings_app_lock_title,
+                                                    descriptionStringRes =
+                                                        R.string.settings_app_lock_summary,
+                                                    iconDrawableId = R.drawable.ic_lock,
+                                                    backendPreference =
+                                                        appPreferences.appLockEnabled,
+                                                ),
+                                            )
+                                    )
+                                ),
+                        )
+                    )
+            ),
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
                             nameStringResource = R.string.welcome_companion_title,
                             iconDrawableId = R.drawable.ic_network,
                             supportedDeviceTypes = listOf(DeviceType.XR),
@@ -950,6 +986,14 @@ class SettingsViewModel @Inject constructor(
                                 viewModelScope.launch { downloadManager.downloadModel() }
                             } else if (!action.preference.value) {
                                 downloadManager.deleteModel()
+                            }
+                        }
+                        if (action.preference.backendPreference.backendName ==
+                            appPreferences.appLockEnabled.backendName) {
+                            viewModelScope.launch {
+                                eventsChannel.send(
+                                    SettingsEvent.ConfigureAppLock(action.preference.value)
+                                )
                             }
                         }
                     }

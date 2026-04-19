@@ -31,4 +31,6 @@ sealed interface SettingsEvent {
     data object ShowCompanionDiscoveryDialog : SettingsEvent
 
     data object RestartActivity : SettingsEvent
+
+    data class ConfigureAppLock(val enable: Boolean) : SettingsEvent
 }
