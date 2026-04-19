@@ -37,6 +37,7 @@ misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
 .claude/settings.local.json
+.claude/*.lock
 
 # Keystore files
 *.jks
