@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.5.0 (87)**, `compileSdk 36`, `targetSdk 35`, `minSdk 31`, JDK 21.
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.5.0 (88)**, `compileSdk 36`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000088`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -139,10 +139,10 @@ If you add a new file under `app/xr/...`, `app/tv/...`, `app/beam/...`, no Gradl
 ## Build Quirks
 
 - **Single application module** — `:app:unified` only. There is no `:app:xr` Gradle module; the directory exists for source staging only.
-- **Single flavor** — `libre`. Build types: `debug`, `staging` (release-derived, `.staging` suffix), `release`.
+- **Product flavors** — `libre` (universal: phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only). Build types: `debug`, `staging` (release-derived, `.staging` suffix), `release`. See [Play Track Bundles](#play-track-bundles) for which bundle goes to which track.
+- **Upstream modules only declare `libre`** — the `tv` flavor uses `matchingFallbacks += "libre"` so library dependencies resolve cleanly. If you ever add a new `:foo` module, remember to keep its single flavor named `libre` (or add `matchingFallbacks` / a `tv` flavor there too).
 - **Release is `isMinifyEnabled = false`** — XR system-extension callbacks under `com.android.extensions.xr.*` were crashing with `AbstractMethodError` in optimized builds. Until the androidx.xr / R8 interaction is fixed, do not flip this on without testing the entire spatial UI. If you must minify, the keep rules in `app/unified/proguard-rules.pro` are the starting point.
 - **ABI splits** — `arm64-v8a` and `armeabi-v7a` are split for APK builds, but **disabled when building bundles** to work around AGP 8.9.0 issue [#402800800](https://issuetracker.google.com/issues/402800800).
-- **No proprietary flavor** — Everything ships under `libre`.
 - **KSP incremental** — Sometimes goes stale during big refactors. If a clean build complains about generated Hilt classes, retry with `-Pksp.incremental=false`.
 
 ### Signing
@@ -171,11 +171,11 @@ Prebuilt `libass_jni.so` lives in `player/xr/src/main/jniLibs`. To rebuild from 
 `buildSrc/src/main/kotlin/Versions.kt` holds:
 
 ```kotlin
-const val APP_CODE = 87        // monotonically increasing integer
+const val APP_CODE = 88        // monotonically increasing integer
 const val APP_NAME = "2.5.0"   // semver
 ```
 
-Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject.
+Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject. `APP_CODE` is the `libre` bundle's versionCode; the `tv` flavor automatically derives `APP_CODE + 1_000_000` (see [Play Track Bundles](#play-track-bundles)), so bumping `APP_CODE` bumps both bundles.
 
 `./gradlew versionCatalogUpdate` updates `gradle/libs.versions.toml`. Always review `git diff gradle/libs.versions.toml` before committing — XR / Compose / Media3 patch bumps occasionally break the build.
 
@@ -442,6 +442,23 @@ User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoice
   -keep class com.android.extensions.xr.** { *; }
   -keep interface com.android.extensions.xr.** { *; }
   ```
+
+### Play Track Bundles
+
+Google Play splits delivery by form factor. We ship **two** AABs from the same source tree:
+
+| Flavor | Task | Leanback | versionCode | Play track(s) |
+|---|---|---|---|---|
+| `libre` | `./gradlew :app:unified:bundleLibreRelease` | `required="false"` | `APP_CODE` | phone / Galaxy XR / Beam Pro |
+| `tv` | `./gradlew :app:unified:bundleTvRelease` | `required="true"` | `APP_CODE + 1_000_000` | Android TV (Google TV Streamer, etc.) |
+
+Bundle outputs:
+- `app/unified/build/outputs/bundle/libreRelease/spatialfin-libre-release.aab`
+- `app/unified/build/outputs/bundle/tvRelease/spatialfin-tv-release.aab`
+
+**Hard rule — do not flip `android.software.leanback` to `required="true"` in the main `AndroidManifest.xml`.** It is a `${leanbackRequired}` manifest placeholder. `libre` leaves it `"false"` (installs on every form factor); `tv` overrides it to `"true"` via `manifestPlaceholders` in its flavor block. Making it unconditionally required would make the `libre` bundle install only on TV devices, silently breaking XR and Beam Pro. Play's TV track is the one place that *demands* it be required.
+
+Same rule for the `xrSpatialFeatureRequired` placeholder — default stays `"false"` unless you have a concrete reason to gate on XR capability.
 
 ---
 
