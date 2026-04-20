@@ -119,6 +119,27 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
+
+import androidx.compose.material.icons.rounded.Favorite
+
+import androidx.compose.material.icons.rounded.FavoriteBorder
+
+import androidx.compose.material.icons.rounded.CheckCircle
+
+import androidx.compose.material.icons.rounded.Check
+
+import androidx.compose.material.icons.rounded.Replay
+
+import androidx.compose.material.icons.rounded.DownloadDone
+
+import androidx.compose.material.icons.rounded.Download
+
+import androidx.compose.material.icons.rounded.Close
+
+import androidx.compose.material.icons.rounded.Pause
+
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
@@ -875,6 +896,7 @@ fun BeamShowScreen(
     val context = LocalContext.current
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
+    var showOverflow by rememberSaveable(showId) { mutableStateOf(false) }
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
@@ -938,42 +960,66 @@ fun BeamShowScreen(
                         eyebrow = "Series",
                         supportingLine = supportingLine,
                         metadata = metadata,
+                        onBack = onBack,
                     ) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             state.nextUp?.let { nextEpisode ->
-                                BeamPrimaryActionButton(
-                                    label = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
+                                androidx.compose.material3.FilledIconButton(
                                     onClick = { launchServerItem(context, nextEpisode) },
-                                )
-                                BeamSecondaryActionButton(
-                                    label = "SyncPlay",
-                                    onClick = {
-                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                            .createIntentForSpatialItem(
-                                                context = context,
-                                                item = nextEpisode,
-                                                openSyncPlayDialogOnStart = true,
-                                            )
-                                            ?.let(context::startActivity)
-                                    },
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                        contentDescription = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next"
+                                    )
+                                }
+                            }
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { viewModel.toggleFavorite() },
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = if (show.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
+                                    contentDescription = if (show.favorite) "Favorited" else "Favorite"
                                 )
                             }
-                            BeamSecondaryActionButton(
-                                label = if (show.favorite) "Favorited" else "Favorite",
-                                onClick = { viewModel.toggleFavorite() },
-                            )
-                            BeamSecondaryActionButton(
-                                label = if (show.played) "Watched" else "Mark watched",
+                            androidx.compose.material3.FilledTonalIconButton(
                                 onClick = { viewModel.togglePlayed() },
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = if (show.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
+                                    contentDescription = if (show.played) "Watched" else "Mark watched"
+                                )
+                            }
+                            BeamOverflowMenu(
+                                expanded = showOverflow,
+                                onExpandedChange = { showOverflow = it },
+                                extraItems = {
+                                    state.nextUp?.let { nextEpisode ->
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("SyncPlay") },
+                                            onClick = {
+                                                showOverflow = false
+                                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                                    .createIntentForSpatialItem(
+                                                        context = context,
+                                                        item = nextEpisode,
+                                                        openSyncPlayDialogOnStart = true,
+                                                    )
+                                                    ?.let(context::startActivity)
+                                            }
+                                        )
+                                    }
+                                    androidx.compose.material3.DropdownMenuItem(
+                                        text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show") },
+                                        onClick = {
+                                            showOverflow = false
+                                            showBulkDownloadDialog = true
+                                        }
+                                    )
+                                }
                             )
-                            BeamSecondaryActionButton(
-                                label = if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show",
-                                onClick = { showBulkDownloadDialog = true },
-                            )
-                            BeamSecondaryActionButton(label = "Back", onClick = onBack)
                         }
                     }
                 }
@@ -1042,6 +1088,7 @@ fun BeamSeasonScreen(
     val context = LocalContext.current
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
+    var showOverflow by rememberSaveable(seasonId) { mutableStateOf(false) }
 
     LaunchedEffect(seasonId) {
         viewModel.load(seasonId)
@@ -1088,24 +1135,47 @@ fun BeamSeasonScreen(
                 val season = state.season ?: return@BeamScaffoldBody
                 val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
                 item {
-                    BeamMediaFeatureCard(
+                    BeamDetailHeroCard(
                         item = season,
-                        actions = {
-                            if (season.canPlay) {
-                                BeamPrimaryActionButton(
-                                    label = if (season.playbackPositionTicks > 0L) "Resume" else "Play",
-                                    onClick = { launchServerItem(context, season) },
-                                )
-                            }
-                            if (downloadableEpisodes.isNotEmpty()) {
-                                BeamSecondaryActionButton(
-                                    label = if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season",
-                                    onClick = { showBulkDownloadDialog = true },
-                                )
-                            }
-                            BeamSecondaryActionButton(label = "Back", onClick = onBack)
+                        eyebrow = "Season",
+                        supportingLine = season.seriesName,
+                        metadata = buildList {
+                            if (season.indexNumber > 0) add("Season ${season.indexNumber}")
+                            season.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
                         },
-                    )
+                        onBack = onBack,
+                    ) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (season.canPlay) {
+                                androidx.compose.material3.FilledIconButton(
+                                    onClick = { launchServerItem(context, season) }
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                        contentDescription = if (season.playbackPositionTicks > 0L) "Resume" else "Play"
+                                    )
+                                }
+                            }
+                            BeamOverflowMenu(
+                                expanded = showOverflow,
+                                onExpandedChange = { showOverflow = it },
+                                extraItems = {
+                                    if (downloadableEpisodes.isNotEmpty()) {
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text(if (state.bulkDownload.isQueuing) "Queuing…" else "Download Season") },
+                                            onClick = {
+                                                showOverflow = false
+                                                showBulkDownloadDialog = true
+                                            }
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
                 if (state.episodes.isEmpty()) {
                     item { BeamEmptyCard("No episodes in this season.") }
@@ -1247,62 +1317,119 @@ fun BeamItemDetailScreen(
                         eyebrow = buildPrimaryBadge(itemData),
                         supportingLine = supportingLine,
                         metadata = metadata,
+                        onBack = onBack,
                     ) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             if (itemData.canPlay) {
-                                BeamPrimaryActionButton(
-                                    label = if (itemData.playbackPositionTicks > 0L) "Resume" else "Play",
-                                    onClick = { launchServerItem(context, itemData) },
-                                )
-                                BeamSecondaryActionButton(label = "From Start") {
-                                    launchServerItem(context = context, item = itemData, startFromBeginning = true)
+                                androidx.compose.material3.FilledIconButton(
+                                    onClick = { launchServerItem(context, itemData) }
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                        contentDescription = if (itemData.playbackPositionTicks > 0L) "Resume" else "Play"
+                                    )
                                 }
-                                BeamSecondaryActionButton(
-                                    label = "SyncPlay",
-                                    onClick = {
-                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                            .createIntentForSpatialItem(
-                                                context = context,
-                                                item = itemData,
-                                                openSyncPlayDialogOnStart = true,
-                                            )
-                                            ?.let(context::startActivity)
+                                androidx.compose.material3.FilledTonalIconButton(
+                                    onClick = { launchServerItem(context = context, item = itemData, startFromBeginning = true) }
+                                ) {
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                                        contentDescription = "From Start"
+                                    )
+                                }
+                            }
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { viewModel.toggleFavorite() }
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
+                                    contentDescription = if (itemData.favorite) "Favorited" else "Favorite"
+                                )
+                            }
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { viewModel.togglePlayed() }
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
+                                    contentDescription = if (itemData.played) "Watched" else "Mark watched"
+                                )
+                            }
+
+                            if (itemData.canPlay) {
+                                BeamDownloadActions(
+                                    item = itemData,
+                                    downloaderState = downloaderState,
+                                    onOpenOptions = { showDownloadDialog = true },
+                                    onCancelDownload = {
+                                        downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
+                                    },
+                                    onPauseDownload = {
+                                        downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
+                                    },
+                                    onResumeDownload = {
+                                        downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
+                                    },
+                                    onDeleteDownload = {
+                                        downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
                                     },
                                 )
-                                OutlinedButton(onClick = { showPlaybackOptions = true }) {
-                                    Text("Playback Options")
-                                }
                             }
-                            if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
-                                BeamPrimaryActionButton(
-                                    label = "Open Collection",
-                                    onClick = { openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {}) },
-                                )
-                            }
-                            if (itemData is SpatialFinEpisode) {
-                                BeamSecondaryActionButton(
-                                    label = "Go to series",
-                                    onClick = { onOpenShow(itemData.seriesId) },
-                                )
-                                BeamSecondaryActionButton(
-                                    label = "Go to season",
-                                    onClick = { onOpenSeason(itemData.seasonId) },
-                                )
-                            }
-                            BeamSecondaryActionButton(
-                                label = if (itemData.favorite) "Favorited" else "Favorite",
-                                onClick = { viewModel.toggleFavorite() },
-                            )
-                            BeamSecondaryActionButton(
-                                label = if (itemData.played) "Watched" else "Mark watched",
-                                onClick = { viewModel.togglePlayed() },
-                            )
+
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
+                                extraItems = {
+                                    if (itemData.canPlay) {
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("SyncPlay") },
+                                            onClick = {
+                                                showOverflow = false
+                                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                                    .createIntentForSpatialItem(
+                                                        context = context,
+                                                        item = itemData,
+                                                        openSyncPlayDialogOnStart = true,
+                                                    )
+                                                    ?.let(context::startActivity)
+                                            }
+                                        )
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Playback Options") },
+                                            onClick = {
+                                                showOverflow = false
+                                                showPlaybackOptions = true
+                                            }
+                                        )
+                                    }
+                                    if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Open Collection") },
+                                            onClick = {
+                                                showOverflow = false
+                                                openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
+                                            }
+                                        )
+                                    }
+                                    if (itemData is SpatialFinEpisode) {
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Go to series") },
+                                            onClick = {
+                                                showOverflow = false
+                                                onOpenShow(itemData.seriesId)
+                                            }
+                                        )
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Go to season") },
+                                            onClick = {
+                                                showOverflow = false
+                                                onOpenSeason(itemData.seasonId)
+                                            }
+                                        )
+                                    }
+                                },
                                 onRefresh = {
                                     viewModel.refreshMetadata()
                                     Toast.makeText(context, "Refreshing metadata…", Toast.LENGTH_SHORT).show()
@@ -1321,26 +1448,6 @@ fun BeamItemDetailScreen(
                                             "Share ${itemData.name}",
                                         )
                                     )
-                                },
-                            )
-                            BeamSecondaryActionButton(label = "Back", onClick = onBack)
-                        }
-                        if (itemData.canPlay) {
-                            BeamDownloadActions(
-                                item = itemData,
-                                downloaderState = downloaderState,
-                                onOpenOptions = { showDownloadDialog = true },
-                                onCancelDownload = {
-                                    downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
-                                },
-                                onPauseDownload = {
-                                    downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
-                                },
-                                onResumeDownload = {
-                                    downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
-                                },
-                                onDeleteDownload = {
-                                    downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
                                 },
                             )
                         }
@@ -1581,46 +1688,50 @@ private fun BeamDownloadActions(
     val isPaused = downloaderState.status == DownloadManager.STATUS_PAUSED
     val isFailed = downloaderState.status == DownloadManager.STATUS_FAILED
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        when {
-            isDownloaded -> {
-                FilledTonalButton(onClick = onDeleteDownload) {
-                    Text("Delete Download")
-                }
-            }
-            isPaused || isFailed -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = onResumeDownload) {
-                        Text("Resume Download")
-                    }
-                    FilledTonalButton(onClick = onCancelDownload) {
-                        Text("Cancel")
-                    }
-                }
-            }
-            isDownloading -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = onPauseDownload) {
-                        val pct = (downloaderState.progress * 100).toInt()
-                        Text(if (pct > 0) "Pause ($pct%)" else "Pause")
-                    }
-                    FilledTonalButton(onClick = onCancelDownload) {
-                        Text("Cancel")
-                    }
-                }
-            }
-            else -> {
-                FilledTonalButton(onClick = onOpenOptions) {
-                    Text("Download")
-                }
+    when {
+        isDownloaded -> {
+            androidx.compose.material3.FilledTonalIconButton(onClick = onDeleteDownload) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.DownloadDone,
+                    contentDescription = "Delete Download"
+                )
             }
         }
-        downloaderState.errorText?.let { error ->
-            Text(
-                text = error.asString(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
+        isPaused || isFailed -> {
+            androidx.compose.material3.FilledTonalIconButton(onClick = onResumeDownload) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Download,
+                    contentDescription = "Resume Download"
+                )
+            }
+            androidx.compose.material3.FilledTonalIconButton(onClick = onCancelDownload) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Close,
+                    contentDescription = "Cancel Download"
+                )
+            }
+        }
+        isDownloading -> {
+            androidx.compose.material3.FilledTonalIconButton(onClick = onPauseDownload) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Pause,
+                    contentDescription = "Pause Download"
+                )
+            }
+            androidx.compose.material3.FilledTonalIconButton(onClick = onCancelDownload) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Close,
+                    contentDescription = "Cancel Download"
+                )
+            }
+        }
+        else -> {
+            androidx.compose.material3.FilledTonalIconButton(onClick = onOpenOptions) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Rounded.Download,
+                    contentDescription = "Download"
+                )
+            }
         }
     }
 }
@@ -2460,6 +2571,7 @@ private fun BeamDetailHeroCard(
     eyebrow: String,
     supportingLine: String?,
     metadata: List<String>,
+    onBack: (() -> Unit)? = null,
     actions: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
@@ -2500,6 +2612,18 @@ private fun BeamDetailHeroCard(
                             )
                         )
             )
+            if (onBack != null) {
+                androidx.compose.material3.IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.padding(16.dp).align(Alignment.TopStart)
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+            }
             val stacked = LocalBeamWidth.current.isCompact
             val info: @Composable ColumnScope.() -> Unit = {
                 BeamBadge(text = eyebrow)
@@ -2825,12 +2949,13 @@ private fun openServerItem(
 private fun BeamOverflowMenu(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onRefresh: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
+    extraItems: @Composable ColumnScope.() -> Unit = {},
+    onRefresh: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
 ) {
     Box {
-        androidx.compose.material3.IconButton(onClick = { onExpandedChange(true) }) {
+        androidx.compose.material3.FilledTonalIconButton(onClick = { onExpandedChange(true) }) {
             androidx.compose.material3.Icon(
                 imageVector = androidx.compose.material.icons.Icons.Rounded.MoreVert,
                 contentDescription = "More actions",
@@ -2840,46 +2965,53 @@ private fun BeamOverflowMenu(
             expanded = expanded,
             onDismissRequest = { onExpandedChange(false) },
         ) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("Refresh metadata") },
-                onClick = {
-                    onExpandedChange(false)
-                    onRefresh()
-                },
-                leadingIcon = {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Rounded.Refresh,
-                        contentDescription = null,
-                    )
-                },
-            )
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("Share") },
-                onClick = {
-                    onExpandedChange(false)
-                    onShare()
-                },
-                leadingIcon = {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Rounded.Share,
-                        contentDescription = null,
-                    )
-                },
-            )
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                onClick = {
-                    onExpandedChange(false)
-                    onDelete()
-                },
-                leadingIcon = {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Rounded.Delete,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                },
-            )
+            extraItems()
+            if (onRefresh != null) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Refresh metadata") },
+                    onClick = {
+                        onExpandedChange(false)
+                        onRefresh()
+                    },
+                    leadingIcon = {
+                        androidx.compose.material3.Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Rounded.Refresh,
+                            contentDescription = null,
+                        )
+                    },
+                )
+            }
+            if (onShare != null) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Share") },
+                    onClick = {
+                        onExpandedChange(false)
+                        onShare()
+                    },
+                    leadingIcon = {
+                        androidx.compose.material3.Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Rounded.Share,
+                            contentDescription = null,
+                        )
+                    },
+                )
+            }
+            if (onDelete != null) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        onExpandedChange(false)
+                        onDelete()
+                    },
+                    leadingIcon = {
+                        androidx.compose.material3.Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Rounded.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                )
+            }
         }
     }
 }

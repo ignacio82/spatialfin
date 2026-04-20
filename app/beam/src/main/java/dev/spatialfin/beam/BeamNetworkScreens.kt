@@ -1,5 +1,23 @@
 package dev.spatialfin.beam
 
+// Fully-qualified Icons.* references below still require the extension
+// properties to be resolvable. The icons library defines them as
+// extension vals on Icons.Rounded / Icons.AutoMirrored.Rounded, so the
+// whole family has to be imported even when call sites spell out the
+// package path.
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -374,14 +392,19 @@ private fun BeamNetworkVideoCard(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onPlay) {
-                    Text("Play")
+                androidx.compose.material3.FilledIconButton(onClick = onPlay) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                        contentDescription = "Play"
+                    )
                 }
-                OutlinedButton(onClick = onPlay) {
-                    Text("Resume")
+                androidx.compose.material3.FilledTonalIconButton(onClick = onPlay) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                        contentDescription = "Resume"
+                    )
                 }
-            }
-        }
+            }        }
     }
 }
 

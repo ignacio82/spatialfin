@@ -1,5 +1,20 @@
 package dev.spatialfin.beam
 
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Share
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -225,7 +240,7 @@ fun BeamLocalMediaScreen(
                                 )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(
+                                androidx.compose.material3.FilledIconButton(
                                     onClick = {
                                         context.startActivity(
                                             BeamPlayerActivity.createIntentForLocalMedia(
@@ -236,9 +251,12 @@ fun BeamLocalMediaScreen(
                                         )
                                     }
                                 ) {
-                                    Text("Play")
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                        contentDescription = "Play"
+                                    )
                                 }
-                                OutlinedButton(
+                                androidx.compose.material3.FilledTonalIconButton(
                                     onClick = {
                                         context.startActivity(
                                             BeamPlayerActivity.createIntentForLocalMedia(
@@ -249,7 +267,10 @@ fun BeamLocalMediaScreen(
                                         )
                                     }
                                 ) {
-                                    Text("Play From Start")
+                                    androidx.compose.material3.Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                                        contentDescription = "Play From Start"
+                                    )
                                 }
                             }
                         }
