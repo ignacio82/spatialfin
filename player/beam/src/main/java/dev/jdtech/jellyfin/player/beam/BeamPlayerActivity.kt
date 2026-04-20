@@ -865,7 +865,7 @@ private fun BeamPlayerScreen(
                 )
             }
 
-            // Fladder-style pause overlay — title top-left, wall-clock + ETA top-right.
+            // Fladder-style pause overlay — logo or title top-left, wall-clock + ETA top-right.
             // Shown only when the full controller overlay is hidden so they don't stack.
             dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
                 visible = !isPlaying && !controlsVisible,
@@ -873,6 +873,16 @@ private fun BeamPlayerScreen(
                 subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
                 positionMs = currentPosition,
                 durationMs = duration,
+                logoSlot = uiState.currentItemLogoUri?.let { uri ->
+                    {
+                        coil3.compose.AsyncImage(
+                            model = uri,
+                            contentDescription = null,
+                            modifier = Modifier.heightIn(max = 72.dp).widthIn(max = 320.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        )
+                    }
+                },
             )
 
             VoiceOrbOverlay(

@@ -82,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -667,7 +668,7 @@ private fun TvPlayerScreen(
             )
         }
 
-        // Fladder-style pause overlay: title top-left, wall-clock + ETA top-right.
+        // Fladder-style pause overlay: logo or title top-left, wall-clock + ETA top-right.
         // Only shown when paused AND the full controller overlay is hidden, so the
         // two surfaces don't stack awkwardly.
         dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
@@ -680,6 +681,16 @@ private fun TvPlayerScreen(
             subtitleFontSize = androidx.compose.ui.unit.TextUnit(20f, androidx.compose.ui.unit.TextUnitType.Sp),
             clockFontSize = androidx.compose.ui.unit.TextUnit(28f, androidx.compose.ui.unit.TextUnitType.Sp),
             etaFontSize = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp),
+            logoSlot = uiState.currentItemLogoUri?.let { uri ->
+                {
+                    coil3.compose.AsyncImage(
+                        model = uri,
+                        contentDescription = null,
+                        modifier = Modifier.heightIn(max = 120.dp).widthIn(max = 460.dp),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+            },
         )
     }
 

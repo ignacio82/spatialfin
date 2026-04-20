@@ -50,6 +50,9 @@ fun PlayerPauseOverlay(
     subtitleFontSize: TextUnit = 14.sp,
     clockFontSize: TextUnit = 18.sp,
     etaFontSize: TextUnit = 14.sp,
+    /** Optional logo rendered top-left in place of the title text. Caller owns
+     *  image loading (Coil lives in platform modules, not in :core). */
+    logoSlot: (@Composable () -> Unit)? = null,
 ) {
     // Re-trigger composition once per minute so the wall-clock ticks while the
     // overlay is visible. Cheap — just flips a Long in remember.
@@ -78,15 +81,19 @@ fun PlayerPauseOverlay(
                     .padding(contentPadding)
         ) {
             Column(modifier = Modifier.align(Alignment.TopStart)) {
-                androidx.compose.foundation.text.BasicText(
-                    text = title,
-                    style =
-                        TextStyle(
-                            color = Color.White,
-                            fontSize = titleFontSize,
-                            fontWeight = FontWeight.Bold,
-                        ),
-                )
+                if (logoSlot != null) {
+                    logoSlot()
+                } else {
+                    androidx.compose.foundation.text.BasicText(
+                        text = title,
+                        style =
+                            TextStyle(
+                                color = Color.White,
+                                fontSize = titleFontSize,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                    )
+                }
                 if (!subtitle.isNullOrBlank()) {
                     androidx.compose.foundation.text.BasicText(
                         text = subtitle,

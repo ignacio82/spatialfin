@@ -398,6 +398,12 @@ class PlaylistManager @Inject internal constructor(
                 is SpatialFinMovie -> (images.backdrop ?: images.primary)?.toString()
                 else -> null
             },
+            logoImageUri = when (this) {
+                is SpatialFinEpisode -> (images.showLogo ?: images.logo)?.toString()
+                is SpatialFinMovie -> images.logo?.toString()
+                is dev.jdtech.jellyfin.models.SpatialFinShow -> images.logo?.toString()
+                else -> null
+            },
             seriesName = if (this is SpatialFinEpisode) seriesName else null,
             seriesId = if (this is SpatialFinEpisode) seriesId else null,
         )

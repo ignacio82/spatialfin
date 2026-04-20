@@ -28,6 +28,8 @@ data class PlayerItem(
     val officialRating: String? = null,
     /** Episode/movie backdrop URI string for next-up cards (null for non-visual items). */
     val backdropImageUri: String? = null,
+    /** Show/movie logo URI string used by the pause overlay when available. */
+    val logoImageUri: String? = null,
     /** Series name for episodes, used in next-up panel display. */
     val seriesName: String? = null,
     val seriesId: UUID? = null,
