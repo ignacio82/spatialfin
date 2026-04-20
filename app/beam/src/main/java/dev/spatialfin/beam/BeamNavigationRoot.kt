@@ -1,5 +1,10 @@
 package dev.spatialfin.beam
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -113,12 +119,11 @@ private val primaryTabs =
     listOf(
         BeamTab(BeamRoute.Home, "Home", Icons.Rounded.Home),
         BeamTab(BeamRoute.Search, "Search", Icons.Rounded.Search),
-        BeamTab(BeamRoute.Local, "Local", Icons.Rounded.Folder),
-        BeamTab(BeamRoute.Network, "Network", Icons.Rounded.Lan),
         BeamTab(BeamRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
         BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
-        BeamTab(BeamRoute.Servers, "Servers", Icons.Rounded.Dns),
         BeamTab(BeamRoute.Users, "Users", Icons.Rounded.People),
+        BeamTab(BeamRoute.Local, "Local", Icons.Rounded.Folder),
+        BeamTab(BeamRoute.Network, "Network", Icons.Rounded.Lan),
     )
 
 val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
@@ -135,6 +140,28 @@ fun BeamNavigationRoot(
     val voiceService = remember { BeamVoiceService(context) }
     val voiceState by voiceService.state.collectAsStateWithLifecycle()
     val voicePartial by voiceService.partialTranscript.collectAsStateWithLifecycle()
+
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val micPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasMicPermission = granted
+            if (granted) {
+                voiceService.resetState()
+                voiceService.startListening { transcript ->
+                    if (transcript.isNotBlank()) {
+                        voiceQuery = transcript
+                        currentRoute = BeamRoute.Search
+                    }
+                    voiceService.resetState()
+                }
+            }
+        }
 
     DisposableEffect(Unit) { onDispose { voiceService.destroy() } }
 
@@ -239,27 +266,69 @@ fun BeamNavigationRoot(
             }
             Scaffold(
                 containerColor = Color.Transparent,
+                floatingActionButton = {
+                    if (showPrimaryNavigation) {
+                        androidx.compose.material3.FloatingActionButton(
+                            onClick = {
+                                if (hasMicPermission) {
+                                    if (voiceState == BeamVoiceState.LISTENING) {
+                                        voiceService.stopListening()
+                                    } else {
+                                        voiceService.resetState()
+                                        voiceService.startListening { transcript ->
+                                            if (transcript.isNotBlank()) {
+                                                voiceQuery = transcript
+                                                currentRoute = BeamRoute.Search
+                                            }
+                                            voiceService.resetState()
+                                        }
+                                    }
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+                            elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+                                defaultElevation = 1.dp,
+                                pressedElevation = 2.dp,
+                                hoveredElevation = 2.dp,
+                                focusedElevation = 1.dp
+                            ),
+                            modifier = Modifier.height(52.dp).widthIn(min = 52.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = if (voiceState == BeamVoiceState.LISTENING) 16.dp else 0.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Mic,
+                                    contentDescription = "Voice Assistant",
+                                    tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                androidx.compose.animation.AnimatedVisibility(visible = voiceState == BeamVoiceState.LISTENING) {
+                                    Row(modifier = Modifier.padding(start = 8.dp)) {
+                                        Text(
+                                            text = if (voicePartial.isNotBlank()) voicePartial else "Listening...",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color(0xFF4FC3F7),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            modifier = Modifier.widthIn(max = 200.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
                 bottomBar = {
                     if (useBottomNav) {
                         BeamBottomNavigationRow(
                             currentRoute = currentRoute,
                             isOfflineMode = state.isOfflineMode,
                             onNavigate = { currentRoute = it },
-                            voiceState = voiceState,
-                            onVoiceClick = {
-                                if (voiceState == BeamVoiceState.LISTENING) {
-                                    voiceService.stopListening()
-                                } else {
-                                    voiceService.resetState()
-                                    voiceService.startListening { transcript ->
-                                        if (transcript.isNotBlank()) {
-                                            voiceQuery = transcript
-                                            currentRoute = BeamRoute.Search
-                                        }
-                                        voiceService.resetState()
-                                    }
-                                }
-                            },
                         )
                     }
                 },
@@ -632,8 +701,6 @@ private fun BeamBottomNavigationRow(
     currentRoute: BeamRoute,
     isOfflineMode: Boolean = false,
     onNavigate: (BeamRoute) -> Unit,
-    voiceState: BeamVoiceState = BeamVoiceState.IDLE,
-    onVoiceClick: () -> Unit = {},
 ) {
     val visibleTabs = if (isOfflineMode) {
         primaryTabs.filter { it.route != BeamRoute.Home && it.route != BeamRoute.Search }
@@ -682,15 +749,6 @@ private fun BeamBottomNavigationRow(
                         )
                     }
                 }
-            }
-            IconButton(onClick = onVoiceClick) {
-                Icon(
-                    imageVector = Icons.Rounded.Mic,
-                    contentDescription = "Voice",
-                    modifier = Modifier.size(22.dp),
-                    tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7)
-                           else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
