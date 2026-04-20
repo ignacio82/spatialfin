@@ -266,20 +266,25 @@ class SettingsViewModel @Inject constructor(
                                                         }
                                                     },
                                                 ),
+                                                // Subtitle size and libass rendering are general
+                                                // (non-XR-specific) preferences — Beam and TV have
+                                                // exposed them from day one through their own
+                                                // hand-rolled surfaces. Making them part of the
+                                                // declarative tree for every device type is the
+                                                // first step toward collapsing those duplicate
+                                                // surfaces onto a single source of truth.
                                                 PreferenceIntInput(
                                                     nameStringResource = R.string.xr_subtitle_size,
                                                     descriptionStringRes = R.string.xr_subtitle_size_summary,
                                                     backendPreference = appPreferences.xrSubtitleSize,
-                                                    supportedDeviceTypes = listOf(DeviceType.XR),
                                                 ),
                                                 PreferenceSelect(
                                                     nameStringResource = R.string.libass_subtitle_usage,
                                                     descriptionStringRes = R.string.libass_subtitle_usage_summary,
                                                     backendPreference = appPreferences.libassSubtitleUsage,
                                                     options = R.array.libass_subtitle_usage_options,
-                                                     optionValues = R.array.libass_subtitle_usage_values,
-                                                     supportedDeviceTypes = listOf(DeviceType.XR),
-                                                 ),
+                                                    optionValues = R.array.libass_subtitle_usage_values,
+                                                ),
                                                  @Suppress("UNCHECKED_CAST")
                                                  PreferenceSelect(
                                                      nameStringResource = R.string.player_max_bitrate,
