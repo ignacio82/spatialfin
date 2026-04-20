@@ -51,7 +51,15 @@ class LlmDownloadManager @Inject constructor(
     private val tempFile = File(modelDir, "$MODEL_FILE_NAME.tmp")
 
     init {
-        if (modelFile.exists() && modelFile.length() > 0) {
+        // Dev override: a file at /data/local/tmp/<MODEL_FILE_NAME> takes
+        // precedence. Lets an engineer push a pre-built NPU variant from a
+        // workstation with `adb push` and test it without touching the
+        // HTTP download flow.
+        val devOverride = File("/data/local/tmp", MODEL_FILE_NAME)
+        if (devOverride.exists() && devOverride.length() > 0) {
+            Timber.i("LlmDownloadManager: using /data/local/tmp override %s (%d bytes)", devOverride.absolutePath, devOverride.length())
+            _downloadState.value = DownloadState.Ready(devOverride)
+        } else if (modelFile.exists() && modelFile.length() > 0) {
             _downloadState.value = DownloadState.Ready(modelFile)
         }
     }
