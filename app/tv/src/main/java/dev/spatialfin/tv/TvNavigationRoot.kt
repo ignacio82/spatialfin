@@ -2065,6 +2065,10 @@ private fun TvHeroButton(
             else -> Color.White
         }
 
+    // Modifier.clickable already registers focus + key handling on TV (DPAD_CENTER
+    // triggers onClick). Stacking an extra Modifier.focusable() on top creates a
+    // second focus target that ate the first OK press, so users had to press OK
+    // twice — same bug the Card(onClick) comment warns about.
     Box(
         modifier =
             modifier
@@ -2077,7 +2081,6 @@ private fun TvHeroButton(
                     shape = RoundedCornerShape(999.dp),
                 )
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable()
                 .clickable(onClick = onClick)
                 .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
@@ -2274,7 +2277,6 @@ private fun TvCastCard(
             .width(140.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
             .clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
