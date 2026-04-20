@@ -41,6 +41,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Replay
@@ -150,6 +151,7 @@ private enum class TvRoute {
     Person,
     Companion,
     Settings,
+    Users,
 }
 
 private data class TvNavItem(
@@ -347,6 +349,11 @@ fun TvNavigationRoot(
                                 serverName = homeState.server?.name,
                                 onOpenCompanion = { currentRoute = TvRoute.Companion },
                                 onOpenSearch = { currentRoute = TvRoute.Search },
+                                onOpenUsers = { currentRoute = TvRoute.Users },
+                            )
+                            TvRoute.Users -> TvUsersScreen(
+                                onBack = { currentRoute = TvRoute.Settings },
+                                onUserSwitched = { currentRoute = TvRoute.Home },
                             )
                             TvRoute.Companion -> TvCompanionScreen(
                                 onBack = { currentRoute = TvRoute.Settings },
@@ -1070,6 +1077,7 @@ private fun TvSettingsScreen(
     serverName: String?,
     onOpenCompanion: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenUsers: () -> Unit,
 ) {
     val companionConfigured = tvCompanionConfigured(appPreferences)
 
@@ -1122,8 +1130,161 @@ private fun TvSettingsScreen(
                     modifier = Modifier.weight(1f),
                     onClick = onOpenSearch,
                 )
+                TvActionTile(
+                    title = "Switch user",
+                    body = "Pick a different Jellyfin account for this TV without re-entering credentials.",
+                    icon = Icons.Rounded.People,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenUsers,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun TvUsersScreen(
+    onBack: () -> Unit,
+    onUserSwitched: () -> Unit,
+    viewModel: dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel = hiltViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.loadUsers() }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            if (event is dev.jdtech.jellyfin.setup.presentation.users.UsersEvent.NavigateToHome) {
+                onUserSwitched()
+            }
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        contentPadding = PaddingValues(bottom = 36.dp),
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                TvHeroButton(
+                    label = "Back",
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    primary = false,
+                    onClick = onBack,
+                )
+            }
+        }
+        item {
+            TvPageHeaderCard(
+                title = "Switch user",
+                body = state.serverName?.let { "Connected to $it" }
+                    ?: "Choose a user to continue.",
+            )
+        }
+        if (state.users.isEmpty() && state.publicUsers.isEmpty()) {
+            item {
+                TvPlaceholderScreen(
+                    title = "No users",
+                    body = "No saved or public users are available for this server yet.",
+                )
+            }
+        } else {
+            item {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    state.users.forEach { user ->
+                        TvUserCard(
+                            name = user.name,
+                            role = "Saved user",
+                            avatarUri = dev.jdtech.jellyfin.core.presentation.components
+                                .userPrimaryImageUri(state.serverAddress, user.id),
+                            onClick = {
+                                viewModel.onAction(
+                                    dev.jdtech.jellyfin.setup.presentation.users.UsersAction.OnUserClick(user.id),
+                                )
+                            },
+                        )
+                    }
+                    state.publicUsers.forEach { user ->
+                        TvUserCard(
+                            name = user.name,
+                            role = "Public user",
+                            avatarUri = dev.jdtech.jellyfin.core.presentation.components
+                                .userPrimaryImageUri(state.serverAddress, user.id),
+                            onClick = {
+                                viewModel.onAction(
+                                    dev.jdtech.jellyfin.setup.presentation.users.UsersAction.OnUserClick(user.id),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvUserCard(
+    name: String,
+    role: String,
+    avatarUri: android.net.Uri?,
+    onClick: () -> Unit,
+) {
+    var isFocused by remember(name) { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        animationSpec = tween(durationMillis = 120),
+        targetValue = if (isFocused) 1.05f else 1f,
+        label = "userCardScale",
+    )
+    val glow = MaterialTheme.colorScheme.primary
+    Column(
+        modifier = Modifier
+            .width(180.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .ultrachromicFocus(isFocused, scale, RoundedCornerShape(20.dp), glow)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(128.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color(0xFF1A2433)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (avatarUri != null) {
+                AsyncImage(
+                    model = avatarUri,
+                    contentDescription = name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Text(
+                    text = name.take(1).uppercase(),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Text(
+            text = name,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = role,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFB8C2CE),
+        )
     }
 }
 
