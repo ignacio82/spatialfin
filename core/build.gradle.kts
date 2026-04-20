@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.litertlm.android)
+    implementation(libs.mlkit.genai.prompt)
     implementation(libs.tflite.gpu)
     implementation(libs.jellyfin.core)
     implementation(libs.material)

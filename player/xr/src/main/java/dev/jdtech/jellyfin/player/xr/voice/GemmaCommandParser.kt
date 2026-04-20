@@ -1,8 +1,7 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
-import dev.jdtech.jellyfin.core.llm.LlmChatModelHelper
 import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
-import dev.jdtech.jellyfin.core.llm.LlmModelInstance
+import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
@@ -15,7 +14,7 @@ import timber.log.Timber
  * Dedicated parser that uses a private Gemma conversation to map voice transcripts
  * into structured JSON commands.
  */
-class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
+class GemmaCommandParser(private val engine: VoiceAiEngine) {
 
     suspend fun parse(
         transcript: String,
@@ -29,8 +28,7 @@ class GemmaCommandParser(private val llmInstance: LlmModelInstance) {
 
         prompts.forEachIndexed { index, prompt ->
             try {
-                val responseText = LlmChatModelHelper.runInference(
-                    instance = llmInstance,
+                val responseText = engine.runInference(
                     prompt = prompt,
                     profile = LlmInferenceProfile.COMMAND,
                 )

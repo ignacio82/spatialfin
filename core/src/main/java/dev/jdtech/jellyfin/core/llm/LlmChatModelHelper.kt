@@ -65,6 +65,7 @@ object LlmChatModelHelper {
     private data class BackendCacheState(
         val lastSuccessfulBackend: String? = null,
         val npuUnsupported: Boolean = false,
+        val skipNpuForModel: Boolean = false,
     )
 
     @OptIn(ExperimentalApi::class)
@@ -130,7 +131,13 @@ object LlmChatModelHelper {
         // NPU requires nativeLibraryDir so LiteRT can locate the vendor delegate .so.
         // Without it the NPU backend throws "TF_LITE_AUX not found in the model".
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        val cacheState = readBackendCache(context, modelPath)
+        // Models we know don't ship NPU subgraphs — skip the attempt entirely.
+        // Today that's every Gemma 4 variant on the litert-community bucket; the
+        // LiteRT-LM NPU path is Gemma3-1B-IT only + Qualcomm/MediaTek SoCs.
+        val modelName = File(modelPath).name
+        val skipNpu = modelName.contains("gemma-4", ignoreCase = true) ||
+            modelName.contains("gemma4", ignoreCase = true)
+        val cacheState = readBackendCache(context, modelPath).copy(skipNpuForModel = skipNpu)
         val backends =
             buildBackendOrder(cacheState, nativeLibDir).map { (name, backend) ->
                 name to { tryBackend(name, backend) }
@@ -255,7 +262,15 @@ object LlmChatModelHelper {
     ): List<Pair<String, Backend>> {
         val defaults =
             buildList {
-                if (!cacheState.npuUnsupported) {
+                // Only attempt NPU for models that carry an NPU subgraph. The
+                // `gemma-4-E2B-it.litertlm` file we ship from litert-community
+                // was built with only GPU/CPU delegate graphs (LiteRT-LM
+                // issue #1915), so attempting NPU always fails with
+                // "TF_LITE_AUX not found in the model" and we pay the cost
+                // of a failed init. Skip entirely. On Pixel devices the
+                // fast path is AICore (Gemini Nano) through
+                // AICoreModelHelper, not LiteRT NPU.
+                if (!cacheState.npuUnsupported && !cacheState.skipNpuForModel) {
                     add("NPU" to Backend.NPU(nativeLibraryDir = nativeLibDir))
                 }
                 add("GPU" to Backend.GPU())

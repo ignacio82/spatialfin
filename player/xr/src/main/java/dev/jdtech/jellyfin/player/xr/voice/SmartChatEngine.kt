@@ -1,10 +1,9 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
 import android.graphics.Bitmap
-import dev.jdtech.jellyfin.core.llm.LlmChatModelHelper
 import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
-import dev.jdtech.jellyfin.core.llm.LlmModelInstance
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -42,7 +41,7 @@ class SmartChatEngine(
     val modelManager: LlmModelManager,
     private val repository: JellyfinRepository,
 ) {
-    private val llmInstance: LlmModelInstance?
+    private val llmInstance: VoiceAiEngine?
         get() = modelManager.instance
     private val mediaSkillRegistry = MediaSkillRegistry(repository, appPreferences)
 
@@ -143,8 +142,7 @@ class SmartChatEngine(
                     coroutineScope {
                         val inferenceJob = launch {
                             try {
-                                val fullResult = LlmChatModelHelper.runInference(
-                                    instance = currentInstance,
+                                val fullResult = currentInstance.runInference(
                                     prompt = recapPrompt,
                                     images = emptyList(),
                                     profile = LlmInferenceProfile.CHAT,
@@ -251,12 +249,11 @@ class SmartChatEngine(
                 try {
                     val currentInstance = llmInstance!!
                     val responseText = withTimeoutOrNull(45_000L) {
-                        LlmChatModelHelper.runInference(
-                            instance = currentInstance,
+                        currentInstance.runInference(
                             prompt = prompt,
                             images = visualContexts,
                             profile = LlmInferenceProfile.CHAT,
-                            onToken = { partial -> 
+                            onToken = { partial ->
                                 onTokenStream?.invoke(partial)
                             },
                         )

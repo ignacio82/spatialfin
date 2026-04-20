@@ -8,23 +8,33 @@ import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.settings.domain.llm.ModelState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * App-wide singleton that manages the LiteRT LM engine lifecycle.
+ * App-wide singleton that owns the on-device voice AI engine lifecycle.
  *
- * Watches [LlmDownloadManager.downloadState] and auto-initialises the engine as soon as the model
- * file is ready. Once initialized, the engine instance is available to any screen via
- * [instance] — not just the XR player.
+ * Previously this only managed LiteRT-LM. It now probes [AICoreModelHelper] on
+ * start-up and prefers Google's system Gemini Nano (AICore) when the device
+ * supports it — the fast path on Pixel 10 Pro and other AICore-capable
+ * devices. LiteRT remains the universal fallback for devices that don't ship
+ * AICore (older Pixels, non-Samsung non-Pixel, etc.).
  *
- * State is also pushed back to [LlmDownloadManager.modelState] so that [SettingsViewModel]
- * (which lives in :settings and cannot depend on :core) can react without a circular dependency.
+ * Surface area for consumers:
+ *   - [engine]: the active [VoiceAiEngine] (AICore or LiteRT) once something
+ *     is ready. Null while still probing or if nothing is usable.
+ *   - [aiCoreStatus]: live AICore probe/download/warm-up state, used by the
+ *     Settings UI.
+ *   - [modelState]: forwarded LiteRT state flow — still exposed so the LiteRT
+ *     management UI keeps working.
  */
 @Singleton
 class LlmModelManager @Inject constructor(
@@ -34,40 +44,129 @@ class LlmModelManager @Inject constructor(
 ) {
     val modelState: StateFlow<ModelState> = downloadManager.modelState
 
-    /** The live engine instance; null if not yet initialized. */
-    @Volatile
-    var instance: LlmModelInstance? = null
-        private set
+    private val _aiCoreStatus = MutableStateFlow<AICoreStatus>(AICoreStatus.Unknown)
+    val aiCoreStatus: StateFlow<AICoreStatus> = _aiCoreStatus.asStateFlow()
+
+    private val _engine = MutableStateFlow<VoiceAiEngine?>(null)
+    val engine: StateFlow<VoiceAiEngine?> = _engine.asStateFlow()
+
+    /** Direct reference to the current engine, null while nothing is ready. */
+    val instance: VoiceAiEngine? get() = _engine.value
+
+    /**
+     * Legacy accessor returning the raw LiteRT [LlmModelInstance] if the
+     * active backend is LiteRT. Lets existing XR voice callers that still
+     * bind to [LlmModelInstance] keep working while they migrate.
+     */
+    @Deprecated("Use engine: StateFlow<VoiceAiEngine?> instead.", ReplaceWith("engine.value"))
+    val literRtInstance: LlmModelInstance?
+        get() = (_engine.value as? LiteRtEngine)?.rawInstance
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var aiCoreDownloadJob: Job? = null
 
     init {
+        scope.launch { probeAiCoreAndActivate() }
         scope.launch {
             downloadManager.downloadState.collect { downloadState ->
+                // Only fall back to LiteRT init when AICore is not the active
+                // engine. If AICore is ready we leave the LiteRT model file on
+                // disk but skip engine init — saves memory + startup time.
+                if (_engine.value?.backendKind == VoiceAiBackend.AICORE) return@collect
                 if (downloadState is DownloadState.Ready &&
                     modelState.value.let { it is ModelState.Idle || it is ModelState.Error }) {
-                    initializeEngine(downloadState.file.absolutePath)
+                    initializeLiteRtEngine(downloadState.file.absolutePath)
                 }
             }
         }
     }
 
     /**
-     * Ensures the engine is initialized. Safe to call from any coroutine context.
-     * Returns immediately if already ready or initializing.
+     * Ensure *some* on-device engine is ready. Called by voice entry points
+     * (e.g. `modelManager.ensureInitialized(); modelManager.instance?.runInference(...)`)
+     * just before running a prompt. Returns promptly when a backend is
+     * already active.
      */
     suspend fun ensureInitialized() {
+        if (_engine.value != null) return
+        // Prefer AICore — re-probe in case the app was backgrounded during
+        // a previous probe or the device state changed.
+        val aiCore = AICoreModelHelper.checkStatus(context)
+        _aiCoreStatus.value = aiCore
+        if (aiCore is AICoreStatus.Ready) {
+            activateAiCoreEngine()
+            return
+        }
         val downloadState = downloadManager.downloadState.value
-        if (downloadState !is DownloadState.Ready) return
-        if (modelState.value.let { it is ModelState.Ready || it is ModelState.Initializing }) return
-        initializeEngine(downloadState.file.absolutePath)
+        if (downloadState is DownloadState.Ready &&
+            modelState.value.let { it is ModelState.Ready || it is ModelState.Initializing }) {
+            // LiteRT already initializing — wait on the existing collector.
+            return
+        }
+        if (downloadState is DownloadState.Ready) {
+            initializeLiteRtEngine(downloadState.file.absolutePath)
+        }
     }
 
-    private suspend fun initializeEngine(modelPath: String) {
-        downloadManager.updateModelState(ModelState.Initializing)
-        Timber.i("LlmModelManager: initializing engine from %s", modelPath)
+    /**
+     * Kick an AICore feature-model download. Safe to call regardless of
+     * current state: if AICore is already Ready this is a no-op.
+     */
+    fun downloadAiCoreFeature() {
+        aiCoreDownloadJob?.cancel()
+        aiCoreDownloadJob = scope.launch {
+            var lastTotal = 0L
+            AICoreModelHelper.downloadFeature(context).collect { status ->
+                val normalised = when (status) {
+                    is AICoreStatus.Downloading -> {
+                        if (status.totalBytes > 0) lastTotal = status.totalBytes
+                        val effectiveTotal = lastTotal.takeIf { it > 0 } ?: 0L
+                        val progress = if (effectiveTotal > 0) {
+                            (status.bytesDownloaded.toFloat() / effectiveTotal).coerceIn(0f, 1f)
+                        } else 0f
+                        AICoreStatus.Downloading(progress, status.bytesDownloaded, effectiveTotal)
+                    }
+                    else -> status
+                }
+                _aiCoreStatus.value = normalised
+                if (normalised is AICoreStatus.Warming) {
+                    val warmed = AICoreModelHelper.warmup(context)
+                    _aiCoreStatus.value = warmed
+                    if (warmed is AICoreStatus.Ready) activateAiCoreEngine()
+                } else if (normalised is AICoreStatus.Error) {
+                    Timber.w("AICore: download reached terminal error — %s", normalised.message)
+                }
+            }
+        }
+    }
 
-        // Log a heartbeat every 15 s so the log shows we're not stuck
+    private suspend fun probeAiCoreAndActivate() {
+        val status = AICoreModelHelper.checkStatus(context)
+        _aiCoreStatus.value = status
+        Timber.i("AICore: initial status=%s", status)
+        if (status is AICoreStatus.Ready) {
+            activateAiCoreEngine()
+        }
+    }
+
+    private fun activateAiCoreEngine() {
+        val previous = _engine.value
+        if (previous?.backendKind == VoiceAiBackend.AICORE) return
+        _engine.value = AICoreEngine(context)
+        _aiCoreStatus.value = AICoreStatus.Ready
+        // Push the LiteRT "backend name" preference so the UI reflects the
+        // currently-active engine without having to reach for both flows.
+        appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, "Gemini Nano (AICore)")
+        // If a prior LiteRT engine was active, tear it down — we'd rather not
+        // keep two on-device LLMs warm in memory.
+        if (previous is LiteRtEngine) previous.close()
+        Timber.i("AICore: engine activated")
+    }
+
+    private suspend fun initializeLiteRtEngine(modelPath: String) {
+        downloadManager.updateModelState(ModelState.Initializing)
+        Timber.i("LlmModelManager: initializing LiteRT engine from %s", modelPath)
+
         val heartbeat = scope.launch {
             var elapsed = 0L
             while (true) {
@@ -81,15 +180,14 @@ class LlmModelManager @Inject constructor(
             val newInstance = LlmChatModelHelper.initializeEngine(context, modelPath)
             heartbeat.cancel()
             if (newInstance != null) {
-                // Close any existing instance before replacing it.
-                instance?.let { LlmChatModelHelper.close(it) }
-                instance = newInstance
+                val previous = _engine.value
+                if (previous is LiteRtEngine) previous.close()
+                val litertEngine = LiteRtEngine(newInstance)
+                _engine.value = litertEngine
                 downloadManager.updateModelState(ModelState.Ready(newInstance.backendName))
 
-                // Always store the actual backend so settings reflects current hardware capability.
                 val previousBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend)
                 appPreferences.setValue(appPreferences.voiceAssistantGemmaBackend, newInstance.backendName)
-                // Auto-enable/disable only on first init (or if backend was previously unknown).
                 if (previousBackend == "Requires Model" || previousBackend == "Unknown" || previousBackend == "CPU") {
                     if (newInstance.backendName == "CPU") {
                         appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, false)

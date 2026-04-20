@@ -41,6 +41,8 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import dev.jdtech.jellyfin.core.llm.AICoreStatus
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.settings.domain.llm.ModelState
@@ -79,6 +81,7 @@ import kotlinx.coroutines.launch
 @InstallIn(SingletonComponent::class)
 internal interface BeamLlmEntryPoint {
     fun llmDownloadManager(): LlmDownloadManager
+    fun llmModelManager(): LlmModelManager
 }
 
 /**
@@ -251,15 +254,18 @@ fun BeamSettingsScreen(
     }
     var loggingEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.loggingEnabled)) }
     val context = LocalContext.current
-    val llmDownloadManager = remember(context) {
+    val beamLlmEntryPoint = remember(context) {
         EntryPointAccessors.fromApplication(
             context.applicationContext,
             BeamLlmEntryPoint::class.java,
-        ).llmDownloadManager()
+        )
     }
+    val llmDownloadManager = remember(beamLlmEntryPoint) { beamLlmEntryPoint.llmDownloadManager() }
+    val llmModelManager = remember(beamLlmEntryPoint) { beamLlmEntryPoint.llmModelManager() }
     val llmDownloadScope = rememberCoroutineScope()
     val llmDownloadState by llmDownloadManager.downloadState.collectAsStateWithLifecycle()
     val llmModelState by llmDownloadManager.modelState.collectAsStateWithLifecycle()
+    val aiCoreStatus by llmModelManager.aiCoreStatus.collectAsStateWithLifecycle()
     val appLockManager = remember(context) { AppLockManager.from(context) }
     val appLockScope = rememberCoroutineScope()
     var appLockMode by rememberSaveable {
@@ -745,12 +751,19 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    // On-device Gemma via LiteRT-LM. The runtime tries NPU → GPU →
-                    // CPU and is device-agnostic (see core/llm/LlmChatModelHelper.kt);
-                    // on a Pixel with a Tensor NPU the engine will run there once the
-                    // .litertlm model lands on disk. The dedicated composable owns the
-                    // full lifecycle — download button, progress bar, active-backend
-                    // label, delete button — instead of hiding it behind a switch.
+                    // On-device AI. Two backends are supported:
+                    //  - AICore (Google's system Gemini Nano) — fast path on
+                    //    Pixel 10 Pro and other devices with AICore.
+                    //  - LiteRT-LM (our bundled Gemma 4 E2B .litertlm) — the
+                    //    universal fallback; NPU attempt is skipped because
+                    //    the litert-community Gemma 4 archive ships only
+                    //    GPU/CPU subgraphs, so we go straight to GPU.
+                    // AICore shows only on supported hardware so older devices
+                    // aren't presented with a disabled row.
+                    BeamAiCoreManagementCard(
+                        status = aiCoreStatus,
+                        onDownload = { llmModelManager.downloadAiCoreFeature() },
+                    )
                     BeamGemmaManagementCard(
                         downloadManager = llmDownloadManager,
                         downloadScope = llmDownloadScope,
@@ -1030,10 +1043,11 @@ private fun BeamGemmaManagementCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("LiteRT Gemma", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("LiteRT Gemma (fallback)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "On-device AI for voice commands. Requires a 2.6 GB model download. " +
-                    "Runs on the Tensor NPU when available (Pixel 10 Pro and similar), otherwise GPU or CPU.",
+                "Universal fallback when AICore is unavailable. Downloads a 2.6 GB " +
+                    "Gemma 4 E2B model and runs it on GPU (the model ships without NPU " +
+                    "subgraphs, so LiteRT can't use the Tensor NPU on Pixel — AICore above does).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1161,4 +1175,116 @@ private fun GemmaErrorState(message: String, onRetry: () -> Unit) {
             Text("Retry")
         }
     }
+}
+
+/**
+ * Gemini Nano via AICore — the fast path on Pixel 10 Pro and other devices
+ * that ship Google's on-device GenAI service. When the device reports
+ * `FeatureStatus.UNAVAILABLE` we hide the card entirely instead of showing
+ * a greyed-out row, so older hardware doesn't get cluttered UI.
+ *
+ * Feature-model download is managed end-to-end by Google Play Services — our
+ * UI only surfaces its progress and lets the user opt in. There is no
+ * "delete model" action because we don't own the file; AICore reclaims disk
+ * when the user clears storage for Google Play Services.
+ */
+@Composable
+private fun BeamAiCoreManagementCard(
+    status: AICoreStatus,
+    onDownload: () -> Unit,
+) {
+    // Hide the card entirely for unsupported hardware — no point showing a
+    // greyed-out option a user can never reach.
+    if (status is AICoreStatus.Unavailable) return
+    if (status is AICoreStatus.Unknown) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "Gemini Nano (AICore)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Runs Google's on-device Gemini Nano through AICore — the fastest path on " +
+                    "Pixel and other AICore-capable devices. The model is managed by Google " +
+                    "Play Services; no manual 2.6 GB download needed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (status) {
+                is AICoreStatus.Downloadable -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Feature model not downloaded yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FilledTonalButton(onClick = onDownload) {
+                        Text("Download")
+                    }
+                }
+                is AICoreStatus.Downloading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val percent = (status.progress * 100).toInt().coerceIn(0, 100)
+                    val label = when {
+                        status.totalBytes > 0L -> "Downloading $percent% (${formatBytes(status.bytesDownloaded)} / ${formatBytes(status.totalBytes)})"
+                        status.bytesDownloaded > 0L -> "Downloading ${formatBytes(status.bytesDownloaded)} so far…"
+                        else -> "Downloading…"
+                    }
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                    // Show an indeterminate bar when we don't yet know the total, else a
+                    // determinate one that fills as bytes arrive.
+                    if (status.totalBytes > 0L) {
+                        LinearProgressIndicator(
+                            progress = { status.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                is AICoreStatus.Warming -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Warming up the engine…", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                is AICoreStatus.Ready -> Text(
+                    text = "Active — Gemini Nano running on device hardware.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                is AICoreStatus.Error -> Text(
+                    text = "Error: ${status.message}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                is AICoreStatus.Unavailable, is AICoreStatus.Unknown -> Unit // filtered above
+            }
+        }
+    }
+}
+
+/**
+ * Compact bytes formatter — we want "1.3 GB" not "1374389840 B" in the
+ * download progress row. Assumes base-1024 units which is how AICore
+ * reports sizes internally.
+ */
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return "%.0f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    val gb = mb / 1024.0
+    return "%.2f GB".format(gb)
 }
