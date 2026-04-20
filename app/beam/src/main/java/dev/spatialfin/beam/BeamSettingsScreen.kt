@@ -763,6 +763,7 @@ fun BeamSettingsScreen(
                     BeamAiCoreManagementCard(
                         status = aiCoreStatus,
                         onDownload = { llmModelManager.downloadAiCoreFeature() },
+                        onReprobe = { llmDownloadScope.launch { llmModelManager.reprobeAiCore() } },
                     )
                     BeamGemmaManagementCard(
                         downloadManager = llmDownloadManager,
@@ -1192,12 +1193,8 @@ private fun GemmaErrorState(message: String, onRetry: () -> Unit) {
 private fun BeamAiCoreManagementCard(
     status: AICoreStatus,
     onDownload: () -> Unit,
+    onReprobe: () -> Unit,
 ) {
-    // Hide the card entirely for unsupported hardware — no point showing a
-    // greyed-out option a user can never reach.
-    if (status is AICoreStatus.Unavailable) return
-    if (status is AICoreStatus.Unknown) return
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -1263,12 +1260,40 @@ private fun BeamAiCoreManagementCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                is AICoreStatus.Error -> Text(
-                    text = "Error: ${status.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                is AICoreStatus.Unavailable, is AICoreStatus.Unknown -> Unit // filtered above
+                is AICoreStatus.Error -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Error: ${status.message}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(onClick = onReprobe) { Text("Retry") }
+                }
+                // Previously hid the card when Unknown / Unavailable. That
+                // made it impossible to tell whether "no AICore card" meant
+                // "probe hasn't run yet" or "device genuinely unsupported" —
+                // so render both states with explicit copy + a manual retry.
+                is AICoreStatus.Unknown -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Probing AICore availability…", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                is AICoreStatus.Unavailable -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Unavailable on this device — ${status.reason}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(onClick = onReprobe) { Text("Retry probe") }
+                }
             }
         }
     }

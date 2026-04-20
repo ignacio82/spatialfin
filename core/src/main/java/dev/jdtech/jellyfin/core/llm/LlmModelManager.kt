@@ -141,12 +141,22 @@ class LlmModelManager @Inject constructor(
     }
 
     private suspend fun probeAiCoreAndActivate() {
+        Timber.i("AICore: probe starting")
         val status = AICoreModelHelper.checkStatus(context)
         _aiCoreStatus.value = status
-        Timber.i("AICore: initial status=%s", status)
+        Timber.i("AICore: probe returned status=%s", status)
         if (status is AICoreStatus.Ready) {
             activateAiCoreEngine()
         }
+    }
+
+    /**
+     * Manual re-probe hook for the Settings UI. Lets a user retry after
+     * Google Play Services finishes installing the AICore feature, or after
+     * the device boots out of an error state, without restarting the app.
+     */
+    suspend fun reprobeAiCore() {
+        probeAiCoreAndActivate()
     }
 
     private fun activateAiCoreEngine() {
