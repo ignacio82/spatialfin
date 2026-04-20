@@ -73,6 +73,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
 
     // Player - Bitrate
     val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
+    val playerForceDirectPlay = Preference("pref_player_force_direct_play", false)
 
     // Downloads
     val downloadOverMobileData = Preference("pref_downloads_mobile_data", false)

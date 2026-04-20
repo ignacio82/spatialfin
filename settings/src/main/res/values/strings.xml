@@ -197,6 +197,8 @@
 
     <string name="player_max_bitrate">Playback Quality</string>
     <string name="player_max_bitrate_summary">Resolution cap sent to the server. Auto means no limit.</string>
+    <string name="player_force_direct_play">Always attempt direct play</string>
+    <string name="player_force_direct_play_summary">Ignore the bitrate cap and tell the server the device can play anything. Fast for LAN, but playback may fail silently on files whose codec or container the device can\'t decode.</string>
 
     <string name="quality_auto">Auto</string>
     <string name="quality_2160p">4K · 40 Mbps</string>

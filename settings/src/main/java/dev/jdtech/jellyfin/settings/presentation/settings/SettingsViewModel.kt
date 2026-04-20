@@ -288,6 +288,11 @@ class SettingsViewModel @Inject constructor(
                                                     options = R.array.player_max_bitrate_options,
                                                     optionValues = R.array.player_max_bitrate_values,
                                                 ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.player_force_direct_play,
+                                                    descriptionStringRes = R.string.player_force_direct_play_summary,
+                                                    backendPreference = appPreferences.playerForceDirectPlay,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.voice_controls,
                                                     descriptionStringRes = R.string.voice_controls_summary,

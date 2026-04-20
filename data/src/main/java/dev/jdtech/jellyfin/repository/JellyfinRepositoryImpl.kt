@@ -354,8 +354,14 @@ class JellyfinRepositoryImpl(
     ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
             downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
-            val bitrate = (maxBitrate ?: appPreferences.getValue(appPreferences.playerMaxBitrate)).let {
-                if (it <= 0L) 1_000_000_000L else it
+            // Force-direct-play overrides any caller-supplied cap so the server
+            // is told the device can direct-play at arbitrary bitrates.
+            val forceDirectPlay = appPreferences.getValue(appPreferences.playerForceDirectPlay)
+            val bitrate = when {
+                forceDirectPlay -> 1_000_000_000L
+                else -> (maxBitrate ?: appPreferences.getValue(appPreferences.playerMaxBitrate)).let {
+                    if (it <= 0L) 1_000_000_000L else it
+                }
             }
             val sources = mutableListOf<SpatialFinSource>()
             sources.addAll(

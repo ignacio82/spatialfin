@@ -237,6 +237,7 @@ constructor(
     private val recentRebufferMs: ArrayDeque<Long> = ArrayDeque()
     private var lastPlaybackState: Int = Player.STATE_IDLE
     private var autoDowngradeCooldownUntilMs: Long = 0L
+    private var startupWatchdogJob: kotlinx.coroutines.Job? = null
     private var remoteSessionConfigured = false
     private var configuredDeviceName: String? = null
 
@@ -669,6 +670,7 @@ constructor(
                 currentMediaItemIndex,
             )
             player.prepare()
+            armStartupWatchdog()
             if (autoPlay) {
                 player.play()
             } else {
@@ -1465,6 +1467,8 @@ constructor(
             ExoPlayer.STATE_READY -> {
                 stateString = "ExoPlayer.STATE_READY     -"
                 _uiState.update { it.copy(fileLoaded = true) }
+                startupWatchdogJob?.cancel()
+                startupWatchdogJob = null
             }
             ExoPlayer.STATE_ENDED -> {
                 stateString = "ExoPlayer.STATE_ENDED     -"
@@ -1525,11 +1529,20 @@ constructor(
         }
         recentRebufferMs.addLast(nowMs)
 
-        val userPref = appPreferences.getValue(appPreferences.playerMaxBitrate)
-        if (userPref != 0L) return // only auto-downgrade in Auto mode
-        if (nowMs < autoDowngradeCooldownUntilMs) return
+        if (!isAdaptiveAutoEligible(nowMs)) return
         if (recentRebufferMs.size < 3) return
+        triggerAutoDowngrade(reason = "rebuffer-storm")
+    }
 
+    private fun isAdaptiveAutoEligible(nowMs: Long): Boolean {
+        if (appPreferences.getValue(appPreferences.playerForceDirectPlay)) return false
+        if (appPreferences.getValue(appPreferences.playerMaxBitrate) != 0L) return false
+        if (nowMs < autoDowngradeCooldownUntilMs) return false
+        return true
+    }
+
+    private fun triggerAutoDowngrade(reason: String) {
+        val nowMs = SystemClock.elapsedRealtime()
         val next = nextLowerAutoStep(effectiveAutoBitrate) ?: return
         effectiveAutoBitrate = next
         autoDowngradeCooldownUntilMs = nowMs + 30_000L
@@ -1540,7 +1553,7 @@ constructor(
 
         val newOption = QualityOption.fromBps(next)
         val friendly = application.getString(newOption.labelRes)
-        Timber.i("Adaptive auto: downgrading to %s (%d bps) after %d rebuffers", friendly, next, 3)
+        Timber.i("Adaptive auto: downgrading to %s (%d bps) reason=%s", friendly, next, reason)
         Toast.makeText(
             application,
             application.getString(R.string.quality_auto_downgraded, friendly),
@@ -1554,6 +1567,27 @@ constructor(
             startFromBeginning = false,
             maxBitrate = next,
         )
+    }
+
+    /**
+     * Watchdog that fires when a session never reaches STATE_READY in time —
+     * typically because the selected preset is bigger than the network can
+     * sustain, so ExoPlayer sits in BUFFERING indefinitely. 45s for the first
+     * attempt (accommodates server-side HLS transcode startup), 25s on retries
+     * since the transcoder pipeline is already warm.
+     */
+    private fun armStartupWatchdog() {
+        startupWatchdogJob?.cancel()
+        val nowMs = SystemClock.elapsedRealtime()
+        if (!isAdaptiveAutoEligible(nowMs)) return
+        val firstAttempt = effectiveAutoBitrate == 0L && recentRebufferMs.isEmpty()
+        val timeoutMs = if (firstAttempt) 45_000L else 25_000L
+        startupWatchdogJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(timeoutMs)
+            if (lastPlaybackState != Player.STATE_READY && player.playWhenReady) {
+                triggerAutoDowngrade(reason = "startup-stall-${timeoutMs}ms")
+            }
+        }
     }
 
     /**
