@@ -68,7 +68,7 @@ suspend fun BaseItemDto.toSpatialFinMovie(
         trailer = remoteTrailers?.getOrNull(0)?.url,
         video3DFormat = video3dFormat?.name,
         images = toSpatialFinImages(jellyfinRepository),
-        chapters = toSpatialFinChapters(),
+        chapters = toSpatialFinChapters(jellyfinRepository, id),
         ratings = toSpatialFinRatings(),
         trickplayInfo =
             trickplay?.mapValues { it.value[it.value.keys.max()]!!.toSpatialFinTrickplayInfo() },

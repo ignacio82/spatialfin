@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -2719,14 +2720,64 @@ private fun BeamChaptersRow(
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(chapters, key = { it.startPosition }) { chapter ->
-                androidx.compose.material3.AssistChip(
-                    onClick = { onChapterClick(chapter) },
-                    label = {
-                        Text(chapter.name?.takeIf { it.isNotBlank() } ?: formatChapterTime(chapter.startPosition))
-                    },
+                BeamChapterCard(chapter = chapter, onClick = { onChapterClick(chapter) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamChapterCard(
+    chapter: dev.jdtech.jellyfin.models.SpatialFinChapter,
+    onClick: () -> Unit,
+) {
+    val title = chapter.name?.takeIf { it.isNotBlank() } ?: formatChapterTime(chapter.startPosition)
+    Column(
+        modifier = Modifier
+            .width(200.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.77f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF161D28)),
+        ) {
+            if (chapter.imageUri != null) {
+                AsyncImage(
+                    model = chapter.imageUri,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(6.dp)
+                    .align(Alignment.BottomStart)
+                    .background(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = formatChapterTime(chapter.startPosition),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

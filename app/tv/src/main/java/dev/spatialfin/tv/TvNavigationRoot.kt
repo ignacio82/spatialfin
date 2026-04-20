@@ -41,6 +41,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.ColumnScope
@@ -1706,25 +1707,27 @@ private fun TvLibraryScreen(
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onBackToHome) {
-                    Text("Back home")
-                }
+                TvHeroButton(
+                    label = "Back home",
+                    icon = Icons.Rounded.Home,
+                    primary = false,
+                    onClick = onBackToHome,
+                )
                 if (availableViews.size > 1) {
-                    Button(onClick = { onSelectView(availableViews.first()) }) {
-                        Text("Jump to first library")
-                    }
+                    TvHeroButton(
+                        label = "Jump to first library",
+                        icon = Icons.AutoMirrored.Rounded.ManageSearch,
+                        primary = false,
+                        onClick = { onSelectView(availableViews.first()) },
+                    )
                 }
-                Button(
+                TvHeroButton(
+                    label = if (offlineOnly) "Available offline" else "All titles",
+                    icon = if (offlineOnly) Icons.Rounded.CloudDone else Icons.Rounded.CloudDownload,
+                    primary = false,
+                    selected = offlineOnly,
                     onClick = { offlineOnly = !offlineOnly },
-                    colors = if (offlineOnly) {
-                        ButtonDefaults.colors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                    } else ButtonDefaults.colors(),
-                ) {
-                    Text(if (offlineOnly) "Available offline" else "All titles")
-                }
+                )
             }
         }
         if (rows.isEmpty()) {
@@ -1784,12 +1787,12 @@ private fun TvSearchScreen(
                                 onSearch = { viewModel.search() },
                             ),
                     )
-                    Button(
+                    TvHeroButton(
+                        label = "Search",
+                        icon = Icons.Rounded.Search,
+                        primary = true,
                         onClick = { viewModel.search() },
-                        colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    ) {
-                        Text("Search")
-                    }
+                    )
                 }
             }
         }
@@ -2335,16 +2338,78 @@ private fun TvChaptersRow(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(chapters, key = { it.startPosition }) { chapter ->
-                TvHeroButton(
-                    label = chapter.name?.takeIf { it.isNotBlank() }
-                        ?: tvFormatChapterTime(chapter.startPosition),
-                    primary = false,
-                    onClick = { onChapterClick(chapter) },
+                TvChapterCard(chapter = chapter, onClick = { onChapterClick(chapter) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvChapterCard(
+    chapter: dev.jdtech.jellyfin.models.SpatialFinChapter,
+    onClick: () -> Unit,
+) {
+    var isFocused by remember(chapter.startPosition) { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        animationSpec = tween(durationMillis = 120),
+        targetValue = if (isFocused) 1.05f else 1f,
+        label = "chapterScale",
+    )
+    val glow = MaterialTheme.colorScheme.primary
+    val title =
+        chapter.name?.takeIf { it.isNotBlank() } ?: tvFormatChapterTime(chapter.startPosition)
+
+    Column(
+        modifier = Modifier
+            .width(240.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .ultrachromicFocus(isFocused, scale, RoundedCornerShape(16.dp), glow)
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.77f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF161D28)),
+        ) {
+            if (chapter.imageUri != null) {
+                AsyncImage(
+                    model = chapter.imageUri,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .padding(6.dp)
+                    .align(Alignment.BottomStart)
+                    .background(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    text = tvFormatChapterTime(chapter.startPosition),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 
@@ -3039,9 +3104,12 @@ private fun TvSeasonScreen(
             ) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onBack) {
-                            Text("Back")
-                        }
+                        TvHeroButton(
+                            label = "Back",
+                            icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                            primary = false,
+                            onClick = onBack,
+                        )
                     }
                 }
                 if (rows.isEmpty()) {

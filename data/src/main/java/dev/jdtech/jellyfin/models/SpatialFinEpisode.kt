@@ -72,7 +72,7 @@ suspend fun BaseItemDto.toSpatialFinEpisode(
             people = people?.map { it.toSpatialFinPerson(jellyfinRepository) } ?: emptyList(),
             missing = locationType == LocationType.VIRTUAL,
             images = toSpatialFinImages(jellyfinRepository),
-            chapters = toSpatialFinChapters(),
+            chapters = toSpatialFinChapters(jellyfinRepository, id),
             ratings = toSpatialFinRatings(),
             trickplayInfo =
                 trickplay?.mapValues { it.value[it.value.keys.max()]!!.toSpatialFinTrickplayInfo() },
