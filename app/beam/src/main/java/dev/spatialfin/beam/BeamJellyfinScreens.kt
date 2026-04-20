@@ -2440,7 +2440,7 @@ private fun BeamHeroCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = buildServerItemSubtitle(item) ?: item.overview,
+                    text = buildServerItemSubtitle(item).ifBlank { item.overview },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.LightGray,
                     maxLines = 2,
@@ -2633,10 +2633,13 @@ private fun BeamSeasonCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Reserve two lines so a rail of mixed-length season labels
+                // ("Season 1" vs. "Season 10 · Specials") stays aligned.
                 Text(
                     text = beamSeasonLabel(season),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
+                    minLines = 2,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2648,6 +2651,7 @@ private fun BeamSeasonCard(
                             ?: season.seriesName,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    minLines = 2,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )

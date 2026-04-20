@@ -587,19 +587,66 @@ private fun TvHomeHeroCard(item: SpatialFinItem, eyebrow: String, parkInitialFoc
 }
 
 @Composable
-private fun TvMediaCard(item: SpatialFinItem, showProgress: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(modifier = modifier, onClick = onClick, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(RoundedCornerShape(22.dp))) {
+private fun TvMediaCard(
+    item: SpatialFinItem,
+    showProgress: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = modifier,
+        onClick = onClick,
+        colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
+        shape = CardDefaults.shape(RoundedCornerShape(22.dp)),
+    ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(1.77f)) {
                 val img = item.images.showBackdrop ?: item.images.backdrop ?: item.images.primary
-                if (img != null) AsyncImage(model = img, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                else Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) { Text(item.name.take(1).uppercase(), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
-                if (showProgress) buildPlaybackFraction(item)?.let { FloatingProgressBar(progress = it, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).align(Alignment.BottomCenter), progressColor = MaterialTheme.colorScheme.primary) }
+                if (img != null) {
+                    AsyncImage(
+                        model = img,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            item.name.take(1).uppercase(),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+                if (showProgress) {
+                    buildPlaybackFraction(item)?.let { fraction ->
+                        FloatingProgressBar(
+                            progress = fraction,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .align(Alignment.BottomCenter),
+                            progressColor = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
             // minLines = 2 keeps a rail of mixed-length titles aligned — short
             // names reserve the same height as wrapped ones so the row lands
             // on a single baseline instead of jittering per card.
-            Text(item.name, Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                item.name,
+                Modifier.padding(8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
