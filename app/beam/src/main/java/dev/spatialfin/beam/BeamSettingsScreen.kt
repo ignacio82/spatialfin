@@ -11,14 +11,24 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -1093,9 +1103,13 @@ private fun GemmaIdleState(storedBackend: String, onDownload: () -> Unit) {
                    else "Previously ran on $storedBackend",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
         )
-        FilledTonalButton(onClick = onDownload) {
-            Text("Download model")
+        // Icon-only download affordance. The description line above already
+        // tells the user what's needed; a button that repeats "Download model"
+        // in multiple rows of text next to that line reads as visual noise.
+        FilledTonalIconButton(onClick = onDownload) {
+            Icon(Icons.Rounded.Download, contentDescription = "Download model")
         }
     }
 }
@@ -1139,7 +1153,7 @@ private fun GemmaReadyState(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -1149,12 +1163,9 @@ private fun GemmaReadyState(
                 modifier = Modifier.weight(1f),
             )
             Switch(checked = enabled, onCheckedChange = onToggleEnabled)
-        }
-        OutlinedButton(
-            onClick = onDelete,
-            modifier = Modifier.align(Alignment.End),
-        ) {
-            Text("Delete model")
+            OutlinedIconButton(onClick = onDelete) {
+                Icon(Icons.Rounded.Delete, contentDescription = "Delete model")
+            }
         }
     }
 }
@@ -1163,17 +1174,22 @@ private fun GemmaReadyState(
 private fun GemmaErrorState(message: String, onRetry: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            Icons.Rounded.ErrorOutline,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+        )
         Text(
             text = "Download failed: $message",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.weight(1f),
         )
-        Button(onClick = onRetry) {
-            Text("Retry")
+        FilledIconButton(onClick = onRetry) {
+            Icon(Icons.Rounded.Refresh, contentDescription = "Retry")
         }
     }
 }
@@ -1212,24 +1228,24 @@ private fun BeamAiCoreManagementCard(
             )
             Text(
                 "Runs Google's on-device Gemini Nano through AICore — the fastest path on " +
-                    "Pixel and other AICore-capable devices. The model is managed by Google " +
-                    "Play Services; no manual 2.6 GB download needed.",
+                    "Pixel and other AICore-capable devices.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             when (status) {
                 is AICoreStatus.Downloadable -> Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "Feature model not downloaded yet",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
                     )
-                    FilledTonalButton(onClick = onDownload) {
-                        Text("Download")
+                    FilledTonalIconButton(onClick = onDownload) {
+                        Icon(Icons.Rounded.Download, contentDescription = "Download AICore model")
                     }
                 }
                 is AICoreStatus.Downloading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1255,23 +1271,44 @@ private fun BeamAiCoreManagementCard(
                     Text("Warming up the engine…", style = MaterialTheme.typography.bodyMedium)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
-                is AICoreStatus.Ready -> Text(
-                    text = "Active — Gemini Nano running on device hardware.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                is AICoreStatus.Error -> Row(
+                is AICoreStatus.Ready -> Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Green-tinted check conveys the good state at a glance —
+                    // text alone is easy to miss when a user is scanning a
+                    // dense settings page for the bit that matters.
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "Active — Gemini Nano running on device hardware.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is AICoreStatus.Error -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.ErrorOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                     Text(
                         text = "Error: ${status.message}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.weight(1f),
                     )
-                    OutlinedButton(onClick = onReprobe) { Text("Retry") }
+                    FilledIconButton(onClick = onReprobe) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "Retry")
+                    }
                 }
                 // Previously hid the card when Unknown / Unavailable. That
                 // made it impossible to tell whether "no AICore card" meant
@@ -1283,7 +1320,7 @@ private fun BeamAiCoreManagementCard(
                 }
                 is AICoreStatus.Unavailable -> Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -1292,7 +1329,9 @@ private fun BeamAiCoreManagementCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    OutlinedButton(onClick = onReprobe) { Text("Retry probe") }
+                    OutlinedIconButton(onClick = onReprobe) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "Retry probe")
+                    }
                 }
             }
         }
