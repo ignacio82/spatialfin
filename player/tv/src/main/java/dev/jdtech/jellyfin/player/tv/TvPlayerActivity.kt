@@ -650,6 +650,21 @@ private fun TvPlayerScreen(
                 onInteraction = ::revealControls,
             )
         }
+
+        // Fladder-style pause overlay: title top-left, wall-clock + ETA top-right.
+        // Only shown when paused AND the full controller overlay is hidden, so the
+        // two surfaces don't stack awkwardly.
+        dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
+            visible = !isPlaying && !controlsVisible,
+            title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
+            subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
+            positionMs = currentPosition,
+            durationMs = duration,
+            titleFontSize = androidx.compose.ui.unit.TextUnit(42f, androidx.compose.ui.unit.TextUnitType.Sp),
+            subtitleFontSize = androidx.compose.ui.unit.TextUnit(20f, androidx.compose.ui.unit.TextUnitType.Sp),
+            clockFontSize = androidx.compose.ui.unit.TextUnit(28f, androidx.compose.ui.unit.TextUnitType.Sp),
+            etaFontSize = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp),
+        )
     }
 
     when (activeDialog) {
