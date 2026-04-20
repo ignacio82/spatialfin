@@ -7,6 +7,7 @@
             android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.SpatialFin.TvPlayer" />
     </application>
 </manifest>

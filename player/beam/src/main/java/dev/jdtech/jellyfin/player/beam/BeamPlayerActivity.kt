@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.player.beam
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,6 +9,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.util.Rational
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.lazy.items
@@ -325,11 +327,22 @@ class BeamPlayerActivity : AppCompatActivity() {
             }
         }
 
+        updatePipParams()
+
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
+                var isPipMode by remember { mutableStateOf(false) }
+                DisposableEffect(Unit) {
+                    val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->
+                        isPipMode = info.isInPictureInPictureMode
+                    }
+                    addOnPictureInPictureModeChangedListener(listener)
+                    onDispose { removeOnPictureInPictureModeChangedListener(listener) }
+                }
                 BeamPlayerScreen(
                     viewModel = viewModel,
                     libassRenderer = libassRenderer,
+                    isPipMode = isPipMode,
                     onBackClick = { finish() },
                     onSelectQuality = { bitrate ->
                         val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
@@ -353,6 +366,20 @@ class BeamPlayerActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Picture-in-Picture: MIN_SDK is 31 so we always use S-era `setAutoEnterEnabled`,
+     * letting Android transition into PiP automatically when the user swipes home.
+     * Aspect ratio is fixed at 16:9 — common enough that a PiP landing on a 4:3 or
+     * ultra-wide file is still usable, and Android clamps to the allowed range.
+     */
+    private fun updatePipParams() {
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setAutoEnterEnabled(true)
+            .build()
+        setPictureInPictureParams(params)
+    }
+
     override fun onStart() {
         super.onStart()
         mediaSession?.release()
@@ -366,6 +393,10 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // In PiP the user hasn't actually left the session — the video keeps
+        // playing and will hit this pause lifecycle every time. Don't treat it
+        // as a stop for progress-reporting purposes.
+        if (isInPictureInPictureMode) return
         Timber.d(
             "BeamPlayerActivity onPause mediaId=%s posMs=%d state=%d",
             viewModel.player.currentMediaItem?.mediaId,
@@ -377,6 +408,8 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        // Keep playback running while the user has us docked as a PiP window.
+        if (isInPictureInPictureMode) return
         viewModel.playWhenReady = viewModel.player.playWhenReady
         viewModel.player.playWhenReady = false
         mediaSession?.release()
@@ -566,6 +599,7 @@ class BeamPlayerActivity : AppCompatActivity() {
 private fun BeamPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,
+    isPipMode: Boolean,
     onBackClick: () -> Unit,
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
@@ -804,7 +838,7 @@ private fun BeamPlayerScreen(
             }
 
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !isPipMode,
                 enter = fadeIn(),
                 exit = fadeOut(),
             ) {
@@ -894,7 +928,7 @@ private fun BeamPlayerScreen(
             // Fladder-style pause overlay — logo or title top-left, wall-clock + ETA top-right.
             // Shown only when the full controller overlay is hidden so they don't stack.
             dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
-                visible = !isPlaying && !controlsVisible,
+                visible = !isPlaying && !controlsVisible && !isPipMode,
                 title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
                 subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
                 positionMs = currentPosition,
@@ -911,20 +945,24 @@ private fun BeamPlayerScreen(
                 },
             )
 
-            VoiceOrbOverlay(
-                state = when (voiceState) {
-                    BeamVoiceState.IDLE -> XrVoiceState.IDLE
-                    BeamVoiceState.LISTENING -> XrVoiceState.LISTENING
-                    BeamVoiceState.PROCESSING -> XrVoiceState.PROCESSING
-                    BeamVoiceState.ERROR -> XrVoiceState.ERROR
-                },
-                partialTranscript = partialTranscript,
-                feedbackText = voiceFeedback,
-                micLevel = voiceMicLevel,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp),
-            )
+            if (!isPipMode) {
+                VoiceOrbOverlay(
+                    state = when (voiceState) {
+                        BeamVoiceState.IDLE -> XrVoiceState.IDLE
+                        BeamVoiceState.LISTENING -> XrVoiceState.LISTENING
+                        BeamVoiceState.PROCESSING -> XrVoiceState.PROCESSING
+                        BeamVoiceState.ERROR -> XrVoiceState.ERROR
+                    },
+                    partialTranscript = partialTranscript,
+                    feedbackText = voiceFeedback,
+                    micLevel = voiceMicLevel,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 72.dp),
+                )
+            }
         }
     }
+
+    if (isPipMode) return
 
     when (activeDialog) {
         BeamPlayerDialog.Audio ->

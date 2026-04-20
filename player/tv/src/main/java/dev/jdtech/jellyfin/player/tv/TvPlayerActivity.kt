@@ -1,10 +1,12 @@
 package dev.jdtech.jellyfin.player.tv
 
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Looper
+import android.util.Rational
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
@@ -287,11 +289,22 @@ class TvPlayerActivity : AppCompatActivity() {
             }
         }
 
+        updatePipParams()
+
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
+                var isPipMode by remember { mutableStateOf(false) }
+                DisposableEffect(Unit) {
+                    val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->
+                        isPipMode = info.isInPictureInPictureMode
+                    }
+                    addOnPictureInPictureModeChangedListener(listener)
+                    onDispose { removeOnPictureInPictureModeChangedListener(listener) }
+                }
                 TvPlayerScreen(
                     viewModel = viewModel,
                     libassRenderer = libassRenderer,
+                    isPipMode = isPipMode,
                     onBackClick = { finish() },
                     onSelectQuality = { bitrate ->
                         val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
@@ -312,6 +325,14 @@ class TvPlayerActivity : AppCompatActivity() {
         }
     }
 
+    private fun updatePipParams() {
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setAutoEnterEnabled(true)
+            .build()
+        setPictureInPictureParams(params)
+    }
+
     override fun onStart() {
         super.onStart()
         mediaSession?.release()
@@ -325,11 +346,13 @@ class TvPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        if (isInPictureInPictureMode) return
         viewModel.updatePlaybackProgress()
     }
 
     override fun onStop() {
         super.onStop()
+        if (isInPictureInPictureMode) return
         viewModel.playWhenReady = viewModel.player.playWhenReady
         viewModel.player.playWhenReady = false
         mediaSession?.release()
@@ -423,6 +446,7 @@ class TvPlayerActivity : AppCompatActivity() {
 private fun TvPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,
+    isPipMode: Boolean,
     onBackClick: () -> Unit,
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
@@ -672,7 +696,7 @@ private fun TvPlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && !isPipMode,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -698,7 +722,7 @@ private fun TvPlayerScreen(
         // Only shown when paused AND the full controller overlay is hidden, so the
         // two surfaces don't stack awkwardly.
         dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
-            visible = !isPlaying && !controlsVisible,
+            visible = !isPlaying && !controlsVisible && !isPipMode,
             title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
             subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
             positionMs = currentPosition,
@@ -719,6 +743,8 @@ private fun TvPlayerScreen(
             },
         )
     }
+
+    if (isPipMode) return
 
     when (activeDialog) {
         TvPlayerDialog.Audio ->
