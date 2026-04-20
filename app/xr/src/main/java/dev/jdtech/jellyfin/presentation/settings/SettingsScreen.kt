@@ -657,6 +657,30 @@ private fun SettingsScreenLayout(
             bottom = safePadding.bottom + MaterialTheme.spacings.large,
         )
 
+    var searchQuery by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    // Filter groups by resolved name/description across every preference row.
+    // Cheap enough to recompute on each keystroke; the tree only has a few
+    // hundred resolved strings and the search box is unlikely to be held down
+    // while the groups animate.
+    val filteredGroups = remember(state.preferenceGroups, searchQuery) {
+        if (searchQuery.isBlank()) state.preferenceGroups
+        else {
+            val q = searchQuery.trim().lowercase()
+            fun matches(@StringRes nameRes: Int?, @StringRes descRes: Int?): Boolean {
+                if (nameRes != null && context.getString(nameRes).lowercase().contains(q)) return true
+                if (descRes != null && context.getString(descRes).lowercase().contains(q)) return true
+                return false
+            }
+            state.preferenceGroups.filter { group ->
+                if (matches(group.nameStringResource, null)) return@filter true
+                group.preferences.any { pref ->
+                    matches(pref.nameStringResource, pref.descriptionStringRes)
+                }
+            }
+        }
+    }
+
     Column(
         modifier =
             Modifier.fillMaxSize().padding(top = safePadding.top + MaterialTheme.spacings.default),
@@ -681,12 +705,37 @@ private fun SettingsScreenLayout(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        androidx.compose.material3.OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .widthIn(max = 860.dp)
+                .fillMaxWidth()
+                .padding(
+                    start = safePadding.start + MaterialTheme.spacings.default,
+                    end = safePadding.end + MaterialTheme.spacings.default,
+                ),
+            label = { Text("Search settings") },
+            placeholder = { Text("Try \"bitrate\" or \"subtitle\"") },
+            singleLine = true,
+        )
         if (state.preferenceGroups.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
+            }
+        } else if (filteredGroups.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "No settings match \"$searchQuery\".",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else {
             LazyColumn(
@@ -695,7 +744,7 @@ private fun SettingsScreenLayout(
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.large),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (hasSubtitlePreferences && appPreferences != null) {
+                if (hasSubtitlePreferences && appPreferences != null && searchQuery.isBlank()) {
                     item {
                         SubtitlePreviewCard(
                             appPreferences = appPreferences,
@@ -703,7 +752,7 @@ private fun SettingsScreenLayout(
                         )
                     }
                 }
-                items(state.preferenceGroups) { group ->
+                items(filteredGroups) { group ->
                     SettingsGroupCard(
                         group = group,
                         onAction = onAction,
