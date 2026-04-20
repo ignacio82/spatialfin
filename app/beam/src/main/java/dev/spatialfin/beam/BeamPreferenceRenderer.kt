@@ -33,6 +33,7 @@ import dev.jdtech.jellyfin.settings.domain.models.Preference as PreferenceBacken
 import dev.jdtech.jellyfin.settings.presentation.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
@@ -58,6 +59,7 @@ internal fun BeamPreferenceRow(
     when (preference) {
         is PreferenceSwitch -> BeamRenderSwitch(preference, appPreferences)
         is PreferenceSelect -> BeamRenderSelect(preference, appPreferences)
+        is PreferenceIntSelect -> BeamRenderIntSelect(preference, appPreferences)
         is PreferenceIntInput -> BeamRenderIntInput(preference, appPreferences)
         is PreferenceLongInput -> BeamRenderLongInput(preference, appPreferences)
         is PreferenceStringInput -> BeamRenderStringInput(preference, appPreferences)
@@ -108,10 +110,14 @@ private fun BeamRenderSwitch(preference: PreferenceSwitch, appPreferences: AppPr
 private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPreferences) {
     val names = stringArrayResource(preference.options)
     val values = stringArrayResource(preference.optionValues)
+    val shortNames = preference.shortOptionsRes?.let { stringArrayResource(it) }
     val isLongBacked = remember(preference.backendPreference) {
         (preference.backendPreference as PreferenceBackend<*>).defaultValue is Long
     }
-    var currentRaw by rememberSaveable(preference.backendPreference.backendName) {
+    // Local fallback for the simple auto-persist flow. When the caller passes
+    // a non-null `preference.value` (stateful flow — see app-lock) we use that
+    // instead so external rollbacks reflect in the UI on the next recomposition.
+    var internalRaw by rememberSaveable(preference.backendPreference.backendName) {
         mutableStateOf(
             if (isLongBacked) {
                 @Suppress("UNCHECKED_CAST")
@@ -121,6 +127,7 @@ private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPr
             }
         )
     }
+    val currentRaw = preference.value ?: internalRaw
     val currentLabel = values.indexOf(currentRaw).takeIf { it >= 0 }?.let { names[it] }
         ?: currentRaw.orEmpty()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -138,22 +145,62 @@ private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPr
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             names.forEachIndexed { index, name ->
                 val optionValue = values.getOrNull(index) ?: return@forEachIndexed
+                val buttonLabel = shortNames?.getOrNull(index) ?: name
                 Button(
                     onClick = {
-                        currentRaw = optionValue
-                        if (isLongBacked) {
-                            @Suppress("UNCHECKED_CAST")
-                            appPreferences.setValue(
-                                preference.backendPreference as PreferenceBackend<Long>,
-                                optionValue.toLongOrNull() ?: 0L,
-                            )
-                        } else {
-                            appPreferences.setValue(preference.backendPreference, optionValue)
+                        internalRaw = optionValue
+                        if (preference.autoPersist) {
+                            if (isLongBacked) {
+                                @Suppress("UNCHECKED_CAST")
+                                appPreferences.setValue(
+                                    preference.backendPreference as PreferenceBackend<Long>,
+                                    optionValue.toLongOrNull() ?: 0L,
+                                )
+                            } else {
+                                appPreferences.setValue(preference.backendPreference, optionValue)
+                            }
                         }
                         preference.onUpdate(optionValue)
                     },
                 ) {
-                    Text(if (optionValue == currentRaw) "• $name" else name)
+                    Text(if (optionValue == currentRaw) "• $buttonLabel" else buttonLabel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamRenderIntSelect(preference: PreferenceIntSelect, appPreferences: AppPreferences) {
+    var internalValue by rememberSaveable(preference.backendPreference.backendName) {
+        mutableIntStateOf(appPreferences.getValue(preference.backendPreference))
+    }
+    val currentValue = preference.value ?: internalValue
+    val currentLabel = preference.options.firstOrNull { it.value == currentValue }
+        ?.labelRes?.let { stringResource(it) } ?: currentValue.toString()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${stringResource(preference.nameStringResource)} · $currentLabel",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            preference.options.forEach { option ->
+                val label = stringResource(option.labelRes)
+                Button(
+                    onClick = {
+                        internalValue = option.value
+                        appPreferences.setValue(preference.backendPreference, option.value)
+                        preference.onUpdate(option.value)
+                    },
+                ) {
+                    Text(if (option.value == currentValue) "• $label" else label)
                 }
             }
         }

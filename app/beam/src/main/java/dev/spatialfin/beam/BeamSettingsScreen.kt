@@ -42,8 +42,10 @@ import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
+import dev.jdtech.jellyfin.settings.presentation.models.IntSelectOption
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
@@ -428,31 +430,23 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    // Playback quality stays hand-rolled: the full "1080p · 10 Mbps"
-                    // labels overflow a 6-button Row on a phone, so Beam uses a
-                    // short-label variant ("4K", "1080p", etc). A shared compact
-                    // select variant is a future-me problem.
-                    val currentQualityOption = QualityOption.fromBps(playerMaxBitrate)
-                    val shortQualityLabel: (QualityOption) -> String = { option ->
-                        when (option) {
-                            QualityOption.AUTO -> "Auto"
-                            QualityOption.UHD -> "4K"
-                            QualityOption.FHD -> "1080p"
-                            QualityOption.HD -> "720p"
-                            QualityOption.SD -> "480p"
-                            QualityOption.LOW -> "360p"
-                        }
-                    }
-                    BeamSettingChoiceRow(
-                        title = "Playback quality",
-                        value = stringResource(currentQualityOption.labelRes),
-                        actions = QualityOption.entries.map(shortQualityLabel),
-                        onAction = { choice ->
-                            val picked = QualityOption.entries.firstOrNull { shortQualityLabel(it) == choice }
-                                ?: QualityOption.AUTO
-                            playerMaxBitrate = picked.bps
-                            appPreferences.setValue(appPreferences.playerMaxBitrate, playerMaxBitrate)
-                        },
+                    // Declarative playback quality: full option labels for XR /
+                    // main Settings dialogs, shortOptionsRes supplies Beam's
+                    // compact button labels ("4K", "1080p") so the Row doesn't
+                    // overflow. Backend is the same Long-backed pref the rest
+                    // of the app reads from.
+                    @Suppress("UNCHECKED_CAST")
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.player_max_bitrate,
+                            descriptionStringRes = SettingsR.string.player_max_bitrate_summary,
+                            backendPreference = appPreferences.playerMaxBitrate
+                                as dev.jdtech.jellyfin.settings.domain.models.Preference<String?>,
+                            options = SettingsR.array.player_max_bitrate_options,
+                            optionValues = SettingsR.array.player_max_bitrate_values,
+                            shortOptionsRes = SettingsR.array.player_max_bitrate_short_options,
+                        ),
+                        appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
                         preference = PreferenceSwitch(
@@ -498,26 +492,29 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    // Color pickers stay hand-rolled — backing prefs are Int
-                    // enums that need a PreferenceIntSelect type the framework
-                    // doesn't have yet.
-                    BeamSettingChoiceRow(
-                        title = "Subtitle text color",
-                        value = beamColorName(subtitleTextColor.toInt()),
-                        actions = listOf("White", "Yellow", "Cyan"),
-                        onAction = { choice ->
-                            subtitleTextColor = beamColorFromName(choice).toLong()
-                            appPreferences.setValue(appPreferences.subtitleTextColor, subtitleTextColor.toInt())
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceIntSelect(
+                            nameStringResource = SettingsR.string.subtitle_text_color,
+                            backendPreference = appPreferences.subtitleTextColor,
+                            options = listOf(
+                                IntSelectOption(SettingsR.string.subtitle_color_white, AndroidColor.WHITE),
+                                IntSelectOption(SettingsR.string.subtitle_color_yellow, AndroidColor.YELLOW),
+                                IntSelectOption(SettingsR.string.subtitle_color_cyan, AndroidColor.CYAN),
+                            ),
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingChoiceRow(
-                        title = "Subtitle background",
-                        value = beamBackgroundName(subtitleBackgroundColor.toInt()),
-                        actions = listOf("Transparent", "Black", "Dim"),
-                        onAction = { choice ->
-                            subtitleBackgroundColor = beamBackgroundFromName(choice).toLong()
-                            appPreferences.setValue(appPreferences.subtitleBackgroundColor, subtitleBackgroundColor.toInt())
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceIntSelect(
+                            nameStringResource = SettingsR.string.subtitle_background,
+                            backendPreference = appPreferences.subtitleBackgroundColor,
+                            options = listOf(
+                                IntSelectOption(SettingsR.string.subtitle_bg_transparent, AndroidColor.TRANSPARENT),
+                                IntSelectOption(SettingsR.string.subtitle_bg_black, AndroidColor.BLACK),
+                                IntSelectOption(SettingsR.string.subtitle_bg_dim, 0x99000000.toInt()),
+                            ),
+                        ),
+                        appPreferences = appPreferences,
                     )
                 }
             }
@@ -554,73 +551,80 @@ fun BeamSettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val modeLabel = when (AppLockMode.fromKey(appLockMode)) {
-                        AppLockMode.Off -> "Off"
-                        AppLockMode.Biometric -> "Biometric"
-                        AppLockMode.Pin -> "PIN"
-                    }
-                    BeamSettingChoiceRow(
-                        title = "App lock",
-                        value = modeLabel,
-                        actions = listOf("Off", "Biometric", "PIN"),
-                        onAction = { choice ->
-                            val targetMode = when (choice) {
-                                "Biometric" -> AppLockMode.Biometric
-                                "PIN" -> AppLockMode.Pin
-                                else -> AppLockMode.Off
-                            }
-                            when (targetMode) {
-                                AppLockMode.Off -> {
-                                    appLockManager.disable()
-                                    appLockMode = AppLockMode.Off.backendKey
-                                }
-                                AppLockMode.Biometric -> {
-                                    val activity = context as? FragmentActivity
-                                    if (activity == null) {
-                                        Toast.makeText(context, "Biometric not available on this screen.", Toast.LENGTH_SHORT).show()
-                                        return@BeamSettingChoiceRow
+                    // App lock mode uses the declarative select with autoPersist=false —
+                    // biometric enrollment / PIN setup may be cancelled or fail, so
+                    // onUpdate owns both the persistence and the rollback. Passing
+                    // `value = appLockMode` keeps the renderer in sync with the
+                    // authoritative state after async results settle.
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.settings_app_lock_mode_title,
+                            descriptionStringRes = SettingsR.string.settings_app_lock_mode_summary,
+                            backendPreference = appPreferences.appLockMode,
+                            options = SettingsR.array.app_lock_mode,
+                            optionValues = SettingsR.array.app_lock_mode_values,
+                            autoPersist = false,
+                            value = appLockMode,
+                            onUpdate = { choice ->
+                                when (AppLockMode.fromKey(choice)) {
+                                    AppLockMode.Off -> {
+                                        appLockManager.disable()
+                                        appLockMode = AppLockMode.Off.backendKey
                                     }
-                                    appLockScope.launch {
-                                        val result = appLockManager.enroll(activity)
-                                        when (result) {
-                                            is AppLockManager.EnrollResult.Success -> {
-                                                appLockMode = AppLockMode.Biometric.backendKey
-                                            }
-                                            is AppLockManager.EnrollResult.DeviceNotSecure -> {
-                                                appLockManager.disable()
-                                                appLockMode = AppLockMode.Off.backendKey
-                                                Toast.makeText(context, "Set a device screen lock first.", Toast.LENGTH_LONG).show()
-                                            }
-                                            is AppLockManager.EnrollResult.Cancelled -> {
-                                                appLockManager.disable()
-                                                appLockMode = AppLockMode.Off.backendKey
-                                            }
-                                            is AppLockManager.EnrollResult.Failed -> {
-                                                appLockManager.disable()
-                                                appLockMode = AppLockMode.Off.backendKey
-                                                Toast.makeText(context, "Biometric setup failed: ${result.message}", Toast.LENGTH_LONG).show()
+                                    AppLockMode.Biometric -> {
+                                        val activity = context as? FragmentActivity
+                                        if (activity == null) {
+                                            Toast.makeText(context, "Biometric not available on this screen.", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            appLockScope.launch {
+                                                val result = appLockManager.enroll(activity)
+                                                when (result) {
+                                                    is AppLockManager.EnrollResult.Success -> {
+                                                        appLockMode = AppLockMode.Biometric.backendKey
+                                                    }
+                                                    is AppLockManager.EnrollResult.DeviceNotSecure -> {
+                                                        appLockManager.disable()
+                                                        appLockMode = AppLockMode.Off.backendKey
+                                                        Toast.makeText(context, "Set a device screen lock first.", Toast.LENGTH_LONG).show()
+                                                    }
+                                                    is AppLockManager.EnrollResult.Cancelled -> {
+                                                        appLockManager.disable()
+                                                        appLockMode = AppLockMode.Off.backendKey
+                                                    }
+                                                    is AppLockManager.EnrollResult.Failed -> {
+                                                        appLockManager.disable()
+                                                        appLockMode = AppLockMode.Off.backendKey
+                                                        Toast.makeText(context, "Biometric setup failed: ${result.message}", Toast.LENGTH_LONG).show()
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+                                    AppLockMode.Pin -> {
+                                        pinSetupVisible = true
+                                    }
                                 }
-                                AppLockMode.Pin -> {
-                                    pinSetupVisible = true
-                                }
-                            }
-                        },
+                            },
+                        ),
+                        appPreferences = appPreferences,
                     )
                     if (AppLockMode.fromKey(appLockMode) == AppLockMode.Pin && appLockManager.isConfigured()) {
-                        TextButton(onClick = { pinSetupVisible = true }) {
-                            Text("Change PIN")
-                        }
+                        BeamPreferenceRow(
+                            preference = PreferenceCategory(
+                                nameStringResource = SettingsR.string.settings_app_lock_pin_change_title,
+                                descriptionStringRes = SettingsR.string.settings_app_lock_pin_change_summary,
+                                onClick = { pinSetupVisible = true },
+                            ),
+                            appPreferences = appPreferences,
+                        )
                     }
-                    BeamSettingSwitchRow(
-                        title = "Encrypt downloads on disk",
-                        checked = contentEncryption,
-                        onCheckedChange = { enabled ->
-                            contentEncryption = enabled
-                            appPreferences.setValue(appPreferences.contentEncryptionEnabled, enabled)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.settings_content_encryption_title,
+                            descriptionStringRes = SettingsR.string.settings_content_encryption_summary,
+                            backendPreference = appPreferences.contentEncryptionEnabled,
+                        ),
+                        appPreferences = appPreferences,
                     )
                 }
             }

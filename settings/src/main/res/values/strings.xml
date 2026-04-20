@@ -225,6 +225,25 @@
         <item>1000000</item>
     </string-array>
 
+    <string-array name="player_max_bitrate_short_options">
+        <item>@string/quality_auto</item>
+        <item>4K</item>
+        <item>1080p</item>
+        <item>720p</item>
+        <item>480p</item>
+        <item>360p</item>
+    </string-array>
+
+    <string name="subtitle_text_color">Subtitle text color</string>
+    <string name="subtitle_background">Subtitle background</string>
+    <string name="subtitle_color_white">White</string>
+    <string name="subtitle_color_yellow">Yellow</string>
+    <string name="subtitle_color_cyan">Cyan</string>
+    <string name="subtitle_bg_transparent">Transparent</string>
+    <string name="subtitle_bg_black">Black</string>
+    <string name="subtitle_bg_dim">Dim</string>
+
+
     <string name="settings_category_seerr">Seerr Integration</string>
     <string name="settings_seerr_enabled">Enable Seerr</string>
     <string name="settings_seerr_enabled_summary">Search and request media from Jellyseerr or Overseerr</string>
