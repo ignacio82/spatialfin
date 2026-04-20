@@ -316,6 +316,12 @@ private fun TvSettingsScreen(state: MainState, appPreferences: AppPreferences, s
                 TvActionTile("Switch user", "Pick a different Jellyfin account for this TV without re-entering credentials.", Icons.Rounded.People, Modifier.weight(1f), onOpenUsers)
             }
         }
+        item {
+            Text("Preferences", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        }
+        item {
+            TvSettingsPreferences(appPreferences = appPreferences)
+        }
     }
 }
 
