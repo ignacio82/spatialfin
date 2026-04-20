@@ -35,6 +35,8 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -289,6 +291,14 @@ fun TvNavigationRoot(
                                     personBackRoute = TvRoute.Detail
                                     selectedPersonId = personId.toString()
                                     currentRoute = TvRoute.Person
+                                },
+                                onOpenShow = { showId ->
+                                    selectedShowId = showId.toString()
+                                    currentRoute = TvRoute.Show
+                                },
+                                onOpenSeason = { seasonId ->
+                                    selectedSeasonId = seasonId.toString()
+                                    currentRoute = TvRoute.Season
                                 },
                             )
                             TvRoute.Show -> TvShowScreen(
@@ -2730,6 +2740,8 @@ private fun TvItemDetailScreen(
     itemId: UUID?,
     onBack: () -> Unit,
     onOpenPerson: (UUID) -> Unit,
+    onOpenShow: (UUID) -> Unit,
+    onOpenSeason: (UUID) -> Unit,
     viewModel: TvItemDetailViewModel = hiltViewModel(),
 ) {
     if (itemId == null) {
@@ -2852,6 +2864,20 @@ private fun TvItemDetailScreen(
                                         },
                                     )
                                 }
+                            }
+                            if (item is SpatialFinEpisode) {
+                                TvHeroButton(
+                                    label = "Go to series",
+                                    icon = Icons.Rounded.Tv,
+                                    primary = false,
+                                    onClick = { onOpenShow(item.seriesId) },
+                                )
+                                TvHeroButton(
+                                    label = "Go to season",
+                                    icon = Icons.AutoMirrored.Rounded.List,
+                                    primary = false,
+                                    onClick = { onOpenSeason(item.seasonId) },
+                                )
                             }
                             TvHeroButton(
                                 label = if (item.favorite) "Favorited" else "Favorite",

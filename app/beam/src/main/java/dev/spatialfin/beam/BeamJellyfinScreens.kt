@@ -1232,6 +1232,16 @@ fun BeamItemDetailScreen(
                                     onClick = { openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {}) },
                                 )
                             }
+                            if (itemData is SpatialFinEpisode) {
+                                BeamSecondaryActionButton(
+                                    label = "Go to series",
+                                    onClick = { onOpenShow(itemData.seriesId) },
+                                )
+                                BeamSecondaryActionButton(
+                                    label = "Go to season",
+                                    onClick = { onOpenSeason(itemData.seasonId) },
+                                )
+                            }
                             BeamSecondaryActionButton(
                                 label = if (itemData.favorite) "Favorited" else "Favorite",
                                 onClick = { viewModel.toggleFavorite() },
