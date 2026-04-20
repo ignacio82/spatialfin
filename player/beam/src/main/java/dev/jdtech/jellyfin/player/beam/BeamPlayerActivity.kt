@@ -142,6 +142,7 @@ class BeamPlayerActivity : AppCompatActivity() {
         private const val EXTRA_NETWORK_VIDEO_ID = "networkVideoId"
         private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
+        const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
 
         fun createIntent(
             context: Context,
@@ -150,6 +151,7 @@ class BeamPlayerActivity : AppCompatActivity() {
             startFromBeginning: Boolean = false,
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
+            openSyncPlayDialogOnStart: Boolean = false,
         ): Intent =
             Intent(context, BeamPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -157,6 +159,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
                 mediaSourceIndex?.let { putExtra(EXTRA_MEDIA_SOURCE_INDEX, it) }
                 maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
+                if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
             }
 
         fun createIntentForLocalMedia(
@@ -183,10 +186,13 @@ class BeamPlayerActivity : AppCompatActivity() {
             context: Context,
             item: SpatialFinItem,
             startFromBeginning: Boolean = false,
+            openSyncPlayDialogOnStart: Boolean = false,
         ): Intent? =
             when (item) {
-                is SpatialFinMovie -> createIntent(context, item.id, "Movie", startFromBeginning)
-                is SpatialFinEpisode -> createIntent(context, item.id, "Episode", startFromBeginning)
+                is SpatialFinMovie ->
+                    createIntent(context, item.id, "Movie", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
+                is SpatialFinEpisode ->
+                    createIntent(context, item.id, "Episode", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
                 else -> null
             }
     }
@@ -547,7 +553,15 @@ private fun BeamPlayerScreen(
     val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
     val subtitleSizeSp = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).coerceIn(28, 96).toFloat() }
     var controlsVisible by remember { mutableStateOf(true) }
-    var activeDialog by remember { mutableStateOf<BeamPlayerDialog?>(null) }
+    val openSyncPlayOnStart = remember {
+        (context as? BeamPlayerActivity)?.intent
+            ?.getBooleanExtra(BeamPlayerActivity.EXTRA_OPEN_SYNC_PLAY, false) ?: false
+    }
+    var activeDialog by remember {
+        mutableStateOf<BeamPlayerDialog?>(
+            if (openSyncPlayOnStart) BeamPlayerDialog.SyncPlay else null,
+        )
+    }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(player.isPlaying) }

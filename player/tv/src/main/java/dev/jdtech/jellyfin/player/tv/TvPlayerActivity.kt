@@ -127,6 +127,10 @@ class TvPlayerActivity : AppCompatActivity() {
         private const val EXTRA_NETWORK_VIDEO_ID = "networkVideoId"
         private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
+        // Placeholder — TV player doesn't show the SyncPlay dialog yet. The
+        // extra is threaded through so detail-screen SyncPlay buttons can flip
+        // this on once the TV dialog lands.
+        const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
 
         fun createIntent(
             context: Context,
@@ -135,6 +139,7 @@ class TvPlayerActivity : AppCompatActivity() {
             startFromBeginning: Boolean = false,
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
+            openSyncPlayDialogOnStart: Boolean = false,
         ): Intent =
             Intent(context, TvPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -142,6 +147,7 @@ class TvPlayerActivity : AppCompatActivity() {
                 putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
                 mediaSourceIndex?.let { putExtra(EXTRA_MEDIA_SOURCE_INDEX, it) }
                 maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
+                if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
             }
 
         fun createIntentForLocalMedia(
@@ -168,10 +174,13 @@ class TvPlayerActivity : AppCompatActivity() {
             context: Context,
             item: SpatialFinItem,
             startFromBeginning: Boolean = false,
+            openSyncPlayDialogOnStart: Boolean = false,
         ): Intent? =
             when (item) {
-                is SpatialFinMovie -> createIntent(context, item.id, "Movie", startFromBeginning)
-                is SpatialFinEpisode -> createIntent(context, item.id, "Episode", startFromBeginning)
+                is SpatialFinMovie ->
+                    createIntent(context, item.id, "Movie", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
+                is SpatialFinEpisode ->
+                    createIntent(context, item.id, "Episode", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
                 else -> null
             }
     }

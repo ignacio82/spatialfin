@@ -142,6 +142,7 @@ private enum class TvRoute {
     Detail,
     Show,
     Season,
+    Person,
     Companion,
     Settings,
 }
@@ -177,6 +178,8 @@ fun TvNavigationRoot(
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedShowId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSeasonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var personBackRoute by rememberSaveable { mutableStateOf(TvRoute.Home) }
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
     val companionConfigured = tvCompanionConfigured(appPreferences)
 
@@ -281,6 +284,11 @@ fun TvNavigationRoot(
                             TvRoute.Detail -> TvItemDetailScreen(
                                 itemId = selectedItemId?.let(UUID::fromString),
                                 onBack = { currentRoute = TvRoute.Home },
+                                onOpenPerson = { personId ->
+                                    personBackRoute = TvRoute.Detail
+                                    selectedPersonId = personId.toString()
+                                    currentRoute = TvRoute.Person
+                                },
                             )
                             TvRoute.Show -> TvShowScreen(
                                 showId = selectedShowId?.let(UUID::fromString),
@@ -293,6 +301,11 @@ fun TvNavigationRoot(
                                     selectedItemId = episodeId.toString()
                                     currentRoute = TvRoute.Detail
                                 },
+                                onOpenPerson = { personId ->
+                                    personBackRoute = TvRoute.Show
+                                    selectedPersonId = personId.toString()
+                                    currentRoute = TvRoute.Person
+                                },
                             )
                             TvRoute.Season -> TvSeasonScreen(
                                 seasonId = selectedSeasonId?.let(UUID::fromString),
@@ -302,6 +315,19 @@ fun TvNavigationRoot(
                                     currentRoute = TvRoute.Detail
                                 },
                             )
+                            TvRoute.Person -> {
+                                val pid = selectedPersonId?.let(UUID::fromString)
+                                if (pid != null) {
+                                    dev.jdtech.jellyfin.presentation.film.PersonScreen(
+                                        personId = pid,
+                                        navigateBack = { currentRoute = personBackRoute },
+                                        navigateHome = { currentRoute = TvRoute.Home },
+                                        navigateToItem = { item -> openItem(item) },
+                                    )
+                                } else {
+                                    currentRoute = TvRoute.Home
+                                }
+                            }
                             TvRoute.Settings -> TvSettingsScreen(
                                 state = state,
                                 appPreferences = appPreferences,
@@ -1130,18 +1156,14 @@ private fun TvActionTile(
 ) {
     var isFocused by remember(title) { mutableStateOf(false) }
     val scale by animateFloatAsState(animationSpec = tween(durationMillis = 120), targetValue = if (isFocused) 1.03f else 1f, label = "actionTileScale")
+    val glow = MaterialTheme.colorScheme.primary
 
     Card(
         modifier =
             modifier
                 .height(152.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .border(
-                    width = if (isFocused) 2.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = RoundedCornerShape(26.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(26.dp), glow),
         onClick = onClick,
         colors =
             CardDefaults.colors(
@@ -1340,6 +1362,7 @@ private fun TvPlaceholderShelf(
 private fun TvShelfCard(title: String) {
     var isFocused by rememberSaveable(title) { mutableStateOf(false) }
     val scale by animateFloatAsState(animationSpec = tween(durationMillis = 120), targetValue = if (isFocused) 1.05f else 1f, label = "scale")
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         onClick = {},
         modifier =
@@ -1347,12 +1370,7 @@ private fun TvShelfCard(title: String) {
                 .width(240.dp)
                 .height(150.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .border(
-                    width = if (isFocused) 2.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = RoundedCornerShape(24.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(24.dp), glow),
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(24.dp)),
     ) {
@@ -1468,7 +1486,7 @@ private fun TvMediaCard(
     onClick: () -> Unit,
 ) {
     var isFocused by remember(item.id) { mutableStateOf(false) }
-    val scale by animateFloatAsState(animationSpec = tween(durationMillis = 120), targetValue = if (isFocused) 1.08f else 1f, label = "scale")
+    val scale by animateFloatAsState(animationSpec = tween(durationMillis = 120), targetValue = if (isFocused) 1.05f else 1f, label = "scale")
     val onFocusChange = LocalFocusedBackground.current
 
     LaunchedEffect(isFocused) {
@@ -1477,25 +1495,12 @@ private fun TvMediaCard(
         }
     }
 
-    val focusGlow = MaterialTheme.colorScheme.primary
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         modifier =
             modifier
                 .onFocusChanged { isFocused = it.isFocused }
-                // Card(onClick) is already focusable; stacking .focusable() on top
-                // creates a second focus target that swallowed the first D-pad
-                // OK press, forcing users to click twice to activate cards.
-                // Keep graphicsLayer cheap — colored ambient/spot shadows were eating
-                // ~10ms per frame on Chromecast (armv7), stalling D-pad input.
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                }
-                .border(
-                    width = if (isFocused) 3.dp else 0.dp,
-                    color = if (isFocused) focusGlow else Color.Transparent,
-                    shape = RoundedCornerShape(22.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(22.dp), glow),
         onClick = onClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(22.dp)),
@@ -1606,18 +1611,14 @@ private fun TvLibraryCard(
         }
     }
 
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         modifier =
             modifier
                 .width(320.dp)
                 .height(188.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .border(
-                    width = if (isFocused) 2.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = RoundedCornerShape(24.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(24.dp), glow),
         onClick = onClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(24.dp)),
@@ -2274,14 +2275,15 @@ private fun TvCastCard(
             .clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        val glow = MaterialTheme.colorScheme.primary
         Box(
             modifier = Modifier
                 .size(140.dp)
                 .clip(RoundedCornerShape(999.dp))
                 .background(Color(0xFF1A2433))
                 .border(
-                    width = if (isFocused) 3.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    width = if (isFocused) 1.dp else 0.dp,
+                    color = if (isFocused) glow.copy(alpha = 0.6f) else Color.Transparent,
                     shape = RoundedCornerShape(999.dp),
                 ),
         ) {
@@ -2346,6 +2348,33 @@ private fun TvChaptersRow(
     }
 }
 
+/**
+ * Ultrachromic-inspired focus style: 1dp accent-60% border + a soft accent
+ * shadow halo via framework elevation. Single source of truth for all TV
+ * cards so the focus treatment stays consistent.
+ */
+private fun Modifier.ultrachromicFocus(
+    isFocused: Boolean,
+    scale: Float,
+    shape: RoundedCornerShape,
+    glow: Color,
+): Modifier =
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            if (isFocused) {
+                shadowElevation = 6.dp.toPx()
+                ambientShadowColor = glow
+                spotShadowColor = glow
+            }
+        }
+        .border(
+            width = if (isFocused) 1.dp else 0.dp,
+            color = if (isFocused) glow.copy(alpha = 0.6f) else Color.Transparent,
+            shape = shape,
+        )
+
 private fun peopleOf(item: SpatialFinItem): List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> =
     when (item) {
         is SpatialFinMovie -> item.people
@@ -2402,18 +2431,14 @@ private fun TvSeasonCard(
         }
     }
 
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         modifier =
             Modifier
                 .width(250.dp)
                 .height(132.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .border(
-                    width = if (isFocused) 2.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = RoundedCornerShape(22.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(22.dp), glow),
         onClick = onClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(22.dp)),
@@ -2478,18 +2503,14 @@ private fun TvEpisodeHighlightCard(
         }
     }
 
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .height(176.dp)
                 .onFocusChanged { isFocused = it.isFocused }
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .border(
-                    width = if (isFocused) 2.dp else 0.dp,
-                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = RoundedCornerShape(24.dp),
-                ),
+                .ultrachromicFocus(isFocused, scale, RoundedCornerShape(24.dp), glow),
         onClick = onClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(24.dp)),
@@ -2551,17 +2572,13 @@ private fun TvHeroCard(
         }
     }
 
+    val glow = MaterialTheme.colorScheme.primary
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(280.dp)
             .onFocusChanged { isFocused = it.isFocused }
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .border(
-                width = if (isFocused) 2.dp else 0.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(30.dp),
-            ),
+            .ultrachromicFocus(isFocused, scale, RoundedCornerShape(30.dp), glow),
         onClick = onClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
@@ -2645,6 +2662,7 @@ internal fun TvPlaceholderScreen(
 private fun TvItemDetailScreen(
     itemId: UUID?,
     onBack: () -> Unit,
+    onOpenPerson: (UUID) -> Unit,
     viewModel: TvItemDetailViewModel = hiltViewModel(),
 ) {
     if (itemId == null) {
@@ -2829,7 +2847,7 @@ private fun TvItemDetailScreen(
                 }
                 if (actors.isNotEmpty()) {
                     item {
-                        TvCastRow(actors = actors, onActorClick = { /* TODO: person screen */ })
+                        TvCastRow(actors = actors, onActorClick = onOpenPerson)
                     }
                 }
             }
@@ -2843,6 +2861,7 @@ private fun TvShowScreen(
     onBack: () -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenEpisode: (UUID) -> Unit,
+    onOpenPerson: (UUID) -> Unit,
     viewModel: TvShowViewModel = hiltViewModel(),
 ) {
     if (showId == null) {
@@ -2969,7 +2988,7 @@ private fun TvShowScreen(
                 }
                 if (actors.isNotEmpty()) {
                     item {
-                        TvCastRow(actors = actors, onActorClick = { /* TODO: person screen */ })
+                        TvCastRow(actors = actors, onActorClick = onOpenPerson)
                     }
                 }
             }

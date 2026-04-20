@@ -95,6 +95,7 @@ private enum class BeamRoute {
     Show,
     Season,
     Detail,
+    Person,
     Local,
     Network,
     NetworkShare,
@@ -148,6 +149,8 @@ fun BeamNavigationRoot(
     var seasonBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
+    var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(
@@ -436,6 +439,11 @@ fun BeamNavigationRoot(
                             detailBackRoute = BeamRoute.Show
                             currentRoute = BeamRoute.Detail
                         },
+                        onOpenPerson = { personId ->
+                            selectedPersonId = personId.toString()
+                            personBackRoute = BeamRoute.Show
+                            currentRoute = BeamRoute.Person
+                        },
                     )
                 }
                     }
@@ -480,6 +488,42 @@ fun BeamNavigationRoot(
                             selectedSeasonId = seasonId.toString()
                             seasonBackRoute = BeamRoute.Detail
                             currentRoute = BeamRoute.Season
+                        },
+                        onOpenPerson = { personId ->
+                            selectedPersonId = personId.toString()
+                            personBackRoute = BeamRoute.Detail
+                            currentRoute = BeamRoute.Person
+                        },
+                    )
+                }
+                    }
+                    currentRoute == BeamRoute.Person -> {
+                val pid = selectedPersonId?.let(UUID::fromString)
+                if (pid == null) {
+                    currentRoute = personBackRoute
+                } else {
+                    dev.jdtech.jellyfin.presentation.film.PersonScreen(
+                        personId = pid,
+                        navigateBack = { currentRoute = personBackRoute },
+                        navigateHome = { currentRoute = BeamRoute.Home },
+                        navigateToItem = { item ->
+                            when (item) {
+                                is dev.jdtech.jellyfin.models.SpatialFinShow -> {
+                                    selectedShowId = item.id.toString()
+                                    showBackRoute = BeamRoute.Person
+                                    currentRoute = BeamRoute.Show
+                                }
+                                is dev.jdtech.jellyfin.models.SpatialFinSeason -> {
+                                    selectedSeasonId = item.id.toString()
+                                    seasonBackRoute = BeamRoute.Person
+                                    currentRoute = BeamRoute.Season
+                                }
+                                else -> {
+                                    selectedDetailItemId = item.id.toString()
+                                    detailBackRoute = BeamRoute.Person
+                                    currentRoute = BeamRoute.Detail
+                                }
+                            }
                         },
                     )
                 }
@@ -947,6 +991,7 @@ private fun BeamSignedInShell(
         BeamRoute.Show,
         BeamRoute.Season,
         BeamRoute.Detail,
+        BeamRoute.Person,
         BeamRoute.Network,
         BeamRoute.Downloads,
         BeamRoute.Settings,

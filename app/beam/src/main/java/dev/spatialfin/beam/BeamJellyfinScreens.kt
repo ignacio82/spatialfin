@@ -827,6 +827,7 @@ fun BeamShowScreen(
     onBack: () -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    onOpenPerson: (UUID) -> Unit,
     viewModel: BeamShowViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -906,6 +907,18 @@ fun BeamShowScreen(
                                     label = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
                                     onClick = { launchServerItem(context, nextEpisode) },
                                 )
+                                BeamSecondaryActionButton(
+                                    label = "SyncPlay",
+                                    onClick = {
+                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                            .createIntentForSpatialItem(
+                                                context = context,
+                                                item = nextEpisode,
+                                                openSyncPlayDialogOnStart = true,
+                                            )
+                                            ?.let(context::startActivity)
+                                    },
+                                )
                             }
                             BeamSecondaryActionButton(
                                 label = if (show.favorite) "Favorited" else "Favorite",
@@ -953,7 +966,7 @@ fun BeamShowScreen(
                     item {
                         dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
                             actors = showActors,
-                            onActorClick = { /* TODO: person screen wiring */ },
+                            onActorClick = onOpenPerson,
                             contentPadding = PaddingValues(horizontal = 0.dp),
                         )
                     }
@@ -1094,6 +1107,7 @@ fun BeamItemDetailScreen(
     onOpenLibrary: (UUID, String, CollectionType) -> Unit,
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
+    onOpenPerson: (UUID) -> Unit,
     viewModel: BeamItemDetailViewModel = hiltViewModel(),
     downloaderViewModel: DownloaderViewModel = hiltViewModel(),
 ) {
@@ -1195,6 +1209,18 @@ fun BeamItemDetailScreen(
                                 BeamSecondaryActionButton(label = "From Start") {
                                     launchServerItem(context = context, item = itemData, startFromBeginning = true)
                                 }
+                                BeamSecondaryActionButton(
+                                    label = "SyncPlay",
+                                    onClick = {
+                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                            .createIntentForSpatialItem(
+                                                context = context,
+                                                item = itemData,
+                                                openSyncPlayDialogOnStart = true,
+                                            )
+                                            ?.let(context::startActivity)
+                                    },
+                                )
                                 OutlinedButton(onClick = { showPlaybackOptions = true }) {
                                     Text("Playback Options")
                                 }
@@ -1264,7 +1290,7 @@ fun BeamItemDetailScreen(
                     item {
                         dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
                             actors = actors,
-                            onActorClick = { /* TODO: person screen wiring */ },
+                            onActorClick = onOpenPerson,
                             contentPadding = PaddingValues(horizontal = 0.dp),
                         )
                     }
