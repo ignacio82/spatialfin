@@ -24,6 +24,7 @@ dependencies {
     implementation(projects.data)
     implementation(projects.player.core)
     implementation(projects.player.local)
+    implementation(projects.settings)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.media3.exoplayer)

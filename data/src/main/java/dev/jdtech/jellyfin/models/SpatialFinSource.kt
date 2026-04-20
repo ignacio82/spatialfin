@@ -18,6 +18,12 @@ data class SpatialFinSource(
     val downloadId: Long? = null,
     val supportsDirectPlay: Boolean = true,
     val bitrate: Int? = null,
+    /**
+     * Absolute HLS master playlist URL Jellyfin generated when it rejected
+     * direct play (e.g. because the source bitrate exceeds the cap). Null for
+     * local / direct-play sources.
+     */
+    val transcodingUrl: String? = null,
 )
 
 suspend fun MediaSourceInfo.toSpatialFinSource(
@@ -25,12 +31,27 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
     itemId: UUID,
     includePath: Boolean = false,
 ): SpatialFinSource {
+    // If Jellyfin rejected direct play (e.g. source bitrate > user's cap) it
+    // returns an HLS master playlist URL in `transcodingUrl`. Prefix with the
+    // server base so the URL is absolute and ExoPlayer's DefaultMediaSourceFactory
+    // picks up HlsMediaSource automatically from the .m3u8 path.
+    val absoluteTranscodingUrl = transcodingUrl
+        ?.takeIf { it.isNotBlank() }
+        ?.let { rel ->
+            if (rel.startsWith("http://") || rel.startsWith("https://")) rel
+            else jellyfinRepository.getBaseUrl().trimEnd('/') + "/" + rel.trimStart('/')
+        }
+
     val path =
         when (protocol) {
             MediaProtocol.FILE -> {
                 try {
                     if (includePath) {
-                        jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                        if (supportsDirectPlay || absoluteTranscodingUrl == null) {
+                            jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                        } else {
+                            absoluteTranscodingUrl
+                        }
                     } else {
                         File(this.path.orEmpty()).name
                     }
@@ -53,6 +74,7 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
             mediaAttachments?.map { it.toSpatialFinMediaAttachment() } ?: emptyList(),
         supportsDirectPlay = supportsDirectPlay,
         bitrate = bitrate,
+        transcodingUrl = absoluteTranscodingUrl,
     )
 }
 

@@ -23,4 +23,7 @@
     <string name="player_controls_skip_preview">Skip preview</string>
     <string name="player_controls_skip_commercial">Skip commercial</string>
     <string name="player_controls_skip_unknown">Skip</string>
+    <string name="playback_method_direct_play">Direct Play</string>
+    <string name="playback_method_transcoding">Transcoding</string>
+    <string name="quality_auto_downgraded">Network slow — dropped to %1$s</string>
 </resources>

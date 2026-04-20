@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import timber.log.Timber
 import java.time.Instant
 import java.time.ZoneId
@@ -493,14 +494,13 @@ class PlayerSessionController(
         return "Cannot change quality right now"
     }
 
-    private fun bitrateLabel(bps: Long): String = when {
-        bps <= 0L -> "Auto"
-        bps >= 1_000_000L -> {
-            val mbps = bps.toDouble() / 1_000_000.0
-            if (mbps == mbps.toLong().toDouble()) "${mbps.toLong()} Mbps"
-            else "%.1f Mbps".format(mbps)
-        }
-        else -> "${bps / 1_000L} Kbps"
+    private fun bitrateLabel(bps: Long): String = when (QualityOption.fromBps(bps)) {
+        QualityOption.AUTO -> "Auto"
+        QualityOption.UHD -> "4K"
+        QualityOption.FHD -> "1080p"
+        QualityOption.HD -> "720p"
+        QualityOption.SD -> "480p"
+        QualityOption.LOW -> "360p"
     }
 
     private fun dispatchTrackSelection(

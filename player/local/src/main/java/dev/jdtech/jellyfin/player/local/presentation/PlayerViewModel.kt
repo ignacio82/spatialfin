@@ -49,6 +49,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.math.ceil
@@ -226,6 +227,16 @@ constructor(
     private var pendingRemoteAudioStreamIndex: Int? = null
     private var pendingRemoteSubtitleStreamIndex: Int? = null
     private var lastNonMutedVolume: Float = 1f
+
+    // Adaptive-auto state. `effectiveAutoBitrate` is the cap currently in use
+    // when the user's pref is Auto (0L); a rebuffer storm pushes it down a
+    // QualityOption at a time. `recentRebufferMs` holds the timestamps of
+    // BUFFERING events that happened after the file was loaded, trimmed to a
+    // rolling 60-second window. Reset whenever a new Jellyfin item loads.
+    private var effectiveAutoBitrate: Long = 0L
+    private val recentRebufferMs: ArrayDeque<Long> = ArrayDeque()
+    private var lastPlaybackState: Int = Player.STATE_IDLE
+    private var autoDowngradeCooldownUntilMs: Long = 0L
     private var remoteSessionConfigured = false
     private var configuredDeviceName: String? = null
 
@@ -675,6 +686,11 @@ constructor(
         val currentPosition = player.currentPosition
         playbackPosition = currentPosition
         appPreferences.setValue(appPreferences.playerMaxBitrate, newMaxBitrate)
+        // User made an explicit choice — wipe any adaptive-auto history so the
+        // rolling rebuffer window starts fresh from this preset.
+        effectiveAutoBitrate = newMaxBitrate
+        recentRebufferMs.clear()
+        autoDowngradeCooldownUntilMs = 0L
         initializePlayer(
             itemId = itemId,
             itemKind = itemKind,
@@ -847,15 +863,18 @@ constructor(
             streamUrl,
             mediaSubtitles.size,
         )
-        val mediaItem =
-            MediaItem.Builder()
-                .setMediaId(itemId.toString())
-                .setUri(streamUrl)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(name).build())
-                .setSubtitleConfigurations(mediaSubtitles)
-                .build()
-
-        return mediaItem
+        val builder = MediaItem.Builder()
+            .setMediaId(itemId.toString())
+            .setUri(streamUrl)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(name).build())
+            .setSubtitleConfigurations(mediaSubtitles)
+        // Hint HLS when Jellyfin returned a transcoding master playlist so
+        // DefaultMediaSourceFactory dispatches to HlsMediaSource even when the
+        // URL's .m3u8 extension is hidden behind query params.
+        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+            builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+        }
+        return builder.build()
     }
 
     private fun releasePlayer() {
@@ -1437,6 +1456,11 @@ constructor(
             }
             ExoPlayer.STATE_BUFFERING -> {
                 stateString = "ExoPlayer.STATE_BUFFERING -"
+                // Only count as a rebuffer if we were mid-playback (READY → BUFFERING);
+                // the initial load transitions IDLE/BUFFERING → READY and shouldn't count.
+                if (lastPlaybackState == ExoPlayer.STATE_READY && playWhenReady) {
+                    onRebufferObserved()
+                }
             }
             ExoPlayer.STATE_READY -> {
                 stateString = "ExoPlayer.STATE_READY     -"
@@ -1474,6 +1498,7 @@ constructor(
                 }
             }
         }
+        lastPlaybackState = state
         Timber.d(
             "Changed player state to %s playWhenReady=%b isPlaying=%b posMs=%d mediaId=%s error=%s",
             stateString,
@@ -1483,6 +1508,66 @@ constructor(
             player.currentMediaItem?.mediaId,
             player.playerError?.errorCodeName,
         )
+    }
+
+    /**
+     * Records a mid-playback BUFFERING transition and, when the user is on the
+     * "Auto" quality preset, steps the streaming cap down one preset if three
+     * rebuffers have occurred within the last 60 seconds. A 30-second cooldown
+     * after each downgrade prevents a cascade while the new, lower-bitrate
+     * stream is re-buffering itself.
+     */
+    private fun onRebufferObserved() {
+        val nowMs = SystemClock.elapsedRealtime()
+        // Trim to 60s rolling window
+        while (recentRebufferMs.isNotEmpty() && nowMs - recentRebufferMs.first() > 60_000L) {
+            recentRebufferMs.removeFirst()
+        }
+        recentRebufferMs.addLast(nowMs)
+
+        val userPref = appPreferences.getValue(appPreferences.playerMaxBitrate)
+        if (userPref != 0L) return // only auto-downgrade in Auto mode
+        if (nowMs < autoDowngradeCooldownUntilMs) return
+        if (recentRebufferMs.size < 3) return
+
+        val next = nextLowerAutoStep(effectiveAutoBitrate) ?: return
+        effectiveAutoBitrate = next
+        autoDowngradeCooldownUntilMs = nowMs + 30_000L
+        recentRebufferMs.clear()
+
+        val currentItemId = _uiState.value.currentItemId?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return
+        val currentItemKind = _uiState.value.currentItemKind ?: return
+
+        val newOption = QualityOption.fromBps(next)
+        val friendly = application.getString(newOption.labelRes)
+        Timber.i("Adaptive auto: downgrading to %s (%d bps) after %d rebuffers", friendly, next, 3)
+        Toast.makeText(
+            application,
+            application.getString(R.string.quality_auto_downgraded, friendly),
+            Toast.LENGTH_SHORT,
+        ).show()
+
+        playbackPosition = player.currentPosition
+        initializePlayer(
+            itemId = currentItemId,
+            itemKind = currentItemKind,
+            startFromBeginning = false,
+            maxBitrate = next,
+        )
+    }
+
+    /**
+     * The first rebuffer in Auto caps at 4K (40 Mbps) regardless of source —
+     * that's already tight enough for most networks. Subsequent rebuffers walk
+     * the QualityOption ladder downward one step at a time.
+     */
+    private fun nextLowerAutoStep(current: Long): Long? = when {
+        current == 0L -> QualityOption.UHD.bps
+        current > QualityOption.FHD.bps -> QualityOption.FHD.bps
+        current > QualityOption.HD.bps -> QualityOption.HD.bps
+        current > QualityOption.SD.bps -> QualityOption.SD.bps
+        current > QualityOption.LOW.bps -> QualityOption.LOW.bps
+        else -> null
     }
 
     override fun onPlayerError(error: PlaybackException) {
@@ -2627,7 +2712,10 @@ constructor(
     private fun buildPlaybackInfoLabel(source: dev.jdtech.jellyfin.models.SpatialFinSource?): String? {
         if (source == null) return null
         val videoStream = source.mediaStreams.firstOrNull { it.type == MediaStreamType.VIDEO } ?: return null
-        val method = if (source.supportsDirectPlay) "Direct Play" else "Transcoding"
+        val methodRes =
+            if (source.supportsDirectPlay) R.string.playback_method_direct_play
+            else R.string.playback_method_transcoding
+        val method = application.getString(methodRes)
         val resolutionLabel = when (val h = videoStream.height) {
             null -> null
             in 2000..Int.MAX_VALUE -> "4K"

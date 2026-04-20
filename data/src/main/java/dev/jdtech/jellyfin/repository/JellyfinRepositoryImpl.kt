@@ -74,6 +74,10 @@ import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
 import org.jellyfin.sdk.model.api.SortOrder as ItemSortOrder
 import org.jellyfin.sdk.model.api.DirectPlayProfile
 import org.jellyfin.sdk.model.api.DlnaProfileType
+import org.jellyfin.sdk.model.api.EncodingContext
+import org.jellyfin.sdk.model.api.MediaStreamProtocol
+import org.jellyfin.sdk.model.api.TranscodeSeekInfo
+import org.jellyfin.sdk.model.api.TranscodingProfile
 import org.jellyfin.sdk.model.api.JoinGroupRequestDto
 import org.jellyfin.sdk.model.api.NewGroupRequestDto
 import org.jellyfin.sdk.model.api.NextItemRequestDto
@@ -381,7 +385,31 @@ class JellyfinRepositoryImpl(
                                             type = DlnaProfileType.VIDEO,
                                         ),
                                     ),
-                                    transcodingProfiles = emptyList(),
+                                    // One HLS-over-TS transcoding profile. Used only when Jellyfin
+                                    // decides the source can't be direct-played within the current
+                                    // bitrate cap — it then returns an .m3u8 URL in
+                                    // MediaSourceInfo.transcodingUrl and the client picks that up.
+                                    transcodingProfiles = listOf(
+                                        TranscodingProfile(
+                                            container = "ts",
+                                            type = DlnaProfileType.VIDEO,
+                                            videoCodec = "h264,hevc",
+                                            audioCodec = "aac,mp3,ac3,eac3",
+                                            protocol = MediaStreamProtocol.HLS,
+                                            estimateContentLength = false,
+                                            enableMpegtsM2TsMode = false,
+                                            transcodeSeekInfo = TranscodeSeekInfo.AUTO,
+                                            copyTimestamps = false,
+                                            context = EncodingContext.STREAMING,
+                                            enableSubtitlesInManifest = false,
+                                            maxAudioChannels = null,
+                                            minSegments = 0,
+                                            segmentLength = 0,
+                                            breakOnNonKeyFrames = false,
+                                            conditions = emptyList(),
+                                            enableAudioVbrEncoding = true,
+                                        ),
+                                    ),
                                     subtitleProfiles =
                                         listOf(
                                             SubtitleProfile("srt", SubtitleDeliveryMethod.EXTERNAL),
