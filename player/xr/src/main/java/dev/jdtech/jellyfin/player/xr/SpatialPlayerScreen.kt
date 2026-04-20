@@ -1227,7 +1227,7 @@ fun SpatialPlayerScreen(
     LaunchedEffect(useLibass) {
         while (useLibass) {
             // Use player.currentPosition directly instead of the 500ms-polled state
-            // to ensure smooth animations and correct timing at 30fps.
+            // to ensure smooth animations and correct timing at ~60fps.
             val pos = player.currentPosition
             val result = libassRenderer?.renderFrame(pos)
             if (result != null) {
@@ -1252,7 +1252,7 @@ fun SpatialPlayerScreen(
                     )
                 }
             }
-            delay(33) // ~30fps for subtitle updates (smooth for \move, \fad)
+            delay(16) // ~60fps for subtitle updates (smooth for \move, \fad, \k karaoke)
         }
     }
 

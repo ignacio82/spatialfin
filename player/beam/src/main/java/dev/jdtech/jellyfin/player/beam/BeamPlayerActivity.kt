@@ -745,7 +745,7 @@ private fun BeamPlayerScreen(
                 } else {
                     libassBitmap = null
                 }
-                delay(33L)
+                delay(16L)
             }
         }
 
