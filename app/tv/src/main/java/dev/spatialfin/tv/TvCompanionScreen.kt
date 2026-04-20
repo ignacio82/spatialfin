@@ -18,13 +18,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.tv.material3.Button
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -605,9 +605,9 @@ fun TvCompanionScreen(
         when (val current = state) {
             TvCompanionState.Idle -> Unit
             TvCompanionState.Applying -> {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xCC131A24)),
-                    shape = RoundedCornerShape(30.dp),
+                Card(onClick = {}, 
+                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
@@ -620,9 +620,9 @@ fun TvCompanionScreen(
                 }
             }
             is TvCompanionState.Error -> {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xCC131A24)),
-                    shape = RoundedCornerShape(30.dp),
+                Card(onClick = {}, 
+                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
@@ -638,9 +638,9 @@ fun TvCompanionScreen(
                 }
             }
             TvCompanionState.Success -> {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xCC131A24)),
-                    shape = RoundedCornerShape(30.dp),
+                Card(onClick = {}, 
+                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
@@ -662,9 +662,9 @@ fun TvCompanionScreen(
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xCC131A24)),
-                        shape = RoundedCornerShape(30.dp),
+                    Card(onClick = {}, 
+                        colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
+                        shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
                     ) {
                         Box(
                             modifier = Modifier.padding(28.dp),
@@ -686,10 +686,10 @@ fun TvCompanionScreen(
                         }
                     }
 
-                    Card(
+                    Card(onClick = {}, 
                         modifier = Modifier.weight(1f),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xCC131A24)),
-                        shape = RoundedCornerShape(30.dp),
+                        colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
+                        shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
                     ) {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(28.dp),

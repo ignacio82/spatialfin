@@ -83,15 +83,24 @@ constructor(
                 if (connectionMonitor.shouldUseOfflineRepository()) {
                     _state.update { it.copy(suggestionsSection = null, views = emptyList()) }
                     loadOfflineLibrarySections()
+                    _state.emit(_state.value.copy(isLoading = false))
                 } else {
                     _state.update { it.copy(offlineLibrarySections = emptyList()) }
                     loadSuggestions()
-                    loadViews()
+                    // Resolve the main loading spinner as soon as the above-the-fold
+                    // content (resume / next-up / suggestions) is in. loadViews()
+                    // does N+1 API calls (one per library for latest media) and was
+                    // blocking first paint by 200-500ms on slow TV connections.
+                    _state.emit(_state.value.copy(isLoading = false))
+                    try {
+                        loadViews()
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadViews failed after first paint")
+                    }
                 }
             } catch (e: Exception) {
-                _state.emit(_state.value.copy(error = e))
+                _state.emit(_state.value.copy(error = e, isLoading = false))
             }
-            _state.emit(_state.value.copy(isLoading = false))
         }
     }
 

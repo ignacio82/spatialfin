@@ -425,6 +425,16 @@ User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoice
 - Saving the app-panel pose: write to `SharedPreferences` only when the pose **actually changes** (`UnifiedMainActivity.poseApproximatelyEqual`). A 1 Hz unconditional write wears flash and races the `MovableComponent`'s final pose with stale ticks.
 - Migrate legacy default poses (`migrateLegacyCenteredAppPose`) — old default depths (-5m / -6m / -9m / -11m) get rewritten to the current default; do not break this when you add a new default.
 
+### TV Form-Factor Perf (Chromecast with Google TV / low-end Leanback)
+TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are cheap on XR / phone become visibly choppy on TV.
+- **No Compose `.blur()` on TV backgrounds.** `TvAmbientBackground` (`app/tv/.../TvNavigationRoot.kt`) uses scrim + radial gradients instead. Blur radii above ~24dp stall focus navigation on these SoCs.
+- **Coil crossfade is disabled on TV.** The `SingletonImageLoader.Factory` in `UnifiedApplication.newImageLoader` branches on `DeviceClass`; TV loads images with crossfade off to avoid stacking fades during fast D-pad navigation.
+- **Ambient backdrop decodes at 960×540.** `TvAmbientBackground` wraps the URL in an `ImageRequest.Builder(...).size(960, 540)` — a full-screen 1920×1080 decode is 8 MB peak per frame on a 2 GB device.
+- **LLM eager init is skipped on TV.** `UnifiedApplication.eagerInitializeLlmIfNeeded` returns immediately for `DeviceClass.TV`. TV has no voice-assistant UI today; initializing `LlmModelManager` for nothing wastes ~100 MB and ties up the GPU.
+- **Lazy list items must be keyed.** TV grids in `TvNavigationRoot.kt` chunk items into rows; every `items(rows, ...)` call passes `key = { it.firstOrNull()?.id ?: it.hashCode() }` so focus state and animations are preserved across scroll recycles.
+- **Focus-scale animations are tween, not spring.** 10 sites in `TvNavigationRoot.kt` use `animateFloatAsState(animationSpec = tween(120), ...)` — the default spring's ~350ms animation forces graphicsLayer re-rasterization too long on weak GPUs.
+- **Home's `loadViews()` runs after first paint.** `HomeViewModel.loadData` emits `isLoading = false` *after* suggestions/resume/next-up arrive, then calls `loadViews()` (N+1 API calls, one per library for latest media) in the same coroutine so the home screen paints immediately.
+
 ---
 
 ## Release & Compliance Mandates

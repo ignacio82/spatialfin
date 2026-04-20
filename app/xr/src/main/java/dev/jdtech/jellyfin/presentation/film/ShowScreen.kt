@@ -128,6 +128,7 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                 ItemHeader(
                     item = show,
                     scrollState = scrollState,
+                    showLogo = true,
                     content = {
                         Row(
                             modifier =

@@ -58,7 +58,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -76,6 +75,7 @@ import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.jdtech.jellyfin.core.presentation.components.CinematicBackdrop
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -221,13 +221,19 @@ fun BeamNavigationRoot(
         LocalBeamWidth provides beamWidth,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {
-            AsyncImage(
-                model = beamBackgroundUrl,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize().blur(80.dp),
-                contentScale = ContentScale.Crop,
-                alpha = 0.35f,
-            )
+            CinematicBackdrop(
+                modifier = Modifier.fillMaxSize(),
+                blurRadius = 80.dp,
+                scrimTopAlpha = 0.55f,
+                scrimBottomAlpha = 0.75f,
+            ) {
+                AsyncImage(
+                    model = beamBackgroundUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
             Scaffold(
                 containerColor = Color.Transparent,
                 bottomBar = {

@@ -147,6 +147,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     }
 
     private fun eagerInitializeLlmIfNeeded() {
+        // TV hardware (e.g. Chromecast with Google TV, Amlogic S905X3/D3, 2 GB RAM) cannot run
+        // on-device Gemma inference usefully, and the voice assistant UI isn't exposed on TV.
+        // Skipping init saves ~100 MB of working set plus GPU/NPU warm-up on low-end SoCs.
+        if (deviceClass == DeviceClass.TV) return
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
         if (deviceClass == DeviceClass.XR) {
             // On XR: only initialize if the model is already on disk. We never auto-download
@@ -190,6 +194,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
     @OptIn(ExperimentalCoilApi::class, ExperimentalTime::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
+        // TV runs on weak GPUs (Amlogic Mali-G31 etc.) where every compositor blend is
+        // expensive. Disable Coil's crossfade on TV — focus-based navigation already
+        // rapid-fires image loads and the fades stack into visible choppiness.
+        val enableCrossfade = deviceClass != DeviceClass.TV
         return ImageLoader.Builder(context)
             .components {
                 add(OkHttpNetworkFetcherFactory(cacheStrategy = { CacheControlCacheStrategy() }))
@@ -207,7 +215,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                     )
                     .build()
             }
-            .crossfade(true)
+            .crossfade(enableCrossfade)
             .build()
     }
 }

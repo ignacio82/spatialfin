@@ -1,9 +1,9 @@
 package dev.spatialfin.tv
 
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
+import androidx.tv.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,7 +28,7 @@ private val TvColorScheme =
         onSurface = Color(0xFFE5EEF7),
         surfaceVariant = Color(0xFF223245),
         onSurfaceVariant = Color(0xFFB7C6D8),
-        outline = Color(0xFF5C7087),
+        border = Color(0xFF5C7087),
     )
 
 @Composable
@@ -39,7 +39,7 @@ fun TvTheme(content: @Composable () -> Unit) {
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = TvColorScheme.background,
+            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = TvColorScheme.background),
         ) {
             content()
         }

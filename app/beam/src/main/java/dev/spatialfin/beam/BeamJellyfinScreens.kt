@@ -72,6 +72,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
+import dev.jdtech.jellyfin.core.presentation.components.FloatingProgressBar
 import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
@@ -81,6 +82,7 @@ import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
 import dev.jdtech.jellyfin.film.presentation.downloads.DownloadSortOrder
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.DownloadRequest
@@ -650,14 +652,13 @@ private fun BeamPosterCard(
                 }
                 if (showProgress) {
                     buildPlaybackFraction(item)?.let { progress ->
-                        LinearProgressIndicator(
-                            progress = { progress },
+                        FloatingProgressBar(
+                            progress = progress,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(3.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
                                 .align(androidx.compose.ui.Alignment.BottomCenter),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.Black.copy(alpha = 0.5f),
+                            progressColor = MaterialTheme.colorScheme.primary,
                         )
                     }
                 }
@@ -2297,6 +2298,9 @@ private fun BeamDetailHeroCard(
                             BeamDetailPill(text = token)
                         }
                     }
+                }
+                if (item.ratings.isNotEmpty()) {
+                    RatingsRow(ratings = item.ratings)
                 }
                 Text(
                     text = item.overview.ifBlank { "No overview available." },

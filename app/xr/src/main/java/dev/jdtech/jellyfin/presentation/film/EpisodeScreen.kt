@@ -190,6 +190,7 @@ private fun EpisodeScreenLayout(
                 ItemHeader(
                     item = episode,
                     scrollState = scrollState,
+                    showLogo = true,
                     content = {
                         Column(
                             modifier =

@@ -200,6 +200,7 @@ private fun MovieScreenLayout(
                 ItemHeader(
                     item = movie,
                     scrollState = scrollState,
+                    showLogo = true,
                     content = {
                         Row(
                             modifier =
