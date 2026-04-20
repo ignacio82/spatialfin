@@ -9,7 +9,9 @@ import kotlin.time.toDuration
 import org.jellyfin.sdk.api.client.HttpClientOptions
 import org.jellyfin.sdk.api.client.extensions.brandingApi
 import org.jellyfin.sdk.api.client.extensions.devicesApi
+import org.jellyfin.sdk.api.client.extensions.itemRefreshApi
 import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.api.client.extensions.libraryApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
 import org.jellyfin.sdk.api.client.extensions.mediaSegmentsApi
 import org.jellyfin.sdk.api.client.extensions.playStateApi
@@ -81,6 +83,8 @@ class JellyfinApi(
     val userLibraryApi = api.userLibraryApi
     val videosApi = api.videosApi
     val viewsApi = api.userViewsApi
+    val itemRefreshApi = api.itemRefreshApi
+    val libraryApi = api.libraryApi
 
     companion object {
         @Volatile private var INSTANCE: JellyfinApi? = null

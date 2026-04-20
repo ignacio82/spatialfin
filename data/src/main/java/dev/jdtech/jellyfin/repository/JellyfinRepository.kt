@@ -164,6 +164,12 @@ interface JellyfinRepository {
 
     suspend fun markAsUnplayed(itemId: UUID)
 
+    /** Trigger Jellyfin's metadata refresh for an item. */
+    suspend fun refreshItemMetadata(itemId: UUID)
+
+    /** Ask Jellyfin to delete an item from the library. Returns true on success. */
+    suspend fun deleteItem(itemId: UUID): Boolean
+
     fun getBaseUrl(): String
 
     fun getAccessToken(): String?

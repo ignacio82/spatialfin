@@ -387,6 +387,19 @@ constructor(
         )
     }
 
+    override suspend fun refreshItemMetadata(itemId: UUID) {
+        runWrite(
+            online = { onlineRepository.refreshItemMetadata(itemId) },
+            offline = { offlineRepository.refreshItemMetadata(itemId) },
+        )
+    }
+
+    override suspend fun deleteItem(itemId: UUID): Boolean =
+        runWithFallback(
+            online = { onlineRepository.deleteItem(itemId) },
+            offline = { offlineRepository.deleteItem(itemId) },
+        )
+
     override fun getBaseUrl(): String = onlineRepository.getBaseUrl()
 
     override suspend fun updateDeviceName(name: String) {

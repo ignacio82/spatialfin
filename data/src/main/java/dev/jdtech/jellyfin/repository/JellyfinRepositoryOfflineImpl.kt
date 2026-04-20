@@ -426,6 +426,15 @@ class JellyfinRepositoryOfflineImpl(
         }
     }
 
+    override suspend fun refreshItemMetadata(itemId: UUID) {
+        // No-op offline — metadata refresh requires server access.
+    }
+
+    override suspend fun deleteItem(itemId: UUID): Boolean {
+        // Offline deletion isn't supported; downloads are managed via Downloader.
+        return false
+    }
+
     override fun getBaseUrl(): String {
         return ""
     }

@@ -116,8 +116,14 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Share
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
@@ -184,6 +190,9 @@ class BeamItemDetailViewModel
 constructor(
     private val repository: JellyfinRepository,
 ) : ViewModel() {
+    /** Exposed for UI callers that need to build share URLs etc. */
+    fun serverBaseUrl(): String = repository.getBaseUrl()
+
     private val _state = MutableStateFlow(BeamItemDetailState())
     val state = _state.asStateFlow()
 
@@ -220,6 +229,28 @@ constructor(
                 else repository.markAsPlayed(current.id)
             }
             load(current.id)
+        }
+    }
+
+    fun refreshMetadata() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching { repository.refreshItemMetadata(current.id) }
+            // Metadata refresh is async on the server side — give it a few seconds then
+            // reload the detail page to pick up the refreshed fields.
+            kotlinx.coroutines.delay(3_000L)
+            load(current.id)
+        }
+    }
+
+    /** Emits true via [_deletedChannel] on success so the screen can pop back. */
+    private val _deletedChannel = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val deletedEvents = _deletedChannel.receiveAsFlow()
+    fun deleteItem() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            val deleted = runCatching { repository.deleteItem(current.id) }.getOrElse { false }
+            _deletedChannel.send(deleted)
         }
     }
 
@@ -1118,6 +1149,16 @@ fun BeamItemDetailScreen(
     val setBackground = LocalBeamBackground.current
     var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
     var showPlaybackOptions by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showOverflow by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showDeleteConfirm by rememberSaveable(itemId) { mutableStateOf(false) }
+
+    LaunchedEffect(itemId) {
+        viewModel.deletedEvents.collect { ok ->
+            val msg = if (ok) "Deleted" else "Delete failed"
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            if (ok) onBack()
+        }
+    }
 
     LaunchedEffect(itemId) {
         viewModel.load(itemId)
@@ -1250,6 +1291,29 @@ fun BeamItemDetailScreen(
                                 label = if (itemData.played) "Watched" else "Mark watched",
                                 onClick = { viewModel.togglePlayed() },
                             )
+                            BeamOverflowMenu(
+                                expanded = showOverflow,
+                                onExpandedChange = { showOverflow = it },
+                                onRefresh = {
+                                    viewModel.refreshMetadata()
+                                    Toast.makeText(context, "Refreshing metadata…", Toast.LENGTH_SHORT).show()
+                                },
+                                onDelete = { showDeleteConfirm = true },
+                                onShare = {
+                                    val base = viewModel.serverBaseUrl().trimEnd('/')
+                                    val url = "$base/web/#!/details?id=${itemData.id}"
+                                    context.startActivity(
+                                        android.content.Intent.createChooser(
+                                            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, itemData.name)
+                                                putExtra(android.content.Intent.EXTRA_TEXT, "${itemData.name}\n$url")
+                                            },
+                                            "Share ${itemData.name}",
+                                        )
+                                    )
+                                },
+                            )
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
                         }
                         if (itemData.canPlay) {
@@ -1318,6 +1382,29 @@ fun BeamItemDetailScreen(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        viewModel.deleteItem()
+                    },
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+            title = { Text("Delete from library?") },
+            text = { Text("This removes the item from your Jellyfin server. This can't be undone.") },
+        )
     }
 
     if (showDownloadDialog) {
@@ -2714,6 +2801,69 @@ private fun openServerItem(
         is SpatialFinShow -> onOpenShow(item.id)
         is SpatialFinSeason -> onOpenSeason(item.id)
         else -> onOpenItem(item.id)
+    }
+}
+
+@Composable
+private fun BeamOverflowMenu(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+) {
+    Box {
+        androidx.compose.material3.IconButton(onClick = { onExpandedChange(true) }) {
+            androidx.compose.material3.Icon(
+                imageVector = androidx.compose.material.icons.Icons.Rounded.MoreVert,
+                contentDescription = "More actions",
+            )
+        }
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { onExpandedChange(false) },
+        ) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Refresh metadata") },
+                onClick = {
+                    onExpandedChange(false)
+                    onRefresh()
+                },
+                leadingIcon = {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.Refresh,
+                        contentDescription = null,
+                    )
+                },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Share") },
+                onClick = {
+                    onExpandedChange(false)
+                    onShare()
+                },
+                leadingIcon = {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.Share,
+                        contentDescription = null,
+                    )
+                },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    onExpandedChange(false)
+                    onDelete()
+                },
+                leadingIcon = {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                },
+            )
+        }
     }
 }
 

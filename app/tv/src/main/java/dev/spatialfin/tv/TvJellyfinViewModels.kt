@@ -20,6 +20,7 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -80,6 +81,28 @@ constructor(
             load(current.id)
         }
     }
+
+    fun refreshMetadata() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching { repository.refreshItemMetadata(current.id) }
+            kotlinx.coroutines.delay(3_000L)
+            load(current.id)
+        }
+    }
+
+    private val _deletedChannel = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val deletedEvents = _deletedChannel.receiveAsFlow()
+
+    fun deleteItem() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            val deleted = runCatching { repository.deleteItem(current.id) }.getOrElse { false }
+            _deletedChannel.send(deleted)
+        }
+    }
+
+    fun serverBaseUrl(): String = repository.getBaseUrl()
 
     private suspend fun loadAvailableVersions(movie: SpatialFinMovie): List<SpatialFinMovie> {
         val targetGroupKey = movie.movieVersionGroupKey() ?: return listOf(movie)

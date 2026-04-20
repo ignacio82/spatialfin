@@ -732,6 +732,25 @@ class JellyfinRepositoryImpl(
         }
     }
 
+    override suspend fun refreshItemMetadata(itemId: UUID) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                jellyfinApi.itemRefreshApi.refreshItem(
+                    itemId = itemId,
+                    metadataRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
+                    imageRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
+                    replaceAllMetadata = false,
+                    replaceAllImages = false,
+                )
+            }
+        }
+    }
+
+    override suspend fun deleteItem(itemId: UUID): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching { jellyfinApi.libraryApi.deleteItem(itemId) }.isSuccess
+        }
+
     override fun getBaseUrl() = jellyfinApi.api.baseUrl.orEmpty()
 
     override fun getAccessToken(): String? = jellyfinApi.api.accessToken

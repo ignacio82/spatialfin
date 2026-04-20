@@ -61,6 +61,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.tv.material3.Button
@@ -2892,6 +2893,31 @@ private fun TvItemDetailScreen(
                                 primary = false,
                                 selected = item.played,
                                 onClick = { viewModel.togglePlayed() },
+                            )
+                            TvHeroButton(
+                                label = "Refresh",
+                                icon = Icons.Rounded.Refresh,
+                                primary = false,
+                                onClick = { viewModel.refreshMetadata() },
+                            )
+                            TvHeroButton(
+                                label = "Share",
+                                icon = Icons.Rounded.Share,
+                                primary = false,
+                                onClick = {
+                                    val base = viewModel.serverBaseUrl().trimEnd('/')
+                                    val url = "$base/web/#!/details?id=${item.id}"
+                                    context.startActivity(
+                                        android.content.Intent.createChooser(
+                                            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, item.name)
+                                                putExtra(android.content.Intent.EXTRA_TEXT, "${item.name}\n$url")
+                                            },
+                                            "Share ${item.name}",
+                                        )
+                                    )
+                                },
                             )
                             TvHeroButton(
                                 label = "Back",
