@@ -218,14 +218,16 @@ object AICoreModelHelper {
 
     private fun obtainModel(context: Context): GenerativeModel? {
         cachedModel?.let { return it }
-        val client = Generation.getClient(
-            generationConfig {
-                modelConfig = modelConfig {
-                    releaseStage = ModelReleaseStage.STABLE
-                    preference = ModelPreference.FAST
-                }
-            },
-        )
+        // Use the parameterless overload so AICore picks whichever feature it
+        // has provisioned on this device. The explicit
+        // Generation.getClient(generationConfig { modelConfig { releaseStage=STABLE;
+        // preference=FAST } }) overload asks for a specific feature id that
+        // isn't always registered even on AICore-capable Pixels — on a Pixel 10
+        // Pro it throws "ErrorCode 606 FEATURE_NOT_FOUND: Feature 645 is not
+        // available." The no-arg client works (see BeamGeminiNanoService) and
+        // uses AICore's default model selection, which is what Google AI Edge
+        // Gallery does as well.
+        val client = Generation.getClient()
         cachedModel = client
         return client
     }
