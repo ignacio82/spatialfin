@@ -14,7 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -28,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -740,36 +745,17 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    // On-device Gemma via LiteRT-LM. Runtime is device-agnostic and
-                    // tries NPU → GPU → CPU in order (see core/llm/LlmChatModelHelper.kt);
-                    // on a Pixel with a Tensor NPU this switch will end up running on
-                    // the Tensor after the .litertlm model downloads the first time.
-                    BeamPreferenceRow(
-                        preference = PreferenceSwitch(
-                            nameStringResource = SettingsR.string.voice_assistant_gemma_enabled,
-                            descriptionStringRes = SettingsR.string.voice_assistant_gemma_enabled_summary,
-                            backendPreference = appPreferences.voiceAssistantGemmaEnabled,
-                            onClick = { pref ->
-                                if (pref.value) {
-                                    llmDownloadScope.launch { llmDownloadManager.downloadModel() }
-                                } else {
-                                    llmDownloadManager.deleteModel()
-                                }
-                            },
-                        ),
-                        appPreferences = appPreferences,
-                    )
-                    // Backend status tracks the live engine lifecycle so "CPU" → "NPU"
-                    // transitions show up as soon as LlmModelManager initialises.
-                    BeamPreferenceRow(
-                        preference = PreferenceInfo(
-                            title = stringResource(SettingsR.string.voice_assistant_gemma_backend),
-                            description = gemmaBackendStatusLine(
-                                downloadState = llmDownloadState,
-                                modelState = llmModelState,
-                                storedBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend),
-                            ),
-                        ),
+                    // On-device Gemma via LiteRT-LM. The runtime tries NPU → GPU →
+                    // CPU and is device-agnostic (see core/llm/LlmChatModelHelper.kt);
+                    // on a Pixel with a Tensor NPU the engine will run there once the
+                    // .litertlm model lands on disk. The dedicated composable owns the
+                    // full lifecycle — download button, progress bar, active-backend
+                    // label, delete button — instead of hiding it behind a switch.
+                    BeamGemmaManagementCard(
+                        downloadManager = llmDownloadManager,
+                        downloadScope = llmDownloadScope,
+                        downloadState = llmDownloadState,
+                        modelState = llmModelState,
                         appPreferences = appPreferences,
                     )
                 }
@@ -1006,26 +992,173 @@ private fun beamBackgroundFromName(name: String): Int =
     }
 
 /**
- * Human-readable description of the current Gemma pipeline state. Prefers the
- * live engine lifecycle ([ModelState]) so Pixel 10 Pro users see "NPU" flip in
- * the moment LiteRT finishes initialising; falls back to the stored backend
- * hint when nothing is loaded yet. Download progress is reported as a
- * percentage so the row stays informative during the 2.6 GB model pull.
+ * Dedicated Gemma management UI. The previous iteration bundled "download
+ * the 2.6 GB model" and "use Gemma for voice commands" into a single switch
+ * whose onClick-hook silently kicked the download — users never saw a
+ * download affordance, progress, or a way to reclaim disk space. This card
+ * surfaces each of those as its own explicit control, keyed on the live
+ * DownloadState + ModelState flows from [LlmDownloadManager]:
+ *
+ *  - Idle        → "Download model" button + size hint
+ *  - Downloading → progress bar, percent, Cancel button
+ *  - Ready       → active-backend label ("NPU"), an enable/disable Switch
+ *                   for the feature, and a Delete-model button to free disk
+ *  - Error       → message + Retry button
+ *
+ * The toggle only appears once the model is on disk — flipping it when the
+ * model isn't present would be meaningless. Disabling the toggle doesn't
+ * delete the file, so it's cheap to re-enable later.
  */
-private fun gemmaBackendStatusLine(
+@Composable
+private fun BeamGemmaManagementCard(
+    downloadManager: LlmDownloadManager,
+    downloadScope: CoroutineScope,
     downloadState: DownloadState,
     modelState: ModelState,
+    appPreferences: AppPreferences,
+) {
+    var gemmaEnabled by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled))
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("LiteRT Gemma", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "On-device AI for voice commands. Requires a 2.6 GB model download. " +
+                    "Runs on the Tensor NPU when available (Pixel 10 Pro and similar), otherwise GPU or CPU.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (val ds = downloadState) {
+                is DownloadState.Idle -> GemmaIdleState(
+                    storedBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend),
+                    onDownload = { downloadScope.launch { downloadManager.downloadModel() } },
+                )
+                is DownloadState.Downloading -> GemmaDownloadingState(progress = ds.progress)
+                is DownloadState.Ready -> GemmaReadyState(
+                    modelState = modelState,
+                    storedBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend),
+                    enabled = gemmaEnabled,
+                    onToggleEnabled = { new ->
+                        gemmaEnabled = new
+                        appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, new)
+                    },
+                    onDelete = {
+                        downloadManager.deleteModel()
+                        gemmaEnabled = false
+                        appPreferences.setValue(appPreferences.voiceAssistantGemmaEnabled, false)
+                    },
+                )
+                is DownloadState.Error -> GemmaErrorState(
+                    message = ds.message,
+                    onRetry = { downloadScope.launch { downloadManager.downloadModel() } },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GemmaIdleState(storedBackend: String, onDownload: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (storedBackend.isBlank() || storedBackend == "Requires Model") "Model not downloaded"
+                   else "Previously ran on $storedBackend",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FilledTonalButton(onClick = onDownload) {
+            Text("Download model")
+        }
+    }
+}
+
+@Composable
+private fun GemmaDownloadingState(progress: Float) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Downloading ${(progress * 100).toInt()}%",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        // Explicit, always-visible progress bar so a user staring at the
+        // screen knows work is happening and roughly how much is left.
+        LinearProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun GemmaReadyState(
+    modelState: ModelState,
     storedBackend: String,
-): String {
-    return when (modelState) {
-        is ModelState.Initializing -> "Detecting backend…"
-        is ModelState.Ready -> modelState.backendName
+    enabled: Boolean,
+    onToggleEnabled: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val backendLabel = when (modelState) {
+        is ModelState.Initializing -> "Initialising engine…"
+        is ModelState.Ready -> "Active backend: ${modelState.backendName}"
         is ModelState.Error -> "Error: ${modelState.message}"
-        is ModelState.Idle -> when (downloadState) {
-            is DownloadState.Downloading -> "Downloading ${(downloadState.progress * 100).toInt()}%"
-            is DownloadState.Ready -> "Model downloaded — initialising…"
-            is DownloadState.Error -> "Download error: ${downloadState.message}"
-            is DownloadState.Idle -> storedBackend.takeIf { it.isNotBlank() } ?: "Requires Model"
+        is ModelState.Idle -> {
+            if (storedBackend.isNotBlank() && storedBackend != "Requires Model") {
+                "Last active on $storedBackend"
+            } else {
+                "Model downloaded — initialising…"
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = backendLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(checked = enabled, onCheckedChange = onToggleEnabled)
+        }
+        OutlinedButton(
+            onClick = onDelete,
+            modifier = Modifier.align(Alignment.End),
+        ) {
+            Text("Delete model")
+        }
+    }
+}
+
+@Composable
+private fun GemmaErrorState(message: String, onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Download failed: $message",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        Button(onClick = onRetry) {
+            Text("Retry")
         }
     }
 }
