@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -199,6 +200,28 @@ constructor(
         }
     }
 
+    fun toggleFavorite() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.favorite) repository.unmarkAsFavorite(current.id)
+                else repository.markAsFavorite(current.id)
+            }
+            load(current.id)
+        }
+    }
+
+    fun togglePlayed() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.played) repository.markAsUnplayed(current.id)
+                else repository.markAsPlayed(current.id)
+            }
+            load(current.id)
+        }
+    }
+
     private suspend fun loadAvailableVersions(movie: SpatialFinMovie): List<SpatialFinMovie> {
         val targetGroupKey = movie.movieVersionGroupKey() ?: return listOf(movie)
         return runCatching {
@@ -254,6 +277,28 @@ constructor(
             }.onFailure { error ->
                 _state.emit(BeamShowState(isLoading = false, error = error))
             }
+        }
+    }
+
+    fun toggleFavorite() {
+        val current = _state.value.show ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.favorite) repository.unmarkAsFavorite(current.id)
+                else repository.markAsFavorite(current.id)
+            }
+            load(current.id)
+        }
+    }
+
+    fun togglePlayed() {
+        val current = _state.value.show ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.played) repository.markAsUnplayed(current.id)
+                else repository.markAsPlayed(current.id)
+            }
+            load(current.id)
         }
     }
 
@@ -863,6 +908,14 @@ fun BeamShowScreen(
                                 )
                             }
                             BeamSecondaryActionButton(
+                                label = if (show.favorite) "Favorited" else "Favorite",
+                                onClick = { viewModel.toggleFavorite() },
+                            )
+                            BeamSecondaryActionButton(
+                                label = if (show.played) "Watched" else "Mark watched",
+                                onClick = { viewModel.togglePlayed() },
+                            )
+                            BeamSecondaryActionButton(
                                 label = if (state.bulkDownload.isQueuing) "Queuing…" else "Download Show",
                                 onClick = { showBulkDownloadDialog = true },
                             )
@@ -890,6 +943,18 @@ fun BeamShowScreen(
                             item = nextEpisode,
                             onPlay = { launchServerItem(context, nextEpisode) },
                             onOpen = { onOpenItem(nextEpisode.id) },
+                        )
+                    }
+                }
+                val showActors = show.people.filter { person ->
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
+                }
+                if (showActors.isNotEmpty()) {
+                    item {
+                        dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
+                            actors = showActors,
+                            onActorClick = { /* TODO: person screen wiring */ },
+                            contentPadding = PaddingValues(horizontal = 0.dp),
                         )
                     }
                 }
@@ -1140,6 +1205,14 @@ fun BeamItemDetailScreen(
                                     onClick = { openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {}) },
                                 )
                             }
+                            BeamSecondaryActionButton(
+                                label = if (itemData.favorite) "Favorited" else "Favorite",
+                                onClick = { viewModel.toggleFavorite() },
+                            )
+                            BeamSecondaryActionButton(
+                                label = if (itemData.played) "Watched" else "Mark watched",
+                                onClick = { viewModel.togglePlayed() },
+                            )
                             BeamSecondaryActionButton(label = "Back", onClick = onBack)
                         }
                         if (itemData.canPlay) {
@@ -1182,6 +1255,28 @@ fun BeamItemDetailScreen(
                                 }
                             }
                         }
+                    }
+                }
+                val actors = beamPeopleOf(itemData).filter { person ->
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
+                }
+                if (actors.isNotEmpty()) {
+                    item {
+                        dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
+                            actors = actors,
+                            onActorClick = { /* TODO: person screen wiring */ },
+                            contentPadding = PaddingValues(horizontal = 0.dp),
+                        )
+                    }
+                }
+                if (itemData.chapters.isNotEmpty()) {
+                    item {
+                        BeamChaptersRow(
+                            chapters = itemData.chapters,
+                            // Seek-to-chapter needs a launchServerItem start-position param;
+                            // for now tapping a chapter just starts playback from beginning.
+                            onChapterClick = { _ -> launchServerItem(context, itemData) },
+                        )
                     }
                 }
             }
@@ -2583,6 +2678,46 @@ private fun openServerItem(
         is SpatialFinSeason -> onOpenSeason(item.id)
         else -> onOpenItem(item.id)
     }
+}
+
+@Composable
+private fun BeamChaptersRow(
+    chapters: List<dev.jdtech.jellyfin.models.SpatialFinChapter>,
+    onChapterClick: (dev.jdtech.jellyfin.models.SpatialFinChapter) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "Chapters",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(chapters, key = { it.startPosition }) { chapter ->
+                androidx.compose.material3.AssistChip(
+                    onClick = { onChapterClick(chapter) },
+                    label = {
+                        Text(chapter.name?.takeIf { it.isNotBlank() } ?: formatChapterTime(chapter.startPosition))
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun beamPeopleOf(item: SpatialFinItem): List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> =
+    when (item) {
+        is SpatialFinMovie -> item.people
+        is SpatialFinEpisode -> item.people
+        is SpatialFinShow -> item.people
+        else -> emptyList()
+    }
+
+private fun formatChapterTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
+    val s = totalSeconds % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
 private fun launchServerItem(

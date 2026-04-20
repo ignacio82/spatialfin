@@ -59,6 +59,28 @@ constructor(
         }
     }
 
+    fun toggleFavorite() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.favorite) repository.unmarkAsFavorite(current.id)
+                else repository.markAsFavorite(current.id)
+            }
+            load(current.id)
+        }
+    }
+
+    fun togglePlayed() {
+        val current = _state.value.item ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.played) repository.markAsUnplayed(current.id)
+                else repository.markAsPlayed(current.id)
+            }
+            load(current.id)
+        }
+    }
+
     private suspend fun loadAvailableVersions(movie: SpatialFinMovie): List<SpatialFinMovie> {
         val targetGroupKey = movie.movieVersionGroupKey() ?: return listOf(movie)
         return runCatching {
@@ -115,6 +137,28 @@ constructor(
             }.onFailure { error ->
                 _state.emit(TvShowState(isLoading = false, error = error))
             }
+        }
+    }
+
+    fun toggleFavorite() {
+        val current = _state.value.show ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.favorite) repository.unmarkAsFavorite(current.id)
+                else repository.markAsFavorite(current.id)
+            }
+            load(current.id)
+        }
+    }
+
+    fun togglePlayed() {
+        val current = _state.value.show ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (current.played) repository.markAsUnplayed(current.id)
+                else repository.markAsPlayed(current.id)
+            }
+            load(current.id)
         }
     }
 

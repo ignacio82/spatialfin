@@ -34,15 +34,28 @@ import androidx.compose.material.icons.automirrored.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
+import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
@@ -807,157 +820,168 @@ private fun TvHomeScreen(
 ) {
     val context = LocalContext.current
     val companionConfigured = tvCompanionConfigured(appPreferences)
-    // Persist "have we already parked focus on the hero?" at screen scope so that
-    // scrolling the hero off-screen (which disposes the hero composable) doesn't
-    // reset the flag and cause focus to be yanked back up on re-entry.
     var heroFocusParked by rememberSaveable { mutableStateOf(false) }
 
     val showOnboardingHero = !state.hasCurrentUser || !state.hasServers
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-        contentPadding = PaddingValues(bottom = 42.dp),
-    ) {
-        if (showOnboardingHero) {
-            item {
-                TvOnboardingHero(
-                    hasServers = state.hasServers,
-                    companionConfigured = companionConfigured,
-                    onOpenCompanion = onOpenCompanion,
-                )
-            }
-            return@LazyColumn
-        }
 
-        val suggestions = homeState.suggestionsSection?.items.orEmpty()
-        val nextUp = homeState.nextUpSection?.homeSection?.items.orEmpty()
-        val featuredItems = suggestions.take(5).ifEmpty { nextUp.take(5) }
-        val featuredEyebrow = if (suggestions.isNotEmpty()) "Featured" else "Next up for you"
+    // jellyfin-androidtv uses Leanback's VerticalGridView for the home, which has
+    // DOWN-always-exits-the-row behaviour baked in. Compose's LazyColumn can't
+    // match that: cards in unrendered shelves don't exist as focus targets, so
+    // Compose's 2D focus search picks the nearest in-row card and DOWN ends up
+    // reinterpreted as RIGHT. Two mitigations make the Compose version behave:
+    //   1. Use Column + verticalScroll so every shelf row composes up-front,
+    //      giving the focus engine a deterministic first-card target per row.
+    //   2. Intercept DPAD_UP / DPAD_DOWN on each shelf's LazyRow via
+    //      onPreviewKeyEvent and forward focus to the next/previous shelf's
+    //      first-card FocusRequester — bypassing spatial search entirely.
 
-        if (featuredItems.isNotEmpty()) {
-            item {
-                val heroHeight = LocalConfiguration.current.screenHeightDp.dp * 0.35f
-                Carousel(
-                    itemCount = featuredItems.size,
-                    // Disable auto-advance — it was stealing focus back to the hero's
-                    // primary button every few seconds, which scrolled the LazyColumn
-                    // back to the top whenever the user was browsing below.
-                    autoScrollDurationMillis = Long.MAX_VALUE,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(heroHeight),
-                ) { index ->
-                    val item = featuredItems[index]
-                    TvHomeHeroCard(
-                        item = item,
-                        eyebrow = featuredEyebrow,
-                        parkInitialFocus = !heroFocusParked && index == 0,
-                        onDidParkFocus = { heroFocusParked = true },
-                        onPrimaryAction = { onOpenItem(item) },
-                        onDetails = { onOpenItem(item) },
-                    )
-                }
-            }
+    if (showOnboardingHero) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 42.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            TvOnboardingHero(
+                hasServers = state.hasServers,
+                companionConfigured = companionConfigured,
+                onOpenCompanion = onOpenCompanion,
+            )
         }
+        return
+    }
 
-        if (homeState.isLoading) {
-            item {
-                TvPlaceholderScreen(
-                    title = "Loading your room",
-                    body = "Fetching Continue Watching, Next Up, suggestions, and library rails from Jellyfin.",
-                )
-            }
-            return@LazyColumn
-        }
+    val suggestions = homeState.suggestionsSection?.items.orEmpty()
+    val nextUp = homeState.nextUpSection?.homeSection?.items.orEmpty()
+    val featuredItems = suggestions.take(5).ifEmpty { nextUp.take(5) }
+    val featuredEyebrow = if (suggestions.isNotEmpty()) "Featured" else "Next up for you"
 
-        if (homeState.error != null) {
-            item {
-                TvPlaceholderScreen(
-                    title = "Home unavailable",
-                    body = homeState.error?.localizedMessage ?: "Failed to load TV home content.",
-                )
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TvActionTile(
-                        title = "Search library",
-                        body = "Jump straight into direct Jellyfin search from the TV.",
-                        icon = Icons.AutoMirrored.Rounded.ManageSearch,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenSearch,
-                    )
-                    TvActionTile(
-                        title = "Companion setup",
-                        body = "Open QR pairing and import settings from your phone companion.",
-                        icon = Icons.Rounded.Link,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenCompanion,
-                    )
-                    TvActionTile(
-                        title = "Refresh home",
-                        body = "Retry the Jellyfin home request for this TV.",
-                        icon = Icons.Rounded.Home,
-                        modifier = Modifier.weight(1f),
-                        onClick = onRefresh,
-                    )
-                }
-            }
-            return@LazyColumn
-        }
+    data class ShelfSpec(
+        val title: String,
+        val items: List<SpatialFinItem>,
+        val showProgress: Boolean = false,
+    )
 
-        homeState.resumeSection?.let { section ->
-            item {
-                TvContentShelf(
-                    title = section.homeSection.name.asString(),
-                    items = section.homeSection.items,
-                    showProgress = true,
-                    onOpenItem = onOpenItem,
-                )
-            }
+    val shelves = buildList {
+        homeState.resumeSection?.let {
+            add(ShelfSpec(it.homeSection.name.asString(), it.homeSection.items, showProgress = true))
         }
-        homeState.nextUpSection?.let { section ->
-            item {
-                TvContentShelf(
-                    title = section.homeSection.name.asString(),
-                    items = section.homeSection.items,
-                    onOpenItem = onOpenItem,
-                )
-            }
+        homeState.nextUpSection?.let {
+            add(ShelfSpec(it.homeSection.name.asString(), it.homeSection.items))
         }
         homeState.views
             .map { it.view }
             .firstOrNull { it.type == CollectionType.Movies }
             ?.takeIf { it.items.isNotEmpty() }
-            ?.let { moviesView ->
-                item {
-                    TvContentShelf(
-                        title = "Recently added movies",
-                        items = moviesView.items,
-                        onOpenItem = onOpenItem,
-                    )
-                }
-            }
+            ?.let { add(ShelfSpec("Recently added movies", it.items)) }
         homeState.views
             .map { it.view }
             .firstOrNull { it.type == CollectionType.TvShows }
             ?.takeIf { it.items.isNotEmpty() }
-            ?.let { showsView ->
-                item {
-                    TvContentShelf(
-                        title = "Recently added TV",
-                        items = showsView.items,
-                        onOpenItem = onOpenItem,
-                    )
-                }
-            }
-        if (homeState.views.isNotEmpty()) {
-            item {
-                TvLibraryShelf(
-                    title = "Library Hub",
-                    views = homeState.views.map { it.view },
-                    onOpenLibrary = onOpenLibrary,
+            ?.let { add(ShelfSpec("Recently added TV", it.items)) }
+    }
+
+    // Focus chain: one requester per shelf (first card) + one for the library shelf.
+    // Built from an ID so requesters are stable across recomposition but re-created
+    // when the number of shelves changes (e.g. data loads in).
+    val shelfCount = shelves.size + if (homeState.views.isNotEmpty()) 1 else 0
+    val shelfRequesters = remember(shelfCount) {
+        List(shelfCount) { androidx.compose.ui.focus.FocusRequester() }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 42.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        if (featuredItems.isNotEmpty()) {
+            val heroHeight = LocalConfiguration.current.screenHeightDp.dp * 0.35f
+            Carousel(
+                itemCount = featuredItems.size,
+                autoScrollDurationMillis = Long.MAX_VALUE,
+                modifier = Modifier.fillMaxWidth().height(heroHeight),
+            ) { index ->
+                val item = featuredItems[index]
+                TvHomeHeroCard(
+                    item = item,
+                    eyebrow = featuredEyebrow,
+                    parkInitialFocus = !heroFocusParked && index == 0,
+                    onDidParkFocus = { heroFocusParked = true },
+                    onPrimaryAction = { onOpenItem(item) },
+                    onDetails = { onOpenItem(item) },
                 )
             }
+        }
+
+        if (homeState.isLoading) {
+            TvPlaceholderScreen(
+                title = "Loading your room",
+                body = "Fetching Continue Watching, Next Up, suggestions, and library rails from Jellyfin.",
+            )
+            return@Column
+        }
+
+        if (homeState.error != null) {
+            TvPlaceholderScreen(
+                title = "Home unavailable",
+                body = homeState.error?.localizedMessage ?: "Failed to load TV home content.",
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvActionTile(
+                    title = "Search library",
+                    body = "Jump straight into direct Jellyfin search from the TV.",
+                    icon = Icons.AutoMirrored.Rounded.ManageSearch,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenSearch,
+                )
+                TvActionTile(
+                    title = "Companion setup",
+                    body = "Open QR pairing and import settings from your phone companion.",
+                    icon = Icons.Rounded.Link,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenCompanion,
+                )
+                TvActionTile(
+                    title = "Refresh home",
+                    body = "Retry the Jellyfin home request for this TV.",
+                    icon = Icons.Rounded.Home,
+                    modifier = Modifier.weight(1f),
+                    onClick = onRefresh,
+                )
+            }
+            return@Column
+        }
+
+        shelves.forEachIndexed { i, shelf ->
+            TvContentShelf(
+                title = shelf.title,
+                items = shelf.items,
+                showProgress = shelf.showProgress,
+                rowFocusRequester = shelfRequesters[i],
+                onDpadDown = shelfRequesters.getOrNull(i + 1)?.let { next ->
+                    { runCatching { next.requestFocus() }.isSuccess }
+                },
+                onDpadUp = shelfRequesters.getOrNull(i - 1)?.let { prev ->
+                    { runCatching { prev.requestFocus() }.isSuccess }
+                },
+                onOpenItem = onOpenItem,
+            )
+        }
+
+        if (homeState.views.isNotEmpty()) {
+            val libIndex = shelves.size
+            TvLibraryShelf(
+                title = "Library Hub",
+                views = homeState.views.map { it.view },
+                rowFocusRequester = shelfRequesters[libIndex],
+                onDpadUp = shelfRequesters.getOrNull(libIndex - 1)?.let { prev ->
+                    { runCatching { prev.requestFocus() }.isSuccess }
+                },
+                onOpenLibrary = onOpenLibrary,
+            )
         }
     }
 }
@@ -1360,6 +1384,9 @@ private fun TvContentShelf(
     title: String,
     items: List<SpatialFinItem>,
     showProgress: Boolean = false,
+    rowFocusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    onDpadDown: (() -> Boolean)? = null,
+    onDpadUp: (() -> Boolean)? = null,
     onOpenItem: (SpatialFinItem) -> Unit,
 ) {
     if (items.isEmpty()) return
@@ -1371,18 +1398,21 @@ private fun TvContentShelf(
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(
-            // focusRestorer remembers the last-focused child so re-entering the row
-            // lands on that card instead of the nearest spatial candidate — this
-            // prevents DOWN/UP from being reinterpreted as RIGHT when rows are
-            // scrolled to different horizontal positions.
-            modifier = Modifier.focusRestorer().focusGroup(),
+            modifier = Modifier
+                .focusRestorer()
+                .focusGroup()
+                .shelfKeyNav(onDpadDown = onDpadDown, onDpadUp = onDpadUp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(items.take(12), key = { it.id }) { item ->
+            val capped = items.take(12)
+            itemsIndexed(capped, key = { _, item -> item.id }) { index, item ->
+                val cardModifier = Modifier
+                    .width(180.dp)
+                    .let { if (index == 0 && rowFocusRequester != null) it.focusRequester(rowFocusRequester) else it }
                 TvMediaCard(
                     item = item,
                     showProgress = showProgress,
-                    modifier = Modifier.width(180.dp),
+                    modifier = cardModifier,
                     onClick = { onOpenItem(item) },
                 )
             }
@@ -1394,6 +1424,9 @@ private fun TvContentShelf(
 private fun TvLibraryShelf(
     title: String,
     views: List<View>,
+    rowFocusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    onDpadDown: (() -> Boolean)? = null,
+    onDpadUp: (() -> Boolean)? = null,
     onOpenLibrary: (View) -> Unit,
 ) {
     if (views.isEmpty()) return
@@ -1405,16 +1438,21 @@ private fun TvLibraryShelf(
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(
-            // focusRestorer remembers the last-focused child so re-entering the row
-            // lands on that card instead of the nearest spatial candidate — this
-            // prevents DOWN/UP from being reinterpreted as RIGHT when rows are
-            // scrolled to different horizontal positions.
-            modifier = Modifier.focusRestorer().focusGroup(),
+            modifier = Modifier
+                .focusRestorer()
+                .focusGroup()
+                .shelfKeyNav(onDpadDown = onDpadDown, onDpadUp = onDpadUp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(views, key = { it.id }) { view ->
+            itemsIndexed(views, key = { _, v -> v.id }) { index, view ->
+                val cardModifier = if (index == 0 && rowFocusRequester != null) {
+                    Modifier.focusRequester(rowFocusRequester)
+                } else {
+                    Modifier
+                }
                 TvLibraryCard(
                     view = view,
+                    modifier = cardModifier,
                     onClick = { onOpenLibrary(view) },
                 )
             }
@@ -1555,6 +1593,7 @@ private fun TvMediaCard(
 @Composable
 private fun TvLibraryCard(
     view: View,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     var isFocused by remember(view.id) { mutableStateOf(false) }
@@ -1569,7 +1608,7 @@ private fun TvLibraryCard(
 
     Card(
         modifier =
-            Modifier
+            modifier
                 .width(320.dp)
                 .height(188.dp)
                 .onFocusChanged { isFocused = it.isFocused }
@@ -1950,6 +1989,32 @@ private fun tvEpisodeLabel(episode: SpatialFinEpisode): String =
         }
     }
 
+/**
+ * Intercepts DPAD_UP / DPAD_DOWN on a shelf's LazyRow and routes focus to the
+ * next/previous shelf's first-card FocusRequester. Returning true from the
+ * key handler consumes the event so Compose's 2D spatial focus search (which
+ * would otherwise pick the next horizontal card in the same row) is skipped.
+ */
+private fun Modifier.shelfKeyNav(
+    onDpadDown: (() -> Boolean)?,
+    onDpadUp: (() -> Boolean)?,
+): Modifier =
+    if (onDpadDown == null && onDpadUp == null) this
+    else this.then(
+        Modifier.onPreviewKeyEvent { event ->
+            if (event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) {
+                return@onPreviewKeyEvent false
+            }
+            when (event.key) {
+                androidx.compose.ui.input.key.Key.DirectionDown ->
+                    onDpadDown?.invoke() ?: false
+                androidx.compose.ui.input.key.Key.DirectionUp ->
+                    onDpadUp?.invoke() ?: false
+                else -> false
+            }
+        }
+    )
+
 @Composable
 private fun TvMetadataPill(text: String) {
     MetadataPill {
@@ -1962,16 +2027,21 @@ private fun TvMetadataPill(text: String) {
 }
 
 /**
- * Hero action button with hardcoded contrast + a leading icon. We avoid
- * `androidx.tv.material3.Button` here because its default focus-state color logic
- * tends to produce invisible text depending on theme — the icon guarantees the
- * button reads even if text styling ever regresses.
+ * Hero / detail action button with hardcoded contrast. We avoid
+ * `androidx.tv.material3.Button` because its focus-state color logic tends to
+ * flip text invisible on some themes — hardcoded colors + an optional leading
+ * icon keep the button readable regardless of theme.
+ *
+ * [primary] controls the default visual (primary = white filled, secondary =
+ * translucent white). [selected] overrides for segmented controls (version
+ * chips, toggle pills). [icon] is optional — omit for text-only chips.
  */
 @Composable
 private fun TvHeroButton(
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    primary: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    primary: Boolean = true,
+    selected: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -1979,12 +2049,14 @@ private fun TvHeroButton(
     val container =
         when {
             isFocused -> Color.White
+            selected -> Color(0xFFB6D3F4)
             primary -> Color.White
             else -> Color.White.copy(alpha = 0.16f)
         }
     val content =
         when {
             isFocused -> Color(0xFF06111B)
+            selected -> Color(0xFF06111B)
             primary -> Color(0xFF06111B)
             else -> Color.White
         }
@@ -2009,12 +2081,14 @@ private fun TvHeroButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = content,
-            )
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = content,
+                )
+            }
             Text(
                 text = label,
                 fontSize = 12.sp,
@@ -2157,6 +2231,135 @@ private fun TvDetailHeroCard(
             )
         }
     }
+}
+
+@Composable
+private fun TvCastRow(
+    actors: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson>,
+    onActorClick: (UUID) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Cast & Crew",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(actors, key = { it.id }) { person ->
+                TvCastCard(person = person, onClick = { onActorClick(person.id) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvCastCard(
+    person: dev.jdtech.jellyfin.models.SpatialFinItemPerson,
+    onClick: () -> Unit,
+) {
+    var isFocused by remember(person.id) { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        animationSpec = tween(durationMillis = 120),
+        targetValue = if (isFocused) 1.06f else 1f,
+        label = "castScale",
+    )
+    Column(
+        modifier = Modifier
+            .width(140.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(140.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color(0xFF1A2433))
+                .border(
+                    width = if (isFocused) 3.dp else 0.dp,
+                    color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    shape = RoundedCornerShape(999.dp),
+                ),
+        ) {
+            if (person.image.uri != null) {
+                AsyncImage(
+                    model = person.image.uri,
+                    contentDescription = person.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Text(
+                    text = person.name.take(1).uppercase(),
+                    modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Text(
+            text = person.name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = Color.White,
+        )
+        if (person.role.isNotBlank()) {
+            Text(
+                text = person.role,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFB8C2CE),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TvChaptersRow(
+    chapters: List<dev.jdtech.jellyfin.models.SpatialFinChapter>,
+    onChapterClick: (dev.jdtech.jellyfin.models.SpatialFinChapter) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Chapters",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(chapters, key = { it.startPosition }) { chapter ->
+                TvHeroButton(
+                    label = chapter.name?.takeIf { it.isNotBlank() }
+                        ?: tvFormatChapterTime(chapter.startPosition),
+                    primary = false,
+                    onClick = { onChapterClick(chapter) },
+                )
+            }
+        }
+    }
+}
+
+private fun peopleOf(item: SpatialFinItem): List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> =
+    when (item) {
+        is SpatialFinMovie -> item.people
+        is SpatialFinEpisode -> item.people
+        is dev.jdtech.jellyfin.models.SpatialFinShow -> item.people
+        else -> emptyList()
+    }
+
+private fun tvFormatChapterTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
+    val s = totalSeconds % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
 @Composable
@@ -2541,21 +2744,20 @@ private fun TvItemDetailScreen(
                         overview = item.overview,
                         actions = {
                             if (item is SpatialFinMovie || item is SpatialFinEpisode) {
-                                Button(
+                                TvHeroButton(
+                                    label = if (item.playbackPositionTicks > 0L) "Resume" else "Play",
+                                    icon = Icons.Rounded.PlayArrow,
+                                    primary = true,
+                                    modifier = Modifier.focusRequester(playFocus),
                                     onClick = {
                                         TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
                                     },
-                                    modifier = Modifier.focusRequester(playFocus),
-                                    colors =
-                                        ButtonDefaults.colors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        ),
-                                ) {
-                                    Text(if (item.playbackPositionTicks > 0L) "Resume" else "Play")
-                                }
+                                )
                                 if (item.playbackPositionTicks > 0L) {
-                                    Button(
+                                    TvHeroButton(
+                                        label = "Restart",
+                                        icon = Icons.Rounded.Replay,
+                                        primary = false,
                                         onClick = {
                                             TvPlayerActivity.createIntentForSpatialItem(
                                                 context = context,
@@ -2563,26 +2765,29 @@ private fun TvItemDetailScreen(
                                                 startFromBeginning = true,
                                             )?.let(context::startActivity)
                                         },
-                                        colors =
-                                            ButtonDefaults.colors(
-                                                containerColor = Color.White.copy(alpha = 0.12f),
-                                                contentColor = Color.White,
-                                            ),
-                                    ) {
-                                        Text("Restart")
-                                    }
+                                    )
                                 }
                             }
-                            Button(
+                            TvHeroButton(
+                                label = if (item.favorite) "Favorited" else "Favorite",
+                                icon = if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                primary = false,
+                                selected = item.favorite,
+                                onClick = { viewModel.toggleFavorite() },
+                            )
+                            TvHeroButton(
+                                label = if (item.played) "Watched" else "Mark watched",
+                                icon = if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                primary = false,
+                                selected = item.played,
+                                onClick = { viewModel.togglePlayed() },
+                            )
+                            TvHeroButton(
+                                label = "Back",
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                primary = false,
                                 onClick = onBack,
-                                colors =
-                                    ButtonDefaults.colors(
-                                        containerColor = Color.White.copy(alpha = 0.12f),
-                                        contentColor = Color.White,
-                                    ),
-                            ) {
-                                Text("Back")
-                            }
+                            )
                         },
                         footer = if (versions.size > 1) {
                             {
@@ -2597,31 +2802,35 @@ private fun TvItemDetailScreen(
                                 ) {
                                     versions.forEach { version ->
                                         val selected = version.id == item.id
-                                        Button(
+                                        TvHeroButton(
+                                            label = version.versionChipLabel(),
+                                            primary = false,
+                                            selected = selected,
                                             onClick = { if (!selected) viewModel.load(version.id) },
-                                            colors =
-                                                ButtonDefaults.colors(
-                                                    containerColor =
-                                                        if (selected) {
-                                                            MaterialTheme.colorScheme.primaryContainer
-                                                        } else {
-                                                            Color(0x55131A24)
-                                                        },
-                                                    contentColor =
-                                                        if (selected) {
-                                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                                        } else {
-                                                            MaterialTheme.colorScheme.onSurface
-                                                        },
-                                                ),
-                                        ) {
-                                            Text(version.versionChipLabel())
-                                        }
+                                        )
                                     }
                                 }
                             }
                         } else null,
                     )
+                }
+                if (item.chapters.isNotEmpty()) {
+                    item {
+                        TvChaptersRow(
+                            chapters = item.chapters,
+                            onChapterClick = {
+                                TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
+                            },
+                        )
+                    }
+                }
+                val actors = peopleOf(item).filter { person ->
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
+                }
+                if (actors.isNotEmpty()) {
+                    item {
+                        TvCastRow(actors = actors, onActorClick = { /* TODO: person screen */ })
+                    }
                 }
             }
         }
@@ -2706,30 +2915,36 @@ private fun TvShowScreen(
                         actions = {
                             val nextEpisode = state.nextUp
                             if (nextEpisode != null) {
-                                Button(
+                                TvHeroButton(
+                                    label = if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next",
+                                    icon = Icons.Rounded.PlayArrow,
+                                    primary = true,
+                                    modifier = Modifier.focusRequester(playFocus),
                                     onClick = {
                                         TvPlayerActivity.createIntentForSpatialItem(context, nextEpisode)?.let(context::startActivity)
                                     },
-                                    modifier = Modifier.focusRequester(playFocus),
-                                    colors =
-                                        ButtonDefaults.colors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        ),
-                                ) {
-                                    Text(if (nextEpisode.playbackPositionTicks > 0L) "Resume Episode" else "Play Next")
-                                }
+                                )
                             }
-                            Button(
+                            TvHeroButton(
+                                label = if (show.favorite) "Favorited" else "Favorite",
+                                icon = if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                primary = false,
+                                selected = show.favorite,
+                                onClick = { viewModel.toggleFavorite() },
+                            )
+                            TvHeroButton(
+                                label = if (show.played) "Watched" else "Mark watched",
+                                icon = if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                primary = false,
+                                selected = show.played,
+                                onClick = { viewModel.togglePlayed() },
+                            )
+                            TvHeroButton(
+                                label = "Back",
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                primary = false,
                                 onClick = onBack,
-                                colors =
-                                    ButtonDefaults.colors(
-                                        containerColor = Color.White.copy(alpha = 0.12f),
-                                        contentColor = Color.White,
-                                    ),
-                            ) {
-                                Text("Back")
-                            }
+                            )
                         },
                     )
                 }
@@ -2747,6 +2962,14 @@ private fun TvShowScreen(
                             seasons = state.seasons,
                             onOpenSeason = onOpenSeason,
                         )
+                    }
+                }
+                val actors = show.people.filter { person ->
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
+                }
+                if (actors.isNotEmpty()) {
+                    item {
+                        TvCastRow(actors = actors, onActorClick = { /* TODO: person screen */ })
                     }
                 }
             }
