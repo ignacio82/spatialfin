@@ -596,7 +596,10 @@ private fun TvMediaCard(item: SpatialFinItem, showProgress: Boolean = false, mod
                 else Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) { Text(item.name.take(1).uppercase(), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold) }
                 if (showProgress) buildPlaybackFraction(item)?.let { FloatingProgressBar(progress = it, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).align(Alignment.BottomCenter), progressColor = MaterialTheme.colorScheme.primary) }
             }
-            Text(item.name, Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // minLines = 2 keeps a rail of mixed-length titles aligned — short
+            // names reserve the same height as wrapped ones so the row lands
+            // on a single baseline instead of jittering per card.
+            Text(item.name, Modifier.padding(8.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

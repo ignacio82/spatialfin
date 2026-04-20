@@ -746,23 +746,30 @@ private fun BeamPosterCard(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
+                // minLines = 2 forces short titles to reserve the same vertical
+                // space as two-line titles, so a rail of mixed-length names
+                // renders as a flat row of same-height cards instead of a
+                // jagged line.
                 Text(
                     text = item.name,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
+                    minLines = 2,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val subtitle = remember(item) { buildServerItemSubtitle(item) }
-                if (subtitle.isNotBlank()) {
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                // Always render the subtitle slot with the built label, falling
+                // back to " " to keep the card footer at a constant height even
+                // if a future item type returns a blank subtitle from
+                // buildServerItemSubtitle.
+                val subtitle = remember(item) { buildServerItemSubtitle(item).ifBlank { " " } }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
