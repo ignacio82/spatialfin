@@ -44,6 +44,12 @@ class SetupRepositoryImpl(
         return appPreferences.getValue(appPreferences.currentServer)?.let { id -> database.get(id) }
     }
 
+    override suspend fun getCurrentServerAddress(): String? {
+        val server = getCurrentServer() ?: return null
+        val addressId = server.currentServerAddressId ?: return null
+        return runCatching { database.getAddress(addressId).address }.getOrNull()
+    }
+
     override suspend fun deleteServer(serverId: String) {
         database.delete(serverId)
     }

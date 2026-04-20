@@ -15,6 +15,9 @@ interface SetupRepository {
 
     suspend fun getCurrentServer(): Server?
 
+    /** Resolve the current server's currently-selected address (base URL). */
+    suspend fun getCurrentServerAddress(): String?
+
     suspend fun deleteServer(serverId: String)
 
     suspend fun getIsQuickConnectEnabled(): Boolean

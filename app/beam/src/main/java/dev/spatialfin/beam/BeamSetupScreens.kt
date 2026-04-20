@@ -8,7 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -291,6 +295,8 @@ fun BeamUsersScreen(
                     },
                     secondaryLabel = "Delete",
                     onSecondaryClick = { selectedUser = user },
+                    avatarUri = dev.jdtech.jellyfin.core.presentation.components
+                        .userPrimaryImageUri(state.serverAddress, user.id),
                 )
             }
             items(state.publicUsers, key = { it.id }) { user ->
@@ -301,6 +307,8 @@ fun BeamUsersScreen(
                     onPrimaryClick = { onPublicUserClick(user.name) },
                     secondaryLabel = null,
                     onSecondaryClick = null,
+                    avatarUri = dev.jdtech.jellyfin.core.presentation.components
+                        .userPrimaryImageUri(state.serverAddress, user.id),
                 )
             }
         }
@@ -487,29 +495,59 @@ private fun BeamUserCard(
     onPrimaryClick: () -> Unit,
     secondaryLabel: String?,
     onSecondaryClick: (() -> Unit)?,
+    avatarUri: android.net.Uri? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onPrimaryClick) {
-                    Text(primaryLabel)
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                if (avatarUri != null) {
+                    coil3.compose.AsyncImage(
+                        model = avatarUri,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    )
+                } else {
+                    Text(
+                        text = title.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
-                if (secondaryLabel != null && onSecondaryClick != null) {
-                    OutlinedButton(onClick = onSecondaryClick) {
-                        Text(secondaryLabel)
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = onPrimaryClick) {
+                        Text(primaryLabel)
+                    }
+                    if (secondaryLabel != null && onSecondaryClick != null) {
+                        OutlinedButton(onClick = onSecondaryClick) {
+                            Text(secondaryLabel)
+                        }
                     }
                 }
             }
