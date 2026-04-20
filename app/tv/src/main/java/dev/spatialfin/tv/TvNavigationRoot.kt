@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Replay
@@ -2865,6 +2866,18 @@ private fun TvItemDetailScreen(
                                         },
                                     )
                                 }
+                                TvHeroButton(
+                                    label = "SyncPlay",
+                                    icon = Icons.Rounded.Groups,
+                                    primary = false,
+                                    onClick = {
+                                        TvPlayerActivity.createIntentForSpatialItem(
+                                            context = context,
+                                            item = item,
+                                            openSyncPlayDialogOnStart = true,
+                                        )?.let(context::startActivity)
+                                    },
+                                )
                             }
                             if (item is SpatialFinEpisode) {
                                 TvHeroButton(

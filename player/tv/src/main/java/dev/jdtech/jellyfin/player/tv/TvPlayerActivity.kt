@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +45,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -81,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -406,7 +409,20 @@ private fun TvPlayerScreen(
         ((viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize) * 55) / 100)
             .coerceIn(18, 72).toFloat()
     }
-    var activeDialog by remember { mutableStateOf<TvPlayerDialog?>(null) }
+    val context = LocalContext.current
+    val openSyncPlayOnStart = remember {
+        (context as? TvPlayerActivity)?.intent
+            ?.getBooleanExtra(TvPlayerActivity.EXTRA_OPEN_SYNC_PLAY, false) ?: false
+    }
+    var activeDialog by remember {
+        mutableStateOf<TvPlayerDialog?>(
+            if (openSyncPlayOnStart) TvPlayerDialog.SyncPlay else null,
+        )
+    }
+    val syncPlayState by viewModel.syncPlayState.collectAsStateWithLifecycle()
+    LaunchedEffect(openSyncPlayOnStart) {
+        if (openSyncPlayOnStart) viewModel.refreshSyncPlayGroups()
+    }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(player.isPlaying) }
@@ -732,6 +748,15 @@ private fun TvPlayerScreen(
                 },
                 onDismiss = { activeDialog = null },
             )
+        TvPlayerDialog.SyncPlay ->
+            TvSyncPlayDialog(
+                state = syncPlayState,
+                onRefresh = { viewModel.refreshSyncPlayGroups() },
+                onCreateGroup = { viewModel.createSyncPlayGroup() },
+                onJoinGroup = { viewModel.joinSyncPlayGroup(it) },
+                onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
+                onDismiss = { activeDialog = null },
+            )
         null -> Unit
     }
 }
@@ -743,6 +768,7 @@ private enum class TvPlayerDialog {
     Chapters,
     Quality,
     Source,
+    SyncPlay,
 }
 
 @Composable
@@ -1411,6 +1437,131 @@ private fun TvSubtitleSearchDialogContent(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvSyncPlayDialog(
+    state: PlayerViewModel.SyncPlayUiState,
+    onRefresh: () -> Unit,
+    onCreateGroup: () -> Unit,
+    onJoinGroup: (UUID) -> Unit,
+    onLeaveGroup: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 720.dp)
+                .fillMaxWidth(0.65f)
+                .heightIn(max = 560.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = Color(0xFF0F141C),
+        ) {
+            Column(
+                modifier = Modifier.padding(28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = "SyncPlay",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+                val active = state.activeGroup
+                if (active != null) {
+                    Text(
+                        text = "In group: ${active.name}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = "Participants: ${active.participants.joinToString()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.75f),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onLeaveGroup, enabled = !state.isLoading) {
+                            Text("Leave Group")
+                        }
+                        OutlinedButton(onClick = onRefresh, enabled = !state.isLoading) {
+                            Text("Refresh")
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onCreateGroup, enabled = !state.isLoading) {
+                            Text("Create Group")
+                        }
+                        OutlinedButton(onClick = onRefresh, enabled = !state.isLoading) {
+                            Text("Refresh")
+                        }
+                    }
+                }
+                state.statusMessage?.let { msg ->
+                    Text(
+                        text = msg,
+                        color = Color(0xFFB6D3F4),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (state.isLoading) {
+                    Text("Loading SyncPlay groups…", color = Color.White.copy(alpha = 0.75f))
+                }
+                if (state.availableGroups.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        state.availableGroups.forEach { group ->
+                            androidx.compose.material3.Card(
+                                onClick = { onJoinGroup(group.id) },
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = Color(0xFF1A2433),
+                                ),
+                                shape = RoundedCornerShape(18.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(18.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = group.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    if (group.participants.isNotEmpty()) {
+                                        Text(
+                                            text = group.participants.joinToString(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.7f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (!state.isLoading && active == null) {
+                    Text(
+                        text = "No active SyncPlay groups on this server.",
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text("Close")
                 }
             }
         }
