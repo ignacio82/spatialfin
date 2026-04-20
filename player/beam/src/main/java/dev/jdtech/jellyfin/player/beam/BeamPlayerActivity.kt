@@ -107,6 +107,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.player.beam.voice.BeamChatEngine
 import dev.jdtech.jellyfin.player.beam.voice.BeamCommandCoordinator
@@ -973,6 +974,7 @@ private fun BeamPlayerScreen(
             )
         BeamPlayerDialog.Quality ->
             BeamQualityDialog(
+                currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
@@ -1093,6 +1095,17 @@ private fun BeamControllerOverlay(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                uiState.currentPlaybackInfoLabel?.let { label ->
+                    Spacer(Modifier.height(4.dp))
+                    dev.jdtech.jellyfin.core.presentation.components.MetadataPill {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.9f),
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
             IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Audio) }) {
@@ -1657,18 +1670,11 @@ private fun BeamSourceDialog(
 
 @Composable
 private fun BeamQualityDialog(
+    currentMaxBitrate: Long,
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val options =
-        listOf(
-            0L to "Auto",
-            3_000_000L to "3 Mbps",
-            5_000_000L to "5 Mbps",
-            10_000_000L to "10 Mbps",
-            20_000_000L to "20 Mbps",
-            40_000_000L to "40 Mbps",
-        )
+    val currentOption = QualityOption.fromBps(currentMaxBitrate)
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -1683,16 +1689,21 @@ private fun BeamQualityDialog(
             Column(modifier = Modifier.padding(24.dp)) {
                 Text("Playback Quality", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
-                options.forEach { (bitrate, label) ->
+                QualityOption.entries.forEach { option ->
                     Row(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { onSelectQuality(bitrate) }
+                                .clickable { onSelectQuality(option.bps) }
                                 .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                        RadioButton(
+                            selected = currentOption == option,
+                            onClick = { onSelectQuality(option.bps) },
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(stringResource(option.labelRes), color = Color.White, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
                 Spacer(Modifier.height(12.dp))

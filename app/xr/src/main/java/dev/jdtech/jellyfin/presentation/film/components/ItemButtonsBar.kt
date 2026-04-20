@@ -50,6 +50,7 @@ import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.presentation.components.BaseDialog
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 
@@ -331,27 +332,7 @@ private fun QualitySelectionDialog(
     onSelect: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val bitrates = listOf(
-        0L to "Auto",
-        120_000_000L to "120 Mbps",
-        80_000_000L to "80 Mbps",
-        60_000_000L to "60 Mbps",
-        40_000_000L to "40 Mbps",
-        30_000_000L to "30 Mbps",
-        20_000_000L to "20 Mbps",
-        15_000_000L to "15 Mbps",
-        10_000_000L to "10 Mbps",
-        8_000_000L to "8 Mbps",
-        6_000_000L to "6 Mbps",
-        5_000_000L to "5 Mbps",
-        4_000_000L to "4 Mbps",
-        3_000_000L to "3 Mbps",
-        2_000_000L to "2 Mbps",
-        1_500_000L to "1.5 Mbps",
-        1_000_000L to "1 Mbps",
-        720_000L to "720 Kbps",
-        480_000L to "480 Kbps",
-    )
+    val currentOption = QualityOption.fromBps(selectedBitrate)
     BaseDialog(
         title = "Select Quality",
         onDismiss = onDismiss
@@ -359,17 +340,17 @@ private fun QualitySelectionDialog(
         Column(
             modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())
         ) {
-            bitrates.forEach { (bitrate, label) ->
+            QualityOption.entries.forEach { option ->
                 Row(
-                    modifier = Modifier.clickable { onSelect(bitrate) }.padding(16.dp).fillMaxWidth(),
+                    modifier = Modifier.clickable { onSelect(option.bps) }.padding(16.dp).fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
-                        selected = selectedBitrate == bitrate,
-                        onClick = { onSelect(bitrate) }
+                        selected = currentOption == option,
+                        onClick = { onSelect(option.bps) }
                     )
                     Spacer(Modifier.width(16.dp))
-                    Text(label, style = MaterialTheme.typography.titleMedium)
+                    Text(androidx.compose.ui.res.stringResource(option.labelRes), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }

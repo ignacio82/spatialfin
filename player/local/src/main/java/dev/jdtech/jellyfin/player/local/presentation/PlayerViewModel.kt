@@ -189,6 +189,12 @@ constructor(
         val nextEpisode: PlayerItem?,
         val fileLoaded: Boolean,
         val visualSubtitlesEnabled: Boolean = true,
+        /**
+         * Pre-formatted chip shown in the player overlay describing the active
+         * stream — e.g. "Direct Play · 1080p · HEVC". Null while the source is
+         * loading or for non-Jellyfin content (local / network file).
+         */
+        val currentPlaybackInfoLabel: String? = null,
     )
 
     private var items: MutableList<PlayerItem> = mutableListOf()
@@ -1076,12 +1082,12 @@ constructor(
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
-                            currentMediaSourceStreams =
-                                repository
-                                    .getMediaSources(item.itemId, includePath = true)
-                                    .firstOrNull { source -> source.id == item.mediaSourceId }
-                                    ?.mediaStreams
-                                    .orEmpty()
+                            val activeSource = repository
+                                .getMediaSources(item.itemId, includePath = true)
+                                .firstOrNull { source -> source.id == item.mediaSourceId }
+                            currentMediaSourceStreams = activeSource?.mediaStreams.orEmpty()
+                            val playbackInfoLabel = buildPlaybackInfoLabel(activeSource)
+                            _uiState.update { it.copy(currentPlaybackInfoLabel = playbackInfoLabel) }
                             ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
@@ -1095,6 +1101,7 @@ constructor(
                         } else {
                             currentMediaItemSegments = emptyList()
                             currentMediaSourceStreams = emptyList()
+                            _uiState.update { it.copy(currentPlaybackInfoLabel = null) }
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
@@ -2615,6 +2622,24 @@ constructor(
             }
         }
         eventsChannel.trySend(PlayerEvents.IsPlayingChanged(isPlaying))
+    }
+
+    private fun buildPlaybackInfoLabel(source: dev.jdtech.jellyfin.models.SpatialFinSource?): String? {
+        if (source == null) return null
+        val videoStream = source.mediaStreams.firstOrNull { it.type == MediaStreamType.VIDEO } ?: return null
+        val method = if (source.supportsDirectPlay) "Direct Play" else "Transcoding"
+        val resolutionLabel = when (val h = videoStream.height) {
+            null -> null
+            in 2000..Int.MAX_VALUE -> "4K"
+            in 1400..1999 -> "1440p"
+            in 950..1399 -> "1080p"
+            in 650..949 -> "720p"
+            in 440..649 -> "480p"
+            in 300..439 -> "360p"
+            else -> "${h}p"
+        }
+        val codec = videoStream.codec.takeIf { it.isNotBlank() }?.uppercase()
+        return listOfNotNull(method, resolutionLabel, codec).joinToString(" · ")
     }
 }
 

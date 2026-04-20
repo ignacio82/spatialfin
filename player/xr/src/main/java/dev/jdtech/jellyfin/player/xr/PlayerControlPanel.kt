@@ -93,6 +93,17 @@ internal fun ControlPanelUI(
                         else
                             Color.White.copy(alpha = 0.6f),
                     )
+                    uiState.currentPlaybackInfoLabel?.let { label ->
+                        Spacer(Modifier.height(8.dp))
+                        dev.jdtech.jellyfin.core.presentation.components.MetadataPill {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.9f),
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
                 if (!isLocked) {
                     IconButton(

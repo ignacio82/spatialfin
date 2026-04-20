@@ -112,6 +112,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -767,6 +768,7 @@ private fun TvPlayerScreen(
             )
         TvPlayerDialog.Quality ->
             TvQualityDialog(
+                currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
@@ -862,6 +864,17 @@ private fun TvControllerOverlay(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                uiState.currentPlaybackInfoLabel?.let { label ->
+                    Spacer(Modifier.height(4.dp))
+                    dev.jdtech.jellyfin.core.presentation.components.MetadataPill {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.9f),
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1203,18 +1216,11 @@ private fun TvSourceDialog(
 
 @Composable
 private fun TvQualityDialog(
+    currentMaxBitrate: Long,
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val options =
-        listOf(
-            0L to "Auto",
-            3_000_000L to "3 Mbps",
-            5_000_000L to "5 Mbps",
-            10_000_000L to "10 Mbps",
-            20_000_000L to "20 Mbps",
-            40_000_000L to "40 Mbps",
-        )
+    val currentOption = QualityOption.fromBps(currentMaxBitrate)
     val initialFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -1227,11 +1233,11 @@ private fun TvQualityDialog(
             onDismiss = onDismiss,
             width = 420.dp,
         ) {
-            options.forEachIndexed { index, (bitrate, label) ->
+            QualityOption.entries.forEachIndexed { index, option ->
                 TvDialogOptionRow(
-                    label = label,
-                    selected = bitrate == 0L,
-                    onClick = { onSelectQuality(bitrate) },
+                    label = stringResource(option.labelRes),
+                    selected = currentOption == option,
+                    onClick = { onSelectQuality(option.bps) },
                     modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
                 )
             }

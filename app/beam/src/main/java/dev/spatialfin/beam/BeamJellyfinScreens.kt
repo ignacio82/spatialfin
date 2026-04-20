@@ -1,8 +1,10 @@
 package dev.spatialfin.beam
 
 import android.content.Context
+import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
 import dev.jdtech.jellyfin.player.beam.isCompact
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import android.app.DownloadManager
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
@@ -1512,17 +1514,14 @@ private fun BeamPlaybackOptionsDialog(
                     }
                 }
                 BeamChoiceSection(title = "Streaming Quality") {
-                    BeamChoiceRow(
-                        selected = selectedBitrate == 0L,
-                        title = "Auto",
-                        subtitle = "Let Jellyfin choose the best direct play or transcode path.",
-                        onClick = { selectedBitrate = 0L },
-                    )
-                    DEFAULT_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
+                    QualityOption.entries.forEach { option ->
                         BeamChoiceRow(
-                            selected = selectedBitrate == bitrate.toLong(),
-                            title = label,
-                            onClick = { selectedBitrate = bitrate.toLong() },
+                            selected = selectedBitrate == option.bps,
+                            title = stringResource(option.labelRes),
+                            subtitle = if (option == QualityOption.AUTO) {
+                                "Let Jellyfin choose the best direct play or transcode path."
+                            } else null,
+                            onClick = { selectedBitrate = option.bps },
                         )
                     }
                 }

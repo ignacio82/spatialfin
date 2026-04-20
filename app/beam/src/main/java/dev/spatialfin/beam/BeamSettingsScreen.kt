@@ -36,7 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
@@ -278,19 +280,25 @@ fun BeamSettingsScreen(
                         appPreferences.setValue(appPreferences.playerSeekForwardInc, it * 1000L)
                     },
                 )
+                val currentQualityOption = QualityOption.fromBps(playerMaxBitrate)
+                val shortQualityLabel: (QualityOption) -> String = { option ->
+                    when (option) {
+                        QualityOption.AUTO -> "Auto"
+                        QualityOption.UHD -> "4K"
+                        QualityOption.FHD -> "1080p"
+                        QualityOption.HD -> "720p"
+                        QualityOption.SD -> "480p"
+                        QualityOption.LOW -> "360p"
+                    }
+                }
                 BeamSettingChoiceRow(
-                    title = "Max bitrate",
-                    value = if (playerMaxBitrate == 0L) "Auto" else "${playerMaxBitrate / 1_000_000L} Mbps",
-                    actions = listOf("Auto", "40 Mbps", "20 Mbps", "10 Mbps", "5 Mbps"),
+                    title = "Playback quality",
+                    value = stringResource(currentQualityOption.labelRes),
+                    actions = QualityOption.entries.map(shortQualityLabel),
                     onAction = { choice ->
-                        playerMaxBitrate =
-                            when (choice) {
-                                "40 Mbps" -> 40_000_000L
-                                "20 Mbps" -> 20_000_000L
-                                "10 Mbps" -> 10_000_000L
-                                "5 Mbps" -> 5_000_000L
-                                else -> 0L
-                            }
+                        val picked = QualityOption.entries.firstOrNull { shortQualityLabel(it) == choice }
+                            ?: QualityOption.AUTO
+                        playerMaxBitrate = picked.bps
                         appPreferences.setValue(appPreferences.playerMaxBitrate, playerMaxBitrate)
                     },
                 )

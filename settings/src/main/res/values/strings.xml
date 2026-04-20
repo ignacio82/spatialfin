@@ -195,51 +195,32 @@
         <item>never</item>
     </string-array>
 
-    <string name="player_max_bitrate">Maximum Streaming Bitrate</string>
-    <string name="player_max_bitrate_summary">Limit streaming quality to save bandwidth or reduce server load</string>
+    <string name="player_max_bitrate">Playback Quality</string>
+    <string name="player_max_bitrate_summary">Resolution cap sent to the server. Auto means no limit.</string>
+
+    <string name="quality_auto">Auto</string>
+    <string name="quality_2160p">4K · 40 Mbps</string>
+    <string name="quality_1080p">1080p · 10 Mbps</string>
+    <string name="quality_720p">720p · 4 Mbps</string>
+    <string name="quality_480p">480p · 2 Mbps</string>
+    <string name="quality_360p">360p · 1 Mbps</string>
 
     <string-array name="player_max_bitrate_options">
-        <item>Auto</item>
-        <item>120 Mbps</item>
-        <item>80 Mbps</item>
-        <item>60 Mbps</item>
-        <item>40 Mbps</item>
-        <item>30 Mbps</item>
-        <item>20 Mbps</item>
-        <item>15 Mbps</item>
-        <item>10 Mbps</item>
-        <item>8 Mbps</item>
-        <item>6 Mbps</item>
-        <item>5 Mbps</item>
-        <item>4 Mbps</item>
-        <item>3 Mbps</item>
-        <item>2 Mbps</item>
-        <item>1.5 Mbps</item>
-        <item>1 Mbps</item>
-        <item>720 Kbps</item>
-        <item>480 Kbps</item>
+        <item>@string/quality_auto</item>
+        <item>@string/quality_2160p</item>
+        <item>@string/quality_1080p</item>
+        <item>@string/quality_720p</item>
+        <item>@string/quality_480p</item>
+        <item>@string/quality_360p</item>
     </string-array>
 
     <string-array name="player_max_bitrate_values">
         <item>0</item>
-        <item>120000000</item>
-        <item>80000000</item>
-        <item>60000000</item>
         <item>40000000</item>
-        <item>30000000</item>
-        <item>20000000</item>
-        <item>15000000</item>
         <item>10000000</item>
-        <item>8000000</item>
-        <item>6000000</item>
-        <item>5000000</item>
         <item>4000000</item>
-        <item>3000000</item>
         <item>2000000</item>
-        <item>1500000</item>
         <item>1000000</item>
-        <item>720000</item>
-        <item>480000</item>
     </string-array>
 
     <string name="settings_category_seerr">Seerr Integration</string>

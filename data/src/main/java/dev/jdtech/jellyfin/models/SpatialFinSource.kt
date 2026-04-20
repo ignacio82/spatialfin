@@ -16,6 +16,8 @@ data class SpatialFinSource(
     val mediaStreams: List<SpatialFinMediaStream>,
     val mediaAttachments: List<SpatialFinMediaAttachment> = emptyList(),
     val downloadId: Long? = null,
+    val supportsDirectPlay: Boolean = true,
+    val bitrate: Int? = null,
 )
 
 suspend fun MediaSourceInfo.toSpatialFinSource(
@@ -49,6 +51,8 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
             mediaStreams?.map { it.toSpatialFinMediaStream(jellyfinRepository) } ?: emptyList(),
         mediaAttachments =
             mediaAttachments?.map { it.toSpatialFinMediaAttachment() } ?: emptyList(),
+        supportsDirectPlay = supportsDirectPlay,
+        bitrate = bitrate,
     )
 }
 

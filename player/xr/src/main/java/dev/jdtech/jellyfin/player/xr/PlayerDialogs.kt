@@ -33,6 +33,7 @@ import androidx.media3.common.Player
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.R as LocalR
+import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 
 /**
  * Modal dialog content Composables for chapters, track selection, speed and
@@ -307,27 +308,7 @@ internal fun QualityDialogContent(
     onQualitySelected: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val bitrates = listOf(
-        0L to "Auto",
-        120_000_000L to "120 Mbps",
-        80_000_000L to "80 Mbps",
-        60_000_000L to "60 Mbps",
-        40_000_000L to "40 Mbps",
-        30_000_000L to "30 Mbps",
-        20_000_000L to "20 Mbps",
-        15_000_000L to "15 Mbps",
-        10_000_000L to "10 Mbps",
-        8_000_000L to "8 Mbps",
-        6_000_000L to "6 Mbps",
-        5_000_000L to "5 Mbps",
-        4_000_000L to "4 Mbps",
-        3_000_000L to "3 Mbps",
-        2_000_000L to "2 Mbps",
-        1_500_000L to "1.5 Mbps",
-        1_000_000L to "1 Mbps",
-        720_000L to "720 Kbps",
-        480_000L to "480 Kbps",
-    )
+    val currentOption = QualityOption.fromBps(currentMaxBitrate)
     Surface(
         modifier = Modifier.width(400.dp).heightIn(max = 560.dp),
         shape = RoundedCornerShape(32.dp),
@@ -343,24 +324,24 @@ internal fun QualityDialogContent(
             Spacer(Modifier.height(24.dp))
             Column(
                 modifier = Modifier
-                    .height(400.dp)
+                    .heightIn(max = 400.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
-                bitrates.forEach { (bitrate, label) ->
+                QualityOption.entries.forEach { option ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onQualitySelected(bitrate); onDismiss() }
+                            .clickable { onQualitySelected(option.bps); onDismiss() }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = currentMaxBitrate == bitrate,
-                            onClick = { onQualitySelected(bitrate); onDismiss() },
+                            selected = currentOption == option,
+                            onClick = { onQualitySelected(option.bps); onDismiss() },
                             modifier = Modifier.size(48.dp),
                         )
                         Spacer(Modifier.width(16.dp))
-                        Text(label, style = MaterialTheme.typography.titleLarge)
+                        Text(stringResource(option.labelRes), style = MaterialTheme.typography.titleLarge)
                     }
                 }
             }
