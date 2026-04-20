@@ -43,6 +43,10 @@ import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.spatialfin.unified.applock.AppLockManager
@@ -298,125 +302,136 @@ fun BeamSettingsScreen(
         if (shouldShow("language")) {
             item {
                 BeamSettingsSection(title = "Language") {
-                    BeamSettingTextField(
-                        title = "Preferred audio language",
-                        value = preferredAudioLanguage,
-                        label = "Language code, e.g. eng",
-                    ) {
-                        preferredAudioLanguage = it
-                        appPreferences.setValue(appPreferences.preferredAudioLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingTextField(
-                        title = "Preferred subtitle language",
-                        value = preferredSubtitleLanguage,
-                        label = "Language code, e.g. eng",
-                    ) {
-                        preferredSubtitleLanguage = it
-                        appPreferences.setValue(appPreferences.preferredSubtitleLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingTextField(
-                        title = "Anime audio language",
-                        value = animeAudioLanguage,
-                        label = "Language code",
-                    ) {
-                        animeAudioLanguage = it
-                        appPreferences.setValue(appPreferences.animeAudioLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingTextField(
-                        title = "Anime subtitle language",
-                        value = animeSubtitleLanguage,
-                        label = "Language code",
-                    ) {
-                        animeSubtitleLanguage = it
-                        appPreferences.setValue(appPreferences.animeSubtitleLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingTextField(
-                        title = "Non-anime audio language",
-                        value = nonAnimeAudioLanguage,
-                        label = "Language code",
-                    ) {
-                        nonAnimeAudioLanguage = it
-                        appPreferences.setValue(appPreferences.nonAnimeAudioLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingSwitchRow(
-                        title = "Disable subtitles for non-anime by default",
-                        checked = nonAnimeSubtitleDisabled,
-                        onCheckedChange = {
-                            nonAnimeSubtitleDisabled = it
-                            appPreferences.setValue(appPreferences.nonAnimeSubtitleDisabled, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_preferred_audio_language,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.preferredAudioLanguage,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingTextField(
-                        title = "Non-anime subtitle language",
-                        value = nonAnimeSubtitleLanguage,
-                        label = "Language code",
-                    ) {
-                        nonAnimeSubtitleLanguage = it
-                        appPreferences.setValue(appPreferences.nonAnimeSubtitleLanguage, it.ifBlank { null })
-                    }
-                    BeamSettingSwitchRow(
-                        title = "Prefer original audio when smart language is active",
-                        checked = smartPreferOriginalAudio,
-                        onCheckedChange = {
-                            smartPreferOriginalAudio = it
-                            appPreferences.setValue(appPreferences.smartPreferOriginalAudio, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_preferred_subtitle_language,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.preferredSubtitleLanguage,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingTextField(
-                        title = "Smart spoken languages",
-                        value = smartSpokenLanguages,
-                        label = "Comma-separated language codes",
-                    ) {
-                        smartSpokenLanguages = it
-                        appPreferences.setValue(appPreferences.smartSpokenLanguages, it.ifBlank { null })
-                    }
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_anime_audio_language,
+                            descriptionStringRes = SettingsR.string.settings_anime_audio_language_summary,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.animeAudioLanguage,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_anime_subtitle_language,
+                            descriptionStringRes = SettingsR.string.settings_anime_subtitle_language_summary,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.animeSubtitleLanguage,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_non_anime_audio_language,
+                            descriptionStringRes = SettingsR.string.settings_non_anime_audio_language_summary,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.nonAnimeAudioLanguage,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.settings_non_anime_subtitle_disabled,
+                            descriptionStringRes = SettingsR.string.settings_non_anime_subtitle_disabled_summary,
+                            backendPreference = appPreferences.nonAnimeSubtitleDisabled,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_non_anime_subtitle_language,
+                            descriptionStringRes = SettingsR.string.settings_non_anime_subtitle_language_summary,
+                            placeholderRes = SettingsR.string.language_code_placeholder,
+                            backendPreference = appPreferences.nonAnimeSubtitleLanguage,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.smart_prefer_original_audio,
+                            descriptionStringRes = SettingsR.string.smart_prefer_original_audio_summary,
+                            backendPreference = appPreferences.smartPreferOriginalAudio,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.smart_spoken_languages,
+                            descriptionStringRes = SettingsR.string.smart_spoken_languages_summary,
+                            placeholderRes = SettingsR.string.smart_spoken_languages_placeholder,
+                            backendPreference = appPreferences.smartSpokenLanguages,
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }
         if (shouldShow("playback")) {
             item {
                 BeamSettingsSection(title = "Playback") {
-                    BeamSettingChoiceRow(
-                        title = "libass subtitle rendering",
-                        value = libassUsage.uppercase(),
-                        actions = listOf("Auto", "Always", "Never"),
-                        onAction = { choice ->
-                            libassUsage = choice.lowercase()
-                            appPreferences.setValue(appPreferences.libassSubtitleUsage, libassUsage)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.libass_subtitle_usage,
+                            descriptionStringRes = SettingsR.string.libass_subtitle_usage_summary,
+                            backendPreference = appPreferences.libassSubtitleUsage,
+                            options = SettingsR.array.libass_subtitle_usage_options,
+                            optionValues = SettingsR.array.libass_subtitle_usage_values,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingSwitchRow(
-                        title = "Show chapter markers",
-                        checked = chapterMarkers,
-                        onCheckedChange = {
-                            chapterMarkers = it
-                            appPreferences.setValue(appPreferences.playerChapterMarkers, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_chapter_markers,
+                            descriptionStringRes = SettingsR.string.pref_player_chapter_markers_summary,
+                            backendPreference = appPreferences.playerChapterMarkers,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingSwitchRow(
-                        title = "Enable trickplay",
-                        checked = trickplay,
-                        onCheckedChange = {
-                            trickplay = it
-                            appPreferences.setValue(appPreferences.playerTrickplay, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_trickplay,
+                            descriptionStringRes = SettingsR.string.pref_player_trickplay_summary,
+                            backendPreference = appPreferences.playerTrickplay,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingNumberRow(
-                        title = "Seek back seconds",
-                        value = playerSeekBackInc,
-                        onValueChange = {
-                            playerSeekBackInc = it
-                            appPreferences.setValue(appPreferences.playerSeekBackInc, it * 1000L)
-                        },
+                    // Store milliseconds, show seconds — displayDivisor = 1000.
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.seek_back_increment,
+                            backendPreference = appPreferences.playerSeekBackInc,
+                            displayDivisor = 1000L,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingNumberRow(
-                        title = "Seek forward seconds",
-                        value = playerSeekForwardInc,
-                        onValueChange = {
-                            playerSeekForwardInc = it
-                            appPreferences.setValue(appPreferences.playerSeekForwardInc, it * 1000L)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.seek_forward_increment,
+                            backendPreference = appPreferences.playerSeekForwardInc,
+                            displayDivisor = 1000L,
+                        ),
+                        appPreferences = appPreferences,
                     )
+                    // Playback quality stays hand-rolled: the full "1080p · 10 Mbps"
+                    // labels overflow a 6-button Row on a phone, so Beam uses a
+                    // short-label variant ("4K", "1080p", etc). A shared compact
+                    // select variant is a future-me problem.
                     val currentQualityOption = QualityOption.fromBps(playerMaxBitrate)
                     val shortQualityLabel: (QualityOption) -> String = { option ->
                         when (option) {
@@ -439,32 +454,29 @@ fun BeamSettingsScreen(
                             appPreferences.setValue(appPreferences.playerMaxBitrate, playerMaxBitrate)
                         },
                     )
-                    BeamSettingSwitchRow(
-                        title = "Show segment skip button",
-                        checked = skipButton,
-                        onCheckedChange = {
-                            skipButton = it
-                            appPreferences.setValue(appPreferences.playerMediaSegmentsSkipButton, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_media_segments_skip_button,
+                            descriptionStringRes = SettingsR.string.pref_player_media_segments_skip_button_summary,
+                            backendPreference = appPreferences.playerMediaSegmentsSkipButton,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingSwitchRow(
-                        title = "Auto-skip intro and outro segments",
-                        checked = autoSkip,
-                        onCheckedChange = {
-                            autoSkip = it
-                            appPreferences.setValue(appPreferences.playerMediaSegmentsAutoSkip, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_media_segments_auto_skip,
+                            descriptionStringRes = SettingsR.string.pref_player_media_segments_auto_skip_summary,
+                            backendPreference = appPreferences.playerMediaSegmentsAutoSkip,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingNumberRow(
-                        title = "Next-episode threshold seconds",
-                        value = nextEpisodeThreshold,
-                        onValueChange = {
-                            nextEpisodeThreshold = it
-                            appPreferences.setValue(
-                                appPreferences.playerMediaSegmentsNextEpisodeThreshold,
-                                it * 1000L,
-                            )
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.pref_player_media_segments_next_episode_threshold,
+                            backendPreference = appPreferences.playerMediaSegmentsNextEpisodeThreshold,
+                            displayDivisor = 1000L,
+                        ),
+                        appPreferences = appPreferences,
                     )
                 }
             }
@@ -478,14 +490,17 @@ fun BeamSettingsScreen(
             }
             item {
                 BeamSettingsSection(title = "Subtitles") {
-                    BeamSettingNumberRow(
-                        title = "Subtitle size",
-                        value = subtitleSize,
-                        onValueChange = {
-                            subtitleSize = it.coerceIn(28L, 96L)
-                            appPreferences.setValue(appPreferences.xrSubtitleSize, subtitleSize.toInt())
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceIntInput(
+                            nameStringResource = SettingsR.string.xr_subtitle_size,
+                            descriptionStringRes = SettingsR.string.xr_subtitle_size_summary,
+                            backendPreference = appPreferences.xrSubtitleSize,
+                        ),
+                        appPreferences = appPreferences,
                     )
+                    // Color pickers stay hand-rolled — backing prefs are Int
+                    // enums that need a PreferenceIntSelect type the framework
+                    // doesn't have yet.
                     BeamSettingChoiceRow(
                         title = "Subtitle text color",
                         value = beamColorName(subtitleTextColor.toInt()),
@@ -613,94 +628,103 @@ fun BeamSettingsScreen(
         if (shouldShow("seerr")) {
             item {
                 BeamSettingsSection(title = "Jellyseerr") {
-                    BeamSettingSwitchRow(
-                        title = "Enable Jellyseerr",
-                        checked = seerrEnabled,
-                        onCheckedChange = {
-                            seerrEnabled = it
-                            appPreferences.setValue(appPreferences.seerrEnabled, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.settings_seerr_enabled,
+                            descriptionStringRes = SettingsR.string.settings_seerr_enabled_summary,
+                            backendPreference = appPreferences.seerrEnabled,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingTextField(
-                        title = "Server URL",
-                        value = seerrUrl,
-                        label = "https://seerr.example.com",
-                    ) {
-                        seerrUrl = it
-                        appPreferences.setValue(appPreferences.seerrUrl, it.ifBlank { null })
-                    }
-                    BeamSettingTextField(
-                        title = "API key",
-                        value = seerrApiKey,
-                        label = "Jellyseerr API key",
-                        secret = true,
-                    ) {
-                        seerrApiKey = it
-                        appPreferences.setValue(appPreferences.seerrApiKey, it.ifBlank { null })
-                    }
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_seerr_url,
+                            descriptionStringRes = SettingsR.string.settings_seerr_url_summary,
+                            placeholderRes = SettingsR.string.seerr_url_placeholder,
+                            backendPreference = appPreferences.seerrUrl,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_seerr_api_key,
+                            descriptionStringRes = SettingsR.string.settings_seerr_api_key_summary,
+                            placeholderRes = SettingsR.string.seerr_api_key_placeholder,
+                            secret = true,
+                            backendPreference = appPreferences.seerrApiKey,
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }
         if (shouldShow("voice")) {
             item {
                 BeamSettingsSection(title = "Voice Assistant") {
-                    BeamSettingSwitchRow(
-                        title = "Enable voice commands",
-                        checked = voiceEnabled,
-                        onCheckedChange = {
-                            voiceEnabled = it
-                            appPreferences.setValue(appPreferences.voiceControlEnabled, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.voice_control_enabled_short,
+                            descriptionStringRes = SettingsR.string.voice_control_enabled_short_summary,
+                            backendPreference = appPreferences.voiceControlEnabled,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingSwitchRow(
-                        title = "Speak assistant replies",
-                        checked = spokenRepliesEnabled,
-                        onCheckedChange = {
-                            spokenRepliesEnabled = it
-                            appPreferences.setValue(appPreferences.voiceAssistantSpokenReplies, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.voice_assistant_spoken_replies,
+                            descriptionStringRes = SettingsR.string.voice_assistant_spoken_replies_summary,
+                            backendPreference = appPreferences.voiceAssistantSpokenReplies,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingChoiceRow(
-                        title = "Assistant verbosity",
-                        value = voiceVerbosity.replaceFirstChar(Char::uppercase),
-                        actions = listOf("Brief", "Balanced", "Detailed"),
-                        onAction = { choice ->
-                            voiceVerbosity = choice.lowercase()
-                            appPreferences.setValue(appPreferences.voiceAssistantVerbosity, voiceVerbosity)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.voice_assistant_verbosity,
+                            descriptionStringRes = SettingsR.string.voice_assistant_verbosity_summary,
+                            backendPreference = appPreferences.voiceAssistantVerbosity,
+                            options = SettingsR.array.voice_assistant_verbosity_options,
+                            optionValues = SettingsR.array.voice_assistant_verbosity_values,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingChoiceRow(
-                        title = "Spoiler policy",
-                        value = voiceSpoilerPolicy.replaceFirstChar(Char::uppercase),
-                        actions = listOf("Strict", "Cautious", "Relaxed"),
-                        onAction = { choice ->
-                            voiceSpoilerPolicy = choice.lowercase()
-                            appPreferences.setValue(appPreferences.voiceAssistantSpoilerPolicy, voiceSpoilerPolicy)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.voice_assistant_spoiler_policy,
+                            descriptionStringRes = SettingsR.string.voice_assistant_spoiler_policy_summary,
+                            backendPreference = appPreferences.voiceAssistantSpoilerPolicy,
+                            options = SettingsR.array.voice_assistant_spoiler_policy_options,
+                            optionValues = SettingsR.array.voice_assistant_spoiler_policy_values,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingTextField(
-                        title = "Cloud AI API key",
-                        value = voiceCloudApiKey,
-                        label = "Optional Gemini API key",
-                        secret = true,
-                    ) {
-                        voiceCloudApiKey = it
-                        appPreferences.setValue(appPreferences.voiceAssistantCloudApiKey, it.ifBlank { null })
-                    }
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.voice_assistant_cloud_api_key,
+                            descriptionStringRes = SettingsR.string.voice_assistant_cloud_api_key_summary,
+                            placeholderRes = SettingsR.string.voice_assistant_cloud_api_key_placeholder,
+                            secret = true,
+                            backendPreference = appPreferences.voiceAssistantCloudApiKey,
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }
         if (shouldShow("companion")) {
             item {
                 BeamSettingsSection(title = "Companion") {
-                    Text(
-                        if (companionConnected) "Companion connection saved" else "No companion connection saved",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Recreating the PreferenceCategory on each recomposition
+                    // lets the name/description swap with connection state.
+                    BeamPreferenceRow(
+                        preference = PreferenceCategory(
+                            nameStringResource = if (companionConnected) SettingsR.string.companion_reconnect_action
+                                else SettingsR.string.companion_connect_action,
+                            descriptionStringRes = if (companionConnected) SettingsR.string.companion_connection_saved
+                                else SettingsR.string.companion_not_paired,
+                            onClick = { onOpenCompanion() },
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    Button(onClick = onOpenCompanion) {
-                        Text(if (companionConnected) "Reconnect Companion" else "Connect Companion")
-                    }
                 }
             }
         }

@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -24,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.models.Preference as PreferenceBackend
@@ -32,6 +35,7 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 
 /**
@@ -56,6 +60,7 @@ internal fun BeamPreferenceRow(
         is PreferenceSelect -> BeamRenderSelect(preference, appPreferences)
         is PreferenceIntInput -> BeamRenderIntInput(preference, appPreferences)
         is PreferenceLongInput -> BeamRenderLongInput(preference, appPreferences)
+        is PreferenceStringInput -> BeamRenderStringInput(preference, appPreferences)
         is PreferenceCategory -> BeamRenderCategoryAction(preference)
         else -> Unit
     }
@@ -185,8 +190,9 @@ private fun BeamRenderIntInput(preference: PreferenceIntInput, appPreferences: A
 
 @Composable
 private fun BeamRenderLongInput(preference: PreferenceLongInput, appPreferences: AppPreferences) {
-    var value by rememberSaveable(preference.backendPreference.backendName) {
-        mutableLongStateOf(appPreferences.getValue(preference.backendPreference))
+    val divisor = preference.displayDivisor.coerceAtLeast(1L)
+    var displayValue by rememberSaveable(preference.backendPreference.backendName) {
+        mutableLongStateOf(appPreferences.getValue(preference.backendPreference) / divisor)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
@@ -198,15 +204,52 @@ private fun BeamRenderLongInput(preference: PreferenceLongInput, appPreferences:
             )
         }
         OutlinedTextField(
-            value = value.toString(),
+            value = displayValue.toString(),
             onValueChange = { raw ->
                 val v = raw.toLongOrNull() ?: 0L
-                value = v
-                appPreferences.setValue(preference.backendPreference, v)
+                displayValue = v
+                appPreferences.setValue(preference.backendPreference, v * divisor)
             },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Numeric value") },
             singleLine = true,
+        )
+    }
+}
+
+@Composable
+private fun BeamRenderStringInput(preference: PreferenceStringInput, appPreferences: AppPreferences) {
+    var value by rememberSaveable(preference.backendPreference.backendName) {
+        mutableStateOf(appPreferences.getValue(preference.backendPreference).orEmpty())
+    }
+    var revealed by rememberSaveable(preference.backendPreference.backendName) { mutableStateOf(false) }
+    val placeholder = preference.placeholderRes?.let { stringResource(it) } ?: preference.placeholder.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedTextField(
+            value = value,
+            onValueChange = { new ->
+                value = new
+                appPreferences.setValue(preference.backendPreference, new.ifBlank { null })
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = if (placeholder.isNotBlank()) { { Text(placeholder) } } else null,
+            singleLine = true,
+            visualTransformation = if (preference.secret && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
+            trailingIcon = if (preference.secret) {
+                {
+                    TextButton(onClick = { revealed = !revealed }) {
+                        Text(if (revealed) "Hide" else "Show")
+                    }
+                }
+            } else null,
         )
     }
 }
