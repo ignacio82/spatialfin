@@ -39,8 +39,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
 import androidx.compose.ui.res.stringResource
+import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
 import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
@@ -507,21 +510,23 @@ fun BeamSettingsScreen(
         if (shouldShow("downloads")) {
             item {
                 BeamSettingsSection(title = "Downloads") {
-                    BeamSettingSwitchRow(
-                        title = "Allow downloads over mobile data",
-                        checked = downloadOverMobileData,
-                        onCheckedChange = {
-                            downloadOverMobileData = it
-                            appPreferences.setValue(appPreferences.downloadOverMobileData, it)
-                        },
+                    // Phase B.2: declarative Preference objects rendered through
+                    // BeamPreferenceRow. Backend values are shared with the main
+                    // Settings tree — editing here flips the same SharedPreferences
+                    // entry that XR Settings does.
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.download_mobile_data,
+                            backendPreference = appPreferences.downloadOverMobileData,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    BeamSettingSwitchRow(
-                        title = "Allow downloads while roaming",
-                        checked = downloadWhenRoaming,
-                        onCheckedChange = {
-                            downloadWhenRoaming = it
-                            appPreferences.setValue(appPreferences.downloadWhenRoaming, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.download_roaming,
+                            backendPreference = appPreferences.downloadWhenRoaming,
+                        ),
+                        appPreferences = appPreferences,
                     )
                 }
             }
@@ -702,20 +707,26 @@ fun BeamSettingsScreen(
         if (shouldShow("diagnostics")) {
             item {
                 BeamSettingsSection(title = "Diagnostics") {
-                    BeamSettingSwitchRow(
-                        title = "Upload diagnostics to companion",
-                        checked = loggingEnabled,
-                        onCheckedChange = {
-                            loggingEnabled = it
-                            appPreferences.setValue(appPreferences.loggingEnabled, it)
-                        },
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.logging_enabled,
+                            descriptionStringRes = SettingsR.string.logging_enabled_summary,
+                            backendPreference = appPreferences.loggingEnabled,
+                        ),
+                        appPreferences = appPreferences,
                     )
-                    Button(
-                        onClick = { BeamCompanionLogUploader.flushNow() },
-                        enabled = loggingEnabled && companionConnected,
-                    ) {
-                        Text("Upload Logs Now")
-                    }
+                    // Dynamic `enabled` is recomputed on each recomposition —
+                    // the PreferenceCategory object is rebuilt cheaply and
+                    // BeamRenderCategoryAction gates on `preference.enabled`.
+                    BeamPreferenceRow(
+                        preference = PreferenceCategory(
+                            nameStringResource = SettingsR.string.diagnostics_upload_logs_now,
+                            descriptionStringRes = SettingsR.string.diagnostics_upload_logs_now_summary,
+                            enabled = loggingEnabled && companionConnected,
+                            onClick = { BeamCompanionLogUploader.flushNow() },
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }

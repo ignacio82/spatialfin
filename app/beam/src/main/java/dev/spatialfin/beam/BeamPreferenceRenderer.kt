@@ -1,0 +1,236 @@
+package dev.spatialfin.beam
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringArrayResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.models.Preference as PreferenceBackend
+import dev.jdtech.jellyfin.settings.presentation.models.Preference
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
+
+/**
+ * Renders a single [Preference] using Beam phone-appropriate controls. Writes
+ * go straight to [AppPreferences] — there is no Beam [SettingsViewModel] to
+ * round-trip through — so each row's state is held in a local [rememberSaveable]
+ * seeded from the current stored value and kept in sync on change.
+ *
+ * Preference types that don't translate to a simple phone row (PreferenceAppLanguage,
+ * PreferenceVoicePicker, PreferenceSmartLanguage, PreferenceMultiSelect,
+ * PreferenceFloatInput, PreferenceInfo) are deliberately ignored here. Categories
+ * that need them fall back to hand-rolled composables in BeamSettingsScreen.kt.
+ */
+@Composable
+internal fun BeamPreferenceRow(
+    preference: Preference,
+    appPreferences: AppPreferences,
+) {
+    if (!preference.enabled) return
+    when (preference) {
+        is PreferenceSwitch -> BeamRenderSwitch(preference, appPreferences)
+        is PreferenceSelect -> BeamRenderSelect(preference, appPreferences)
+        is PreferenceIntInput -> BeamRenderIntInput(preference, appPreferences)
+        is PreferenceLongInput -> BeamRenderLongInput(preference, appPreferences)
+        is PreferenceCategory -> BeamRenderCategoryAction(preference)
+        else -> Unit
+    }
+}
+
+@Composable
+private fun BeamRenderSwitch(preference: PreferenceSwitch, appPreferences: AppPreferences) {
+    var checked by rememberSaveable(preference.backendPreference.backendName) {
+        mutableStateOf(appPreferences.getValue(preference.backendPreference))
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
+            preference.descriptionStringRes?.let { descRes ->
+                Text(
+                    stringResource(descRes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = { newValue ->
+                checked = newValue
+                appPreferences.setValue(preference.backendPreference, newValue)
+                preference.onClick(preference.copy(value = newValue))
+            },
+        )
+    }
+}
+
+/**
+ * Select rows in the declarative tree carry a `Preference<String?>` backend —
+ * even when the underlying stored value is a `Long` (e.g. `playerMaxBitrate`)
+ * that was unsafe-cast at the declaration site. Mirrors the same Long-aware
+ * branch used by SettingsViewModel.computePreferences() so Beam's renderer
+ * handles both cases without crashing.
+ */
+@Composable
+private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPreferences) {
+    val names = stringArrayResource(preference.options)
+    val values = stringArrayResource(preference.optionValues)
+    val isLongBacked = remember(preference.backendPreference) {
+        (preference.backendPreference as PreferenceBackend<*>).defaultValue is Long
+    }
+    var currentRaw by rememberSaveable(preference.backendPreference.backendName) {
+        mutableStateOf(
+            if (isLongBacked) {
+                @Suppress("UNCHECKED_CAST")
+                appPreferences.getValue(preference.backendPreference as PreferenceBackend<Long>).toString()
+            } else {
+                appPreferences.getValue(preference.backendPreference)
+            }
+        )
+    }
+    val currentLabel = values.indexOf(currentRaw).takeIf { it >= 0 }?.let { names[it] }
+        ?: currentRaw.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${stringResource(preference.nameStringResource)} · $currentLabel",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            names.forEachIndexed { index, name ->
+                val optionValue = values.getOrNull(index) ?: return@forEachIndexed
+                Button(
+                    onClick = {
+                        currentRaw = optionValue
+                        if (isLongBacked) {
+                            @Suppress("UNCHECKED_CAST")
+                            appPreferences.setValue(
+                                preference.backendPreference as PreferenceBackend<Long>,
+                                optionValue.toLongOrNull() ?: 0L,
+                            )
+                        } else {
+                            appPreferences.setValue(preference.backendPreference, optionValue)
+                        }
+                        preference.onUpdate(optionValue)
+                    },
+                ) {
+                    Text(if (optionValue == currentRaw) "• $name" else name)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamRenderIntInput(preference: PreferenceIntInput, appPreferences: AppPreferences) {
+    var value by rememberSaveable(preference.backendPreference.backendName) {
+        mutableIntStateOf(appPreferences.getValue(preference.backendPreference))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedTextField(
+            value = value.toString(),
+            onValueChange = { raw ->
+                val v = raw.toIntOrNull() ?: 0
+                value = v
+                appPreferences.setValue(preference.backendPreference, v)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Numeric value") },
+            singleLine = true,
+        )
+    }
+}
+
+@Composable
+private fun BeamRenderLongInput(preference: PreferenceLongInput, appPreferences: AppPreferences) {
+    var value by rememberSaveable(preference.backendPreference.backendName) {
+        mutableLongStateOf(appPreferences.getValue(preference.backendPreference))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedTextField(
+            value = value.toString(),
+            onValueChange = { raw ->
+                val v = raw.toLongOrNull() ?: 0L
+                value = v
+                appPreferences.setValue(preference.backendPreference, v)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Numeric value") },
+            singleLine = true,
+        )
+    }
+}
+
+/**
+ * Categories are used in the declarative tree for navigation drill-downs, but
+ * here we use them as action rows: clicking invokes `onClick(preference)` which
+ * dispatches to whatever the construction site wired (open dialog, fire event,
+ * etc). Beam maps this to a full-width button so the row reads as "action"
+ * rather than "value you can change."
+ */
+@Composable
+private fun BeamRenderCategoryAction(preference: PreferenceCategory) {
+    Column(
+        modifier = Modifier.fillMaxWidth().clickable { preference.onClick(preference) }.padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(stringResource(preference.nameStringResource), style = MaterialTheme.typography.bodyLarge)
+        preference.descriptionStringRes?.let { descRes ->
+            Text(
+                stringResource(descRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}

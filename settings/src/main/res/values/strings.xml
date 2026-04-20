@@ -240,6 +240,8 @@
     <string name="settings_omdb_api_key_summary">API key for IMDb ratings and metadata via OMDb (omdbapi.com)</string>
     <string name="logging_enabled">Enable Logging</string>
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
+    <string name="diagnostics_upload_logs_now">Upload logs now</string>
+    <string name="diagnostics_upload_logs_now_summary">Send the local log file to the paired companion.</string>
     <string name="voice_controls">Voice controls</string>
     <string name="voice_controls_summary">Configure on-device XR voice commands, permissions, and diagnostics</string>
     <string name="voice_gesture_hand">Voice gesture hand</string>
