@@ -2968,8 +2968,12 @@ private fun TvItemDetailScreen(
                     item {
                         TvChaptersRow(
                             chapters = item.chapters,
-                            onChapterClick = {
-                                TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
+                            onChapterClick = { chapter ->
+                                TvPlayerActivity.createIntentForSpatialItem(
+                                    context = context,
+                                    item = item,
+                                    startPositionMs = chapter.startPosition,
+                                )?.let(context::startActivity)
                             },
                         )
                     }

@@ -143,6 +143,7 @@ class BeamPlayerActivity : AppCompatActivity() {
         private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
         const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
+        const val EXTRA_START_POSITION_MS = "startPositionMs"
 
         fun createIntent(
             context: Context,
@@ -152,6 +153,7 @@ class BeamPlayerActivity : AppCompatActivity() {
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
+            startPositionMs: Long? = null,
         ): Intent =
             Intent(context, BeamPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -160,6 +162,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 mediaSourceIndex?.let { putExtra(EXTRA_MEDIA_SOURCE_INDEX, it) }
                 maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
+                startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
             }
 
         fun createIntentForLocalMedia(
@@ -187,12 +190,27 @@ class BeamPlayerActivity : AppCompatActivity() {
             item: SpatialFinItem,
             startFromBeginning: Boolean = false,
             openSyncPlayDialogOnStart: Boolean = false,
+            startPositionMs: Long? = null,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
-                    createIntent(context, item.id, "Movie", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
+                    createIntent(
+                        context = context,
+                        itemId = item.id,
+                        itemKind = "Movie",
+                        startFromBeginning = startFromBeginning,
+                        openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
+                        startPositionMs = startPositionMs,
+                    )
                 is SpatialFinEpisode ->
-                    createIntent(context, item.id, "Episode", startFromBeginning, openSyncPlayDialogOnStart = openSyncPlayDialogOnStart)
+                    createIntent(
+                        context = context,
+                        itemId = item.id,
+                        itemKind = "Episode",
+                        startFromBeginning = startFromBeginning,
+                        openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
+                        startPositionMs = startPositionMs,
+                    )
                 else -> null
             }
     }
@@ -229,6 +247,12 @@ class BeamPlayerActivity : AppCompatActivity() {
         val maxBitrate =
             if (intent.hasExtra(EXTRA_MAX_BITRATE)) {
                 intent.getLongExtra(EXTRA_MAX_BITRATE, 0L).takeIf { it > 0L }
+            } else {
+                null
+            }
+        val startPositionMs =
+            if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
+                intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).takeIf { it > 0L }
             } else {
                 null
             }
@@ -291,6 +315,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                     startFromBeginning = startFromBeginning,
                     mediaSourceIndex = mediaSourceIndex,
                     maxBitrate = maxBitrate,
+                    startPositionMs = startPositionMs,
                 )
             }
             else -> {

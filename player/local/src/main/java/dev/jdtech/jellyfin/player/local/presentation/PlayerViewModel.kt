@@ -575,8 +575,12 @@ constructor(
         mediaSourceIndex: Int? = null,
         maxBitrate: Long? = null,
         autoPlay: Boolean = true,
+        startPositionMs: Long? = null,
     ) {
         currentItemKind = itemKind
+        if (startPositionMs != null && startPositionMs > 0L) {
+            playbackPosition = startPositionMs
+        }
         player.removeListener(this)
         player.addListener(this)
         Timber.i(

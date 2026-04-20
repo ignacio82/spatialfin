@@ -1374,9 +1374,16 @@ fun BeamItemDetailScreen(
                     item {
                         BeamChaptersRow(
                             chapters = itemData.chapters,
-                            // Seek-to-chapter needs a launchServerItem start-position param;
-                            // for now tapping a chapter just starts playback from beginning.
-                            onChapterClick = { _ -> launchServerItem(context, itemData) },
+                            onChapterClick = { chapter ->
+                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+                                    .createIntentForSpatialItem(
+                                        context = context,
+                                        item = itemData,
+                                        // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
+                                        startPositionMs = chapter.startPosition,
+                                    )
+                                    ?.let(context::startActivity)
+                            },
                         )
                     }
                 }
