@@ -31,6 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
+import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
+import dev.jdtech.jellyfin.settings.domain.llm.ModelState
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +52,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.settings.presentation.models.IntSelectOption
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceInfo
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
@@ -55,6 +64,17 @@ import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
 import dev.spatialfin.unified.applock.PinSetupScreen
 import kotlinx.coroutines.launch
+
+/**
+ * Singleton accessor for the LiteRT-LM download manager. Hilt can't inject
+ * directly into a plain @Composable, but a SingletonComponent EntryPoint
+ * gives us the same instance the XR / settings ViewModels already use.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface BeamLlmEntryPoint {
+    fun llmDownloadManager(): LlmDownloadManager
+}
 
 /**
  * Categories exposed as drill-down cards on the Beam (and TV) settings hubs.
@@ -226,6 +246,15 @@ fun BeamSettingsScreen(
     }
     var loggingEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.loggingEnabled)) }
     val context = LocalContext.current
+    val llmDownloadManager = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            BeamLlmEntryPoint::class.java,
+        ).llmDownloadManager()
+    }
+    val llmDownloadScope = rememberCoroutineScope()
+    val llmDownloadState by llmDownloadManager.downloadState.collectAsStateWithLifecycle()
+    val llmModelState by llmDownloadManager.modelState.collectAsStateWithLifecycle()
     val appLockManager = remember(context) { AppLockManager.from(context) }
     val appLockScope = rememberCoroutineScope()
     var appLockMode by rememberSaveable {
@@ -711,6 +740,38 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
+                    // On-device Gemma via LiteRT-LM. Runtime is device-agnostic and
+                    // tries NPU → GPU → CPU in order (see core/llm/LlmChatModelHelper.kt);
+                    // on a Pixel with a Tensor NPU this switch will end up running on
+                    // the Tensor after the .litertlm model downloads the first time.
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.voice_assistant_gemma_enabled,
+                            descriptionStringRes = SettingsR.string.voice_assistant_gemma_enabled_summary,
+                            backendPreference = appPreferences.voiceAssistantGemmaEnabled,
+                            onClick = { pref ->
+                                if (pref.value) {
+                                    llmDownloadScope.launch { llmDownloadManager.downloadModel() }
+                                } else {
+                                    llmDownloadManager.deleteModel()
+                                }
+                            },
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    // Backend status tracks the live engine lifecycle so "CPU" → "NPU"
+                    // transitions show up as soon as LlmModelManager initialises.
+                    BeamPreferenceRow(
+                        preference = PreferenceInfo(
+                            title = stringResource(SettingsR.string.voice_assistant_gemma_backend),
+                            description = gemmaBackendStatusLine(
+                                downloadState = llmDownloadState,
+                                modelState = llmModelState,
+                                storedBackend = appPreferences.getValue(appPreferences.voiceAssistantGemmaBackend),
+                            ),
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }
@@ -943,3 +1004,28 @@ private fun beamBackgroundFromName(name: String): Int =
         "Dim" -> 0x99000000.toInt()
         else -> AndroidColor.TRANSPARENT
     }
+
+/**
+ * Human-readable description of the current Gemma pipeline state. Prefers the
+ * live engine lifecycle ([ModelState]) so Pixel 10 Pro users see "NPU" flip in
+ * the moment LiteRT finishes initialising; falls back to the stored backend
+ * hint when nothing is loaded yet. Download progress is reported as a
+ * percentage so the row stays informative during the 2.6 GB model pull.
+ */
+private fun gemmaBackendStatusLine(
+    downloadState: DownloadState,
+    modelState: ModelState,
+    storedBackend: String,
+): String {
+    return when (modelState) {
+        is ModelState.Initializing -> "Detecting backend…"
+        is ModelState.Ready -> modelState.backendName
+        is ModelState.Error -> "Error: ${modelState.message}"
+        is ModelState.Idle -> when (downloadState) {
+            is DownloadState.Downloading -> "Downloading ${(downloadState.progress * 100).toInt()}%"
+            is DownloadState.Ready -> "Model downloaded — initialising…"
+            is DownloadState.Error -> "Download error: ${downloadState.message}"
+            is DownloadState.Idle -> storedBackend.takeIf { it.isNotBlank() } ?: "Requires Model"
+        }
+    }
+}

@@ -32,6 +32,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.models.Preference as PreferenceBackend
 import dev.jdtech.jellyfin.settings.presentation.models.Preference
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
+import dev.jdtech.jellyfin.settings.presentation.models.PreferenceInfo
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
@@ -63,8 +64,21 @@ internal fun BeamPreferenceRow(
         is PreferenceIntInput -> BeamRenderIntInput(preference, appPreferences)
         is PreferenceLongInput -> BeamRenderLongInput(preference, appPreferences)
         is PreferenceStringInput -> BeamRenderStringInput(preference, appPreferences)
+        is PreferenceInfo -> BeamRenderInfo(preference)
         is PreferenceCategory -> BeamRenderCategoryAction(preference)
         else -> Unit
+    }
+}
+
+@Composable
+private fun BeamRenderInfo(preference: PreferenceInfo) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(preference.title, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            preference.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
