@@ -117,9 +117,15 @@ internal class PlayerTrackSelector(
 
         val selectedAudioLanguage = groupPrimaryLanguage(selectedAudioGroup)
         val audioUnderstood =
-            spokenLanguages.any { preferredCode ->
-                selectedAudioLanguage != null &&
+            if (selectedAudioLanguage == null) {
+                // No language tag on the audio track. Defaulting to false would flip the fallback
+                // branch to "force-on spoken-language subs" for untagged English dubs, which is
+                // the opposite of what a user who has "subs off by default" set actually wants.
+                true
+            } else {
+                spokenLanguages.any { preferredCode ->
                     LanguageCatalog.matches(application, selectedAudioLanguage, preferredCode)
+                }
             }
 
         val seriesOverrideSubtitle = seriesOverride?.subtitleLanguageCode
@@ -175,20 +181,7 @@ internal class PlayerTrackSelector(
             builder.setIgnoredTextSelectionFlags(0)
         } else {
             host.setVisualSubtitlesEnabled(false)
-            val allSubtitleGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-            val aiTrack = selectHiddenAiSubtitleTrack(allSubtitleGroups)
-            if (aiTrack != null) {
-                val format = aiTrack.getTrackFormat(0)
-                Timber.i("FORCING Hidden AI subtitle track: label=%s lang=%s", format.label, format.language)
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                builder.setOverrideForType(
-                    TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
-                )
-                builder.setIgnoredTextSelectionFlags(0)
-            } else {
-                Timber.i("No suitable tracks found for hidden AI context.")
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            }
+            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         }
 
         player.trackSelectionParameters = builder.build()
@@ -219,37 +212,12 @@ internal class PlayerTrackSelector(
         }
 
         if (index == -1) {
-            if (trackType == C.TRACK_TYPE_TEXT) {
-                val aiTrack = selectHiddenAiSubtitleTrack(groups)
-                if (aiTrack != null) {
-                    val format = aiTrack.getTrackFormat(0)
-                    Timber.i("Hidden AI subtitle track selected: label=%s lang=%s", format.label, format.language)
-                    player.trackSelectionParameters =
-                        player.trackSelectionParameters
-                            .buildUpon()
-                            .setOverrideForType(
-                                TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
-                            )
-                            .setTrackTypeDisabled(trackType, false)
-                            .setIgnoredTextSelectionFlags(0)
-                            .build()
-                } else {
-                    Timber.i("No suitable AI subtitle track found.")
-                    player.trackSelectionParameters =
-                        player.trackSelectionParameters
-                            .buildUpon()
-                            .clearOverridesOfType(trackType)
-                            .setTrackTypeDisabled(trackType, true)
-                            .build()
-                }
-            } else {
-                player.trackSelectionParameters =
-                    player.trackSelectionParameters
-                        .buildUpon()
-                        .clearOverridesOfType(trackType)
-                        .setTrackTypeDisabled(trackType, true)
-                        .build()
-            }
+            player.trackSelectionParameters =
+                player.trackSelectionParameters
+                    .buildUpon()
+                    .clearOverridesOfType(trackType)
+                    .setTrackTypeDisabled(trackType, true)
+                    .build()
             persistSeriesLanguageOverride(
                 trackType = trackType,
                 languageCode = null,
@@ -290,22 +258,6 @@ internal class PlayerTrackSelector(
                 )
             }
         }
-    }
-
-    private fun selectHiddenAiSubtitleTrack(groups: List<Tracks.Group>): Tracks.Group? {
-        return groups
-            .sortedByDescending { group ->
-                val format = group.getTrackFormat(0)
-                val label = format.label.orEmpty().lowercase()
-                val roleFlags = format.roleFlags
-                var score = 0
-                if (label.contains("sdh") || label.contains("cc")) score += 100
-                if (roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) score += 50
-                if (roleFlags and C.ROLE_FLAG_TRANSCRIBES_DIALOG != 0) score += 50
-                if (groupMatchesLanguage(group, "en") || groupMatchesLanguage(group, "eng")) score += 20
-                score
-            }
-            .firstOrNull()
     }
 
     private fun maybeEnableSubtitleForManualAudioSelection(audioLanguageCode: String?) {

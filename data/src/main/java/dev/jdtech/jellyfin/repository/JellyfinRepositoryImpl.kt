@@ -173,9 +173,11 @@ class JellyfinRepositoryImpl(
                     sortOrder = listOf(ItemSortOrder.fromName(sortOrder.sortString)),
                     startIndex = startIndex,
                     limit = limit,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
                 .items
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
@@ -215,9 +217,11 @@ class JellyfinRepositoryImpl(
                     personIds = personIds,
                     includeItemTypes = includeTypes,
                     recursive = recursive,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
                 .items
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
@@ -230,9 +234,11 @@ class JellyfinRepositoryImpl(
                     includeItemTypes =
                         listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
                     recursive = true,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
                 .items
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
@@ -250,9 +256,11 @@ class JellyfinRepositoryImpl(
                             BaseItemKind.BOX_SET,
                         ),
                     recursive = true,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
                 .items
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
@@ -266,6 +274,7 @@ class JellyfinRepositoryImpl(
                 )
                 .content
                 .items
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
@@ -286,8 +295,14 @@ class JellyfinRepositoryImpl(
     override suspend fun getLatestMedia(parentId: UUID): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
             jellyfinApi.userLibraryApi
-                .getLatestMedia(jellyfinApi.userId!!, parentId = parentId, limit = 16)
+                .getLatestMedia(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    limit = 16,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                )
                 .content
+                .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
