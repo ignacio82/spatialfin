@@ -131,12 +131,29 @@ object LlmChatModelHelper {
         // NPU requires nativeLibraryDir so LiteRT can locate the vendor delegate .so.
         // Without it the NPU backend throws "TF_LITE_AUX not found in the model".
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        // Models we know don't ship NPU subgraphs — skip the attempt entirely.
-        // Today that's every Gemma 4 variant on the litert-community bucket; the
-        // LiteRT-LM NPU path is Gemma3-1B-IT only + Qualcomm/MediaTek SoCs.
         val modelName = File(modelPath).name
-        val skipNpu = modelName.contains("gemma-4", ignoreCase = true) ||
+        // Skip the NPU attempt entirely if:
+        //  (a) the model name is one we know has no NPU subgraphs (every
+        //      Gemma 4 variant on the litert-community bucket — the LiteRT-LM
+        //      NPU path today is Gemma3-1B-IT only + Qualcomm/MediaTek SoCs), or
+        //  (b) the vendor dispatch runtime isn't present on the runtime
+        //      classpath. If we go past this guard without (b), LiteRT's
+        //      dispatch_delegate aborts via libc once it fails to dlopen the
+        //      dispatch library — a SIGABRT our Kotlin try/catch can't see.
+        //      The Qualcomm dispatch ships as libLiteRtDispatch_Qualcomm.so;
+        //      absent any dispatch .so, don't even register the NPU backend.
+        //      (See https://github.com/google-ai-edge/LiteRT-LM/issues/1466.)
+        val nameSkipsNpu = modelName.contains("gemma-4", ignoreCase = true) ||
             modelName.contains("gemma4", ignoreCase = true)
+        val dispatchLibMissing = !hasLiteRtDispatchLibrary(nativeLibDir)
+        val skipNpu = nameSkipsNpu || dispatchLibMissing
+        if (dispatchLibMissing && !nameSkipsNpu) {
+            Timber.w(
+                "LiteRT: NPU backend skipped — no libLiteRtDispatch_*.so in %s. " +
+                    "Bundle the Qualcomm/MediaTek dispatch runtime in jniLibs/arm64-v8a to enable NPU.",
+                nativeLibDir,
+            )
+        }
         val cacheState = readBackendCache(context, modelPath).copy(skipNpuForModel = skipNpu)
         val backends =
             buildBackendOrder(cacheState, nativeLibDir).map { (name, backend) ->
@@ -279,6 +296,23 @@ object LlmChatModelHelper {
 
         val preferred = cacheState.lastSuccessfulBackend ?: return defaults
         return defaults.sortedBy { if (it.first == preferred) 0 else 1 }
+    }
+
+    /**
+     * Detects whether the runtime classpath includes a LiteRT dispatch library
+     * (Qualcomm or MediaTek) — required before we try Backend.NPU(). Looking
+     * for the `.so` files is a best-effort check; runtime extraction under API
+     * 23+ still deposits uncompressed native libs in `nativeLibraryDir`, so
+     * `File.exists()` there is accurate for the overwhelming majority of
+     * installs.
+     */
+    private fun hasLiteRtDispatchLibrary(nativeLibDir: String): Boolean {
+        val dir = File(nativeLibDir)
+        if (!dir.isDirectory) return false
+        return dir.listFiles()?.any { f ->
+            val n = f.name
+            n.startsWith("libLiteRtDispatch_") && n.endsWith(".so")
+        } ?: false
     }
 
     private fun readBackendCache(context: Context, modelPath: String): BackendCacheState {
