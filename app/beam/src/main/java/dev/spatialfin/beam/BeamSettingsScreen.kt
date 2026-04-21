@@ -76,6 +76,7 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
+import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
 import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
@@ -87,6 +88,9 @@ import kotlinx.coroutines.launch
  * directly into a plain @Composable, but a SingletonComponent EntryPoint
  * gives us the same instance the XR / settings ViewModels already use.
  */
+// Despite the `Beam` name, this entry point is reusable: the Gemma +
+// AICore management cards are rendered on both Beam and TV, and both
+// flavors pull the same managers from the single Hilt singleton graph.
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 internal interface BeamLlmEntryPoint {
@@ -112,6 +116,12 @@ internal val BEAM_SETTINGS_CATEGORIES = listOf(
         "Language",
         "Audio & subtitle preferences",
         "audio subtitle language anime non-anime smart spoken",
+    ),
+    BeamSettingsCategoryDef(
+        "interface",
+        "Interface",
+        "Theme, home sections, and display",
+        "theme dark light dynamic color home suggestions continue watching next up latest ratings extra info",
     ),
     BeamSettingsCategoryDef(
         "playback",
@@ -147,7 +157,19 @@ internal val BEAM_SETTINGS_CATEGORIES = listOf(
         "voice",
         "Voice assistant",
         "Speech commands and replies",
-        "voice speech verbosity spoiler gemini ai reply",
+        "voice speech verbosity spoiler gemini ai reply picker tts",
+    ),
+    BeamSettingsCategoryDef(
+        "network",
+        "Network",
+        "Metadata keys & timeouts",
+        "network tmdb omdb api key timeout request connect socket",
+    ),
+    BeamSettingsCategoryDef(
+        "cache",
+        "Cache",
+        "Image cache and size",
+        "cache image disk storage size",
     ),
     BeamSettingsCategoryDef(
         "companion",
@@ -262,6 +284,12 @@ fun BeamSettingsScreen(
     var voiceCloudApiKey by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
     }
+    // Holds the TTS voice name that's currently stored. Shown in the summary
+    // row; updated both when the user opens the picker and when they save it.
+    var assistantVoice by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantVoice).orEmpty())
+    }
+    var voicePickerVisible by rememberSaveable { mutableStateOf(false) }
     var loggingEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.loggingEnabled)) }
     val context = LocalContext.current
     val beamLlmEntryPoint = remember(context) {
@@ -428,6 +456,77 @@ fun BeamSettingsScreen(
                             descriptionStringRes = SettingsR.string.smart_spoken_languages_summary,
                             placeholderRes = SettingsR.string.smart_spoken_languages_placeholder,
                             backendPreference = appPreferences.smartSpokenLanguages,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                }
+            }
+        }
+        if (shouldShow("interface")) {
+            item {
+                BeamSettingsSection(title = "Interface") {
+                    // Theme / dynamic colors were previously gated PHONE-only
+                    // under the XR tree; Beam is a phone so the gate is the
+                    // same default user experience as the XR Appearance card.
+                    BeamPreferenceRow(
+                        preference = PreferenceSelect(
+                            nameStringResource = SettingsR.string.theme,
+                            backendPreference = appPreferences.theme,
+                            options = SettingsR.array.theme,
+                            optionValues = SettingsR.array.theme_values,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.dynamic_colors,
+                            descriptionStringRes = SettingsR.string.dynamic_colors_summary,
+                            enabled = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S,
+                            backendPreference = appPreferences.dynamicColors,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.home_suggestions,
+                            backendPreference = appPreferences.homeSuggestions,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.home_continue_watching,
+                            backendPreference = appPreferences.homeContinueWatching,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.home_next_up,
+                            backendPreference = appPreferences.homeNextUp,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.home_latest,
+                            backendPreference = appPreferences.homeLatest,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.extra_info,
+                            descriptionStringRes = SettingsR.string.extra_info_summary,
+                            backendPreference = appPreferences.displayExtraInfo,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.display_ratings,
+                            descriptionStringRes = SettingsR.string.display_ratings_summary,
+                            backendPreference = appPreferences.displayRatings,
                         ),
                         appPreferences = appPreferences,
                     )
@@ -712,6 +811,87 @@ fun BeamSettingsScreen(
                 }
             }
         }
+        if (shouldShow("network")) {
+            item {
+                BeamSettingsSection(title = "Network") {
+                    // TMDB/OMDB keys and HTTP timeouts were previously only
+                    // exposed in the XR tree. Power users who pair a phone
+                    // as the primary device also need to configure metadata
+                    // sources, so surfacing them here keeps the two surfaces
+                    // in parity.
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_tmdb_api_key,
+                            descriptionStringRes = SettingsR.string.settings_tmdb_api_key_summary,
+                            secret = true,
+                            backendPreference = appPreferences.tmdbApiKey,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceStringInput(
+                            nameStringResource = SettingsR.string.settings_omdb_api_key,
+                            descriptionStringRes = SettingsR.string.settings_omdb_api_key_summary,
+                            secret = true,
+                            backendPreference = appPreferences.omdbApiKey,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.settings_tmdb_auto_match,
+                            descriptionStringRes = SettingsR.string.settings_tmdb_auto_match_summary,
+                            backendPreference = appPreferences.tmdbAutoMatch,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.settings_request_timeout,
+                            backendPreference = appPreferences.requestTimeout,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.settings_connect_timeout,
+                            backendPreference = appPreferences.connectTimeout,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceLongInput(
+                            nameStringResource = SettingsR.string.settings_socket_timeout,
+                            backendPreference = appPreferences.socketTimeout,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                }
+            }
+        }
+        if (shouldShow("cache")) {
+            item {
+                BeamSettingsSection(title = "Cache") {
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.settings_use_cache_title,
+                            descriptionStringRes = SettingsR.string.settings_use_cache_summary,
+                            backendPreference = appPreferences.imageCache,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceIntInput(
+                            nameStringResource = SettingsR.string.settings_cache_size,
+                            descriptionStringRes = SettingsR.string.settings_cache_size_message,
+                            dependencies = listOf(appPreferences.imageCache),
+                            backendPreference = appPreferences.imageCacheSize,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                }
+            }
+        }
         if (shouldShow("voice")) {
             item {
                 BeamSettingsSection(title = "Voice Assistant") {
@@ -730,6 +910,10 @@ fun BeamSettingsScreen(
                             backendPreference = appPreferences.voiceAssistantSpokenReplies,
                         ),
                         appPreferences = appPreferences,
+                    )
+                    BeamVoicePickerRow(
+                        currentVoice = assistantVoice,
+                        onClick = { voicePickerVisible = true },
                     )
                     BeamPreferenceRow(
                         preference = PreferenceSelect(
@@ -831,6 +1015,36 @@ fun BeamSettingsScreen(
         }
     }
 
+    if (voicePickerVisible) {
+        // Reuses the XR VoicePickerDialog — it wraps BaseDialog (a plain
+        // Surface) so it's safe to host in a regular phone Dialog here. We
+        // stretch to ~95% width because the dialog's internal min-width
+        // (520dp) is larger than many phone widths otherwise.
+        Dialog(
+            onDismissRequest = { voicePickerVisible = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.95f),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                VoicePickerDialog(
+                    initialVoiceName = assistantVoice.ifBlank { null },
+                    onSave = { selected ->
+                        val normalized = selected?.trim()?.takeIf { it.isNotEmpty() }
+                        appPreferences.setValue(
+                            appPreferences.voiceAssistantVoice,
+                            normalized,
+                        )
+                        assistantVoice = normalized.orEmpty()
+                        voicePickerVisible = false
+                    },
+                    onDismissRequest = { voicePickerVisible = false },
+                )
+            }
+        }
+    }
+
     if (pinSetupVisible) {
         Dialog(
             onDismissRequest = { pinSetupVisible = false },
@@ -865,6 +1079,44 @@ fun BeamSettingsScreen(
         }
     }
 }
+
+/**
+ * Voice picker row for Beam — shows the currently chosen TTS voice (or
+ * "System default" when unset) and opens the full [VoicePickerDialog] on
+ * click. Kept separate from the declarative [BeamPreferenceRow] pipeline
+ * because the dialog needs to be hosted by the caller (state must outlive
+ * the click to drive a `Dialog`), so this row owns only the summary.
+ */
+@Composable
+private fun BeamVoicePickerRow(
+    currentVoice: String,
+    onClick: () -> Unit,
+) {
+    val summary = if (currentVoice.isBlank() || currentVoice in legacyVoiceValues) {
+        stringResource(SettingsR.string.voice_assistant_voice_system_default)
+    } else {
+        currentVoice
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            stringResource(SettingsR.string.voice_assistant_voice),
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// Legacy values from an earlier voice-selection model ("male" / "female" /
+// "system") — no longer real TTS voice names, so we fall back to "System
+// default" if the stored value is one of these.
+private val legacyVoiceValues = setOf("male", "female", "system")
 
 @Composable
 private fun BeamSettingsCategoryCard(
@@ -1034,7 +1286,7 @@ private fun beamBackgroundFromName(name: String): Int =
  * delete the file, so it's cheap to re-enable later.
  */
 @Composable
-private fun BeamGemmaManagementCard(
+internal fun BeamGemmaManagementCard(
     downloadManager: LlmDownloadManager,
     downloadScope: CoroutineScope,
     downloadState: DownloadState,
@@ -1206,7 +1458,7 @@ private fun GemmaErrorState(message: String, onRetry: () -> Unit) {
  * when the user clears storage for Google Play Services.
  */
 @Composable
-private fun BeamAiCoreManagementCard(
+internal fun BeamAiCoreManagementCard(
     status: AICoreStatus,
     onDownload: () -> Unit,
     onReprobe: () -> Unit,

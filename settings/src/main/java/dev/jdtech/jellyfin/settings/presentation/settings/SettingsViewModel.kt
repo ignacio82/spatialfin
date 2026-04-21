@@ -59,30 +59,13 @@ class SettingsViewModel @Inject constructor(
     private val eventsChannel = Channel<SettingsEvent>()
     val events = eventsChannel.receiveAsFlow()
 
+    // Flat, category-per-card structure (one group per top-level entry,
+    // with a single drill-in that shows that category's prefs as one section).
+    // Mirrors Beam's hub layout so users hopping between form factors see
+    // the same taxonomy. XR-only entries (XR Space, Companion) are gated by
+    // supportedDeviceTypes; voice/subtitles/interface are shared.
     private val topLevelPreferences =
         listOf(
-            PreferenceGroup(
-                preferences =
-                    listOf(
-                        PreferenceSwitch(
-                            nameStringResource = R.string.offline_mode,
-                            descriptionStringRes = R.string.offline_mode_summary,
-                            iconDrawableId = R.drawable.ic_server_off,
-                            supportedDeviceTypes = listOf(DeviceType.PHONE),
-                            onClick = {
-                                viewModelScope.launch {
-                                    eventsChannel.send(SettingsEvent.RestartActivity)
-                                }
-                            },
-                            backendPreference = appPreferences.offlineMode,
-                        ),
-                        PreferenceSwitch(
-                            nameStringResource = R.string.logging_enabled,
-                            descriptionStringRes = R.string.logging_enabled_summary,
-                            backendPreference = appPreferences.loggingEnabled,
-                        )
-                    )
-            ),
             PreferenceGroup(
                 preferences =
                     listOf(
@@ -109,12 +92,7 @@ class SettingsViewModel @Inject constructor(
                                                     enabled =
                                                         Build.VERSION.SDK_INT >=
                                                             Build.VERSION_CODES.TIRAMISU,
-                                                )
-                                            )
-                                    ),
-                                    PreferenceGroup(
-                                        preferences =
-                                            listOf(
+                                                ),
                                                 PreferenceSmartLanguage(
                                                     nameStringResource =
                                                         R.string.settings_smart_audio_subtitles,
@@ -148,12 +126,10 @@ class SettingsViewModel @Inject constructor(
                             nestedPreferenceGroups =
                                 listOf(
                                     PreferenceGroup(
-                                        nameStringResource = R.string.settings_category_appearance,
                                         preferences =
                                             listOf(
                                                 PreferenceSelect(
                                                     nameStringResource = R.string.theme,
-                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
                                                     backendPreference = appPreferences.theme,
                                                     onUpdate = { value ->
                                                         viewModelScope.launch {
@@ -174,15 +150,8 @@ class SettingsViewModel @Inject constructor(
                                                     enabled =
                                                         Build.VERSION.SDK_INT >=
                                                             Build.VERSION_CODES.S,
-                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
                                                     backendPreference = appPreferences.dynamicColors,
                                                 ),
-                                            ),
-                                    ),
-                                    PreferenceGroup(
-                                        nameStringResource = R.string.home,
-                                        preferences =
-                                            listOf(
                                                 PreferenceSwitch(
                                                     nameStringResource = R.string.home_suggestions,
                                                     backendPreference =
@@ -202,11 +171,6 @@ class SettingsViewModel @Inject constructor(
                                                     nameStringResource = R.string.home_latest,
                                                     backendPreference = appPreferences.homeLatest,
                                                 ),
-                                            ),
-                                    ),
-                                    PreferenceGroup(
-                                        preferences =
-                                            listOf(
                                                 PreferenceSwitch(
                                                     nameStringResource = R.string.extra_info,
                                                     descriptionStringRes =
@@ -220,13 +184,17 @@ class SettingsViewModel @Inject constructor(
                                                         R.string.display_ratings_summary,
                                                     backendPreference =
                                                         appPreferences.displayRatings,
-                                                )
-                                            )
+                                                ),
+                                            ),
                                     ),
                                 ),
                         )
                     )
             ),
+            // Playback is a single flat section — all playback prefs in one
+            // scroll, no "Seeking" / "Media Segments" / "Trickplay" sub-headers.
+            // Beam and TV already render this way; mirroring it here means a
+            // user hitting Settings on any device sees the same taxonomy.
             PreferenceGroup(
                 preferences =
                     listOf(
@@ -247,47 +215,9 @@ class SettingsViewModel @Inject constructor(
                                     PreferenceGroup(
                                         preferences =
                                             listOf(
-                                                PreferenceCategory(
-                                                    nameStringResource = R.string.subtitles,
-                                                    descriptionStringRes =
-                                                        R.string.subtitles_summary,
-                                                    iconDrawableId = R.drawable.ic_closed_caption,
-                                                    supportedDeviceTypes = listOf(DeviceType.PHONE, DeviceType.TV),
-                                                    onClick = {
-                                                        viewModelScope.launch {
-                                                            eventsChannel.send(
-                                                                SettingsEvent.LaunchIntent(
-                                                                    Intent(
-                                                                        Settings
-                                                                            .ACTION_CAPTIONING_SETTINGS
-                                                                    )
-                                                                )
-                                                            )
-                                                        }
-                                                    },
-                                                ),
-                                                // Subtitle size and libass rendering are general
-                                                // (non-XR-specific) preferences — Beam and TV have
-                                                // exposed them from day one through their own
-                                                // hand-rolled surfaces. Making them part of the
-                                                // declarative tree for every device type is the
-                                                // first step toward collapsing those duplicate
-                                                // surfaces onto a single source of truth.
-                                                PreferenceIntInput(
-                                                    nameStringResource = R.string.xr_subtitle_size,
-                                                    descriptionStringRes = R.string.xr_subtitle_size_summary,
-                                                    backendPreference = appPreferences.xrSubtitleSize,
-                                                ),
+                                                @Suppress("UNCHECKED_CAST")
                                                 PreferenceSelect(
-                                                    nameStringResource = R.string.libass_subtitle_usage,
-                                                    descriptionStringRes = R.string.libass_subtitle_usage_summary,
-                                                    backendPreference = appPreferences.libassSubtitleUsage,
-                                                    options = R.array.libass_subtitle_usage_options,
-                                                    optionValues = R.array.libass_subtitle_usage_values,
-                                                ),
-                                                 @Suppress("UNCHECKED_CAST")
-                                                 PreferenceSelect(
-                                                     nameStringResource = R.string.player_max_bitrate,
+                                                    nameStringResource = R.string.player_max_bitrate,
                                                     descriptionStringRes = R.string.player_max_bitrate_summary,
                                                     backendPreference = appPreferences.playerMaxBitrate as Preference<String?>,
                                                     options = R.array.player_max_bitrate_options,
@@ -298,31 +228,6 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.player_force_direct_play_summary,
                                                     backendPreference = appPreferences.playerForceDirectPlay,
                                                 ),
-                                                PreferenceCategory(
-                                                    nameStringResource = R.string.voice_controls,
-                                                    descriptionStringRes = R.string.voice_controls_summary,
-                                                    iconDrawableId = R.drawable.ic_microphone,
-                                                    supportedDeviceTypes = listOf(DeviceType.XR),
-                                                    onClick = {
-                                                        viewModelScope.launch {
-                                                            eventsChannel.send(
-                                                                SettingsEvent.NavigateToSettings(
-                                                                    intArrayOf(
-                                                                        R.string.settings_category_player,
-                                                                        R.string.voice_controls,
-                                                                    )
-                                                                )
-                                                            )
-                                                        }
-                                                    },
-                                                    nestedPreferenceGroups = emptyList(),
-                                                ),
-                                            )
-                                    ),
-                                    PreferenceGroup(
-                                        nameStringResource = R.string.seeking,
-                                        preferences =
-                                            listOf(
                                                 PreferenceLongInput(
                                                     nameStringResource =
                                                         R.string.seek_back_increment,
@@ -346,12 +251,14 @@ class SettingsViewModel @Inject constructor(
                                                     backendPreference =
                                                         appPreferences.playerChapterMarkers,
                                                 ),
-                                            ),
-                                    ),
-                                    PreferenceGroup(
-                                        nameStringResource = R.string.media_segments,
-                                        preferences =
-                                            listOf(
+                                                PreferenceSwitch(
+                                                    nameStringResource =
+                                                        R.string.pref_player_trickplay,
+                                                    descriptionStringRes =
+                                                        R.string.pref_player_trickplay_summary,
+                                                    backendPreference =
+                                                        appPreferences.playerTrickplay,
+                                                ),
                                                 PreferenceSwitch(
                                                     nameStringResource =
                                                         R.string
@@ -411,7 +318,6 @@ class SettingsViewModel @Inject constructor(
                                                             appPreferences
                                                                 .playerMediaSegmentsAutoSkip
                                                         ),
-                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
                                                     backendPreference =
                                                         appPreferences
                                                             .playerMediaSegmentsAutoSkipMode,
@@ -446,21 +352,96 @@ class SettingsViewModel @Inject constructor(
                                                 ),
                                             ),
                                     ),
+                                ),
+                        )
+                    )
+            ),
+            // Subtitles: promoted from nested-under-Player to top-level.
+            // Previously the "Subtitles" row under Player sent users to
+            // Android's system captioning screen — bewildering when the
+            // in-app subtitle prefs were a screen deeper. Now this drill-in
+            // shows the in-app prefs directly, with a system-captioning
+            // shortcut at the bottom for users who want the OS-level knobs.
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
+                            nameStringResource = R.string.subtitles,
+                            descriptionStringRes = R.string.subtitles_summary,
+                            iconDrawableId = R.drawable.ic_closed_caption,
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups =
+                                listOf(
                                     PreferenceGroup(
-                                        nameStringResource = R.string.trickplay,
                                         preferences =
                                             listOf(
-                                                PreferenceSwitch(
-                                                    nameStringResource =
-                                                        R.string.pref_player_trickplay,
-                                                    descriptionStringRes =
-                                                        R.string.pref_player_trickplay_summary,
-                                                    backendPreference =
-                                                        appPreferences.playerTrickplay,
+                                                PreferenceIntInput(
+                                                    nameStringResource = R.string.xr_subtitle_size,
+                                                    descriptionStringRes = R.string.xr_subtitle_size_summary,
+                                                    backendPreference = appPreferences.xrSubtitleSize,
                                                 ),
-                                            ),
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.libass_subtitle_usage,
+                                                    descriptionStringRes = R.string.libass_subtitle_usage_summary,
+                                                    backendPreference = appPreferences.libassSubtitleUsage,
+                                                    options = R.array.libass_subtitle_usage_options,
+                                                    optionValues = R.array.libass_subtitle_usage_values,
+                                                ),
+                                                PreferenceCategory(
+                                                    nameStringResource = R.string.settings_subtitles_system_captioning,
+                                                    descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,
+                                                    iconDrawableId = R.drawable.ic_closed_caption,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE, DeviceType.TV),
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(
+                                                                SettingsEvent.LaunchIntent(
+                                                                    Intent(
+                                                                        Settings
+                                                                            .ACTION_CAPTIONING_SETTINGS
+                                                                    )
+                                                                )
+                                                            )
+                                                        }
+                                                    },
+                                                ),
+                                            )
                                     ),
                                 ),
+                        )
+                    )
+            ),
+            // Voice Assistant: promoted to top-level. Was buried under
+            // Player → Voice Controls; users expected parity with Beam /
+            // TV where "Voice assistant" is its own card. The category's
+            // nestedPreferenceGroups are empty because voicePreferenceGroups()
+            // is returned directly in computePreferences() when
+            // R.string.voice_controls is on the index path.
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
+                            nameStringResource = R.string.voice_controls,
+                            descriptionStringRes = R.string.voice_controls_summary,
+                            iconDrawableId = R.drawable.ic_microphone,
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups = emptyList(),
                         )
                     )
             ),
@@ -842,6 +823,55 @@ class SettingsViewModel @Inject constructor(
                                     eventsChannel.send(SettingsEvent.ShowCompanionDiscoveryDialog)
                                 }
                             },
+                        )
+                    )
+            ),
+            // Diagnostics: tucks the offline-mode toggle (phone only — XR/TV
+            // stay always-online) and the logging toggle together, matching
+            // Beam's "Diagnostics" card. Previously these were an unlabeled
+            // group at the top of Settings; moving them into a named
+            // category makes the hub a clean list of equally-weighted
+            // cards instead of a jumble.
+            PreferenceGroup(
+                preferences =
+                    listOf(
+                        PreferenceCategory(
+                            nameStringResource = R.string.settings_category_diagnostics,
+                            iconDrawableId = R.drawable.ic_info,
+                            onClick = {
+                                viewModelScope.launch {
+                                    eventsChannel.send(
+                                        SettingsEvent.NavigateToSettings(
+                                            intArrayOf(it.nameStringResource)
+                                        )
+                                    )
+                                }
+                            },
+                            nestedPreferenceGroups =
+                                listOf(
+                                    PreferenceGroup(
+                                        preferences =
+                                            listOf(
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.offline_mode,
+                                                    descriptionStringRes = R.string.offline_mode_summary,
+                                                    iconDrawableId = R.drawable.ic_server_off,
+                                                    supportedDeviceTypes = listOf(DeviceType.PHONE),
+                                                    onClick = {
+                                                        viewModelScope.launch {
+                                                            eventsChannel.send(SettingsEvent.RestartActivity)
+                                                        }
+                                                    },
+                                                    backendPreference = appPreferences.offlineMode,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.logging_enabled,
+                                                    descriptionStringRes = R.string.logging_enabled_summary,
+                                                    backendPreference = appPreferences.loggingEnabled,
+                                                ),
+                                            )
+                                    )
+                                ),
                         )
                     )
             ),

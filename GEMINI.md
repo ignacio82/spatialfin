@@ -206,6 +206,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | SMB/NFS bridge | `data/.../network/{Smb,Nfs}FileClient.kt`, `NetworkStreamProxy.kt` | clients + local HTTP proxy |
 | mDNS discovery | `data/.../network/NetworkDiscovery.kt` | discovery |
 | Downloads | `core/.../work/` workers + `data/.../downloads/DownloadStorageManager.kt` | WorkManager |
+| Google TV Watch Next sync | `core/.../watchnext/WatchNextSync.kt` + `WatchNextScheduler.kt` + `core/.../work/WatchNextWorker.kt` | WorkManager + tvprovider |
 | Preferences | `settings/.../domain/AppPreferences.kt` | DataStore facade |
 | Voice telemetry | `settings/.../voice/VoiceTelemetryStore.kt` | local telemetry |
 | Companion (QR import) | `app/unified/.../UnifiedMainActivity.kt` (sync glue) | one-shot importer |
@@ -430,10 +431,11 @@ TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are 
 - **No Compose `.blur()` on TV backgrounds.** `TvAmbientBackground` (`app/tv/.../TvNavigationRoot.kt`) uses scrim + radial gradients instead. Blur radii above ~24dp stall focus navigation on these SoCs.
 - **Coil crossfade is disabled on TV.** The `SingletonImageLoader.Factory` in `UnifiedApplication.newImageLoader` branches on `DeviceClass`; TV loads images with crossfade off to avoid stacking fades during fast D-pad navigation.
 - **Ambient backdrop decodes at 960×540.** `TvAmbientBackground` wraps the URL in an `ImageRequest.Builder(...).size(960, 540)` — a full-screen 1920×1080 decode is 8 MB peak per frame on a 2 GB device.
-- **LLM eager init is skipped on TV.** `UnifiedApplication.eagerInitializeLlmIfNeeded` returns immediately for `DeviceClass.TV`. TV has no voice-assistant UI today; initializing `LlmModelManager` for nothing wastes ~100 MB and ties up the GPU.
+- **LLM eager init is skipped on TV.** `UnifiedApplication.eagerInitializeLlmIfNeeded` returns immediately for `DeviceClass.TV`. TV settings now expose voice-assistant preferences (picker, cloud key, Gemma/AICore management) to match Beam/XR, but TV has no active voice *listener* — eager init would warm an engine nothing on TV invokes. If you wire up a TV voice entry point later, flip this gate.
 - **Lazy list items must be keyed.** TV grids in `TvNavigationRoot.kt` chunk items into rows; every `items(rows, ...)` call passes `key = { it.firstOrNull()?.id ?: it.hashCode() }` so focus state and animations are preserved across scroll recycles.
 - **Focus-scale animations are tween, not spring.** 10 sites in `TvNavigationRoot.kt` use `animateFloatAsState(animationSpec = tween(120), ...)` — the default spring's ~350ms animation forces graphicsLayer re-rasterization too long on weak GPUs.
 - **Home's `loadViews()` runs after first paint.** `HomeViewModel.loadData` emits `isLoading = false` *after* suggestions/resume/next-up arrive, then calls `loadViews()` (N+1 API calls, one per library for latest media) in the same coroutine so the home screen paints immediately.
+- **Google TV Watch Next sync.** `WatchNextScheduler` publishes resume + next-up into the system Watch Next row on TV only (gated by `FEATURE_LEANBACK`). `UnifiedApplication.onCreate` enqueues a 30-min `PeriodicWorkRequest`; `HomeViewModel.loadData` fires a one-shot after each successful online refresh. Tap targets go straight to `TvPlayerActivity` via `Intent.toUri(URI_INTENT_SCHEME)` — the TV-flavor manifest overlay at `app/unified/src/tv/AndroidManifest.xml` makes that activity exported. Fully-played items (`played = true`) are dropped and their rows deleted, per Google's UX guidance.
 
 ---
 

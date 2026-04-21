@@ -22,6 +22,7 @@ import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
+import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.CompanionLiveSyncClient
 import dev.spatialfin.CompanionLogUploader
@@ -39,6 +40,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
     @Inject lateinit var llmDownloadManager: Lazy<LlmDownloadManager>
+    @Inject lateinit var watchNextScheduler: WatchNextScheduler
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -78,6 +80,11 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         reportPendingPlayerLaunch()
         eagerInitializeLlmIfNeeded()
         CompanionLiveSyncClient.from(this).start()
+        // TV-only: publish the home screen's Continue Watching / Next Up into the
+        // Google TV launcher's Watch Next row. No-op on XR/phone.
+        if (deviceClass == DeviceClass.TV) {
+            watchNextScheduler.schedulePeriodic(this)
+        }
     }
 
     private fun applyNightMode() {
@@ -148,8 +155,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
     private fun eagerInitializeLlmIfNeeded() {
         // TV hardware (e.g. Chromecast with Google TV, Amlogic S905X3/D3, 2 GB RAM) cannot run
-        // on-device Gemma inference usefully, and the voice assistant UI isn't exposed on TV.
-        // Skipping init saves ~100 MB of working set plus GPU/NPU warm-up on low-end SoCs.
+        // on-device Gemma inference usefully. TV settings now expose the voice-assistant prefs
+        // (picker, cloud key, Gemma/AICore management) for parity with Beam/XR, but TV still has
+        // no active voice *listener*, so there is nothing to warm. Skipping init saves ~100 MB of
+        // working set plus GPU/NPU warm-up on low-end SoCs.
         if (deviceClass == DeviceClass.TV) return
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
         if (deviceClass == DeviceClass.XR) {

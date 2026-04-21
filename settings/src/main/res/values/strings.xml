@@ -51,7 +51,7 @@
     <string name="settings_non_anime_subtitle_language">Non-anime: subtitle language</string>
     <string name="settings_non_anime_subtitle_language_summary">Subtitle language when subtitles are not disabled for non-anime</string>
     <string name="settings_category_servers">Servers</string>
-    <string name="settings_category_player">Player</string>
+    <string name="settings_category_player">Playback</string>
     <string name="settings_category_download">Downloads</string>
     <string name="settings_category_appearance">Appearance</string>
     <string name="settings_category_interface">Interface</string>
@@ -265,6 +265,9 @@
     <string name="logging_enabled_summary">Create a log file in the Downloads folder. Disabled by default.</string>
     <string name="diagnostics_upload_logs_now">Upload logs now</string>
     <string name="diagnostics_upload_logs_now_summary">Send the local log file to the paired companion.</string>
+    <string name="settings_category_diagnostics">Diagnostics</string>
+    <string name="settings_subtitles_system_captioning">System captioning</string>
+    <string name="settings_subtitles_system_captioning_summary">Open the Android captioning screen to adjust font, color, and edge style at the OS level.</string>
     <string name="language_code_placeholder">Language code, e.g. eng</string>
     <string name="smart_prefer_original_audio">Prefer original audio</string>
     <string name="smart_prefer_original_audio_summary">When smart language is active, prefer the original audio track over dubs.</string>

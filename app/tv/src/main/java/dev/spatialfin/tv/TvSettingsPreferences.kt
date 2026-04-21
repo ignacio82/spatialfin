@@ -20,26 +20,40 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import dagger.hilt.android.EntryPointAccessors
+import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
+import dev.spatialfin.beam.BeamAiCoreManagementCard
+import dev.spatialfin.beam.BeamGemmaManagementCard
+import dev.spatialfin.beam.BeamLlmEntryPoint
+import kotlinx.coroutines.launch
 
 /**
  * Categories mirror the Beam settings hub so users hopping between a phone and
@@ -53,9 +67,12 @@ internal val TV_SETTINGS_CATEGORIES = listOf(
     TvSettingsCategoryDef("playback", "Playback", "Quality, seek, chapters"),
     TvSettingsCategoryDef("subtitles", "Subtitles", "Size, color, background"),
     TvSettingsCategoryDef("language", "Language", "Preferred audio & subtitles"),
-    TvSettingsCategoryDef("voice", "Voice assistant", "Commands & replies"),
+    TvSettingsCategoryDef("interface", "Interface", "Theme, home sections, display"),
+    TvSettingsCategoryDef("voice", "Voice assistant", "Commands, voice, & on-device AI"),
     TvSettingsCategoryDef("security", "Security", "App lock & encryption"),
     TvSettingsCategoryDef("seerr", "Jellyseerr", "Request integration"),
+    TvSettingsCategoryDef("network", "Network", "Metadata keys & timeouts"),
+    TvSettingsCategoryDef("cache", "Cache", "Image cache & size"),
     TvSettingsCategoryDef("diagnostics", "Diagnostics", "Logs & telemetry"),
 )
 
@@ -103,9 +120,12 @@ internal fun TvSettingsPreferences(
                 "playback" -> TvPlaybackPrefs(appPreferences)
                 "subtitles" -> TvSubtitlePrefs(appPreferences)
                 "language" -> TvLanguagePrefs(appPreferences)
+                "interface" -> TvInterfacePrefs(appPreferences)
                 "voice" -> TvVoicePrefs(appPreferences)
                 "security" -> TvSecurityPrefs(appPreferences)
                 "seerr" -> TvSeerrPrefs(appPreferences)
+                "network" -> TvNetworkPrefs(appPreferences)
+                "cache" -> TvCachePrefs(appPreferences)
                 "diagnostics" -> TvDiagnosticsPrefs(appPreferences)
             }
         }
@@ -373,10 +393,35 @@ private fun TvLanguagePrefs(appPreferences: AppPreferences) {
 @Composable
 private fun TvVoicePrefs(appPreferences: AppPreferences) {
     TvPrefSectionTitle("Voice assistant")
+    val context = LocalContext.current
+    // Single Hilt entry point supplies the download / model managers —
+    // same ones Beam uses, same ones SettingsViewModel uses. Gets us the
+    // live DownloadState / ModelState / AICoreStatus flows without
+    // rebuilding any plumbing just for TV.
+    val entryPoint = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            BeamLlmEntryPoint::class.java,
+        )
+    }
+    val llmDownloadManager = remember(entryPoint) { entryPoint.llmDownloadManager() }
+    val llmModelManager = remember(entryPoint) { entryPoint.llmModelManager() }
+    val llmScope = rememberCoroutineScope()
+    val downloadState by llmDownloadManager.downloadState.collectAsStateWithLifecycle()
+    val modelState by llmDownloadManager.modelState.collectAsStateWithLifecycle()
+    val aiCoreStatus by llmModelManager.aiCoreStatus.collectAsStateWithLifecycle()
+
     var voiceEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.voiceControlEnabled)) }
     var spokenReplies by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)) }
     var verbosity by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantVerbosity)) }
     var spoiler by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantSpoilerPolicy)) }
+    var assistantVoice by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantVoice).orEmpty())
+    }
+    var voicePickerVisible by rememberSaveable { mutableStateOf(false) }
+    var cloudApiKey by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
+    }
 
     TvPrefSwitchRow(
         title = "Enable voice commands",
@@ -387,6 +432,14 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
         title = "Speak assistant replies",
         checked = spokenReplies,
         onCheckedChange = { spokenReplies = it; appPreferences.setValue(appPreferences.voiceAssistantSpokenReplies, it) },
+    )
+    // TV TTS voice selection: same dialog shell as XR/Beam. Dpad navigation
+    // inside the radio-button list works out of the box — RadioButton has
+    // focus state — though it's noticeably slower than a touch screen to
+    // scrub through every installed voice.
+    TvVoicePickerRow(
+        currentVoice = assistantVoice,
+        onClick = { voicePickerVisible = true },
     )
     TvPrefChoiceRow(
         title = "Verbosity",
@@ -406,6 +459,120 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
             appPreferences.setValue(appPreferences.voiceAssistantSpoilerPolicy, spoiler)
         },
     )
+    // Cloud fallback key. Dpad text entry is tedious but works with the
+    // Google TV on-screen keyboard — previously this was gated behind
+    // "use the phone companion" which is a worse UX when no phone is
+    // around.
+    TvPrefSecretField(
+        title = "Cloud AI API key",
+        value = cloudApiKey,
+        label = "Optional Gemini API key",
+        onValueChange = {
+            cloudApiKey = it
+            appPreferences.setValue(
+                appPreferences.voiceAssistantCloudApiKey,
+                it.trim().ifBlank { null },
+            )
+        },
+    )
+    // Reuse Beam's on-device model management cards verbatim — they use
+    // androidx.compose.material3 primitives which render fine in the TV
+    // settings pane. Users can download Gemma / AICore without needing a
+    // companion app.
+    BeamAiCoreManagementCard(
+        status = aiCoreStatus,
+        onDownload = { llmModelManager.downloadAiCoreFeature() },
+        onReprobe = { llmScope.launch { llmModelManager.reprobeAiCore() } },
+    )
+    BeamGemmaManagementCard(
+        downloadManager = llmDownloadManager,
+        downloadScope = llmScope,
+        downloadState = downloadState,
+        modelState = modelState,
+        appPreferences = appPreferences,
+    )
+
+    if (voicePickerVisible) {
+        Dialog(
+            onDismissRequest = { voicePickerVisible = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.85f),
+                color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+            ) {
+                VoicePickerDialog(
+                    initialVoiceName = assistantVoice.ifBlank { null },
+                    onSave = { selected ->
+                        val normalized = selected?.trim()?.takeIf { it.isNotEmpty() }
+                        appPreferences.setValue(
+                            appPreferences.voiceAssistantVoice,
+                            normalized,
+                        )
+                        assistantVoice = normalized.orEmpty()
+                        voicePickerVisible = false
+                    },
+                    onDismissRequest = { voicePickerVisible = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvVoicePickerRow(currentVoice: String, onClick: () -> Unit) {
+    val summary = if (currentVoice.isBlank() || currentVoice in tvLegacyVoiceValues) {
+        "System default"
+    } else {
+        currentVoice
+    }
+    var focused by remember { mutableStateOf(false) }
+    val borderColor = if (focused) MaterialTheme.colorScheme.primary else Color.Transparent
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(2.dp, borderColor, RoundedCornerShape(12.dp))
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("Assistant voice", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private val tvLegacyVoiceValues = setOf("male", "female", "system")
+
+@Composable
+private fun TvPrefSecretField(
+    title: String,
+    value: String,
+    label: String,
+    onValueChange: (String) -> Unit,
+) {
+    var revealed by rememberSaveable(title) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { androidx.compose.material3.Text(label) },
+            singleLine = true,
+            visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                androidx.compose.material3.TextButton(onClick = { revealed = !revealed }) {
+                    androidx.compose.material3.Text(if (revealed) "Hide" else "Show")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 @Composable
@@ -429,6 +596,7 @@ private fun TvSeerrPrefs(appPreferences: AppPreferences) {
     TvPrefSectionTitle("Jellyseerr")
     var seerrEnabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrEnabled)) }
     var seerrUrl by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrUrl).orEmpty()) }
+    var seerrApiKey by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.seerrApiKey).orEmpty()) }
 
     TvPrefSwitchRow(
         title = "Enable Jellyseerr requests",
@@ -444,10 +612,18 @@ private fun TvSeerrPrefs(appPreferences: AppPreferences) {
             appPreferences.setValue(appPreferences.seerrUrl, it.ifBlank { null })
         },
     )
-    Text(
-        "API keys are easier to enter from the phone companion.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    // API key is secret-masked with show/hide, same as the cloud AI key.
+    // Google TV's on-screen keyboard handles the typing; previously this
+    // was punted to the phone companion which meant "you need another
+    // device to finish setting this up."
+    TvPrefSecretField(
+        title = "API key",
+        value = seerrApiKey,
+        label = "Jellyseerr API key",
+        onValueChange = {
+            seerrApiKey = it
+            appPreferences.setValue(appPreferences.seerrApiKey, it.trim().ifBlank { null })
+        },
     )
 }
 
@@ -459,5 +635,158 @@ private fun TvDiagnosticsPrefs(appPreferences: AppPreferences) {
         title = "Upload diagnostics to companion",
         checked = logging,
         onCheckedChange = { logging = it; appPreferences.setValue(appPreferences.loggingEnabled, it) },
+    )
+}
+
+@Composable
+private fun TvInterfacePrefs(appPreferences: AppPreferences) {
+    TvPrefSectionTitle("Interface")
+    // TV still benefits from theme selection — a bright home screen behind
+    // the settings pane is jarring at night. Dynamic colors only work on
+    // Android 12+ (and only when the system supports Material You).
+    var theme by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.theme).orEmpty().ifBlank { "system" }) }
+    var dynamicColors by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.dynamicColors)) }
+    var homeSuggestions by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeSuggestions)) }
+    var homeContinue by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeContinueWatching)) }
+    var homeNextUp by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeNextUp)) }
+    var homeLatest by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeLatest)) }
+    var extraInfo by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.displayExtraInfo)) }
+    var ratings by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.displayRatings)) }
+
+    TvPrefChoiceRow(
+        title = "Theme",
+        value = theme.replaceFirstChar(Char::uppercase),
+        actions = listOf("System", "Light", "Dark"),
+        onAction = { choice ->
+            theme = choice.lowercase()
+            appPreferences.setValue(appPreferences.theme, theme)
+        },
+    )
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        TvPrefSwitchRow(
+            title = "Dynamic colors",
+            checked = dynamicColors,
+            onCheckedChange = { dynamicColors = it; appPreferences.setValue(appPreferences.dynamicColors, it) },
+        )
+    }
+    TvPrefSwitchRow(
+        title = "Display suggestions",
+        checked = homeSuggestions,
+        onCheckedChange = { homeSuggestions = it; appPreferences.setValue(appPreferences.homeSuggestions, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Display continue watching",
+        checked = homeContinue,
+        onCheckedChange = { homeContinue = it; appPreferences.setValue(appPreferences.homeContinueWatching, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Display next up",
+        checked = homeNextUp,
+        onCheckedChange = { homeNextUp = it; appPreferences.setValue(appPreferences.homeNextUp, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Display latest items",
+        checked = homeLatest,
+        onCheckedChange = { homeLatest = it; appPreferences.setValue(appPreferences.homeLatest, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Display extra info",
+        checked = extraInfo,
+        onCheckedChange = { extraInfo = it; appPreferences.setValue(appPreferences.displayExtraInfo, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Display ratings",
+        checked = ratings,
+        onCheckedChange = { ratings = it; appPreferences.setValue(appPreferences.displayRatings, it) },
+    )
+}
+
+@Composable
+private fun TvNetworkPrefs(appPreferences: AppPreferences) {
+    TvPrefSectionTitle("Network")
+    // TV metadata enrichment uses the same TMDB / OMDB keys as the other
+    // form factors — configuring them here means users don't need a phone
+    // companion just to fill in an API key.
+    var tmdbKey by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.tmdbApiKey).orEmpty()) }
+    var omdbKey by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.omdbApiKey).orEmpty()) }
+    var autoMatch by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.tmdbAutoMatch)) }
+    var requestTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.requestTimeout)) }
+    var connectTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.connectTimeout)) }
+    var socketTimeout by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.socketTimeout)) }
+
+    TvPrefSecretField(
+        title = "TMDB API key",
+        value = tmdbKey,
+        label = "Paste your TMDB key",
+        onValueChange = {
+            tmdbKey = it
+            appPreferences.setValue(appPreferences.tmdbApiKey, it.trim().ifBlank { null })
+        },
+    )
+    TvPrefSecretField(
+        title = "OMDb API key",
+        value = omdbKey,
+        label = "Paste your OMDb key",
+        onValueChange = {
+            omdbKey = it
+            appPreferences.setValue(appPreferences.omdbApiKey, it.trim().ifBlank { null })
+        },
+    )
+    TvPrefSwitchRow(
+        title = "Automatic TMDB matching",
+        checked = autoMatch,
+        onCheckedChange = { autoMatch = it; appPreferences.setValue(appPreferences.tmdbAutoMatch, it) },
+    )
+    TvPrefTextField(
+        title = "Request timeout (ms)",
+        value = requestTimeout.toString(),
+        label = "Milliseconds",
+        onValueChange = { raw ->
+            val v = raw.toLongOrNull() ?: 0L
+            requestTimeout = v
+            appPreferences.setValue(appPreferences.requestTimeout, v)
+        },
+    )
+    TvPrefTextField(
+        title = "Connect timeout (ms)",
+        value = connectTimeout.toString(),
+        label = "Milliseconds",
+        onValueChange = { raw ->
+            val v = raw.toLongOrNull() ?: 0L
+            connectTimeout = v
+            appPreferences.setValue(appPreferences.connectTimeout, v)
+        },
+    )
+    TvPrefTextField(
+        title = "Socket timeout (ms)",
+        value = socketTimeout.toString(),
+        label = "Milliseconds",
+        onValueChange = { raw ->
+            val v = raw.toLongOrNull() ?: 0L
+            socketTimeout = v
+            appPreferences.setValue(appPreferences.socketTimeout, v)
+        },
+    )
+}
+
+@Composable
+private fun TvCachePrefs(appPreferences: AppPreferences) {
+    TvPrefSectionTitle("Cache")
+    var enabled by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.imageCache)) }
+    var sizeMb by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.imageCacheSize).toString()) }
+    TvPrefSwitchRow(
+        title = "Cache images",
+        checked = enabled,
+        onCheckedChange = { enabled = it; appPreferences.setValue(appPreferences.imageCache, it) },
+    )
+    TvPrefTextField(
+        title = "Cache size (MB)",
+        value = sizeMb,
+        label = "Size in megabytes",
+        onValueChange = { raw ->
+            val v = raw.toIntOrNull() ?: 0
+            sizeMb = v.toString()
+            appPreferences.setValue(appPreferences.imageCacheSize, v)
+        },
     )
 }
