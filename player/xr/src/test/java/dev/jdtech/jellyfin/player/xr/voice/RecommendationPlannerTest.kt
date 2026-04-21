@@ -11,6 +11,7 @@ import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import java.util.UUID
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -98,7 +99,7 @@ class RecommendationPlannerTest {
     }
 
     @Test
-    fun `direct recommendation reply names titles and concrete reasons`() {
+    fun `direct recommendation reply names titles without justification`() {
         val quickMovie = movie(name = "Quick Laughs", genres = listOf("Comedy"), englishAudio = true, runtimeMinutes = 88)
         val backupMovie = movie(name = "Space Patrol", genres = listOf("Sci-Fi"), englishAudio = true, runtimeMinutes = 104)
         val analysis = RecommendationPlanner.analyzeQuestion("recommend something funny with english audio", null)
@@ -107,14 +108,13 @@ class RecommendationPlannerTest {
             RecommendationPlanner.buildRecommendationReply(
                 items = listOf(quickMovie, backupMovie),
                 analysis = analysis!!,
-                currentTitle = null,
             )
 
         assertNotNull(reply)
         assertTrue(reply!!.contains("Quick Laughs"))
         assertTrue(reply.contains("Space Patrol"))
-        assertTrue(reply.contains("English audio"))
-        assertTrue(reply.contains("Comedy") || reply.contains("comedic"))
+        assertFalse(reply.contains("because"))
+        assertFalse(reply.contains("good fit"))
     }
 
     private fun movie(

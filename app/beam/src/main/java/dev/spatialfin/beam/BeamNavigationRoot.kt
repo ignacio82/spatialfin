@@ -19,11 +19,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDownload
@@ -61,6 +64,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.DisposableEffect
@@ -74,11 +78,20 @@ import androidx.compose.ui.text.font.FontWeight
 import coil3.compose.AsyncImage
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
+import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSeason
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
 import dev.jdtech.jellyfin.player.beam.isCompact
 import dev.jdtech.jellyfin.player.beam.rememberBeamWidth
-import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
-import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
+import dev.jdtech.jellyfin.player.xr.voice.VoiceState
+import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
+import dev.spatialfin.unified.HomeVoiceController
+import dev.spatialfin.unified.HomeVoiceNavigation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.presentation.components.CinematicBackdrop
@@ -132,14 +145,31 @@ val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> 
 fun BeamNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
+    repository: JellyfinRepository,
+    llmModelManager: LlmModelManager,
+    voiceTelemetryStore: VoiceTelemetryStore,
     onReconnect: () -> Unit = {},
+    onFinishApp: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var currentRoute by rememberSaveable { mutableStateOf(BeamRoute.Welcome) }
     var voiceQuery by rememberSaveable { mutableStateOf<String?>(null) }
-    val voiceService = remember { BeamVoiceService(context) }
-    val voiceState by voiceService.state.collectAsStateWithLifecycle()
-    val voicePartial by voiceService.partialTranscript.collectAsStateWithLifecycle()
+
+    val voiceController = remember(context) {
+        HomeVoiceController(
+            applicationContext = context.applicationContext,
+            appPreferences = appPreferences,
+            repository = repository,
+            llmModelManager = llmModelManager,
+            voiceTelemetryStore = voiceTelemetryStore,
+        )
+    }
+    val voiceState by voiceController.voiceService.state.collectAsStateWithLifecycle()
+    val voicePartial by voiceController.voiceService.partialTranscript.collectAsStateWithLifecycle()
+    val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsStateWithLifecycle()
+    val assistantSpokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
+    val assistantVoiceName = appPreferences.getValue(appPreferences.voiceAssistantVoice)
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -147,23 +177,6 @@ fun BeamNavigationRoot(
                 PackageManager.PERMISSION_GRANTED
         )
     }
-
-    val micPermissionLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            hasMicPermission = granted
-            if (granted) {
-                voiceService.resetState()
-                voiceService.startListening { transcript ->
-                    if (transcript.isNotBlank()) {
-                        voiceQuery = transcript
-                        currentRoute = BeamRoute.Search
-                    }
-                    voiceService.resetState()
-                }
-            }
-        }
-
-    DisposableEffect(Unit) { onDispose { voiceService.destroy() } }
 
     var prefilledUsername by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedNetworkShareId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -179,6 +192,123 @@ fun BeamNavigationRoot(
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
+
+    // When the AI layer produces a search action, it sets voiceSearchQuery; mirror
+    // that into the Beam Search tab so existing search UI and Seerr fallback still work.
+    LaunchedEffect(voiceController.voiceSearchQuery) {
+        val query = voiceController.voiceSearchQuery
+        if (!query.isNullOrBlank()) {
+            voiceQuery = query
+            currentRoute = BeamRoute.Search
+            voiceController.voiceSearchQuery = null
+        }
+    }
+
+    val navigation = remember(context) {
+        object : HomeVoiceNavigation {
+            override fun launchItem(item: SpatialFinItem): Boolean {
+                val intent = BeamPlayerActivity.createIntentForSpatialItem(context, item)
+                if (intent != null &&
+                    runCatching { context.startActivity(intent) }.isSuccess
+                ) {
+                    return true
+                }
+                // Non-playable (Show/Season/BoxSet) or playback couldn't start — jump to detail.
+                return when (item) {
+                    is SpatialFinMovie -> {
+                        selectedDetailItemId = item.id.toString()
+                        detailBackRoute = currentRoute
+                        currentRoute = BeamRoute.Detail
+                        true
+                    }
+                    is SpatialFinEpisode -> {
+                        selectedDetailItemId = item.id.toString()
+                        detailBackRoute = currentRoute
+                        currentRoute = BeamRoute.Detail
+                        true
+                    }
+                    is SpatialFinShow -> {
+                        selectedShowId = item.id.toString()
+                        showBackRoute = currentRoute
+                        currentRoute = BeamRoute.Show
+                        true
+                    }
+                    is SpatialFinSeason -> {
+                        selectedSeasonId = item.id.toString()
+                        seasonBackRoute = currentRoute
+                        currentRoute = BeamRoute.Season
+                        true
+                    }
+                    else -> {
+                        voiceController.voiceSearchQuery = item.name
+                        true
+                    }
+                }
+            }
+
+            override fun goHome() { currentRoute = BeamRoute.Home }
+            override fun goBack() { currentRoute = BeamRoute.Home }
+            override fun closeApp() { onFinishApp() }
+        }
+    }
+
+    val latestHasMicPermission = rememberUpdatedState(hasMicPermission)
+    val latestAssistantSpoken = rememberUpdatedState(assistantSpokenReplies)
+    val latestAssistantVoice = rememberUpdatedState(assistantVoiceName)
+
+    val micPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasMicPermission = granted
+            if (granted) {
+                voiceController.requestVoiceCommand(
+                    scope = coroutineScope,
+                    source = "beam-permission-grant",
+                    currentVoiceState = voiceState,
+                    currentTtsSpeaking = isTtsSpeaking,
+                    hasAudioPermission = true,
+                    assistantSpokenReplies = latestAssistantSpoken.value,
+                    assistantVoiceName = latestAssistantVoice.value,
+                    navigation = navigation,
+                    onAudioPermissionMissing = {},
+                )
+            }
+        }
+
+    fun startVoiceCommand(source: String) {
+        voiceController.requestVoiceCommand(
+            scope = coroutineScope,
+            source = source,
+            currentVoiceState = voiceState,
+            currentTtsSpeaking = isTtsSpeaking,
+            hasAudioPermission = latestHasMicPermission.value,
+            assistantSpokenReplies = latestAssistantSpoken.value,
+            assistantVoiceName = latestAssistantVoice.value,
+            navigation = navigation,
+            onAudioPermissionMissing = {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            },
+        )
+    }
+
+    val onVoiceMicClick: () -> Unit = {
+        if (voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)) {
+            voiceController.interruptVoiceCommand(
+                scope = coroutineScope,
+                reason = "beam-mic-tap",
+                currentVoiceState = voiceState,
+                currentTtsSpeaking = isTtsSpeaking,
+                requestFollowUp = { startVoiceCommand("beam-follow-up-interrupt") },
+            )
+        } else {
+            startVoiceCommand("beam-mic-tap")
+        }
+    }
+
+    voiceController.RegisterEffects(
+        requestFollowUp = { startVoiceCommand("beam-follow-up-auto") },
+    )
+
+    DisposableEffect(voiceController) { onDispose { voiceController.destroy() } }
 
     LaunchedEffect(
         state.isLoading,
@@ -229,20 +359,7 @@ fun BeamNavigationRoot(
             onReconnect = onReconnect,
             voiceState = voiceState,
             voicePartial = voicePartial,
-            onVoiceClick = {
-                if (voiceState == BeamVoiceState.LISTENING) {
-                    voiceService.stopListening()
-                } else {
-                    voiceService.resetState()
-                    voiceService.startListening { transcript ->
-                        if (transcript.isNotBlank()) {
-                            voiceQuery = transcript
-                            currentRoute = BeamRoute.Search
-                        }
-                        voiceService.resetState()
-                    }
-                }
-            },
+            onVoiceClick = onVoiceMicClick,
         )
     }
 
@@ -268,59 +385,12 @@ fun BeamNavigationRoot(
                 containerColor = Color.Transparent,
                 floatingActionButton = {
                     if (showPrimaryNavigation) {
-                        androidx.compose.material3.FloatingActionButton(
-                            onClick = {
-                                if (hasMicPermission) {
-                                    if (voiceState == BeamVoiceState.LISTENING) {
-                                        voiceService.stopListening()
-                                    } else {
-                                        voiceService.resetState()
-                                        voiceService.startListening { transcript ->
-                                            if (transcript.isNotBlank()) {
-                                                voiceQuery = transcript
-                                                currentRoute = BeamRoute.Search
-                                            }
-                                            voiceService.resetState()
-                                        }
-                                    }
-                                } else {
-                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                            },
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(26.dp),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
-                            elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
-                                defaultElevation = 1.dp,
-                                pressedElevation = 2.dp,
-                                hoveredElevation = 2.dp,
-                                focusedElevation = 1.dp
-                            ),
-                            modifier = Modifier.height(52.dp).widthIn(min = 52.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = if (voiceState == BeamVoiceState.LISTENING) 16.dp else 0.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Mic,
-                                    contentDescription = "Voice Assistant",
-                                    tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                androidx.compose.animation.AnimatedVisibility(visible = voiceState == BeamVoiceState.LISTENING) {
-                                    Row(modifier = Modifier.padding(start = 8.dp)) {
-                                        Text(
-                                            text = if (voicePartial.isNotBlank()) voicePartial else "Listening...",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = Color(0xFF4FC3F7),
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            modifier = Modifier.widthIn(max = 200.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        BeamVoiceFab(
+                            voiceState = voiceState,
+                            isTtsSpeaking = isTtsSpeaking,
+                            partialTranscript = voicePartial,
+                            onClick = onVoiceMicClick,
+                        )
                     }
                 },
                 bottomBar = {
@@ -692,6 +762,20 @@ fun BeamNavigationRoot(
             }
         }
     }
+            BeamVoiceFeedbackOverlay(
+                feedback = voiceController.voiceFeedback,
+                isListening = voiceState == VoiceState.LISTENING,
+                partialTranscript = voicePartial,
+            )
+            BeamRecommendationSheet(
+                recommendationContext = voiceController.recommendationContext,
+                onSelect = { item ->
+                    if (navigation.launchItem(item)) {
+                        voiceController.clearRecommendationContext()
+                    }
+                },
+                onDismiss = { voiceController.clearRecommendationContext() },
+            )
 }
 }
 }
@@ -760,7 +844,7 @@ private fun BeamSidebar(
     isOfflineMode: Boolean = false,
     onNavigate: (BeamRoute) -> Unit,
     onReconnect: () -> Unit = {},
-    voiceState: BeamVoiceState = BeamVoiceState.IDLE,
+    voiceState: VoiceState = VoiceState.IDLE,
     voicePartial: String = "",
     onVoiceClick: () -> Unit = {},
     forceExpanded: Boolean = false,
@@ -824,12 +908,12 @@ private fun BeamSidebar(
                             imageVector = Icons.Rounded.Mic,
                             contentDescription = "Voice",
                             modifier = Modifier.size(22.dp),
-                            tint = if (voiceState == BeamVoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (voiceState == VoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
-            if (voiceState == BeamVoiceState.LISTENING && voicePartial.isNotBlank() && isExpanded) {
+            if (voiceState == VoiceState.LISTENING && voicePartial.isNotBlank() && isExpanded) {
                 Text(
                     text = voicePartial,
                     style = MaterialTheme.typography.bodySmall,
@@ -1109,4 +1193,177 @@ internal fun BeamScaffoldBody(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         content = content,
     )
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.BeamVoiceFeedbackOverlay(
+    feedback: String?,
+    isListening: Boolean,
+    partialTranscript: String,
+) {
+    val message = when {
+        !feedback.isNullOrBlank() -> feedback
+        isListening && partialTranscript.isNotBlank() -> partialTranscript
+        else -> null
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = message != null,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 56.dp, start = 24.dp, end = 24.dp),
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 6.dp,
+        ) {
+            Text(
+                text = message.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .widthIn(max = 360.dp)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BeamVoiceFab(
+    voiceState: VoiceState,
+    isTtsSpeaking: Boolean,
+    partialTranscript: String,
+    onClick: () -> Unit,
+) {
+    val listeningTint = Color(0xFF4FC3F7)
+    val thinkingTint = Color(0xFFFFB74D)
+    val speakingTint = Color(0xFFBA68C8)
+    val errorTint = Color(0xFFEF5350)
+
+    val tint = when {
+        isTtsSpeaking -> speakingTint
+        voiceState == VoiceState.LISTENING -> listeningTint
+        voiceState == VoiceState.PROCESSING -> thinkingTint
+        voiceState == VoiceState.ERROR -> errorTint
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val label = when {
+        isTtsSpeaking -> "Tap to stop"
+        voiceState == VoiceState.LISTENING ->
+            if (partialTranscript.isNotBlank()) partialTranscript else "Listening…"
+        voiceState == VoiceState.PROCESSING -> "Thinking…"
+        else -> null
+    }
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "voiceFabPulse")
+        .animateFloat(
+            initialValue = 0.85f,
+            targetValue = 1f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+            ),
+            label = "voiceFabPulseValue",
+        )
+    val iconAlpha = if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING || isTtsSpeaking) pulse else 1f
+
+    androidx.compose.material3.FloatingActionButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(26.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+        elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
+            defaultElevation = 1.dp,
+            pressedElevation = 2.dp,
+            hoveredElevation = 2.dp,
+            focusedElevation = 1.dp,
+        ),
+        modifier = Modifier.height(52.dp).widthIn(min = 52.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = if (label != null) 16.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Mic,
+                contentDescription = "Voice Assistant",
+                tint = tint.copy(alpha = iconAlpha),
+            )
+            androidx.compose.animation.AnimatedVisibility(visible = label != null) {
+                Row(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(
+                        text = label.orEmpty(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tint,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.widthIn(max = 200.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.BeamRecommendationSheet(
+    recommendationContext: dev.jdtech.jellyfin.player.xr.voice.RecommendationContext?,
+    onSelect: (SpatialFinItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val ctx = recommendationContext ?: return
+    Surface(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .heightIn(max = 420.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f),
+        shape = RoundedCornerShape(24.dp),
+        tonalElevation = 8.dp,
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = ctx.query.ifBlank { "Recommendations" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(ctx.items) { item ->
+                    Surface(
+                        onClick = { onSelect(item) },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            Text(
+                                text = item.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 2,
+                            )
+                            (item as? SpatialFinMovie)?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                                Text(
+                                    text = overview,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

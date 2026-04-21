@@ -191,29 +191,15 @@ internal object RecommendationPlanner {
     fun buildRecommendationReply(
         items: List<SpatialFinItem>,
         analysis: RecommendationAnalysis,
-        currentTitle: String? = null,
     ): String? {
         val picks = items.take(3)
         if (picks.isEmpty()) return null
 
-        val opener =
-            when {
-                analysis.filters.preferSurprise -> "Try ${joinTitlesForSpeech(picks)}."
-                analysis.usePriorContext -> "Here are a few better matches: ${joinTitlesForSpeech(picks)}."
-                else -> "Based on your Jellyfin library, try ${joinTitlesForSpeech(picks)}."
-            }
-
-        val details =
-            picks.joinToString(" ") { item ->
-                val reason = buildRecommendationReason(item, analysis, currentTitle)
-                if (reason.isBlank()) {
-                    "${item.name} looks like a solid fit."
-                } else {
-                    "${item.name} is a good fit because $reason."
-                }
-            }
-
-        return "$opener $details".trim()
+        return when {
+            analysis.filters.preferSurprise -> "Try ${joinTitlesForSpeech(picks)}."
+            analysis.usePriorContext -> "Here are a few better matches: ${joinTitlesForSpeech(picks)}."
+            else -> "Based on your Jellyfin library, try ${joinTitlesForSpeech(picks)}."
+        }
     }
 
     private fun scoreItem(
@@ -369,61 +355,6 @@ internal object RecommendationPlanner {
             2 -> "${items[0].name} or ${items[1].name}"
             else -> "${items[0].name}, ${items[1].name}, or ${items[2].name}"
         }
-
-    private fun buildRecommendationReason(
-        item: SpatialFinItem,
-        analysis: RecommendationAnalysis,
-        currentTitle: String?,
-    ): String {
-        val reasons = mutableListOf<String>()
-        val type = typeLabel(item).lowercase()
-        val year = itemProductionYear(item)
-        val primaryGenre = itemGenres(item).firstOrNull()
-        val runtimeMinutes = itemRuntimeMinutes(item)
-
-        if (year != null && primaryGenre != null) {
-            reasons += "it's a $year $primaryGenre $type"
-        } else if (year != null) {
-            reasons += "it's a $year $type"
-        } else if (primaryGenre != null) {
-            reasons += "it's a $primaryGenre $type"
-        }
-
-        if (analysis.filters.preferShorter || analysis.filters.maxRuntimeMinutes != null) {
-            if (runtimeMinutes > 0) reasons += "it runs about $runtimeMinutes minutes"
-        }
-
-        if (analysis.filters.requireEnglishAudio && hasEnglishAudio(item)) {
-            reasons += "it has English audio available"
-        }
-
-        if (analysis.filters.preferFunny && itemGenres(item).any { it.contains("comedy", ignoreCase = true) }) {
-            reasons += "it leans comedic"
-        }
-
-        if (analysis.filters.preferNew && year != null && year >= 2020) {
-            reasons += "it's relatively recent"
-        }
-
-        if (!analysis.filters.avoidAnime && isAnimeLike(item)) {
-            reasons += "it has an anime vibe"
-        }
-
-        val current = currentTitle.orEmpty().trim()
-        if (current.isNotBlank() && !item.name.equals(current, ignoreCase = true)) {
-            reasons += "it should land well if you're in the mood for something like $current"
-        }
-
-        if (item.favorite) {
-            reasons += "it's already one of your favorites"
-        } else if (!item.played) {
-            reasons += "you haven't finished it yet"
-        } else if ((item.unplayedItemCount ?: 0) > 0) {
-            reasons += "it still has unwatched episodes"
-        }
-
-        return reasons.distinct().take(2).joinToString(" and ")
-    }
 
     private fun normalize(input: String): String =
         input.lowercase()

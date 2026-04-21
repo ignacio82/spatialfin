@@ -88,8 +88,9 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SpatialVoiceSynthesizer.kt`
 - `player/session/src/main/java/dev/jdtech/jellyfin/player/session/voice/PlayerSessionController.kt`
 - `settings/src/main/java/dev/jdtech/jellyfin/settings/voice/VoiceTelemetryStore.kt`
-- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` (Home-Space voice state machine + lazy LLM/TTS service creation)
-- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` (gesture wiring + navigation surface for the controller)
+- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` (voice state machine + lazy LLM/TTS service creation; used by both XR Home Space and the Beam phone shell)
+- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` (XR gesture wiring + navigation surface for the controller)
+- `app/beam/src/main/java/dev/spatialfin/beam/BeamNavigationRoot.kt` (Beam-phone mic FAB, voice feedback overlay, recommendation sheet — delegates to `HomeVoiceController` for the same AI pipeline as XR)
 
 ---
 
@@ -317,11 +318,13 @@ Each result card exposes `Play`, `Trailer`, `More Like This`, `Save`. Reuse the 
 - Use for: title lookups, actor/director summaries, richer answers than local metadata.
 - Do **not** use for: playback control, library search, recommendation ranking.
 
-### Home vs Player
+### Home vs Player vs Beam
 
 - `SpatialPlayerScreen` owns the richest voice UI (interactive results, recommendation cards, subtitle context).
 - `UnifiedMainActivity` Home Space shares the parser and chat engine but is text-first today.
-- `ChatQuery` must be supported in **both** screens. `RecommendationContext` and short conversation history must persist across follow-up turns in both paths.
+- `BeamNavigationRoot` (phone) reuses `HomeVoiceController` end-to-end. Mic FAB cancels any busy state (listening / processing / TTS). Feedback chip is anchored top-center so it never sits under the FAB. Recommendations render in a bottom sheet that routes taps through `BeamPlayerActivity.createIntentForSpatialItem`. **Do not fall back to transcript→Search** — that was the old behavior that bypassed the AI layers entirely.
+- `ChatQuery` must be supported in **all three** surfaces. `RecommendationContext` and short conversation history must persist across follow-up turns in each path.
+- **Recommendation replies are title-only** (`RecommendationPlanner.buildRecommendationReply` + the `WATCH_RECOMMENDER` / `MOOD_SURPRISE` task instructions in `MediaSkillRegistry`). Adding per-item rationale was rejected — the model's reasons were weak enough to undermine the picks. If you reintroduce reasons, talk to the user first.
 
 ---
 

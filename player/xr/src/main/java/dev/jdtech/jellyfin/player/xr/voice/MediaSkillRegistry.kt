@@ -518,14 +518,13 @@ internal class MediaSkillRegistry(
             RecommendationPlanner.buildRecommendationReply(
                 items = ranked,
                 analysis = analysis,
-                currentTitle = playerState.currentItemTitle,
             )
         val instructions =
             when (skillId) {
                 MediaSkillId.MOOD_SURPRISE ->
-                    "Task: Pick 2-4 titles that fit the user's mood or vibe. Prioritize the supplied Jellyfin library items and explain the match in one short sentence each."
+                    "Task: Pick 2-4 titles that fit the user's mood or vibe. Prioritize the supplied Jellyfin library items. Reply with only the titles — do not explain why each is a good fit."
                 else ->
-                    "Task: Recommend what to watch next. Prioritize the supplied Jellyfin library items. Name 2-4 concrete titles when possible and mention brief reasons. Respect any user filters like shorter, movie only, funny, not anime, newer, or English audio."
+                    "Task: Recommend what to watch next. Prioritize the supplied Jellyfin library items. Name 2-4 concrete titles when possible. Respect any user filters like shorter, movie only, funny, not anime, newer, or English audio. Reply with only the titles — do not justify or explain the picks."
             }
 
         return MediaSkillPlan(

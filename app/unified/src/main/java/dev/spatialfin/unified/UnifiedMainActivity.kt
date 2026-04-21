@@ -215,7 +215,11 @@ class UnifiedMainActivity : AppCompatActivity() {
                             BeamNavigationRoot(
                                 state = state,
                                 appPreferences = appPreferences,
+                                repository = repository,
+                                llmModelManager = llmModelManager,
+                                voiceTelemetryStore = voiceTelemetryStore,
                                 onReconnect = viewModel::reconnect,
+                                onFinishApp = { finishAndRemoveTask() },
                             )
                         }
                     }
