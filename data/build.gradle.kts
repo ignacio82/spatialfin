@@ -35,6 +35,12 @@ android {
     }
 
     buildFeatures { buildConfig = true }
+
+    testOptions {
+        // Robolectric shadows read real Android resources; include them so robolectric.properties
+        // / AndroidManifest stubs resolve during off-device JVM tests.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -54,4 +60,8 @@ dependencies {
     implementation(libs.jmdns)
     implementation(libs.timber)
     testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.turbine)
 }

@@ -46,6 +46,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
     private val deviceClass by lazy { detectDeviceClass() }
+    private val capabilities by lazy { DeviceClassCapabilities(deviceClass) }
     private var logFileTree: LogFileTree? = null
     private val preferenceListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -80,9 +81,8 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         reportPendingPlayerLaunch()
         eagerInitializeLlmIfNeeded()
         CompanionLiveSyncClient.from(this).start()
-        // TV-only: publish the home screen's Continue Watching / Next Up into the
-        // Google TV launcher's Watch Next row. No-op on XR/phone.
-        if (deviceClass == DeviceClass.TV) {
+        // Google TV launcher's Watch Next row — Leanback-only surface.
+        if (capabilities.hasLeanback) {
             watchNextScheduler.schedulePeriodic(this)
         }
     }
@@ -107,23 +107,26 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     }
 
     private fun initializeCompanionLogging() {
-        when (deviceClass) {
-            DeviceClass.PHONE -> BeamCompanionLogUploader.initialize(this, appPreferences)
-            DeviceClass.TV, DeviceClass.XR -> CompanionLogUploader.initialize(this, appPreferences)
+        if (capabilities.usesBeamCompanion) {
+            BeamCompanionLogUploader.initialize(this, appPreferences)
+        } else {
+            CompanionLogUploader.initialize(this, appPreferences)
         }
     }
 
     private fun enqueueCompanionLog(priority: Int, tag: String?, message: String, throwable: Throwable?) {
-        when (deviceClass) {
-            DeviceClass.PHONE -> BeamCompanionLogUploader.enqueue(priority, tag, message, throwable)
-            DeviceClass.TV, DeviceClass.XR -> CompanionLogUploader.enqueue(priority, tag, message, throwable)
+        if (capabilities.usesBeamCompanion) {
+            BeamCompanionLogUploader.enqueue(priority, tag, message, throwable)
+        } else {
+            CompanionLogUploader.enqueue(priority, tag, message, throwable)
         }
     }
 
     private fun flushCompanionLogs() {
-        when (deviceClass) {
-            DeviceClass.PHONE -> BeamCompanionLogUploader.flushNow()
-            DeviceClass.TV, DeviceClass.XR -> CompanionLogUploader.flushNow()
+        if (capabilities.usesBeamCompanion) {
+            BeamCompanionLogUploader.flushNow()
+        } else {
+            CompanionLogUploader.flushNow()
         }
     }
 
@@ -159,9 +162,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         // (picker, cloud key, Gemma/AICore management) for parity with Beam/XR, but TV still has
         // no active voice *listener*, so there is nothing to warm. Skipping init saves ~100 MB of
         // working set plus GPU/NPU warm-up on low-end SoCs.
-        if (deviceClass == DeviceClass.TV) return
+        if (!capabilities.eagerInitLlm) return
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
-        if (deviceClass == DeviceClass.XR) {
+        if (capabilities.isXr) {
             // On XR: only initialize if the model is already on disk. We never auto-download
             // at launch (that would pull 2.6 GB without user consent), but if the user has
             // already downloaded the model we should start warming up the engine immediately
@@ -206,7 +209,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         // TV runs on weak GPUs (Amlogic Mali-G31 etc.) where every compositor blend is
         // expensive. Disable Coil's crossfade on TV — focus-based navigation already
         // rapid-fires image loads and the fades stack into visible choppiness.
-        val enableCrossfade = deviceClass != DeviceClass.TV
+        val enableCrossfade = capabilities.useImageCrossfades
         return ImageLoader.Builder(context)
             .components {
                 add(OkHttpNetworkFetcherFactory(cacheStrategy = { CacheControlCacheStrategy() }))

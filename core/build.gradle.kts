@@ -28,6 +28,8 @@ android {
     }
 
     buildFeatures { compose = true }
+
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
@@ -55,4 +57,10 @@ dependencies {
     implementation(libs.material)
     implementation(libs.okhttp)
     implementation(libs.timber)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.turbine)
 }

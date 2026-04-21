@@ -30,6 +30,10 @@ jellyfin = "1.8.8"
 jmdns = "3.6.3"
 junit = "4.13.2"
 kotlin = "2.3.20"
+kotlinx-coroutines = "1.10.2"
+mockk = "1.14.5"
+robolectric = "4.15.1"
+turbine = "1.2.1"
 kotlinx-serialization = "1.11.0"
 ksp = "2.3.6"
 ktfmt = "0.26.0"
@@ -102,6 +106,11 @@ jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version.ref = "jcifs-ng" }
 jellyfin-core = { module = "org.jellyfin.sdk:jellyfin-core", version.ref = "jellyfin" }
 jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
 junit4 = { module = "junit:junit", version.ref = "junit" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+mockk-android = { module = "io.mockk:mockk-android", version.ref = "mockk" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 litertlm-android = "com.google.ai.edge.litertlm:litertlm-android:0.10.2"

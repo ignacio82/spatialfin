@@ -73,6 +73,13 @@ These paths are usually not useful for code understanding and should be skipped 
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/SpatialPlayerScreen.kt` — main player Composable (large; decomposed into sibling `Player*.kt` files — see the comment block near the bottom of the file for the index of what was lifted out).
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerVoiceCapture.kt` — `startVoiceCapture` + helpers. Builds the `PlayerStateSnapshot`, decides character-ID vs general visual context for chat queries, pauses/resumes playback around GPU-bound on-device inference, dispatches non-chat actions through `PlayerSessionController`, and records telemetry.
 - `data/src/main/java/dev/jdtech/jellyfin/repository/JellyfinRepositoryImpl.kt` — primary Jellyfin/DB gateway.
+- `player/local/src/main/java/dev/jdtech/jellyfin/player/local/presentation/SyncPlayCoordinator.kt` — owns SyncPlay / Jellyfin remote-control state + message handlers. `PlayerViewModel` delegates the four public entry points (`refresh/create/join/leave`) and exposes `syncPlay.isActive()` / `shouldSuppressEvents()` for its `Player.Listener` callbacks.
+- `player/local/src/main/java/dev/jdtech/jellyfin/player/local/presentation/PlayerTrackSelector.kt` — owns smart-language audio/subtitle auto-selection, manual `switchToTrack`, and series-override persistence. `PlayerViewModel` delegates `switchToTrack`, and calls `trackSelector.applySmart()` on media-item transition / tracks-changed.
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerSubtitleContext.kt` — `rememberPlayerSubtitleContext(viewModel)` holder for the AI-facing subtitle bundle (rolling cue buffer, disk-cache fallback, derived assistant lines).
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/LibassRendererState.kt` — `rememberLibassRenderer(...)` holder that owns libass render state + Media3 fallback cues + the Player.Listener + 4 self-driven effects (render loop, useLibass gate, MCP bridge mirror, post-move diagnostic). Screen consumes `libass.useLibass`, `libass.bitmap`, `libass.hasSubtitleContent`, etc., and calls `libass.bumpOverlayAttachment()` / `libass.reset()` on entity attachment / screen exit.
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerVoiceServices.kt` — `rememberPlayerVoiceServices(viewModel)` holder for the six voice / on-device AI singletons (`SpatialVoiceService`, Gemini Nano / Cloud, `SpatialVoiceSynthesizer`, LLM entry point) plus lazy `requireCommandCoordinator` / `requireChatEngine`. Call `voiceServices.destroy()` from the screen's `DisposableEffect(context)` onDispose.
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerVoiceCoordinator.kt` — `rememberPlayerVoiceCoordinator(...)` holder for the 14 voice-overlay state vars + `armFollowUpWindow` / `speakAssistantReply` / `interruptVoiceCommand` / `isVoiceTurnBusy` primitives + 4 self-contained effects (audio ducking, feedback auto-dismiss, ERROR auto-reset, TTS transition state machine). The screen-inline `requestVoiceCommand` and the follow-up auto-start / pinch-detector effects stay in `SpatialPlayerScreen` because they depend on `startVoiceCapture`'s remaining ~22-param surface.
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerSnapshotBuilder.kt` — `buildPlayerStateSnapshot(...)` is the single source of truth for building a `PlayerStateSnapshot` from player + UiState + voice-search + recommendation context. Both `SpatialPlayerScreen.currentRecommendationSnapshot()` and `startVoiceCapture` now call it instead of duplicating the 45-line constructor (which had drifted on `audioTrackNames` / `subtitleTrackNames` / `chapterNames`).
 
 ### Voice / AI Entry Points
 
@@ -144,7 +151,7 @@ If you add a new file under `app/xr/...`, `app/tv/...`, `app/beam/...`, no Gradl
 - **Upstream modules only declare `libre`** — the `tv` flavor uses `matchingFallbacks += "libre"` so library dependencies resolve cleanly. If you ever add a new `:foo` module, remember to keep its single flavor named `libre` (or add `matchingFallbacks` / a `tv` flavor there too).
 - **Release is `isMinifyEnabled = false`** — XR system-extension callbacks under `com.android.extensions.xr.*` were crashing with `AbstractMethodError` in optimized builds. Until the androidx.xr / R8 interaction is fixed, do not flip this on without testing the entire spatial UI. If you must minify, the keep rules in `app/unified/proguard-rules.pro` are the starting point.
 - **ABI splits** — `arm64-v8a` and `armeabi-v7a` are split for APK builds, but **disabled when building bundles** to work around AGP 8.9.0 issue [#402800800](https://issuetracker.google.com/issues/402800800).
-- **KSP incremental** — Sometimes goes stale during big refactors. If a clean build complains about generated Hilt classes, retry with `-Pksp.incremental=false`.
+- **KSP incremental** — Reliable on the current Kotlin 2.3.20 / KSP 2.3.6 pairing; builds run incrementally by default. `-Pksp.incremental=false` is kept as a last-resort escape hatch for Hilt-generated-class staleness, but it is not needed under normal development.
 
 ### Signing
 
@@ -201,6 +208,12 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | TTS + ducking | `player/xr/.../voice/SpatialVoiceSynthesizer.kt` | engine |
 | Hand gesture activation | `player/xr/.../voice/SecondaryHandPinchDetector.kt` | detector |
 | Jellyfin gateway | `data/.../repository/JellyfinRepositoryImpl.kt` | repository |
+| SyncPlay / remote control | `player/local/.../presentation/SyncPlayCoordinator.kt` | collaborator (Host callback pattern) |
+| Smart language / track selection | `player/local/.../presentation/PlayerTrackSelector.kt` | collaborator (Host callback pattern) |
+| Assistant subtitle context | `player/xr/.../PlayerSubtitleContext.kt` | Compose holder (`@Stable`) |
+| Libass render state + cue listener | `player/xr/.../LibassRendererState.kt` | Compose holder (`@Stable`) — owns its effects |
+| Voice service bundle | `player/xr/.../PlayerVoiceServices.kt` | Compose holder (`@Stable`) |
+| Voice overlay state + TTS state machine | `player/xr/.../PlayerVoiceCoordinator.kt` | Compose holder (`@Stable`) — owns its effects |
 | Offline gateway | `data/.../repository/JellyfinRepositoryOfflineImpl.kt` | repository (partial — see [Known Gaps](#known-gaps)) |
 | Continue Watching filter | `data/.../repository/ResumeFilter.kt` | pure object (`ResumeFilterTest`) |
 | Track signature ids | `player/local/.../presentation/PlayerTrackSignatures.kt` | pure object (`PlayerTrackSignaturesTest`) |
@@ -369,7 +382,7 @@ High-signal log sources: `AndroidRuntime`, `libc`, `SurfaceFlinger`, `BufferQueu
 ```bash
 ./gradlew :player:xr:testDebugUnitTest                            # cheapest regression check
 ./gradlew :player:xr:compileDebugKotlin
-./gradlew :app:unified:compileLibreDebugKotlin -Pksp.incremental=false
+./gradlew :app:unified:compileLibreDebugKotlin
 ```
 
 ### Where To Look In Logs
@@ -504,10 +517,9 @@ These are the gaps a future contributor (human or AI) should know about. If you 
 
 - **`JellyfinRepositoryOfflineImpl.kt`** — `getItemsPaging`, `getPerson`, `getPersonItems` now return safe defaults (empty paging, placeholder person, empty list) instead of crashing. `getStreamUrl` raises a loud `error(...)` since downloaded items play from local file URIs and should never reach this path. `getPublicSystemInfo` still throws — onboarding/setup is online-only by design.
 - **`core/.../utils/DownloaderImpl.kt`** — has a TODO noting that some download steps may abort if the user navigates away mid-flight; the long-term fix is to push everything onto WorkManager.
-- **`SpatialPlayerScreen.kt.orig`** — leftover backup file. Safe to delete; verify no script references it first.
-- **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — both are very large (>2000 lines). Split before adding major new player features; otherwise AI context windows and human reviewers both struggle.
-- **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` and pose persistence into `PanelPoseController`; the Activity now reads as pure orchestration (`~750` lines, mostly device-class branching and the FullSpace Subspace tree). Next size pressure is `SpatialPlayerScreen.kt` and `PlayerViewModel.kt` — both still >2k lines.
-- **Test coverage** — `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest`, `ResumeFilterTest`, `PlayerTrackSignaturesTest` exist. The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — add tests when changing those areas. Note: only JUnit 4 is wired in (no Mockito/MockK/Robolectric), so prefer extracting pure helpers/policies (taking primitive args, not framework types) for testability rather than mocking framework calls.
+- **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — screen down to ~2.07k lines (from 2.40k); VM down to ~1.8k (from 2.77k). Phase 1+2 lifted SyncPlay / track selection out of the VM and pulled voice services + AI subtitle context out of the screen. Phase 3 extracted the libass renderer (`LibassRendererState`) and the voice state / TTS state machine (`PlayerVoiceCoordinator`) — both own their own effects so the screen no longer juggles ~15 libass/voice `LaunchedEffect`s. What still lives inline is `requestVoiceCommand` (27-param call into `startVoiceCapture`), the follow-up auto-start effect, and the pinch-detector gesture-collection effect — all three need `requestVoiceCommand` in-scope, so lifting them requires either flattening `startVoiceCapture`'s surface or splitting the function.
+- **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` and pose persistence into `PanelPoseController`; the Activity now reads as pure orchestration (`~750` lines, mostly device-class branching and the FullSpace Subspace tree).
+- **Test coverage** — JUnit 4 + MockK + Robolectric + Turbine + `kotlinx-coroutines-test` are wired up in `:app:unified`, `:core`, and `:data` (pin `@Config(sdk = [35])` on any Robolectric test — the shipped SDK jars end at API 35). Existing pure-policy tests: `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest`, `ResumeFilterTest`, `PlayerTrackSignaturesTest`. Smoke tests for the new infra: `DeviceClassCapabilitiesTest` (pure) and `UserImageUriTest` (Robolectric, exercises `android.net.Uri`). The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — MockK means you no longer have to extract every Android-typed helper into a pure object just to test it; use Robolectric when you need a real `Uri` / Context shadow, and MockK when you need to stub `JellyfinRepository` / `ServerConnectionMonitor` / view-model collaborators.
 - **`isMinifyEnabled = false` for release** — see [Build Quirks](#build-quirks). Long-term debt; revisit when androidx.xr fixes the R8 interaction.
 
 ---

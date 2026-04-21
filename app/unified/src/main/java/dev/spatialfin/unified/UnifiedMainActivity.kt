@@ -118,6 +118,7 @@ class UnifiedMainActivity : AppCompatActivity() {
     }
 
     private val deviceClass by lazy { detectDeviceClass() }
+    private val capabilities by lazy { DeviceClassCapabilities(deviceClass) }
     private val viewModel: MainViewModel by viewModels()
 
     @Inject
@@ -177,7 +178,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             DeviceClass.XR -> Unit
         }
 
-        if (deviceClass == DeviceClass.XR) {
+        if (capabilities.isXr) {
             window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
             window.setBackgroundDrawable(
                 android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
@@ -331,7 +332,7 @@ class UnifiedMainActivity : AppCompatActivity() {
     }
 
     private fun applyPhoneOrientation() {
-        if (deviceClass != DeviceClass.PHONE) return
+        if (!capabilities.isPhone) return
         val dm = getSystemService(DisplayManager::class.java)
         val hasExternal = dm?.displays?.any { it.displayId != Display.DEFAULT_DISPLAY } == true
         requestedOrientation = if (hasExternal) {
