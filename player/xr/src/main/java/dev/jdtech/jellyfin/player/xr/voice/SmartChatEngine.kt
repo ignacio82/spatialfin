@@ -6,6 +6,10 @@ import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import dev.jdtech.jellyfin.player.xr.voice.prompt.PromptContext
+import dev.jdtech.jellyfin.player.xr.voice.prompt.chatPrompt
+import dev.jdtech.jellyfin.player.xr.voice.prompt.characterIdentificationPrompt
+import dev.jdtech.jellyfin.player.xr.voice.prompt.recapPrompt
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
@@ -477,58 +481,23 @@ class SmartChatEngine(
         question: String,
         playerState: PlayerStateSnapshot,
         subtitleContext: String,
-    ): String {
-        val showInfo = buildString {
-            if (!playerState.currentSeriesName.isNullOrBlank()) {
-                append(playerState.currentSeriesName)
-                if (playerState.currentSeasonNumber != null && playerState.currentEpisodeNumber != null) {
-                    append(" S${playerState.currentSeasonNumber}E${playerState.currentEpisodeNumber}")
-                }
-                if (playerState.currentItemTitle.isNotBlank()) {
-                    append(" \"${playerState.currentItemTitle}\"")
-                }
-            } else {
-                append(playerState.currentItemTitle.ifBlank { "this content" })
-            }
-        }
-        val chapterHint = playerState.currentChapterName
-            ?.takeIf { it.isNotBlank() }
-            ?.let { " (chapter: $it)" }
-            ?: ""
-
-        // Cap subtitles at 60 lines so the prompt stays small and fast.
-        val cappedSubtitles = subtitleContext.lines().takeLast(60).joinToString("\n")
-
-        return buildString {
-            appendLine("The user is watching $showInfo$chapterHint and asked: \"$question\"")
-            appendLine()
-            appendLine("Subtitles from that moment:")
-            appendLine(cappedSubtitles)
-            appendLine()
-            append("In 2-3 natural sentences, summarize what just happened. Be conversational — do not read the lines back verbatim.")
-        }
-    }
+    ): String = recapPrompt(
+        PromptContext(
+            question = question,
+            playerState = playerState,
+            subtitleContext = subtitleContext,
+        ),
+    ).render()
 
     private fun buildCharacterIdentificationPrompt(
         playerState: PlayerStateSnapshot,
         taskInstructions: String,
-    ): String {
-        val castBlock = playerState.castWithCharacters.take(12)
-            .joinToString("\n") { (actor, character) -> "Character: $character — Actor: $actor" }
-            .ifBlank { playerState.castNames.take(8).joinToString("\n") { "Actor: $it" } }
-
-        return buildString {
-            appendLine("You are SpatialFin, an on-device XR assistant identifying characters in a video frame.")
-            appendLine(taskInstructions)
-            if (castBlock.isNotBlank()) {
-                appendLine()
-                appendLine("Reference cast:")
-                appendLine(castBlock)
-            }
-            appendLine()
-            append("Analyze the video frame above and respond.")
-        }
-    }
+    ): String = characterIdentificationPrompt(
+        PromptContext(
+            playerState = playerState,
+            taskInstructions = taskInstructions,
+        ),
+    ).render()
 
     private fun buildPrompt(
         question: String,
@@ -540,50 +509,19 @@ class SmartChatEngine(
         relatedItemsContext: String?,
         taskInstructions: String,
         lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
-    ): String {
-        val historyBlock = if (conversationHistory.isNotEmpty()) {
-            "\nConversation history:\n" + conversationHistory.joinToString("\n") { (u, a) ->
-                "User: $u\nAssistant: $a"
-            } + "\n"
-        } else ""
-
-        val relatedBlock = if (relatedItemsContext != null) {
-            "\nItems available in library that may be relevant:\n$relatedItemsContext\n"
-        } else ""
-
-        val pointerContext = if (lastPointerPosition != null) {
-            "\nUser is currently pointing/looking at coordinates: x=${(lastPointerPosition.x * 100).toInt()}%, y=${(lastPointerPosition.y * 100).toInt()}% of the video screen.\n"
-        } else ""
-
-        return """
-            You are SpatialFin, an on-device XR media assistant.
-            Respect the spoiler policy: ${assistantPreferences.spoilerPolicy}.
-            Verbosity: ${assistantPreferences.verbosity}.
-            Do not invent details not present in the supplied context.
-            $taskInstructions
-
-            Current title: ${playerState.currentItemTitle}
-            Series: ${playerState.currentSeriesName ?: ""}
-            Season: ${playerState.currentSeasonNumber ?: ""}
-            Episode: ${playerState.currentEpisodeNumber ?: ""}
-            Year: ${playerState.productionYear ?: ""}
-            Rating: ${playerState.officialRating ?: ""}
-            Overview: ${playerState.currentOverview.take(1000)}
-            Genres: ${playerState.currentGenres.joinToString(", ")}
-            Community ratings: ${playerState.currentRatings.joinToString(", ")}
-            Cast: ${playerState.castNames.joinToString(", ")}
-            Directors: ${playerState.directors.joinToString(", ")}
-            Writers: ${playerState.writers.joinToString(", ")}
-            Current chapter: ${playerState.currentChapterName ?: ""}
-            Story so far: ${(storySoFarContext ?: "").take(1200)}
-            Recent subtitles: ${subtitleContext.takeLast(1200)}
-            Audio track: ${playerState.currentAudioTrack ?: ""}
-            Subtitle track: ${playerState.currentSubtitleTrack ?: ""}
-            $historyBlock$relatedBlock$pointerContext
-            User question:
-            $question
-        """.trimIndent()
-    }
+    ): String = chatPrompt(
+        PromptContext(
+            question = question,
+            playerState = playerState,
+            assistantPreferences = assistantPreferences,
+            storySoFar = storySoFarContext,
+            subtitleContext = subtitleContext,
+            conversationHistory = conversationHistory,
+            relatedItems = relatedItemsContext,
+            pointerPosition = lastPointerPosition,
+            taskInstructions = taskInstructions,
+        ),
+    ).render()
 
     private fun fallbackAnswer(
         question: String,

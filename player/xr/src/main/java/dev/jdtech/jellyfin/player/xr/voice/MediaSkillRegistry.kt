@@ -605,9 +605,6 @@ internal class MediaSkillRegistry(
         playerState: PlayerStateSnapshot,
     ): MediaSkillPlan {
         val castPairs = playerState.castWithCharacters.take(12)
-        val castLines = castPairs.joinToString("\n") { (actor, character) ->
-            "  Character: $character — Actor: $actor"
-        }
         val titleLine = playerState.currentItemTitle.ifBlank { "the current title" }
 
         val fallback = when {
@@ -620,23 +617,11 @@ internal class MediaSkillRegistry(
                 "I couldn't identify the character — no cast metadata is available."
         }
 
-        val taskInstructions = buildString {
-            appendLine("Task: Identify which character from the cast list below is visible in the video frame.")
-            appendLine("IMPORTANT: Only name characters from the provided list. Do NOT invent names or guess outside this list.")
-            appendLine("If you can confidently match the frame to a character, state:")
-            appendLine("  1. The character's name")
-            appendLine("  2. The actor's name")
-            appendLine("  3. One sentence about the character's role in $titleLine")
-            appendLine("If you cannot confidently identify anyone, say: \"I can't identify the character from this frame.\"")
-            if (castLines.isNotBlank()) {
-                appendLine()
-                appendLine("Cast for $titleLine:")
-                append(castLines)
-            } else {
-                appendLine()
-                append("No cast metadata available — describe what you observe in the frame instead.")
-            }
-        }.trimEnd()
+        val taskInstructions =
+            dev.jdtech.jellyfin.player.xr.voice.prompt.characterIdentificationInstructions(
+                titleLine = titleLine,
+                castPairs = castPairs,
+            )
 
         return MediaSkillPlan(
             skillId = MediaSkillId.CHARACTER_IDENTIFICATION,
