@@ -25,15 +25,9 @@ import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.Rating
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
-import dev.jdtech.jellyfin.models.SpatialFinEpisode
-import dev.jdtech.jellyfin.models.SpatialFinItem
-import dev.jdtech.jellyfin.models.SpatialFinMovie
-import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinSegmentType
-import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SyncPlayGroup
-import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
@@ -47,8 +41,6 @@ import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.Constants
-import dev.jdtech.jellyfin.settings.language.LanguageCatalog
-import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import java.util.UUID
 import javax.inject.Inject
@@ -65,22 +57,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.jellyfin.sdk.api.sockets.SocketApiState
 import org.jellyfin.sdk.model.api.BaseItemKind
-import org.jellyfin.sdk.model.api.GeneralCommandMessage
-import org.jellyfin.sdk.model.api.GeneralCommandType
-import org.jellyfin.sdk.model.api.GroupStateType
 import org.jellyfin.sdk.model.api.MediaStreamType
-import org.jellyfin.sdk.model.api.PlaystateCommand
-import org.jellyfin.sdk.model.api.SyncPlayCommandMessage
-import org.jellyfin.sdk.model.api.SyncPlayGroupDoesNotExistUpdate
-import org.jellyfin.sdk.model.api.SyncPlayGroupJoinedUpdate
-import org.jellyfin.sdk.model.api.SyncPlayGroupLeftUpdate
-import org.jellyfin.sdk.model.api.SyncPlayGroupUpdateMessage
-import org.jellyfin.sdk.model.api.SyncPlayNotInGroupUpdate
-import org.jellyfin.sdk.model.api.SyncPlayPlayQueueUpdate
-import org.jellyfin.sdk.model.api.SyncPlayQueueItem
-import org.jellyfin.sdk.model.api.SyncPlayStateUpdate
 import timber.log.Timber
 
 private const val ASSISTANT_SUBTITLE_HISTORY_WINDOW_MS = 20 * 60 * 1_000L
@@ -154,9 +132,81 @@ constructor(
         val statusMessage: String? = null,
     )
 
-    private val _syncPlayState = MutableStateFlow(SyncPlayUiState())
-    val syncPlayState = _syncPlayState.asStateFlow()
-    private var lastAutoLanguageSelectionMediaId: String? = null
+    private val syncPlay =
+        SyncPlayCoordinator(
+            application = application,
+            repository = repository,
+            playlistManager = playlistManager,
+            scope = viewModelScope,
+            host = object : SyncPlayCoordinator.Host {
+                override val player: Player
+                    get() = this@PlayerViewModel.player
+                override val currentMediaSourceStreams: List<SpatialFinMediaStream>
+                    get() = this@PlayerViewModel.currentMediaSourceStreams
+                override var playbackPosition: Long
+                    get() = this@PlayerViewModel.playbackPosition
+                    set(value) {
+                        this@PlayerViewModel.playbackPosition = value
+                    }
+
+                override fun currentPlayerItem(): PlayerItem? =
+                    this@PlayerViewModel.currentPlayerItem()
+
+                override fun currentItemTitle(): String = _uiState.value.currentItemTitle
+
+                override fun updateNextEpisode(nextEpisode: PlayerItem?) {
+                    _uiState.update { it.copy(nextEpisode = nextEpisode) }
+                }
+
+                override fun replaceItems(items: MutableList<PlayerItem>) {
+                    this@PlayerViewModel.items = items
+                }
+
+                override fun initializePlayer(
+                    itemId: UUID,
+                    itemKind: String,
+                    startFromBeginning: Boolean,
+                    mediaSourceIndex: Int?,
+                    autoPlay: Boolean,
+                ) {
+                    this@PlayerViewModel.initializePlayer(
+                        itemId = itemId,
+                        itemKind = itemKind,
+                        startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
+                        autoPlay = autoPlay,
+                    )
+                }
+
+                override fun switchToTrack(trackType: Int, index: Int) {
+                    this@PlayerViewModel.switchToTrack(trackType, index)
+                }
+
+                override fun skipToNextItem() {
+                    this@PlayerViewModel.skipToNextItem()
+                }
+
+                override fun toMediaItem(item: PlayerItem): MediaItem = with(item) { toMediaItem() }
+            },
+        )
+    val syncPlayState = syncPlay.state
+
+    private val trackSelector =
+        PlayerTrackSelector(
+            application = application,
+            appPreferences = appPreferences,
+            host = object : PlayerTrackSelector.Host {
+                override val player: Player
+                    get() = this@PlayerViewModel.player
+
+                override fun currentPlayerItem(): PlayerItem? =
+                    this@PlayerViewModel.currentPlayerItem()
+
+                override fun setVisualSubtitlesEnabled(enabled: Boolean) {
+                    _uiState.update { it.copy(visualSubtitlesEnabled = enabled) }
+                }
+            },
+        )
 
     private val eventsChannel = Channel<PlayerEvents>()
     val eventsChannelFlow = eventsChannel.receiveAsFlow()
@@ -200,7 +250,7 @@ constructor(
 
     private var items: MutableList<PlayerItem> = mutableListOf()
 
-    private val trackSelector = DefaultTrackSelector(application)
+    private val eventTrackSelector = DefaultTrackSelector(application)
     var playWhenReady = true
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
@@ -219,14 +269,7 @@ constructor(
 
     var isInPictureInPictureMode: Boolean = false
 
-    private var activeSyncPlayGroupId: UUID? = null
-    private var currentSyncPlaylistItemId: UUID? = null
-    private var suppressSyncUntilMs: Long = 0L
-    private var isSocketConnected = false
     private var pendingAutoAdvanceMediaId: String? = null
-    private var pendingRemoteAudioStreamIndex: Int? = null
-    private var pendingRemoteSubtitleStreamIndex: Int? = null
-    private var lastNonMutedVolume: Float = 1f
 
     // Adaptive-auto state. `effectiveAutoBitrate` is the cap currently in use
     // when the user's pref is Auto (0L); a rebuffer storm pushes it down a
@@ -238,8 +281,6 @@ constructor(
     private var lastPlaybackState: Int = Player.STATE_IDLE
     private var autoDowngradeCooldownUntilMs: Long = 0L
     private var startupWatchdogJob: kotlinx.coroutines.Job? = null
-    private var remoteSessionConfigured = false
-    private var configuredDeviceName: String? = null
 
     init {
         // Log HDR capabilities
@@ -290,26 +331,26 @@ constructor(
         playerFlow = _playerFlow.asStateFlow()
         
         // Add comprehensive logging for network, buffering, and dropped frames for ExoPlayer
-        (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
+        (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
 
         viewModelScope.launch {
             repository.observePlayStateMessages().collect { message ->
                 message.data?.let { request ->
-                    handlePlayStateMessage(request.command, request.seekPositionTicks)
+                    syncPlay.handlePlayStateMessage(request.command, request.seekPositionTicks)
                 }
             }
         }
         viewModelScope.launch {
-            repository.observeSyncPlayCommandMessages().collect(::handleSyncPlayCommandMessage)
+            repository.observeSyncPlayCommandMessages().collect(syncPlay::handleSyncPlayCommandMessage)
         }
         viewModelScope.launch {
-            repository.observeSyncPlayGroupUpdates().collect(::handleSyncPlayGroupUpdate)
+            repository.observeSyncPlayGroupUpdates().collect(syncPlay::handleSyncPlayGroupUpdate)
         }
         viewModelScope.launch {
-            repository.observeGeneralCommandMessages().collect(::handleGeneralCommandMessage)
+            repository.observeGeneralCommandMessages().collect(syncPlay::handleGeneralCommandMessage)
         }
         viewModelScope.launch {
-            repository.observeSocketState().collectLatest(::handleSocketState)
+            repository.observeSocketState().collectLatest(syncPlay::handleSocketState)
         }
     }
 
@@ -327,7 +368,7 @@ constructor(
         player.release()
         player = newPlayer
         player.addListener(this)
-        (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(trackSelector))
+        (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
     }
 
     fun clearAssistantSubtitleHistory() {
@@ -464,127 +505,13 @@ constructor(
         }
     }
 
-    fun refreshSyncPlayGroups() {
-        viewModelScope.launch {
-            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
-            runCatching { repository.getSyncPlayGroups() }
-                .onSuccess { groups ->
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            availableGroups = groups,
-                            activeGroup = groups.firstOrNull { group -> group.id == activeSyncPlayGroupId } ?: it.activeGroup,
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    Timber.w(error, "Failed to refresh SyncPlay groups")
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            statusMessage = error.localizedMessage ?: "Unable to load SyncPlay groups",
-                        )
-                    }
-                }
-        }
-    }
+    fun refreshSyncPlayGroups() = syncPlay.refreshGroups()
 
-    fun createSyncPlayGroup() {
-        val currentItem = currentPlayerItem()
-        if (currentItem?.contentSource != PlayerContentSource.JELLYFIN) {
-            _syncPlayState.update {
-                it.copy(statusMessage = "SyncPlay is only available for Jellyfin playback")
-            }
-            return
-        }
+    fun createSyncPlayGroup() = syncPlay.createGroup()
 
-        val groupName = uiState.value.currentItemTitle.ifBlank { currentItem.name }.take(60)
-        viewModelScope.launch {
-            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
-            runCatching {
-                    val group = repository.createSyncPlayGroup(groupName)
-                    repository.setSyncPlayQueue(
-                        itemIds = listOf(currentItem.itemId),
-                        playingItemIndex = 0,
-                        startPositionTicks = player.currentPosition.coerceAtLeast(0L) * 10_000L,
-                    )
-                    group
-                }
-                .onSuccess { group ->
-                    activeSyncPlayGroupId = group.id
-                    currentSyncPlaylistItemId = null
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            activeGroup = group,
-                            statusMessage = "Created SyncPlay group: ${group.name}",
-                        )
-                    }
-                    refreshSyncPlayGroups()
-                }
-                .onFailure { error ->
-                    Timber.w(error, "Failed to create SyncPlay group")
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            statusMessage = error.localizedMessage ?: "Unable to create SyncPlay group",
-                        )
-                    }
-                }
-        }
-    }
+    fun joinSyncPlayGroup(groupId: UUID) = syncPlay.joinGroup(groupId)
 
-    fun joinSyncPlayGroup(groupId: UUID) {
-        val currentItem = currentPlayerItem()
-        if (currentItem?.contentSource != PlayerContentSource.JELLYFIN) {
-            _syncPlayState.update {
-                it.copy(statusMessage = "SyncPlay is only available for Jellyfin playback")
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            _syncPlayState.update { it.copy(isLoading = true, statusMessage = null) }
-            runCatching {
-                    repository.joinSyncPlayGroup(groupId)
-                    repository.getSyncPlayGroups().firstOrNull { it.id == groupId }
-                }
-                .onSuccess { group ->
-                    activeSyncPlayGroupId = groupId
-                    currentSyncPlaylistItemId = null
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            activeGroup = group ?: it.activeGroup,
-                            statusMessage = "Joined SyncPlay group",
-                        )
-                    }
-                    refreshSyncPlayGroups()
-                }
-                .onFailure { error ->
-                    Timber.w(error, "Failed to join SyncPlay group")
-                    _syncPlayState.update {
-                        it.copy(
-                            isLoading = false,
-                            statusMessage = error.localizedMessage ?: "Unable to join SyncPlay group",
-                        )
-                    }
-                }
-        }
-    }
-
-    fun leaveSyncPlayGroup() {
-        viewModelScope.launch {
-            runCatching { repository.leaveSyncPlayGroup() }
-                .onFailure { Timber.w(it, "Failed to leave SyncPlay group") }
-            activeSyncPlayGroupId = null
-            currentSyncPlaylistItemId = null
-            _syncPlayState.update {
-                it.copy(activeGroup = null, statusMessage = "Left SyncPlay group")
-            }
-            refreshSyncPlayGroups()
-        }
-    }
+    fun leaveSyncPlayGroup() = syncPlay.leaveGroup()
 
     fun initializePlayer(
         itemId: UUID,
@@ -1109,7 +1036,7 @@ constructor(
                             currentMediaSourceStreams = activeSource?.mediaStreams.orEmpty()
                             val playbackInfoLabel = buildPlaybackInfoLabel(activeSource)
                             _uiState.update { it.copy(currentPlaybackInfoLabel = playbackInfoLabel) }
-                            ensureRemotePlaybackSessionReady()
+                            syncPlay.ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
                             if (segmentsSkipButton || segmentsAutoSkip) {
@@ -1129,8 +1056,8 @@ constructor(
                             playlistManager.setCurrentMediaItemIndex(item.itemId)
                         }
 
-                        if (isSyncPlayActive()) {
-                            currentSyncPlaylistItemId = item.playlistItemId
+                        if (syncPlay.isActive()) {
+                            syncPlay.currentPlaylistItemId = item.playlistItemId
                             _uiState.update {
                                 it.copy(nextEpisode = items.getOrNull(player.currentMediaItemIndex + 1))
                             }
@@ -1188,183 +1115,14 @@ constructor(
                             _uiState.update { it.copy(nextEpisode = null) }
                         }
 
-                        lastAutoLanguageSelectionMediaId = null
-                        applySmartLanguagePreferences()
+                        trackSelector.resetAutoSelection()
+                        trackSelector.applySmart()
                         Timber.tag("PlayerItems").d(items.map { it.indexNumber }.toString())
                     }
             } catch (e: Exception) {
                 Timber.e(e)
             }
         }
-    }
-
-    private fun applySmartLanguagePreferences() {
-        val mediaId = player.currentMediaItem?.mediaId ?: return
-        if (lastAutoLanguageSelectionMediaId == mediaId) return
-
-        val spokenLanguages = appPreferences.getSmartSpokenLanguageCodes(application)
-        val currentItem = currentPlayerItem() ?: return
-        val seriesOverride = currentPlayerItem()?.seriesId?.let {
-            appPreferences.getSeriesLanguageOverride(it.toString())
-        }
-        val audioGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
-        if (audioGroups.isEmpty()) return
-        val subtitleGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-
-        val isAnime =
-            currentItem.genres.any { genre -> genre.contains("anime", ignoreCase = true) } ||
-                (
-                    audioGroups.any { group -> groupMatchesLanguage(group, "jpn") } &&
-                        subtitleGroups.any { group ->
-                            val mime = group.getTrackFormat(0).sampleMimeType.orEmpty()
-                            mime == "text/x-ssa" || mime == androidx.media3.common.MimeTypes.TEXT_SSA
-                        }
-                )
-        val preferredAudioForContent =
-            if (isAnime) {
-                appPreferences.getValue(appPreferences.animeAudioLanguage)
-            } else {
-                appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
-                    ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
-            }
-        val preferredSubtitleForContent =
-            if (isAnime) {
-                appPreferences.getValue(appPreferences.animeSubtitleLanguage)
-                    ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
-            } else {
-                appPreferences.getValue(appPreferences.nonAnimeSubtitleLanguage)
-                    ?: appPreferences.getValue(appPreferences.preferredSubtitleLanguage)
-            }
-        val defaultSubtitleDisabled = !isAnime && appPreferences.getValue(appPreferences.nonAnimeSubtitleDisabled)
-
-        val inferredOriginalAudio = inferOriginalAudioLanguage(audioGroups, spokenLanguages)
-        val seriesOverrideAudio = seriesOverride?.audioLanguageCode
-        val seriesOverrideAudioSignature = seriesOverride?.audioTrackSignature
-        val selectedAudioGroup =
-            when {
-                seriesOverrideAudioSignature != null ->
-                    audioGroups.firstOrNull { group ->
-                        audioTrackSignature(group) == seriesOverrideAudioSignature
-                    } ?: audioGroups.firstOrNull {
-                        seriesOverrideAudio != null && groupMatchesLanguage(it, seriesOverrideAudio)
-                    } ?: audioGroups.first()
-                seriesOverrideAudio != null ->
-                    audioGroups.firstOrNull {
-                        groupMatchesLanguage(it, seriesOverrideAudio)
-                    } ?: audioGroups.first()
-                !preferredAudioForContent.isNullOrBlank() ->
-                    audioGroups.firstOrNull {
-                        groupMatchesLanguage(it, preferredAudioForContent)
-                    } ?: audioGroups.first()
-                appPreferences.getValue(appPreferences.smartPreferOriginalAudio) &&
-                    inferredOriginalAudio != null -> {
-                audioGroups.firstOrNull {
-                    groupMatchesLanguage(it, inferredOriginalAudio)
-                } ?: audioGroups.first()
-                }
-                else ->
-                    spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                        audioGroups.firstOrNull { group ->
-                            groupMatchesLanguage(group, preferredCode)
-                        }
-                    } ?: audioGroups.first()
-            }
-
-        val selectedAudioLanguage = groupPrimaryLanguage(selectedAudioGroup)
-        val audioUnderstood =
-            spokenLanguages.any { preferredCode ->
-                selectedAudioLanguage != null &&
-                    LanguageCatalog.matches(application, selectedAudioLanguage, preferredCode)
-            }
-
-        val seriesOverrideSubtitle = seriesOverride?.subtitleLanguageCode
-        val seriesOverrideSubtitleSignature = seriesOverride?.subtitleTrackSignature
-        val selectedSubtitleGroup =
-            if (seriesOverride?.subtitlesEnabled == false) {
-                null
-            } else if (seriesOverrideSubtitleSignature != null) {
-                subtitleGroups.firstOrNull { group ->
-                    subtitleTrackSignature(group) == seriesOverrideSubtitleSignature
-                } ?: subtitleGroups
-                    .filter { group ->
-                        seriesOverrideSubtitle != null &&
-                            groupMatchesLanguage(group, seriesOverrideSubtitle)
-                    }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = seriesOverrideSubtitle) }
-            } else if (seriesOverrideSubtitle != null) {
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, seriesOverrideSubtitle) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = seriesOverrideSubtitle) }
-            } else if (defaultSubtitleDisabled && audioUnderstood) {
-                null
-            } else if (!preferredSubtitleForContent.isNullOrBlank()) {
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, preferredSubtitleForContent) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredSubtitleForContent) }
-                    ?.takeIf { !audioUnderstood || isAnime }
-            } else if (audioUnderstood) {
-                null
-            } else {
-                spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                    subtitleGroups
-                        .filter { group -> groupMatchesLanguage(group, preferredCode) }
-                        .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredCode) }
-                }
-            }
-
-        val builder = player.trackSelectionParameters
-            .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setPreferredAudioLanguage(selectedAudioLanguage)
-            .setOverrideForType(
-                TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0)
-            )
-
-        if (selectedSubtitleGroup != null) {
-            _uiState.update { it.copy(visualSubtitlesEnabled = true) }
-            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            builder.setOverrideForType(
-                TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0)
-            )
-            builder.setIgnoredTextSelectionFlags(0)
-        } else {
-            _uiState.update { it.copy(visualSubtitlesEnabled = false) }
-            val allSubtitleGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-            val aiTrack = selectHiddenAiSubtitleTrack(allSubtitleGroups)
-            if (aiTrack != null) {
-                val format = aiTrack.getTrackFormat(0)
-                Timber.i("FORCING Hidden AI subtitle track: label=%s lang=%s", format.label, format.language)
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                builder.setOverrideForType(
-                    TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
-                )
-                builder.setIgnoredTextSelectionFlags(0)
-            } else {
-                Timber.i("No suitable tracks found for hidden AI context.")
-                builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            }
-        }
-
-        player.trackSelectionParameters = builder.build()
-        lastAutoLanguageSelectionMediaId = mediaId
-
-        Timber.d(
-            "Smart language track prefs: isAnime=%b preferOriginal=%b contentAudio=%s contentSubtitle=%s seriesOverride=%s inferredOriginal=%s spoken=%s selectedAudio=%s subtitlesDisabled=%b selectedSubtitle=%s subtitleSignature=%s",
-            isAnime,
-            appPreferences.getValue(appPreferences.smartPreferOriginalAudio),
-            preferredAudioForContent,
-            preferredSubtitleForContent,
-            seriesOverride,
-            inferredOriginalAudio,
-            spokenLanguages.joinToString(","),
-            selectedAudioLanguage,
-            selectedSubtitleGroup == null,
-            groupPrimaryLanguage(selectedSubtitleGroup),
-            selectedSubtitleGroup?.let(::subtitleTrackSignature),
-        )
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -1411,8 +1169,8 @@ constructor(
                 } catch (e: Exception) {
                     Timber.e(e)
                 }
-                if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
-                    val playlistItemId = currentSyncPlaylistItemId
+                if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents()) {
+                    val playlistItemId = syncPlay.currentPlaylistItemId
                     if (playlistItemId != null && player.hasNextMediaItem()) {
                         runCatching { repository.nextSyncPlayItem(playlistItemId) }
                             .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
@@ -1437,8 +1195,8 @@ constructor(
             clearAssistantSubtitleHistory()
         }
         if (
-            !isSyncPlayActive() ||
-                shouldSuppressSyncEvents() ||
+            !syncPlay.isActive() ||
+                syncPlay.shouldSuppressEvents() ||
                 reason != Player.DISCONTINUITY_REASON_SEEK
         ) {
             return
@@ -1475,8 +1233,8 @@ constructor(
                 val currentMediaId = player.currentMediaItem?.mediaId
                 val nextEpisode = _uiState.value.nextEpisode
                 val shouldAutoAdvance =
-                    if (isSyncPlayActive()) {
-                        currentSyncPlaylistItemId != null && nextEpisode != null
+                    if (syncPlay.isActive()) {
+                        syncPlay.currentPlaylistItemId != null && nextEpisode != null
                     } else {
                         player.hasNextMediaItem() || nextEpisode != null
                     }
@@ -1638,15 +1396,15 @@ constructor(
             _currentFrameRate.value = detectedFrameRate
         }
 
-        applySmartLanguagePreferences()
-        applyPendingRemoteStreamSelections()
+        trackSelector.applySmart()
+        syncPlay.applyPendingRemoteStreamSelections()
     }
 
     override fun onCleared() {
         super.onCleared()
         Timber.d("Clearing Player ViewModel")
         // viewModelScope is cancelled before onCleared() is called, so use a detached scope.
-        if (isSyncPlayActive()) {
+        if (syncPlay.isActive()) {
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
                 runCatching { repository.leaveSyncPlayGroup() }
             }
@@ -1654,571 +1412,13 @@ constructor(
         releasePlayer()
     }
 
-    fun switchToTrack(trackType: @C.TrackType Int, index: Int) {
-        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
-
-        if (trackType == C.TRACK_TYPE_TEXT) {
-            _uiState.update { it.copy(visualSubtitlesEnabled = index != -1) }
-        }
-
-        // Index -1 equals disable track
-        if (index == -1) {
-            if (trackType == C.TRACK_TYPE_TEXT) {
-                val aiTrack = selectHiddenAiSubtitleTrack(groups)
-                if (aiTrack != null) {
-                    val format = aiTrack.getTrackFormat(0)
-                    Timber.i("Hidden AI subtitle track selected: label=%s lang=%s", format.label, format.language)
-                    player.trackSelectionParameters =
-                        player.trackSelectionParameters
-                            .buildUpon()
-                            .setOverrideForType(
-                                TrackSelectionOverride(aiTrack.mediaTrackGroup, 0)
-                            )
-                            .setTrackTypeDisabled(trackType, false)
-                            .setIgnoredTextSelectionFlags(0)
-                            .build()
-                } else {
-                    Timber.i("No suitable AI subtitle track found.")
-                    player.trackSelectionParameters =
-                        player.trackSelectionParameters
-                            .buildUpon()
-                            .clearOverridesOfType(trackType)
-                            .setTrackTypeDisabled(trackType, true)
-                            .build()
-                }
-            } else {
-                player.trackSelectionParameters =
-                    player.trackSelectionParameters
-                        .buildUpon()
-                        .clearOverridesOfType(trackType)
-                        .setTrackTypeDisabled(trackType, true)
-                        .build()
-            }
-            persistSeriesLanguageOverride(
-                trackType = trackType,
-                languageCode = null,
-                trackSignature = null,
-                enabled = false,
-            )
-        } else {
-            val selectedGroup = groups[index]
-            val selectedLanguage = groupPrimaryLanguage(selectedGroup)
-            player.trackSelectionParameters =
-                player.trackSelectionParameters
-                    .buildUpon()
-                    .setOverrideForType(
-                        TrackSelectionOverride(
-                            selectedGroup.mediaTrackGroup,
-                            0,
-                        )
-                    )
-                    .setTrackTypeDisabled(trackType, false)
-                    .apply {
-                        if (trackType == C.TRACK_TYPE_TEXT) {
-                            setIgnoredTextSelectionFlags(0)
-                        }
-                    }
-                    .build()
-
-            if (trackType == C.TRACK_TYPE_AUDIO) {
-                persistSeriesLanguageOverride(
-                    trackType = trackType,
-                    languageCode = selectedLanguage,
-                    trackSignature = audioTrackSignature(selectedGroup),
-                    enabled = true,
-                )
-                maybeEnableSubtitleForManualAudioSelection(selectedLanguage)
-            } else {
-                persistSeriesLanguageOverride(
-                    trackType = trackType,
-                    languageCode = selectedLanguage,
-                    trackSignature = subtitleTrackSignature(selectedGroup),
-                    enabled = true,
-                )
-            }
-        }
-    }
-
-    private fun selectHiddenAiSubtitleTrack(groups: List<Tracks.Group>): Tracks.Group? {
-        return groups
-            .sortedByDescending { group ->
-                val format = group.getTrackFormat(0)
-                val label = format.label.orEmpty().lowercase()
-                val roleFlags = format.roleFlags
-                var score = 0
-                if (label.contains("sdh") || label.contains("cc")) score += 100
-                if (roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) score += 50
-                if (roleFlags and C.ROLE_FLAG_TRANSCRIBES_DIALOG != 0) score += 50
-                if (groupMatchesLanguage(group, "en") || groupMatchesLanguage(group, "eng")) score += 20
-                score
-            }
-            .firstOrNull()
-    }
-
-    private fun isSyncPlayActive(): Boolean = activeSyncPlayGroupId != null
-
-    private fun shouldSuppressSyncEvents(): Boolean = SystemClock.elapsedRealtime() < suppressSyncUntilMs
-
-    private inline fun applyRemoteSync(action: () -> Unit) {
-        suppressSyncUntilMs = SystemClock.elapsedRealtime() + 1_500L
-        action()
-    }
-
-    private suspend fun handleSyncPlayCommandMessage(message: SyncPlayCommandMessage) {
-        val command = message.data ?: return
-        if (command.groupId != activeSyncPlayGroupId) return
-
-        when (command.command) {
-            org.jellyfin.sdk.model.api.SendCommandType.PAUSE -> {
-                applyRemoteSync { player.pause() }
-            }
-            org.jellyfin.sdk.model.api.SendCommandType.UNPAUSE -> {
-                applyRemoteSync { player.play() }
-            }
-            org.jellyfin.sdk.model.api.SendCommandType.SEEK -> {
-                command.positionTicks?.let { seekToRemotePosition(it) }
-            }
-            org.jellyfin.sdk.model.api.SendCommandType.STOP -> {
-                applyRemoteSync {
-                    player.pause()
-                    player.seekTo(0)
-                }
-            }
-        }
-    }
-
-    private suspend fun handleSyncPlayGroupUpdate(message: SyncPlayGroupUpdateMessage) {
-        val update = message.data
-        when (update) {
-            is SyncPlayGroupJoinedUpdate -> {
-                if (activeSyncPlayGroupId == update.groupId) {
-                    _syncPlayState.update { it.copy(activeGroup = update.data.toSyncPlayGroup()) }
-                }
-            }
-            is SyncPlayPlayQueueUpdate -> {
-                if (activeSyncPlayGroupId != update.groupId) return
-                applySyncPlayQueueUpdate(
-                    queue = update.data.playlist,
-                    playingItemIndex = update.data.playingItemIndex,
-                    startPositionTicks = update.data.startPositionTicks,
-                    shouldPlay = update.data.isPlaying,
-                )
-            }
-            is SyncPlayStateUpdate -> {
-                if (activeSyncPlayGroupId != update.groupId) return
-                when (update.data.state) {
-                    GroupStateType.PLAYING -> applyRemoteSync { player.play() }
-                    GroupStateType.PAUSED,
-                    GroupStateType.WAITING -> applyRemoteSync { player.pause() }
-                    GroupStateType.IDLE -> Unit
-                }
-            }
-            is SyncPlayGroupLeftUpdate,
-            is SyncPlayNotInGroupUpdate,
-            is SyncPlayGroupDoesNotExistUpdate -> {
-                if (activeSyncPlayGroupId == update.groupId) {
-                    activeSyncPlayGroupId = null
-                    currentSyncPlaylistItemId = null
-                    _syncPlayState.update {
-                        it.copy(activeGroup = null, statusMessage = "SyncPlay group ended")
-                    }
-                    refreshSyncPlayGroups()
-                }
-            }
-            else -> Unit
-        }
-    }
-
-    private fun handlePlayStateMessage(command: PlaystateCommand, seekPositionTicks: Long?) {
-        when (command) {
-            PlaystateCommand.PAUSE -> applyRemoteSync { player.pause() }
-            PlaystateCommand.UNPAUSE,
-            PlaystateCommand.PLAY_PAUSE -> {
-                applyRemoteSync {
-                    if (player.isPlaying) player.pause() else player.play()
-                }
-            }
-            PlaystateCommand.SEEK -> {
-                seekPositionTicks?.let { ticks ->
-                    viewModelScope.launch { seekToRemotePosition(ticks) }
-                }
-            }
-            PlaystateCommand.STOP -> {
-                applyRemoteSync {
-                    player.pause()
-                    player.seekTo(0)
-                }
-            }
-            else -> Unit
-        }
-    }
-
-    private suspend fun handleGeneralCommandMessage(message: GeneralCommandMessage) {
-        val command = message.data ?: return
-        when (command.name) {
-            GeneralCommandType.VOLUME_UP -> setPlayerVolume(player.volume + 0.05f)
-            GeneralCommandType.VOLUME_DOWN -> setPlayerVolume(player.volume - 0.05f)
-            GeneralCommandType.MUTE -> mutePlayer()
-            GeneralCommandType.UNMUTE -> unmutePlayer()
-            GeneralCommandType.TOGGLE_MUTE -> {
-                if (player.volume <= 0.001f) {
-                    unmutePlayer()
-                } else {
-                    mutePlayer()
-                }
-            }
-            GeneralCommandType.SET_VOLUME -> {
-                parseRemoteVolume(message)?.let(::setPlayerVolume)
-            }
-            GeneralCommandType.SET_AUDIO_STREAM_INDEX -> {
-                pendingRemoteAudioStreamIndex =
-                    parseRemoteIntArgument(message, "AudioStreamIndex", "StreamIndex", "Index")
-                applyPendingRemoteStreamSelections()
-            }
-            GeneralCommandType.SET_SUBTITLE_STREAM_INDEX -> {
-                pendingRemoteSubtitleStreamIndex =
-                    parseRemoteIntArgument(
-                        message,
-                        "SubtitleStreamIndex",
-                        "StreamIndex",
-                        "Index",
-                    )
-                applyPendingRemoteStreamSelections()
-            }
-            GeneralCommandType.DISPLAY_MESSAGE -> {
-                parseRemoteArgument(message, "Text", "Message", "DisplayMessage")?.let { text ->
-                    Toast.makeText(application, text, Toast.LENGTH_LONG).show()
-                }
-            }
-            GeneralCommandType.PLAY -> {
-                if (!handleRemotePlayMediaSource(message)) {
-                    applyRemoteSync { player.play() }
-                }
-            }
-            GeneralCommandType.PLAY_NEXT -> skipToNextItem()
-            GeneralCommandType.PLAY_STATE -> handleRemotePlayStateCommand(message)
-            GeneralCommandType.PLAY_MEDIA_SOURCE -> {
-                handleRemotePlayMediaSource(message)
-            }
-            else -> Unit
-        }
-    }
-
-    private suspend fun seekToRemotePosition(positionTicks: Long) {
-        val targetMs = positionTicks / 10_000L
-        applyRemoteSync { player.seekTo(targetMs.coerceAtLeast(0L)) }
-    }
-
-    private suspend fun ensureRemotePlaybackSessionReady(force: Boolean = false) {
-        if (currentPlayerItem()?.contentSource != PlayerContentSource.JELLYFIN) return
-
-        val deviceName = buildPreferredDeviceName()
-        if (!force && remoteSessionConfigured && configuredDeviceName == deviceName) return
-
-        runCatching { repository.postCapabilities() }
-            .onSuccess { remoteSessionConfigured = true }
-            .onFailure { Timber.w(it, "Failed to register Jellyfin remote-control capabilities") }
-
-        runCatching { repository.updateDeviceName(deviceName) }
-            .onSuccess { configuredDeviceName = deviceName }
-            .onFailure { Timber.w(it, "Failed to update Jellyfin device name") }
-    }
-
-    private fun buildPreferredDeviceName(): String {
-        val appName = application.applicationInfo.loadLabel(application.packageManager).toString().trim()
-        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
-        val model = Build.MODEL?.trim().orEmpty()
-        val deviceLabel =
-            buildList {
-                if (manufacturer.isNotBlank()) add(manufacturer)
-                if (model.isNotBlank() && !model.equals(manufacturer, ignoreCase = true)) add(model)
-            }.joinToString(" ")
-
-        return if (deviceLabel.isBlank()) appName else "$appName on $deviceLabel"
-    }
-
-    private fun setPlayerVolume(targetVolume: Float) {
-        val clamped = targetVolume.coerceIn(0f, 1f)
-        if (clamped > 0f) {
-            lastNonMutedVolume = clamped
-        }
-        applyRemoteSync { player.volume = clamped }
-    }
-
-    private fun mutePlayer() {
-        if (player.volume > 0f) {
-            lastNonMutedVolume = player.volume
-        }
-        applyRemoteSync { player.volume = 0f }
-    }
-
-    private fun unmutePlayer() {
-        setPlayerVolume(lastNonMutedVolume.takeIf { it > 0f } ?: 1f)
-    }
-
-    private fun applyPendingRemoteStreamSelections() {
-        pendingRemoteAudioStreamIndex?.let { streamIndex ->
-            if (switchRemoteTrackByStreamIndex(C.TRACK_TYPE_AUDIO, streamIndex)) {
-                pendingRemoteAudioStreamIndex = null
-            }
-        }
-
-        pendingRemoteSubtitleStreamIndex?.let { streamIndex ->
-            if (switchRemoteTrackByStreamIndex(C.TRACK_TYPE_TEXT, streamIndex)) {
-                pendingRemoteSubtitleStreamIndex = null
-            }
-        }
-    }
-
-    private fun switchRemoteTrackByStreamIndex(
-        trackType: @C.TrackType Int,
-        streamIndex: Int,
-    ): Boolean {
-        if (trackType == C.TRACK_TYPE_TEXT && streamIndex < 0) {
-            switchToTrack(trackType, -1)
-            return true
-        }
-
-        val streamType =
-            when (trackType) {
-                C.TRACK_TYPE_AUDIO -> MediaStreamType.AUDIO
-                C.TRACK_TYPE_TEXT -> MediaStreamType.SUBTITLE
-                else -> return false
-            }
-        val candidateStreams =
-            currentMediaSourceStreams.filter { it.type == streamType }
-        if (candidateStreams.isEmpty()) return false
-
-        val targetOrder = candidateStreams.indexOfFirst { it.index == streamIndex }
-        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
-        if (targetOrder !in groups.indices) {
-            Timber.w(
-                "Remote stream selection failed type=%d streamIndex=%d candidateStreams=%s groups=%d",
-                trackType,
-                streamIndex,
-                candidateStreams.map(SpatialFinMediaStream::index),
-                groups.size,
-            )
-            return false
-        }
-
-        switchToTrack(trackType, targetOrder)
-        return true
-    }
-
-    private suspend fun handleRemotePlayMediaSource(message: GeneralCommandMessage): Boolean {
-        val itemId = parseRemoteItemId(message) ?: return false
-        val item = runCatching { repository.getItem(itemId) }
-            .onFailure { Timber.w(it, "Failed to resolve remote play item %s", itemId) }
-            .getOrNull() ?: return false
-        val itemKind = item.toPlayerItemKind() ?: return false
-
-        val requestedSourceId = parseRemoteArgument(message, "MediaSourceId", "SourceId")
-        val sourceIndex =
-            requestedSourceId?.let { sourceId ->
-                runCatching { repository.getMediaSources(itemId, includePath = true) }
-                    .getOrNull()
-                    ?.indexOfFirst { source -> source.id == sourceId }
-                    ?.takeIf { it >= 0 }
-            }
-
-        pendingRemoteAudioStreamIndex =
-            parseRemoteIntArgument(message, "AudioStreamIndex", "AudioIndex")
-        pendingRemoteSubtitleStreamIndex =
-            parseRemoteIntArgument(message, "SubtitleStreamIndex", "SubtitleIndex")
-
-        playbackPosition =
-            (parseRemoteLongArgument(message, "StartPositionTicks", "PositionTicks")
-                ?.div(10_000L)
-                ?.coerceAtLeast(0L))
-                ?: 0L
-
-        applyRemoteSync {
-            initializePlayer(
-                itemId = itemId,
-                itemKind = itemKind,
-                startFromBeginning = playbackPosition <= 0L,
-                mediaSourceIndex = sourceIndex,
-                autoPlay = true,
-            )
-        }
-        return true
-    }
-
-    private suspend fun handleRemotePlayStateCommand(message: GeneralCommandMessage) {
-        val command =
-            when (parseRemoteArgument(message, "Command", "PlayCommand", "PlaystateCommand")
-                ?.trim()
-                ?.lowercase()) {
-                "pause" -> PlaystateCommand.PAUSE
-                "unpause", "play" -> PlaystateCommand.UNPAUSE
-                "playpause", "play_pause", "toggle" -> PlaystateCommand.PLAY_PAUSE
-                "seek" -> PlaystateCommand.SEEK
-                "stop" -> PlaystateCommand.STOP
-                else -> null
-            } ?: return
-
-        val seekTicks = parseRemoteLongArgument(message, "SeekPositionTicks", "PositionTicks")
-        handlePlayStateMessage(command, seekTicks)
-    }
-
-    private fun parseRemoteItemId(message: GeneralCommandMessage): UUID? {
-        val raw =
-            parseRemoteArgument(message, "ItemId", "ItemIds", "Ids")
-                ?.split(',', ';', '|')
-                ?.map(String::trim)
-                ?.firstOrNull { it.isNotEmpty() }
-                ?: return null
-        return runCatching { UUID.fromString(raw) }
-            .onFailure { Timber.w(it, "Ignoring invalid remote item id %s", raw) }
-            .getOrNull()
-    }
-
-    private fun parseRemoteVolume(message: GeneralCommandMessage): Float? {
-        val raw =
-            parseRemoteArgument(message, "Volume", "Value", "Argument")
-                ?: return null
-        val numeric = raw.toFloatOrNull() ?: return null
-        return if (numeric > 1f) numeric / 100f else numeric
-    }
-
-    private fun parseRemoteIntArgument(message: GeneralCommandMessage, vararg keys: String): Int? =
-        parseRemoteArgument(message, *keys)?.toIntOrNull()
-
-    private fun parseRemoteLongArgument(message: GeneralCommandMessage, vararg keys: String): Long? =
-        parseRemoteArgument(message, *keys)?.toLongOrNull()
-
-    private fun parseRemoteArgument(message: GeneralCommandMessage, vararg keys: String): String? {
-        val arguments = message.data?.arguments ?: return null
-        return keys.firstNotNullOfOrNull { key ->
-            arguments.entries.firstOrNull { entry -> entry.key.equals(key, ignoreCase = true) }?.value
-        }?.takeIf { it.isNotBlank() }
-    }
-
-    private suspend fun handleSocketState(state: SocketApiState) {
-        when (state) {
-            is SocketApiState.Connected -> {
-                val reconnected = !isSocketConnected
-                isSocketConnected = true
-                if (reconnected && currentPlayerItem()?.contentSource == PlayerContentSource.JELLYFIN) {
-                    ensureRemotePlaybackSessionReady(force = true)
-                }
-                if (reconnected && isSyncPlayActive()) {
-                    _syncPlayState.update { it.copy(statusMessage = "SyncPlay reconnected") }
-                    refreshSyncPlayGroups()
-                }
-            }
-            is SocketApiState.Connecting -> {
-                if (isSyncPlayActive()) {
-                    _syncPlayState.update { it.copy(statusMessage = "Reconnecting SyncPlay...") }
-                }
-            }
-            is SocketApiState.Disconnected -> {
-                isSocketConnected = false
-                remoteSessionConfigured = false
-                if (isSyncPlayActive()) {
-                    _syncPlayState.update { it.copy(statusMessage = "SyncPlay connection lost") }
-                }
-            }
-        }
-    }
-
-    private suspend fun switchToSyncPlayItem(
-        itemId: UUID,
-        positionTicks: Long,
-        shouldPlay: Boolean,
-    ) {
-        val item = runCatching { repository.getItem(itemId) }
-            .onFailure { Timber.w(it, "Failed to resolve SyncPlay item %s", itemId) }
-            .getOrNull()
-
-        val itemKind = item?.toPlayerItemKind()
-        if (itemKind == null) {
-            _syncPlayState.update {
-                it.copy(statusMessage = "SyncPlay tried to start an unsupported item")
-            }
-            return
-        }
-
-        playbackPosition = positionTicks / 10_000L
-        applyRemoteSync {
-            initializePlayer(
-                itemId = itemId,
-                itemKind = itemKind,
-                startFromBeginning = false,
-                autoPlay = shouldPlay,
-            )
-        }
-        _syncPlayState.update {
-            it.copy(statusMessage = "Synced to ${item.name}")
-        }
-    }
-
-    private suspend fun applySyncPlayQueueUpdate(
-        queue: List<SyncPlayQueueItem>,
-        playingItemIndex: Int,
-        startPositionTicks: Long,
-        shouldPlay: Boolean,
-    ) {
-        val targetQueueItem = queue.getOrNull(playingItemIndex) ?: return
-        val resolvedItems =
-            queue.mapNotNull { queueItem ->
-                playlistManager.getPlayerItem(
-                    itemId = queueItem.itemId,
-                    playbackPosition = 0L,
-                    playlistItemId = queueItem.playlistItemId,
-                )
-            }
-
-        if (resolvedItems.isEmpty()) return
-
-        val targetIndex =
-            resolvedItems.indexOfFirst { it.playlistItemId == targetQueueItem.playlistItemId }
-                .takeIf { it >= 0 } ?: return
-
-        items = resolvedItems.toMutableList()
-        currentSyncPlaylistItemId = targetQueueItem.playlistItemId
-        _uiState.update { it.copy(nextEpisode = items.getOrNull(targetIndex + 1)) }
-
-        val targetPositionMs = startPositionTicks / 10_000L
-        val queueMatches =
-            player.mediaItemCount == resolvedItems.size &&
-                resolvedItems.indices.all { index ->
-                    player.getMediaItemAt(index).mediaId == resolvedItems[index].itemId.toString()
-                }
-
-        if (!queueMatches) {
-            applyRemoteSync {
-                player.setMediaItems(
-                    resolvedItems.map { it.toMediaItem() },
-                    targetIndex,
-                    targetPositionMs,
-                )
-                player.prepare()
-                if (shouldPlay) player.play() else player.pause()
-            }
-            return
-        }
-
-        applyRemoteSync {
-            if (player.currentMediaItemIndex != targetIndex) {
-                player.seekTo(targetIndex, targetPositionMs)
-            } else if (kotlin.math.abs(player.currentPosition - targetPositionMs) > 1_500L) {
-                player.seekTo(targetPositionMs)
-            }
-
-            if (shouldPlay) {
-                player.play()
-            } else {
-                player.pause()
-            }
-        }
-    }
+    fun switchToTrack(trackType: @C.TrackType Int, index: Int) =
+        trackSelector.switchToTrack(trackType, index)
 
     fun skipToNextItem() {
         viewModelScope.launch {
-            if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
-                currentSyncPlaylistItemId?.let { playlistItemId ->
+            if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents()) {
+                syncPlay.currentPlaylistItemId?.let { playlistItemId ->
                     runCatching { repository.nextSyncPlayItem(playlistItemId) }
                         .onFailure { Timber.w(it, "Failed to request next SyncPlay item") }
                 }
@@ -2259,8 +1459,8 @@ constructor(
 
     fun skipToPreviousItem() {
         viewModelScope.launch {
-            if (isSyncPlayActive() && !shouldSuppressSyncEvents()) {
-                currentSyncPlaylistItemId?.let { playlistItemId ->
+            if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents()) {
+                syncPlay.currentPlaylistItemId?.let { playlistItemId ->
                     runCatching { repository.previousSyncPlayItem(playlistItemId) }
                         .onFailure { Timber.w(it, "Failed to request previous SyncPlay item") }
                 }
@@ -2270,15 +1470,6 @@ constructor(
             }
         }
     }
-
-    private fun SpatialFinItem.toPlayerItemKind(): String? =
-        when (this) {
-            is SpatialFinMovie -> BaseItemKind.MOVIE.serialName
-            is SpatialFinEpisode -> BaseItemKind.EPISODE.serialName
-            is SpatialFinSeason -> BaseItemKind.SEASON.serialName
-            is SpatialFinShow -> BaseItemKind.SERIES.serialName
-            else -> null
-        }
 
     fun selectSpeed(speed: Float) {
         player.setPlaybackSpeed(speed)
@@ -2397,152 +1588,6 @@ constructor(
             val marker = if (index == player.currentMediaItemIndex) "*" else ""
             "$marker${player.getMediaItemAt(index).mediaId}"
         }
-    }
-
-    private fun inferOriginalAudioLanguage(
-        audioGroups: List<Tracks.Group>,
-        spokenLanguages: List<String>,
-    ): String? {
-        val availableLanguages = audioGroups.mapNotNull { groupPrimaryLanguage(it) }.distinct()
-        if (availableLanguages.isEmpty()) return null
-        if (availableLanguages.size == 1) return availableLanguages.first()
-
-        return availableLanguages.firstOrNull { available ->
-            spokenLanguages.none { preferred ->
-                LanguageCatalog.matches(application, available, preferred)
-            }
-        } ?: availableLanguages.first()
-    }
-
-    private fun groupPrimaryLanguage(group: Tracks.Group?): String? {
-        if (group == null) return null
-        return (0 until group.length)
-            .mapNotNull { index ->
-                LanguageCatalog.normalize(
-                    application,
-                    group.getTrackFormat(index).language ?: group.getTrackFormat(index).label,
-                )
-            }
-            .firstOrNull()
-    }
-
-    private fun groupMatchesLanguage(group: Tracks.Group, languageCode: String): Boolean {
-        return (0 until group.length).any { index ->
-            val format = group.getTrackFormat(index)
-            LanguageCatalog.matches(application, format.language, languageCode) ||
-                LanguageCatalog.matches(application, format.label, languageCode)
-        }
-    }
-
-    private fun persistSeriesLanguageOverride(
-        trackType: @C.TrackType Int,
-        languageCode: String?,
-        trackSignature: String?,
-        enabled: Boolean,
-    ) {
-        val seriesId = currentPlayerItem()?.seriesId?.toString() ?: return
-        val existingOverride = appPreferences.getSeriesLanguageOverride(seriesId) ?: SeriesLanguageOverride()
-        val updatedOverride =
-            when (trackType) {
-                C.TRACK_TYPE_AUDIO ->
-                    existingOverride.copy(
-                        audioLanguageCode = if (enabled) languageCode else null,
-                        audioTrackSignature = if (enabled) trackSignature else null,
-                    )
-                C.TRACK_TYPE_TEXT ->
-                    existingOverride.copy(
-                        subtitleLanguageCode = if (enabled) languageCode else null,
-                        subtitleTrackSignature = if (enabled) trackSignature else null,
-                        subtitlesEnabled = enabled,
-                    )
-                else -> existingOverride
-            }
-
-        appPreferences.setSeriesLanguageOverride(seriesId, updatedOverride)
-        Timber.d("Saved series language override seriesId=%s override=%s", seriesId, updatedOverride)
-    }
-
-    private fun maybeEnableSubtitleForManualAudioSelection(audioLanguageCode: String?) {
-        val normalizedAudio = LanguageCatalog.normalize(application, audioLanguageCode) ?: return
-        val spokenLanguages = appPreferences.getSmartSpokenLanguageCodes(application)
-        val audioUnderstood =
-            spokenLanguages.any { preferred ->
-                LanguageCatalog.matches(application, normalizedAudio, preferred)
-            }
-        if (audioUnderstood) return
-
-        val subtitleGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-        val selectedSubtitleGroup =
-            spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, preferredCode) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredCode) }
-            } ?: return
-
-        val subtitleLanguage = groupPrimaryLanguage(selectedSubtitleGroup)
-        player.trackSelectionParameters =
-            player.trackSelectionParameters
-                .buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setIgnoredTextSelectionFlags(0)
-                .setOverrideForType(
-                    TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0)
-                )
-                .build()
-
-        persistSeriesLanguageOverride(
-            trackType = C.TRACK_TYPE_TEXT,
-            languageCode = subtitleLanguage,
-            trackSignature = subtitleTrackSignature(selectedSubtitleGroup),
-            enabled = true,
-        )
-        Timber.d(
-            "Enabled spoken-language subtitles after manual audio switch audio=%s subtitle=%s",
-            normalizedAudio,
-            subtitleLanguage,
-        )
-    }
-
-    private fun subtitleTrackSignature(group: Tracks.Group): String =
-        PlayerTrackSignatures.subtitle(group)
-
-    private fun audioTrackSignature(group: Tracks.Group): String =
-        PlayerTrackSignatures.audio(group)
-
-    private fun scoreSubtitleGroup(
-        group: Tracks.Group,
-        preferredLanguageCode: String?,
-    ): Int {
-        val format = group.getTrackFormat(0)
-        val label = format.label.orEmpty().lowercase()
-        var score = 0
-
-        if (preferredLanguageCode != null && groupMatchesLanguage(group, preferredLanguageCode)) {
-            score += 100
-        }
-        if (label.contains("full") || label.contains("dialog")) {
-            score += 35
-        }
-        if (label.contains("default")) {
-            score += 30
-        }
-        if ((format.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0) {
-            score += 25
-        }
-        if ((format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0) {
-            score -= 40
-        }
-        if (label.contains("sign") || label.contains("song")) {
-            score -= 60
-        }
-        if (label.contains("forced")) {
-            score -= 50
-        }
-        if (label.contains("sdh") || label.contains("cc")) {
-            score -= 15
-        }
-        return score
     }
 
     fun skipSegment(segment: SpatialFinSegment) {
@@ -2729,7 +1774,7 @@ constructor(
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         super.onIsPlayingChanged(isPlaying)
-        if (isSyncPlayActive() && !shouldSuppressSyncEvents() && player.playbackState == Player.STATE_READY) {
+        if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents() && player.playbackState == Player.STATE_READY) {
             viewModelScope.launch {
                 runCatching {
                     if (isPlaying) {

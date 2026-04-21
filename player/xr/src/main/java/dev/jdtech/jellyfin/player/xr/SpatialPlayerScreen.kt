@@ -8,7 +8,6 @@ import android.net.Uri
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
-import android.graphics.Bitmap
 import android.util.TypedValue
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.lazy.items
@@ -63,7 +62,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
@@ -73,7 +71,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -88,7 +85,6 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.Cue
-import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
@@ -126,21 +122,16 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
-import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.CharacterScanOverlay
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
-import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.InstallIn
 import dagger.hilt.EntryPoint
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
-import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
-import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -164,7 +155,6 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.player.xr.mcp.EntityInfo
-import dev.jdtech.jellyfin.player.xr.mcp.LibassState
 import dev.jdtech.jellyfin.player.xr.mcp.McpBridge
 import dev.jdtech.jellyfin.player.xr.mcp.PlaybackState
 import dev.jdtech.jellyfin.player.xr.mcp.SceneState
@@ -272,67 +262,30 @@ fun SpatialPlayerScreen(
     val assistantSpoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy)
     val assistantSpokenReplies = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpokenReplies)
     val assistantVoiceName = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVoice)
-    val voiceService = remember(context) { SpatialVoiceService(context.applicationContext) }
-    val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
-    val geminiCloudService = remember(context) { GeminiCloudService(context.applicationContext, viewModel.appPreferences, viewModel.repository) }
-    val llmEntryPoint = remember(context) {
-        EntryPointAccessors.fromApplication(context.applicationContext, LlmEntryPoint::class.java)
-    }
-    val downloadManager = remember(context) { llmEntryPoint.downloadManager() }
-    var commandCoordinator by remember(context) { mutableStateOf<SpatialCommandCoordinator?>(null) }
-    var chatEngine by remember(context) { mutableStateOf<SmartChatEngine?>(null) }
-    val tts = remember(context) { SpatialVoiceSynthesizer(context.applicationContext) }
+    val voiceServices = rememberPlayerVoiceServices(viewModel)
+    val voiceService = voiceServices.voiceService
+    val geminiNanoService = voiceServices.geminiNanoService
+    val geminiCloudService = voiceServices.geminiCloudService
+    val llmEntryPoint = voiceServices.llmEntryPoint
+    val downloadManager = voiceServices.downloadManager
+    val tts = voiceServices.tts
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
-    val recentSubtitles = remember { mutableStateListOf<Pair<Long, String>>() }
-    val assistantSubtitleHistory by viewModel.assistantSubtitleHistory.collectAsState()
-    val assistantSubtitleLines =
-        if (assistantSubtitleHistory.isNotEmpty()) assistantSubtitleHistory else recentSubtitles.toList()
-
-    // Disk-cache fallback: reads the current item UUID from the ViewModel's StateFlow at call time,
-    // so it always uses the correct item even if the composable hasn't recomposed yet.
-    val subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>) = remember(viewModel) {
-        { fromMs, toMs ->
-            val itemId = runCatching {
-                java.util.UUID.fromString(viewModel.uiState.value.currentItemId)
-            }.getOrNull()
-            if (itemId != null) {
-                viewModel.subtitleCacheManager.loadWindow(itemId, fromMs, toMs)
-            } else {
-                emptyList()
-            }
-        }
-    }
+    val subtitleContext = rememberPlayerSubtitleContext(viewModel)
 
     val voiceState by voiceService.state.collectAsState()
     val partialTranscript by voiceService.partialTranscript.collectAsState()
     val voiceMicLevel by voiceService.micLevel.collectAsState()
-    var voiceFeedback by remember { mutableStateOf<String?>(null) }
-    val conversationHistory = remember { mutableStateListOf<Pair<String, String>>() }
-    var recommendationContext by remember { mutableStateOf<RecommendationContext?>(null) }
-    var voiceGestureArmingProgress by remember { mutableFloatStateOf(0f) }
-    var voiceGestureHint by remember { mutableStateOf<String?>(null) }
-    var shouldStartVoiceCapture by remember { mutableStateOf(false) }
-    var followUpPending by remember { mutableStateOf(false) }
-    var followUpDeadlineMs by remember { mutableLongStateOf(0L) }
     val followUpListenWindowMs = 12_000L
     val followUpAutoStartDelayMs = 200L
-    var characterScanActive by remember { mutableStateOf(false) }
-    var voiceAssetsRequested by remember { mutableStateOf(false) }
+    val voice = rememberPlayerVoiceCoordinator(
+        player = player,
+        voiceService = voiceService,
+        tts = tts,
+        followUpListenWindowMs = followUpListenWindowMs,
+    )
     var exitRequested by remember { mutableStateOf(false) }
-    var activeVoiceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val voiceGestureHand =
         viewModel.appPreferences.getValue(viewModel.appPreferences.voiceGestureHand) ?: "left"
-
-    fun armFollowUpWindow(reason: String) {
-        followUpPending = true
-        followUpDeadlineMs = System.currentTimeMillis() + followUpListenWindowMs
-        voiceGestureHint = "Answer now"
-        Timber.i(
-            "VOICE: player follow-up armed reason=%s windowMs=%d",
-            reason,
-            followUpListenWindowMs,
-        )
-    }
 
     LaunchedEffect(Unit) {
         Timber.i("VOICE: deferring XR voice startup work until explicit activation")
@@ -345,24 +298,9 @@ fun SpatialPlayerScreen(
     }
 
     fun requireCommandCoordinator(): SpatialCommandCoordinator =
-        commandCoordinator
-            ?: SpatialCommandCoordinator(
-                context.applicationContext,
-                geminiNanoService,
-                geminiCloudService,
-                viewModel.appPreferences,
-                llmEntryPoint.modelManager(),
-            ).also { commandCoordinator = it }
+        voiceServices.requireCommandCoordinator()
 
-    fun requireChatEngine(): SmartChatEngine =
-        chatEngine
-            ?: SmartChatEngine(
-                geminiNanoService,
-                geminiCloudService,
-                viewModel.appPreferences,
-                llmEntryPoint.modelManager(),
-                viewModel.repository,
-            ).also { chatEngine = it }
+    fun requireChatEngine(): SmartChatEngine = voiceServices.requireChatEngine()
     var hasAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -380,8 +318,8 @@ fun SpatialPlayerScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             hasAudioPermission = granted
             if (!granted) {
-                shouldStartVoiceCapture = false
-                voiceFeedback = "Microphone permission required"
+                voice.shouldStartVoiceCapture = false
+                voice.voiceFeedback = "Microphone permission required"
                 voiceService.resetState()
             }
         }
@@ -389,18 +327,12 @@ fun SpatialPlayerScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             hasHandTrackingPermission = granted
             if (!granted) {
-                voiceGestureArmingProgress = 0f
-                voiceGestureHint = null
+                voice.voiceGestureArmingProgress = 0f
+                voice.voiceGestureHint = null
             }
         }
     
     // --- Libass state ---
-    var useLibass by remember { mutableStateOf(false) }
-    var libassBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var hasLibassContent by remember { mutableStateOf(false) }
-    var libassFrameVersion by remember { mutableIntStateOf(0) }
-    var videoOverlayAttachmentVersion by remember { mutableIntStateOf(0) }
-    var lastLoggedMoveFrameVersion by remember { mutableIntStateOf(0) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     // Build caption style from user preferences so the selected colours / background
     // are honoured instead of the system default (which renders a black background box).
@@ -437,24 +369,15 @@ fun SpatialPlayerScreen(
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
     var videoWidth by remember { mutableFloatStateOf(DEFAULT_VIDEO_WIDTH_METERS) }
     var videoHeight by remember { mutableFloatStateOf(DEFAULT_VIDEO_HEIGHT_METERS) }
-    var currentCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
-    var subtitleTrackSelected by remember { mutableStateOf(false) }
-    var subtitleTrackVersion by remember { mutableIntStateOf(0) }
-    val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
-    var resumePlaybackAfterAssistantSpeech by remember { mutableStateOf(false) }
-    var assistantSpeechPendingStart by remember { mutableStateOf(false) }
-    var assistantSpeechStarted by remember { mutableStateOf(false) }
 
-    // A voice turn is "busy" when a recognition/processing/speech cycle is in flight.
-    // The same predicate answers both "is it safe to start a new turn?" (callers negate)
-    // and "is there something to interrupt right now?" (callers use directly).
-    fun isVoiceTurnBusy(): Boolean {
-        return voiceState != VoiceState.IDLE ||
-            activeVoiceJob?.isActive == true ||
-            assistantSpeechPendingStart ||
-            assistantSpeechStarted ||
-            isTtsSpeaking
-    }
+    val libass = rememberLibassRenderer(
+        player = player,
+        currentStereoMode = currentStereoMode,
+        libassUsagePref = libassUsagePref,
+        libassRenderer = libassRenderer,
+        onCueRecorded = subtitleContext::recordCueLine,
+    )
+    val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
 
     val pinchDetector = remember(session, activity, voiceGestureHand) {
         activity?.let {
@@ -467,12 +390,12 @@ fun SpatialPlayerScreen(
                         hasHandTrackingPermission &&
                         hasAudioPermission &&
                         voiceService.isAvailable() &&
-                        !isVoiceTurnBusy()
+                        !voice.isVoiceTurnBusy(voiceState, isTtsSpeaking)
                 },
                 shouldDetectInterrupt = {
                     voiceControlEnabled &&
                         hasHandTrackingPermission &&
-                        isVoiceTurnBusy()
+                        voice.isVoiceTurnBusy(voiceState, isTtsSpeaking)
                 },
             )
         }
@@ -543,14 +466,10 @@ fun SpatialPlayerScreen(
             player.currentMediaItem?.mediaId,
             player.currentPosition,
             player.playbackState,
-            useLibass,
+            libass.useLibass,
         )
         viewModel.updatePlaybackProgress()
-        useLibass = false
-        subtitleTrackSelected = false
-        hasLibassContent = false
-        libassBitmap = null
-        currentCues = emptyList()
+        libass.reset()
         runCatching { player.pause() }
         // Let the activity finish drive the single XR surface teardown path. Clearing the
         // video surface here races with SurfaceEntity disposal on some devices.
@@ -599,17 +518,6 @@ fun SpatialPlayerScreen(
         )
     }
 
-    LaunchedEffect(useLibass, hasLibassContent, libassFrameVersion, libassBitmap) {
-        McpBridge.updateLibass(
-            LibassState(
-                renderWidth = libassBitmap?.width ?: 0,
-                renderHeight = libassBitmap?.height ?: 0,
-                hasContent = hasLibassContent,
-                frameVersion = libassFrameVersion,
-            ),
-        )
-    }
-
     LaunchedEffect(openSyncPlayDialogOnStart) {
         if (openSyncPlayDialogOnStart) {
             activeDialog = "syncplay"
@@ -638,40 +546,14 @@ fun SpatialPlayerScreen(
     }
 
     fun currentRecommendationSnapshot(): PlayerStateSnapshot =
-        PlayerStateSnapshot(
-            screenContext = dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext.PLAYER,
-            isPlaying = player.isPlaying,
-            positionSeconds = player.currentPosition / 1_000L,
-            durationSeconds = player.duration.coerceAtLeast(0L) / 1_000L,
+        buildPlayerStateSnapshot(
+            player = player,
+            uiState = uiState,
             controlsVisible = controlsVisible,
-            currentItemTitle = uiState.currentItemTitle,
-            currentOverview = uiState.currentOverview,
-            currentSeriesName = uiState.currentSeriesName,
-            currentSeasonNumber = uiState.currentSeasonNumber,
-            currentEpisodeNumber = uiState.currentEpisodeNumber,
-            currentSegmentType = uiState.currentSegment?.type?.toString(),
-            currentChapterName = currentChapterName(uiState, player.currentPosition),
-            nextEpisodeTitle = uiState.nextEpisode?.name,
-            currentGenres = uiState.currentGenres,
-            currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" },
-            castNames = uiState.currentPeople.filter { it.type.equals("Actor", ignoreCase = true) }.map { it.name },
-            directors = uiState.currentPeople.filter { it.type.equals("Director", ignoreCase = true) }.map { it.name },
-            writers = uiState.currentPeople.filter { it.type.equals("Writer", ignoreCase = true) }.map { it.name },
-            castWithCharacters = uiState.currentPeople
-                .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
-                .map { it.name to it.role },
-            productionYear = uiState.currentProductionYear,
-            officialRating = uiState.currentOfficialRating,
-            currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
-            currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
-            currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
-            currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
-            inVoiceSearch = voiceSearchOpen,
-            voiceSearchQuery = voiceSearchQuery.ifBlank { null },
-            voiceSearchResultsCount = voiceSearchResults.size,
-            lastRecommendationQuery = recommendationContext?.query,
-            lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-            lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
+            voiceSearchOpen = voiceSearchOpen,
+            voiceSearchQuery = voiceSearchQuery,
+            voiceSearchResults = voiceSearchResults,
+            recommendationContext = voice.recommendationContext,
             passthroughEnabled = passthroughEnabled,
         )
 
@@ -701,7 +583,7 @@ fun SpatialPlayerScreen(
         }
         savePlayerRootPose(viewModel, defaultPose)
         savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
-        videoOverlayAttachmentVersion++
+        libass.bumpOverlayAttachment()
     }
 
     fun applyCurrentLaunchPose() {
@@ -784,27 +666,19 @@ fun SpatialPlayerScreen(
         }
 
     fun speakAssistantReply(text: String, languageHint: String?) {
-        if (!assistantSpokenReplies || !tts.canSpeak()) {
-            Timber.w("VOICE: speakAssistantReply skipped spokenReplies=%b canSpeak=%b chars=%d", assistantSpokenReplies, tts.canSpeak(), text.length)
-            return
-        }
-        resumePlaybackAfterAssistantSpeech = player.isPlaying
-        assistantSpeechPendingStart = true
-        assistantSpeechStarted = false
-        if (followUpPending) {
-            followUpDeadlineMs = 0L
-            voiceGestureHint = "Wait for the reply, then answer"
-            Timber.i("VOICE: player follow-up scheduled pending spoken reply")
-        }
-        if (resumePlaybackAfterAssistantSpeech) {
-            player.pause()
-        }
-        tts.speak(text, languageHint, assistantVoiceName)
+        voice.speakAssistantReply(
+            text = text,
+            languageHint = languageHint,
+            spokenRepliesEnabled = assistantSpokenReplies,
+            assistantVoiceName = assistantVoiceName,
+            player = player,
+            tts = tts,
+        )
     }
 
     fun requestVoiceAssetsWarmup() {
-        if (voiceAssetsRequested) return
-        voiceAssetsRequested = true
+        if (voice.voiceAssetsRequested) return
+        voice.voiceAssetsRequested = true
         if (viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantGemmaEnabled)) {
             coroutineScope.launch {
                 Timber.i("VOICE: requesting XR voice assets on demand")
@@ -814,66 +688,71 @@ fun SpatialPlayerScreen(
     }
 
     fun requestVoiceCommand(source: String = "manual") {
-        if (source != "manual" && isVoiceTurnBusy()) {
+        if (source != "manual" && voice.isVoiceTurnBusy(voiceState, isTtsSpeaking)) {
             Timber.i(
                 "VOICE: player request ignored source=%s state=%s speaking=%b pendingSpeech=%b startedSpeech=%b jobActive=%b",
                 source,
                 voiceState,
                 isTtsSpeaking,
-                assistantSpeechPendingStart,
-                assistantSpeechStarted,
-                activeVoiceJob?.isActive == true,
+                voice.assistantSpeechPendingStart,
+                voice.assistantSpeechStarted,
+                voice.activeVoiceJob?.isActive == true,
             )
             return
         }
         // Cancel any in-flight inference from the previous voice command before starting a new one.
-        activeVoiceJob?.cancel()
-        activeVoiceJob = null
+        voice.activeVoiceJob?.cancel()
+        voice.activeVoiceJob = null
         if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING) {
             Timber.i("VOICE: player request ignored source=%s state=%s", source, voiceState)
             return
         }
         if (isTtsSpeaking) {
             tts.stop()
-            assistantSpeechPendingStart = false
-            assistantSpeechStarted = false
-            resumePlaybackAfterAssistantSpeech = false
+            voice.cancelPendingSpeech()
         }
         if (!voiceControlEnabled) {
-            voiceFeedback = "Voice control disabled"
+            voice.voiceFeedback = "Voice control disabled"
             return
         }
         requestVoiceAssetsWarmup()
         if (!voiceService.isAvailable()) {
-            voiceFeedback = "On-device speech unavailable"
+            voice.voiceFeedback = "On-device speech unavailable"
             return
         }
         if (!hasAudioPermission) {
-            shouldStartVoiceCapture = true
+            voice.shouldStartVoiceCapture = true
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        shouldStartVoiceCapture = false
+        voice.shouldStartVoiceCapture = false
         Timber.i(
             "VOICE: player request starting source=%s followUpPending=%b followUpDeadlineMs=%d",
             source,
-            followUpPending,
-            followUpDeadlineMs,
+            voice.followUpPending,
+            voice.followUpDeadlineMs,
         )
-        followUpPending = false
-        followUpDeadlineMs = 0L
-        voiceGestureHint = null
-        voiceFeedback = null
+        voice.clearFollowUp()
+        voice.voiceFeedback = null
         revealControls("voice-command")
         startVoiceCapture(
             voiceService = voiceService,
             commandCoordinatorProvider = ::requireCommandCoordinator,
             chatEngineProvider = ::requireChatEngine,
-            recentSubtitles = assistantSubtitleLines,
+            recentSubtitles = subtitleContext.assistantLines,
             player = player,
             viewModel = viewModel,
             uiState = uiState,
-            controlsVisible = controlsVisible,
+            snapshot = buildPlayerStateSnapshot(
+                player = player,
+                uiState = uiState,
+                controlsVisible = controlsVisible,
+                voiceSearchOpen = voiceSearchOpen,
+                voiceSearchQuery = voiceSearchQuery,
+                voiceSearchResults = voiceSearchResults,
+                recommendationContext = voice.recommendationContext,
+                passthroughEnabled = passthroughEnabled,
+            ),
             controller = sessionController,
             telemetryStore = telemetryStore,
             onSearchQuery = onSearchQuery,
@@ -882,78 +761,52 @@ fun SpatialPlayerScreen(
                 spoilerPolicy = assistantSpoilerPolicy,
                 spokenRepliesEnabled = assistantSpokenReplies,
             ),
-            passthroughEnabled = passthroughEnabled,
             responseLanguageHint =
                 selectedTrackLanguage(player, C.TRACK_TYPE_TEXT)
                     ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO)
                     ?: selectedTrackName(player, C.TRACK_TYPE_TEXT)
                     ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO),
-            conversationHistory = conversationHistory,
+            conversationHistory = voice.conversationHistory,
             onConversationTurn = { q, a ->
-                conversationHistory.add(q to a)
-                if (conversationHistory.size > 6) conversationHistory.removeAt(0)
+                voice.conversationHistory.add(q to a)
+                if (voice.conversationHistory.size > 6) voice.conversationHistory.removeAt(0)
             },
-            voiceSearchOpen = voiceSearchOpen,
-            voiceSearchQuery = voiceSearchQuery,
-            voiceSearchResults = voiceSearchResults,
-            recommendationContext = recommendationContext,
-            onRecommendationContextUpdated = { recommendationContext = it },
+            recommendationContext = voice.recommendationContext,
+            onRecommendationContextUpdated = { voice.recommendationContext = it },
             onScheduleFollowUp = {
-                armFollowUpWindow("chat-reply")
+                voice.armFollowUpWindow("chat-reply", followUpListenWindowMs)
             },
             onGetSuggestions = { viewModel.repository.getSuggestions() },
-            onResult = { voiceFeedback = it },
+            onResult = { voice.voiceFeedback = it },
             onSpokenReply = { text, lang -> speakAssistantReply(text, lang) },
-            onCharacterScanActiveChanged = { characterScanActive = it },
-            subtitleCacheFallback = subtitleCacheFallback,
+            onCharacterScanActiveChanged = { voice.characterScanActive = it },
+            subtitleCacheFallback = subtitleContext.cacheFallback,
             scope = coroutineScope,
             lastPointerPosition = lastPointerPosition,
-            onJobStarted = { activeVoiceJob = it },
+            onJobStarted = { voice.activeVoiceJob = it },
             )
             }
 
     fun interruptVoiceCommand(reason: String) {
-        if (!isVoiceTurnBusy()) return
-        val shouldResumeFollowUp =
-            followUpPending &&
-                (isTtsSpeaking || assistantSpeechPendingStart || assistantSpeechStarted)
-        Timber.i(
-            "VOICE: player interrupt requested reason=%s state=%s speaking=%b jobActive=%b resumeFollowUp=%b",
-            reason,
-            voiceState,
-            isTtsSpeaking,
-            activeVoiceJob?.isActive == true,
-            shouldResumeFollowUp,
+        voice.interruptVoiceCommand(
+            reason = reason,
+            voiceState = voiceState,
+            isTtsSpeaking = isTtsSpeaking,
+            tts = tts,
+            voiceService = voiceService,
+            followUpListenWindowMs = followUpListenWindowMs,
+            scope = coroutineScope,
+            followUpAutoStartDelayMs = followUpAutoStartDelayMs,
+            onResumeFollowUp = { requestVoiceCommand("follow-up-interrupt") },
         )
-        voiceGestureArmingProgress = 0f
-        voiceGestureHint = null
-        voiceFeedback = null
-        assistantSpeechPendingStart = false
-        assistantSpeechStarted = false
-        resumePlaybackAfterAssistantSpeech = false
-        activeVoiceJob?.cancel()
-        activeVoiceJob = null
-        tts.stop()
-        voiceService.cancelListening()
-        voiceService.resetState()
-        if (shouldResumeFollowUp) {
-            armFollowUpWindow("speech-interrupted")
-            coroutineScope.launch {
-                delay(followUpAutoStartDelayMs)
-                requestVoiceCommand("follow-up-interrupt")
-            }
-        } else {
-            followUpPending = false
-            followUpDeadlineMs = 0L
-        }
     }
 
     // Reset conversation history when the playing item changes. Key on item id
     // (with title fallback) — two adjacent episodes can share a title and the
     // assistant must drop stale context when the actual item flips.
     LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) {
-        conversationHistory.clear()
-        recommendationContext = null
+        voice.conversationHistory.clear()
+        voice.recommendationContext = null
     }
 
     LaunchedEffect(isActuallyPaused) {
@@ -979,9 +832,9 @@ fun SpatialPlayerScreen(
         } catch (_: Exception) {}
     }
 
-    LaunchedEffect(hasAudioPermission, shouldStartVoiceCapture) {
-        if (hasAudioPermission && shouldStartVoiceCapture) {
-            shouldStartVoiceCapture = false
+    LaunchedEffect(hasAudioPermission, voice.shouldStartVoiceCapture) {
+        if (hasAudioPermission && voice.shouldStartVoiceCapture) {
+            voice.shouldStartVoiceCapture = false
             requestVoiceCommand()
         }
     }
@@ -1005,12 +858,12 @@ fun SpatialPlayerScreen(
         detector.gestureStates.collect { event ->
             when (event) {
                 is SecondaryHandPinchDetector.GestureState.Arming -> {
-                    voiceGestureArmingProgress = event.progress
-                    voiceGestureHint = event.hint
+                    voice.voiceGestureArmingProgress = event.progress
+                    voice.voiceGestureHint = event.hint
                 }
                 is SecondaryHandPinchDetector.GestureState.Started -> {
-                    voiceGestureArmingProgress = 1f
-                    voiceGestureHint = null
+                    voice.voiceGestureArmingProgress = 1f
+                    voice.voiceGestureHint = null
                     when (event.gestureType) {
                         SecondaryHandPinchDetector.GestureType.ACTIVATE ->
                             requestVoiceCommand("gesture-activate")
@@ -1019,242 +872,61 @@ fun SpatialPlayerScreen(
                     }
                 }
                 is SecondaryHandPinchDetector.GestureState.Ended -> {
-                    voiceGestureArmingProgress = 0f
+                    voice.voiceGestureArmingProgress = 0f
                     if (voiceState != VoiceState.LISTENING) {
-                        voiceGestureHint = null
+                        voice.voiceGestureHint = null
                     }
                 }
                 SecondaryHandPinchDetector.GestureState.Idle -> {
-                    voiceGestureArmingProgress = 0f
+                    voice.voiceGestureArmingProgress = 0f
                     if (voiceState != VoiceState.LISTENING) {
-                        voiceGestureHint = null
+                        voice.voiceGestureHint = null
                     }
                 }
-            }
-        }
-    }
-
-    LaunchedEffect(voiceState, isTtsSpeaking) {
-        if (voiceState == VoiceState.LISTENING) {
-            player.volume = 0.2f
-            voiceGestureHint = null
-        } else if (isTtsSpeaking) {
-            player.volume = 0.5f
-        } else {
-            player.volume = 1.0f
-        }
-    }
-
-    LaunchedEffect(voiceFeedback, isTtsSpeaking) {
-        // Auto-dismiss any transient feedback once TTS has finished speaking it.
-        // The "Thinking..." sentinel that previously guarded this check came from a
-        // dead dispatch branch (now throws) — nothing assigns it anymore, and the
-        // live "thinking" indicator is driven by VoiceControlOverlay from voiceState.
-        if (voiceFeedback != null && !isTtsSpeaking) {
-            delay(4_000L)
-            if (!isTtsSpeaking) {
-                voiceFeedback = null
-            }
-        }
-    }
-
-    LaunchedEffect(voiceState) {
-        if (voiceState == VoiceState.ERROR) {
-            delay(2_000L)
-            if (voiceState == VoiceState.ERROR) {
-                voiceService.resetState()
             }
         }
     }
 
     LaunchedEffect(
-        followUpPending,
-        followUpDeadlineMs,
+        voice.followUpPending,
+        voice.followUpDeadlineMs,
         isTtsSpeaking,
-        assistantSpeechPendingStart,
-        assistantSpeechStarted,
+        voice.assistantSpeechPendingStart,
+        voice.assistantSpeechStarted,
         voiceState,
-        activeVoiceJob,
+        voice.activeVoiceJob,
     ) {
         if (
-            !followUpPending ||
-            followUpDeadlineMs == 0L ||
+            !voice.followUpPending ||
+            voice.followUpDeadlineMs == 0L ||
             isTtsSpeaking ||
-            assistantSpeechPendingStart ||
-            assistantSpeechStarted ||
+            voice.assistantSpeechPendingStart ||
+            voice.assistantSpeechStarted ||
             voiceState != VoiceState.IDLE ||
-            activeVoiceJob?.isActive == true
+            voice.activeVoiceJob?.isActive == true
         ) {
             return@LaunchedEffect
         }
-        val remaining = followUpDeadlineMs - System.currentTimeMillis()
+        val remaining = voice.followUpDeadlineMs - System.currentTimeMillis()
         if (remaining <= 0L) {
-            followUpPending = false
-            voiceGestureHint = null
+            voice.clearFollowUp()
             return@LaunchedEffect
         }
         delay(followUpAutoStartDelayMs)
         if (
-            followUpPending &&
-            followUpDeadlineMs > 0L &&
+            voice.followUpPending &&
+            voice.followUpDeadlineMs > 0L &&
             !isTtsSpeaking &&
-            !assistantSpeechPendingStart &&
-            !assistantSpeechStarted &&
+            !voice.assistantSpeechPendingStart &&
+            !voice.assistantSpeechStarted &&
             voiceState == VoiceState.IDLE &&
-            activeVoiceJob?.isActive != true
+            voice.activeVoiceJob?.isActive != true
         ) {
-            Timber.i("VOICE: player auto-starting follow-up listening remainingMs=%d", followUpDeadlineMs - System.currentTimeMillis())
+            Timber.i("VOICE: player auto-starting follow-up listening remainingMs=%d", voice.followUpDeadlineMs - System.currentTimeMillis())
             requestVoiceCommand("follow-up-auto")
         }
     }
 
-    LaunchedEffect(isTtsSpeaking, assistantSpeechPendingStart, assistantSpeechStarted, followUpPending) {
-        if (assistantSpeechPendingStart && isTtsSpeaking) {
-            assistantSpeechPendingStart = false
-            assistantSpeechStarted = true
-        } else if (assistantSpeechPendingStart && !isTtsSpeaking) {
-            delay(1_500L)
-            if (assistantSpeechPendingStart && !isTtsSpeaking) {
-                assistantSpeechPendingStart = false
-                assistantSpeechStarted = false
-                if (resumePlaybackAfterAssistantSpeech) {
-                    player.play()
-                }
-                resumePlaybackAfterAssistantSpeech = false
-                if (followUpPending && followUpDeadlineMs == 0L) {
-                    armFollowUpWindow("spoken-reply-did-not-start")
-                }
-            }
-        } else if (!isTtsSpeaking && assistantSpeechStarted) {
-            if (resumePlaybackAfterAssistantSpeech) {
-                player.play()
-            }
-            resumePlaybackAfterAssistantSpeech = false
-            assistantSpeechStarted = false
-            if (followUpPending && followUpDeadlineMs == 0L) {
-                armFollowUpWindow("spoken-reply-finished")
-            }
-        }
-    }
-
-    // Subtitle cue listener
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onCues(cueGroup: CueGroup) {
-                currentCues = if (subtitleTrackSelected) cueGroup.cues else emptyList()
-                if (cueGroup.cues.isNotEmpty()) {
-                    val first = cueGroup.cues[0].text?.toString()
-                    if (first != null) {
-                        val pos = player.currentPosition
-                        Timber.d("AI Subtitle Buffer: adding cue at %d: %s", pos, first)
-                        recentSubtitles.add(pos to first)
-                        recentSubtitles.removeAll { pos - it.first > 1_200_000L }
-                    }
-                }
-            }
-
-            override fun onTracksChanged(tracks: Tracks) {
-                subtitleTrackSelected =
-                    tracks.groups.any { group ->
-                        group.type == C.TRACK_TYPE_TEXT &&
-                            group.isSupported &&
-                            groupIsSelected(group)
-                    }
-
-                // AI context optimization: find and record the first available SDH track for assistant context,
-                // even if not visually selected.  This gives the AI non-verbal cues (e.g. [Door Slams]).
-                val aiTrack =
-                    tracks.groups
-                        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
-                        .sortedByDescending { group ->
-                            val label = group.mediaTrackGroup.getFormat(0).label?.lowercase() ?: ""
-                            val roleFlags = group.mediaTrackGroup.getFormat(0).roleFlags
-                            var score = 0
-                            if (label.contains("sdh") || label.contains("cc")) score += 100
-                            if (roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND != 0) score += 50
-                            if (roleFlags and C.ROLE_FLAG_TRANSCRIBES_DIALOG != 0) score += 50
-                            score
-                        }
-                        .firstOrNull()
-
-                if (aiTrack != null) {
-                    val format = aiTrack.mediaTrackGroup.getFormat(0)
-                    Timber.i(
-                        "subtitle: XR assistant track candidate label=%s lang=%s roleFlags=%d",
-                        format.label,
-                        format.language,
-                        format.roleFlags,
-                    )
-                }
-
-                if (!subtitleTrackSelected) {
-                    currentCues = emptyList()
-                }
-                subtitleTrackVersion++
-                Timber.i(
-                    "subtitle: XR track snapshot updated version=%d textGroups=%d selected=%b",
-                    subtitleTrackVersion,
-                    tracks.groups.count { it.type == C.TRACK_TYPE_TEXT },
-                    subtitleTrackSelected,
-                )
-            }
-        }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener) }
-    }
-
-    // Initialize libass when track info becomes available
-    LaunchedEffect(player, subtitleTrackVersion, currentStereoMode, libassUsagePref) {
-        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
-        useLibass = !stereoPlayback &&
-            libassRenderer != null &&
-            LibassSubtitleHelper.shouldUseLibass(player, emptyList(), libassUsagePref)
-        if (!useLibass) {
-            hasLibassContent = false
-            libassBitmap = null
-        }
-        Timber.i(
-            "subtitle: useLibass=%b (renderer=%b pref=%s stereoMode=%s trackVersion=%d)",
-            useLibass,
-            libassRenderer != null,
-            libassUsagePref,
-            currentStereoMode,
-            subtitleTrackVersion,
-        )
-    }
-
-    // Render libass subtitles in the playback polling loop
-    LaunchedEffect(useLibass) {
-        while (useLibass) {
-            // Use player.currentPosition directly instead of the 500ms-polled state
-            // to ensure smooth animations and correct timing at ~60fps.
-            val pos = player.currentPosition
-            val result = libassRenderer?.renderFrame(pos)
-            if (result != null) {
-                hasLibassContent = result.hasContent
-                if (result.bitmap != null) {
-                    libassBitmap = result.bitmap
-                    libassFrameVersion++
-                }
-                if (
-                    videoOverlayAttachmentVersion > 0 &&
-                    videoOverlayAttachmentVersion > lastLoggedMoveFrameVersion &&
-                    (result.bitmap != null || result.hasContent)
-                ) {
-                    lastLoggedMoveFrameVersion = videoOverlayAttachmentVersion
-                    Timber.i(
-                        "subtitle: first frame after move overlayVersion=%d hasContent=%b bitmap=%b frameVersion=%d posMs=%d",
-                        videoOverlayAttachmentVersion,
-                        result.hasContent,
-                        result.bitmap != null,
-                        libassFrameVersion,
-                        pos,
-                    )
-                }
-            }
-            delay(16) // ~60fps for subtitle updates (smooth for \move, \fad, \k karaoke)
-        }
-    }
 
     // Navigate back when playback ends (movie finished or last episode of season)
     LaunchedEffect(Unit) {
@@ -1511,7 +1183,7 @@ fun SpatialPlayerScreen(
                             subtitleRoot,
                             UI_DEPTH_METERS / effectiveDepth,
                         )
-                        videoOverlayAttachmentVersion++
+                        libass.bumpOverlayAttachment()
                         savePlayerRootPose(viewModel, savedPose)
                         val t = savedPose.translation
                         Timber.i(
@@ -1555,16 +1227,9 @@ fun SpatialPlayerScreen(
                 finalPose?.let { savePlayerRootPose(viewModel, it) }
             }
             savePlayerRootScale(viewModel, videoPanelScale)
-            voiceService.destroy()
             // Release voice/AI services so their background work (OkHttp dispatcher,
             // LiteRT/AICore handles, coroutine scopes) doesn't leak past the screen.
-            runCatching { commandCoordinator?.destroy() }
-            commandCoordinator = null
-            runCatching { chatEngine?.destroy() }
-            chatEngine = null
-            runCatching { geminiNanoService.destroy() }
-            runCatching { geminiCloudService.destroy() }
-            tts.destroy()
+            voiceServices.destroy()
             runCatching { player.clearVideoSurface() }
             runCatching { videoEntity.value?.dispose() }
             videoEntity.value = null
@@ -1662,19 +1327,6 @@ fun SpatialPlayerScreen(
             }
             delay(100L)
         }
-    }
-
-    LaunchedEffect(videoOverlayAttachmentVersion) {
-        if (videoOverlayAttachmentVersion <= 0) return@LaunchedEffect
-        delay(750L)
-        Timber.i(
-            "subtitle: post-move state overlayVersion=%d useLibass=%b hasContent=%b frameVersion=%d bitmap=%b",
-            videoOverlayAttachmentVersion,
-            useLibass,
-            hasLibassContent,
-            libassFrameVersion,
-            libassBitmap != null,
-        )
     }
 
     LaunchedEffect(videoRootEntity.value) {
@@ -1866,7 +1518,7 @@ fun SpatialPlayerScreen(
         Timber.d(
             "subtitle: panel geometry mode=%s useLibass=%b panel=%.1fdp x %.1fdp density=%.3f render=%dx%d video=%dx%d finalTextSp=%.1f z=%.1fdp",
             currentStereoMode,
-            useLibass,
+            libass.useLibass,
             subtitlePanelWidthDp,
             subtitlePanelHeightDp,
             density.density,
@@ -1894,10 +1546,7 @@ fun SpatialPlayerScreen(
     // appearance), but a disabled GroupEntity does not participate in SceneCore raycast
     // hit-testing.  When disabled, grab gestures pass straight through to the video entity's
     // MovableComponent so the user can move the video even when subtitles are present.
-    val hasSubtitleContent = uiState.visualSubtitlesEnabled && (
-        (useLibass && hasLibassContent && libassBitmap != null) ||
-        (!useLibass && subtitleTrackSelected && currentCues.isNotEmpty())
-    )
+    val hasSubtitleContent = uiState.visualSubtitlesEnabled && libass.hasSubtitleContent
     LaunchedEffect(hasSubtitleContent, subtitleRootEntity.value) {
         subtitleRootEntity.value?.setEnabled(hasSubtitleContent)
     }
@@ -1910,9 +1559,9 @@ fun SpatialPlayerScreen(
                 // Recreating the SpatialPanel when a new line appears causes SceneCore to
                 // briefly render it at the subtitle root origin before the panel offset lands,
                 // which shows up as a flash below the screen.
-                if (useLibass) {
-                    val currentBitmap = libassBitmap
-                    val showLibassContent = hasLibassContent && currentBitmap != null
+                if (libass.useLibass) {
+                    val currentBitmap = libass.bitmap
+                    val showLibassContent = libass.hasContent && currentBitmap != null
                     SpatialPanel(
                         modifier = SubspaceModifier
                             .width(subtitlePanelWidthDp.dp)
@@ -1920,7 +1569,7 @@ fun SpatialPlayerScreen(
                             .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
                     ) {
                         if (showLibassContent) {
-                            key(videoOverlayAttachmentVersion, libassFrameVersion) {
+                            key(libass.overlayAttachmentVersion, libass.frameVersion) {
                                 Image(
                                     painter = BitmapPainter(currentBitmap.asImageBitmap(), filterQuality = FilterQuality.High),
                                     contentDescription = null,
@@ -1949,7 +1598,7 @@ fun SpatialPlayerScreen(
                             update = { view ->
                                 view.setStyle(captionStyle)
                                 view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, finalSubtitleSize)
-                                view.setCues(currentCues)
+                                view.setCues(libass.currentCues)
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -1966,12 +1615,12 @@ fun SpatialPlayerScreen(
                 VoiceControlOverlay(
                     state = voiceState,
                     partialTranscript = partialTranscript,
-                    feedbackText = if (characterScanActive) null else voiceFeedback,
-                    gestureArmingProgress = voiceGestureArmingProgress,
-                    gestureHint = voiceGestureHint,
+                    feedbackText = if (voice.characterScanActive) null else voice.voiceFeedback,
+                    gestureArmingProgress = voice.voiceGestureArmingProgress,
+                    gestureHint = voice.voiceGestureHint,
                     micLevel = voiceMicLevel,
                 )
-                CharacterScanOverlay(visible = characterScanActive)
+                CharacterScanOverlay(visible = voice.characterScanActive)
             }
         }
 
@@ -2205,12 +1854,12 @@ fun SpatialPlayerScreen(
                                                 },
                                             )
                                         }.onSuccess {
-                                            voiceFeedback = "Opening trailer for ${item.name}"
+                                            voice.voiceFeedback = "Opening trailer for ${item.name}"
                                         }.onFailure {
-                                            voiceFeedback = "Couldn't open trailer for ${item.name}"
+                                            voice.voiceFeedback = "Couldn't open trailer for ${item.name}"
                                         }
                                     } ?: run {
-                                        voiceFeedback = "No trailer found for ${item.name}"
+                                        voice.voiceFeedback = "No trailer found for ${item.name}"
                                     }
                                 },
                                 onMoreLikeThis = { item ->
@@ -2224,7 +1873,7 @@ fun SpatialPlayerScreen(
                                                 question = "more like this",
                                                 playerState = currentRecommendationSnapshot(),
                                                 storySoFarContext = uiState.storySoFarContext,
-                                                recentSubtitleLines = assistantSubtitleLines,
+                                                recentSubtitleLines = subtitleContext.assistantLines,
                                                 currentPositionMs = player.currentPosition,
                                                 assistantPreferences =
                                                     AssistantPreferences(
@@ -2233,22 +1882,22 @@ fun SpatialPlayerScreen(
                                                         spokenRepliesEnabled = assistantSpokenReplies,
                                                     ),
                                                 onSearchQuery = onSearchQuery,
-                                                conversationHistory = conversationHistory,
+                                                conversationHistory = voice.conversationHistory,
                                                 onGetSuggestions = { viewModel.repository.getSuggestions() },
                                                 recommendationContext = RecommendationContext(item.name, listOf(item)),
-                                                subtitleCacheFallback = subtitleCacheFallback,
+                                                subtitleCacheFallback = subtitleContext.cacheFallback,
                                             )
                                         voiceSearchLoading = false
                                         response.recommendedItems
                                             .takeIf { it.isNotEmpty() }
                                             ?.let {
-                                                recommendationContext = RecommendationContext(item.name, it)
+                                                voice.recommendationContext = RecommendationContext(item.name, it)
                                                 voiceSearchResults = it
                                             }
                                             ?: run {
                                                 voiceSearchError = "No similar titles found"
                                             }
-                                        voiceFeedback = response.text
+                                        voice.voiceFeedback = response.text
                                     }
                                 },
                                 onToggleFavorite = { item ->
@@ -2262,8 +1911,8 @@ fun SpatialPlayerScreen(
                                         }.onSuccess {
                                             val updated = item.withFavorite(!item.favorite)
                                             updateVoiceSearchItem(updated)
-                                            recommendationContext =
-                                                recommendationContext?.let { context ->
+                                            voice.recommendationContext =
+                                                voice.recommendationContext?.let { context ->
                                                     if (context.items.any { it.id == updated.id }) {
                                                         context.copy(
                                                             items = context.items.map { existing ->
@@ -2274,14 +1923,14 @@ fun SpatialPlayerScreen(
                                                         context
                                                     }
                                                 }
-                                            voiceFeedback =
+                                            voice.voiceFeedback =
                                                 if (updated.favorite) {
                                                     "Saved ${updated.name}"
                                                 } else {
                                                     "Removed ${updated.name} from favorites"
                                                 }
                                         }.onFailure {
-                                            voiceFeedback = "Couldn't update favorite for ${item.name}"
+                                            voice.voiceFeedback = "Couldn't update favorite for ${item.name}"
                                         }
                                     }
                                 },
