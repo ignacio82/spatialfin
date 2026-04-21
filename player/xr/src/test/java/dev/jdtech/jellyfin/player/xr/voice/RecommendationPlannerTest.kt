@@ -99,6 +99,56 @@ class RecommendationPlannerTest {
     }
 
     @Test
+    fun `mmr diversifies a franchise-heavy shortlist`() {
+        // Five near-identical Marvel-like action picks + one drama +
+        // one comedy. Without MMR, the relevance ranking surfaces five of
+        // the same franchise.
+        val candidates = listOf(
+            movie(name = "Iron Fire 1", genres = listOf("Action", "Superhero"), englishAudio = true) to 9.0,
+            movie(name = "Iron Fire 2", genres = listOf("Action", "Superhero"), englishAudio = true) to 8.9,
+            movie(name = "Iron Fire 3", genres = listOf("Action", "Superhero"), englishAudio = true) to 8.8,
+            movie(name = "Iron Fire 4", genres = listOf("Action", "Superhero"), englishAudio = true) to 8.7,
+            movie(name = "Iron Fire 5", genres = listOf("Action", "Superhero"), englishAudio = true) to 8.6,
+            movie(name = "Quiet Drama", genres = listOf("Drama"), englishAudio = true) to 7.0,
+            movie(name = "Loud Comedy", genres = listOf("Comedy"), englishAudio = true) to 6.5,
+        )
+
+        val diversified = RecommendationPlanner.applyMmrDiversity(candidates, pickSize = 3)
+
+        assertEquals("top pick should still be highest-relevance", "Iron Fire 1", diversified[0].name)
+        val names = diversified.map { it.name }
+        val franchises = names.count { it.startsWith("Iron Fire") }
+        assertTrue(
+            "MMR should not return 3 Iron Fire entries: $names",
+            franchises < 3,
+        )
+        assertTrue(
+            "Expected a non-Iron-Fire genre in the top 3: $names",
+            names.any { it == "Quiet Drama" || it == "Loud Comedy" },
+        )
+    }
+
+    @Test
+    fun `mmr is a no-op on single-candidate lists`() {
+        val only = movie(name = "Solo", genres = listOf("Thriller"), englishAudio = true) to 5.0
+        val diversified = RecommendationPlanner.applyMmrDiversity(listOf(only), pickSize = 6)
+        assertEquals(1, diversified.size)
+        assertEquals("Solo", diversified[0].name)
+    }
+
+    @Test
+    fun `mmr handles equal relevance scores by spreading across genres`() {
+        val candidates = listOf(
+            movie(name = "A", genres = listOf("Comedy"), englishAudio = true) to 5.0,
+            movie(name = "B", genres = listOf("Comedy"), englishAudio = true) to 5.0,
+            movie(name = "C", genres = listOf("Drama"), englishAudio = true) to 5.0,
+        )
+        val diversified = RecommendationPlanner.applyMmrDiversity(candidates, pickSize = 2)
+        val genres = diversified.map { (it as SpatialFinMovie).genres.first() }.toSet()
+        assertEquals("with equal scores, MMR should pick across genres", 2, genres.size)
+    }
+
+    @Test
     fun `direct recommendation reply names titles without justification`() {
         val quickMovie = movie(name = "Quick Laughs", genres = listOf("Comedy"), englishAudio = true, runtimeMinutes = 88)
         val backupMovie = movie(name = "Space Patrol", genres = listOf("Sci-Fi"), englishAudio = true, runtimeMinutes = 104)

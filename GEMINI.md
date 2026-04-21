@@ -90,6 +90,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/GemmaCommandParser.kt`
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SmartChatEngine.kt`
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/MediaSkillRegistry.kt`
+- `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/ChatToolRegistry.kt`
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/RecommendationPlanner.kt`
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SecondaryHandPinchDetector.kt`
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/voice/SpatialVoiceSynthesizer.kt`
@@ -196,6 +197,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Voice command routing | `player/xr/.../voice/SpatialCommandCoordinator.kt` | coordinator |
 | AI chat / multi-backend routing | `player/xr/.../voice/SmartChatEngine.kt` | engine |
 | Built-in skills | `player/xr/.../voice/MediaSkillRegistry.kt` | registry |
+| Chat tool-calling pre-pass | `player/xr/.../voice/ChatToolRegistry.kt` | registry |
 | Player action execution | `player/session/.../voice/PlayerSessionController.kt` | controller |
 | TTS + ducking | `player/xr/.../voice/SpatialVoiceSynthesizer.kt` | engine |
 | Hand gesture activation | `player/xr/.../voice/SecondaryHandPinchDetector.kt` | detector |
@@ -297,6 +299,8 @@ For low-latency movement of complex player UIs:
 4. **`PlayerSessionController`** — executes playback/search/selection actions; owns pending-selection state for follow-ups like "play the first one."
 5. **`SmartChatEngine`** — handles `ChatQuery`; builds prompt context **only after** a skill is selected.
 6. **`MediaSkillRegistry`** — selects the built-in skill, validates input, decides reply mode (`DIRECT` / `MODEL` / `FALLBACK`).
+7. **`ChatToolRegistry`** — optional pre-pass that runs before the main chat inference when the skill lands on `GENERAL_CHAT`. Calls `VoiceAiEngine.runToolCall` against a single `research_media` tool with an `action` enum (`lookup_title`, `lookup_person`, `describe_current_item`, and `web_search` when `WebSearchClient.isConfigured()`) — mirrors the `interpret_command` pattern in `GemmaCommandParser`. Gated on LiteRT with a non-CPU backend; AICore has no tool schema support and cloud doesn't need this wedge. Returns structured notes that render as a "Research notes" block in `PromptContext.researchNotes`.
+8. **`WebSearchClient`** — fronts web search for the `web_search` tool action. Prefers the paired companion's `GET /api/v1/search?q=...` (auth via existing `X-Setup-Token`), falls back to a user-pasted SearXNG URL (`voiceAssistantSearxngUrl` preference). Graceful no-op when neither is set. The companion is expected to run a SearXNG sidecar bound to 127.0.0.1 — do not hit SearXNG directly from the headset even on a LAN, it has no auth of its own.
 
 ### Built-In Skills (`MediaSkillRegistry`)
 
@@ -310,6 +314,7 @@ Extend skills here, not via prompt branches.
 2. `RecommendationPlanner` extracts filters / follow-up context.
 3. Candidates from `repository.{getSuggestions, getResumeItems, getFavoriteItems}` and prior `RecommendationContext`.
 4. Planner ranks by media type, runtime ("under N minutes"), comedy/new/English/anime-avoidance, comfort, current-media genre overlap, prior seed items.
+   - After scoring, an MMR pass (`RecommendationPlanner.applyMmrDiversity`, lambda=0.5) reranks the top-15 shortlist to the final 6 so the picks span genre / decade / franchise instead of clustering on one strand. The MMR constants live at the top of the planner; tune lambda up if picks feel too scattered, down if they feel franchise-heavy.
 5. XR shows results in the interactive recommendation panel.
 
 ### Interactive Recommendation Panel (`SpatialPlayerScreen`)
@@ -512,6 +517,7 @@ These are the gaps a future contributor (human or AI) should know about. If you 
 - **`core/.../utils/DownloaderImpl.kt`** — has a TODO noting that some download steps may abort if the user navigates away mid-flight; the long-term fix is to push everything onto WorkManager.
 - **`SpatialPlayerScreen.kt`, `PlayerViewModel.kt`** — screen down to ~2.07k lines (from 2.40k); VM down to ~1.8k (from 2.77k). Phase 1+2 lifted SyncPlay / track selection out of the VM and pulled voice services + AI subtitle context out of the screen. Phase 3 extracted the libass renderer (`LibassRendererState`) and the voice state / TTS state machine (`PlayerVoiceCoordinator`) — both own their own effects so the screen no longer juggles ~15 libass/voice `LaunchedEffect`s. What still lives inline is `requestVoiceCommand` (27-param call into `startVoiceCapture`), the follow-up auto-start effect, and the pinch-detector gesture-collection effect — all three need `requestVoiceCommand` in-scope, so lifting them requires either flattening `startVoiceCapture`'s surface or splitting the function.
 - **`UnifiedMainActivity.kt`** — voice was extracted into `HomeVoiceController` and pose persistence into `PanelPoseController`; the Activity now reads as pure orchestration (`~750` lines, mostly device-class branching and the FullSpace Subspace tree).
+- **Skill-classifier drift sentinel** — `player/xr/.../voice/SkillClassifierRegressionTest.kt` runs `MediaSkillRegistry.selectSkill` over ~25 seeded queries and reports every divergence in a single assertion with the full diff. When a classifier heuristic edit intentionally reclassifies a query, update the expected `MediaSkillId` in the same commit so the git diff documents the behavior change. The file also carries an `ASPIRATIONAL_IMPROVEMENTS` comment listing queries that fall through to `GENERAL_CHAT` today but should be routed elsewhere — promote a case into the asserted `CASES` list when the classifier gains a matching heuristic.
 - **Test coverage** — JUnit 4 + MockK + Robolectric + Turbine + `kotlinx-coroutines-test` are wired up in `:app:unified`, `:core`, and `:data` (pin `@Config(sdk = [35])` on any Robolectric test — the shipped SDK jars end at API 35). Existing pure-policy tests: `RecommendationPlannerTest`, `VoiceReplayCommandLibraryTest`, `StereoModeDetectorTest`, `SmbPathNormalizerTest`, `HomeVoicePolicyTest`, `PanelPosePolicyTest`, `ResumeFilterTest`, `PlayerTrackSignaturesTest`. Smoke tests for the new infra: `DeviceClassCapabilitiesTest` (pure) and `UserImageUriTest` (Robolectric, exercises `android.net.Uri`). The player UI, repositories, and most of `JellyfinRepositoryOfflineImpl` are still essentially untested — MockK means you no longer have to extract every Android-typed helper into a pure object just to test it; use Robolectric when you need a real `Uri` / Context shadow, and MockK when you need to stub `JellyfinRepository` / `ServerConnectionMonitor` / view-model collaborators.
 - **`isMinifyEnabled = false` for release** — see [Build Quirks](#build-quirks). Long-term debt; revisit when androidx.xr fixes the R8 interaction.
 

@@ -52,18 +52,15 @@ internal class MediaSkillRegistry(
     private val repository: JellyfinRepository,
     appPreferences: AppPreferences,
 ) {
-    // Share a single OkHttpClient across both helpers so we don't allocate two
-    // independent dispatcher thread pools per registry instance. Full Hilt-scoping
-    // of these clients would require reshaping SmartChatEngine's construction (it
-    // is created from a Composable `remember` block, not injected), so this is
-    // the minimum that removes the duplication concern without a cascading refactor.
-    private val httpClient = sharedHttpClient
+    // Share a single OkHttpClient across the voice-package helpers (skill registry
+    // and ChatToolRegistry) so we don't allocate independent dispatcher thread
+    // pools per-instance. Full Hilt-scoping of these clients would require
+    // reshaping SmartChatEngine's construction (it is created from a Composable
+    // `remember` block, not injected), so a package-level lazy val is the minimum
+    // that removes duplication without a cascading refactor.
+    private val httpClient = voiceHttpClient
     private val tmdbApi = TmdbApi(appPreferences, httpClient)
     private val wikipediaClient = WikipediaSummaryClient(httpClient)
-
-    companion object {
-        private val sharedHttpClient: okhttp3.OkHttpClient by lazy { okhttp3.OkHttpClient() }
-    }
 
     suspend fun plan(
         question: String,
@@ -563,15 +560,15 @@ internal class MediaSkillRegistry(
         if (personMode) {
             val text =
                 wikipedia?.extract?.let { extract ->
-                    buildString {
-                        append("$target: ")
-                        append(extract.take(420).trim())
-                    }
+                    // Source-labelled: users have asked to know whether a fact
+                    // came from TMDB vs Wikipedia vs the model's own memory,
+                    // especially when recommendations diverge from reviews.
+                    "Per Wikipedia — $target: ${extract.take(420).trim()}"
                 } ?: "I couldn't find an external summary for $target."
             return MediaSkillPlan(
                 skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
                 validatedInput = target,
-                taskInstructions = "Task: Answer from external movie knowledge sources when available.",
+                taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB or Wikipedia).",
                 directAnswer = text,
                 fallbackText = text,
                 debugInfo = buildExternalDebugInfo(target, wikipedia?.canonicalUrl, null, letterboxdUrlFor(target)),
@@ -583,16 +580,16 @@ internal class MediaSkillRegistry(
         val text =
             when {
                 tmdbSummary != null && wikipedia != null ->
-                    "${tmdbSummary.first} ${wikipedia.extract.take(260).trim()}"
-                tmdbSummary != null -> tmdbSummary.first
-                wikipedia != null -> wikipedia.extract.take(420).trim()
+                    "Per TMDB: ${tmdbSummary.first} Per Wikipedia: ${wikipedia.extract.take(260).trim()}"
+                tmdbSummary != null -> "Per TMDB: ${tmdbSummary.first}"
+                wikipedia != null -> "Per Wikipedia: ${wikipedia.extract.take(420).trim()}"
                 else -> "I couldn't find external details for $target."
             }
 
         return MediaSkillPlan(
             skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
             validatedInput = target,
-            taskInstructions = "Task: Answer from external movie knowledge sources when available.",
+            taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB or Wikipedia).",
             directAnswer = text,
             fallbackText = text,
             debugInfo = buildExternalDebugInfo(target, wikipedia?.canonicalUrl, tmdbSummary?.second, letterboxdUrlFor(target)),

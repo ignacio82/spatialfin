@@ -58,6 +58,10 @@ fun chatPrompt(ctx: PromptContext): PromptSections = promptSections {
         ctx.conversationHistory.joinToString("\n") { (u, a) -> "User: $u\nAssistant: $a" }
     }
 
+    sectionIf(!ctx.researchNotes.isNullOrBlank(), header = "Research notes (verified facts — ground your answer in these):") {
+        ctx.researchNotes.orEmpty()
+    }
+
     sectionIf(!ctx.relatedItems.isNullOrBlank(), header = "Items available in library that may be relevant:") {
         ctx.relatedItems.orEmpty()
     }

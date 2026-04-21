@@ -22,6 +22,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeoutException
 import timber.log.Timber
 
+// Skip the tool-call research pass on very short questions — the entity signal
+// is too weak to justify a 3–5s round trip.
+private const val MIN_TOOL_CALL_QUESTION_LEN = 12
+
 data class AssistantPreferences(
     val verbosity: String = "balanced",
     val spoilerPolicy: String = "cautious",
@@ -48,6 +52,7 @@ class SmartChatEngine(
     private val llmInstance: VoiceAiEngine?
         get() = modelManager.instance
     private val mediaSkillRegistry = MediaSkillRegistry(repository, appPreferences)
+    private val chatToolRegistry = ChatToolRegistry(appPreferences)
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         if (shouldUseGemma()) {
@@ -223,6 +228,31 @@ class SmartChatEngine(
                     recommendedItems = recommendedItems,
                 )
 
+        // Tool-call research pass for GENERAL_CHAT: the skill registry already
+        // gathers what's needed for every other skill, so engaging here is the
+        // smallest wedge where the model might want to pull in TMDB/Wikipedia/
+        // current-item facts before generating. Gated on LiteRT with a non-CPU
+        // backend — AICore returns null from runToolCall (no schema support yet),
+        // and CPU-only LiteRT is already too slow to add a tool round trip to.
+        val researchNotes: ChatToolRegistry.ResearchNotes? =
+            if (plan.skillId == MediaSkillId.GENERAL_CHAT && shouldUseGemma() && question.length >= MIN_TOOL_CALL_QUESTION_LEN) {
+                modelManager.ensureInitialized()
+                val engine = llmInstance
+                if (engine != null && !engine.backendName.equals("CPU", ignoreCase = true)) {
+                    try {
+                        chatToolRegistry.gather(question, playerState, engine)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w(e, "ChatTool: gather failed, skipping research pass")
+                        null
+                    }
+                } else null
+            } else null
+        if (researchNotes != null) {
+            Timber.d("ChatTool: researchNotes attached (%s)", researchNotes.debugInfo)
+        }
+
         val prompt = if (plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION) {
             buildCharacterIdentificationPrompt(playerState, plan.taskInstructions)
         } else {
@@ -234,6 +264,7 @@ class SmartChatEngine(
                 assistantPreferences = assistantPreferences,
                 conversationHistory = conversationHistory,
                 relatedItemsContext = plan.relatedItemsContext,
+                researchNotes = researchNotes?.body,
                 taskInstructions = plan.taskInstructions,
                 lastPointerPosition = lastPointerPosition,
             )
@@ -507,6 +538,7 @@ class SmartChatEngine(
         assistantPreferences: AssistantPreferences,
         conversationHistory: List<Pair<String, String>>,
         relatedItemsContext: String?,
+        researchNotes: String? = null,
         taskInstructions: String,
         lastPointerPosition: androidx.compose.ui.geometry.Offset? = null,
     ): String = chatPrompt(
@@ -518,6 +550,7 @@ class SmartChatEngine(
             subtitleContext = subtitleContext,
             conversationHistory = conversationHistory,
             relatedItems = relatedItemsContext,
+            researchNotes = researchNotes,
             pointerPosition = lastPointerPosition,
             taskInstructions = taskInstructions,
         ),

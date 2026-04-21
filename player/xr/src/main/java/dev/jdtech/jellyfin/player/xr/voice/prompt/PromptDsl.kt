@@ -31,6 +31,13 @@ data class PromptContext(
     val conversationHistory: List<Pair<String, String>> = emptyList(),
     /** Pre-formatted related-items block when a skill surfaces library hits (WATCH_RECOMMENDER etc.). */
     val relatedItems: String? = null,
+    /**
+     * Pre-formatted external knowledge (TMDB, Wikipedia, current-item digest) gathered
+     * by [dev.jdtech.jellyfin.player.xr.voice.ChatToolRegistry] before the main
+     * inference. Rendered as its own section ahead of [relatedItems] so the model
+     * sees grounded facts distinctly from "items from the user's library".
+     */
+    val researchNotes: String? = null,
     /** Pointer / gaze fraction of the video panel (0..1), used by CHARACTER_IDENTIFICATION. */
     val pointerPosition: Offset? = null,
     /** Per-skill instruction block produced by [MediaSkillRegistry]. */

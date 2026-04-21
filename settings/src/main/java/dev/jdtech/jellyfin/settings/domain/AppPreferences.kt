@@ -142,6 +142,20 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantGemmaEnabled = Preference("pref_voice_assistant_gemma_enabled", false)
     val voiceAssistantGemmaBackend = Preference("pref_voice_assistant_gemma_backend", "Requires Model")
     val voiceAssistantCpuInference = Preference("pref_voice_assistant_cpu_inference", false)
+
+    // Web search (voice AI grounding).
+    //
+    // Master switch for the `web_search` tool exposed in the chat tool-call pass.
+    // Enabled by default because the client gracefully no-ops when nothing is
+    // configured — paired-companion users get it automatically once the
+    // companion advertises `capabilities.web_search=true`, and users without a
+    // companion can still flip it on and paste a SearXNG URL.
+    val voiceAssistantWebSearchEnabled = Preference("pref_voice_assistant_web_search_enabled", true)
+    // Optional direct SearXNG endpoint. When non-blank, overrides the paired
+    // companion's /api/v1/search proxy and hits this URL directly with
+    // `format=json`. Useful for users who run their own SearXNG without the
+    // companion, or who want to point at a different instance.
+    val voiceAssistantSearxngUrl = Preference<String?>("pref_voice_assistant_searxng_url", null)
     val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
     val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
     val onboardingCompleted = Preference("pref_onboarding_completed", false)

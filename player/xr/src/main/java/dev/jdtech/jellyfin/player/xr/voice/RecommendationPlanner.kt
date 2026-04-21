@@ -65,6 +65,20 @@ internal object RecommendationPlanner {
         "late night",
     )
 
+    // MMR tuning. Lambda = 0.5 is a 50/50 relevance-vs-diversity split and the
+    // canonical choice from Carbonell & Goldstein's original MMR paper for
+    // diversified retrieval. Higher values (0.7+) let near-duplicate franchise
+    // entries crowd the top slots when relevance is tightly clustered — the
+    // exact failure mode ("five Iron Man movies") this reranker exists to
+    // prevent — because a same-franchise Jaccard of 1.0 can't outweigh a
+    // small score delta. Lower values (<0.4) start surfacing very weakly
+    // scored picks for the sake of variety. Bump MMR_SHORTLIST_SIZE if the
+    // library is large and the rerank feels too narrow; it caps how much
+    // post-sort work runs and limits the diversity horizon.
+    private const val MMR_LAMBDA = 0.5
+    private const val MMR_SHORTLIST_SIZE = 15
+    private const val MMR_RESULT_SIZE = 6
+
     fun analyzeQuestion(
         question: String,
         previousContext: RecommendationContext?,
@@ -143,15 +157,102 @@ internal object RecommendationPlanner {
                 analysis.referenceItem?.let(::add)
                 previousContext?.items?.take(3)?.forEach(::add)
             }
-        val ranked =
+        val scored =
             candidates
                 .distinctBy { it.id }
                 .map { item -> item to scoreItem(item, sourceWeights[item.id] ?: 0, playerState, queryTokens, analysis, seedItems) }
                 .filter { (_, score) -> score > -50.0 }
                 .sortedByDescending { it.second }
-                .map { it.first }
 
-        return ranked.take(6)
+        // Relevance-only ranking on a well-stocked library surfaces five Marvel
+        // movies when the user asks for "something new". MMR rerank of the
+        // shortlist enforces diversity across genre / decade / franchise so the
+        // top picks span the library instead of clustering on a single strand.
+        return applyMmrDiversity(scored.take(MMR_SHORTLIST_SIZE), MMR_RESULT_SIZE)
+    }
+
+    /**
+     * Maximal-Marginal-Relevance rerank of an already-scored shortlist. Each
+     * pick trades off its raw relevance score against the maximum similarity
+     * to the items already picked. [MMR_LAMBDA] controls the balance — higher
+     * leans relevance, lower leans diversity. The similarity metric is a
+     * Jaccard overlap over (genre set ∪ decade bucket ∪ franchise key), which
+     * is cheap to compute and catches the common failure modes (five entries
+     * from the same franchise, five 90s action flicks, etc.) without needing
+     * richer per-item metadata.
+     *
+     * Visible for testing.
+     */
+    internal fun applyMmrDiversity(
+        scored: List<Pair<SpatialFinItem, Double>>,
+        pickSize: Int,
+    ): List<SpatialFinItem> {
+        if (scored.size <= 1) return scored.map { it.first }
+        val normalizedScores = normalizeScores(scored.map { it.second })
+        val signatures = scored.map { diversitySignature(it.first) }
+        val remaining = scored.indices.toMutableList()
+        val picks = mutableListOf<Int>()
+        while (picks.size < pickSize && remaining.isNotEmpty()) {
+            val bestIdx = if (picks.isEmpty()) {
+                remaining.maxBy { normalizedScores[it] }
+            } else {
+                remaining.maxBy { i ->
+                    val maxSim = picks.maxOf { p -> jaccard(signatures[i], signatures[p]) }
+                    MMR_LAMBDA * normalizedScores[i] - (1 - MMR_LAMBDA) * maxSim
+                }
+            }
+            picks.add(bestIdx)
+            remaining.remove(bestIdx)
+        }
+        return picks.map { scored[it].first }
+    }
+
+    private fun diversitySignature(item: SpatialFinItem): Set<String> {
+        val tokens = mutableSetOf<String>()
+        itemGenres(item).forEach { g -> tokens.add("g:${g.lowercase()}") }
+        itemProductionYear(item)?.let { y -> tokens.add("d:${y / 10}") }
+        // Franchise proxy. For shows/episodes use the series name; for movies,
+        // use the first two normalized words of the title (catches "Iron Man",
+        // "Iron Man 2", "Iron Man 3" as one franchise — the usual MMR failure).
+        val franchise = when (item) {
+            is SpatialFinEpisode -> item.seriesName
+            is SpatialFinSeason -> item.seriesName
+            is SpatialFinShow -> item.name
+            is SpatialFinMovie -> item.name
+            else -> ""
+        }
+        normalizedFranchiseKey(franchise)?.let { tokens.add("f:$it") }
+        return tokens
+    }
+
+    private fun normalizedFranchiseKey(raw: String): String? {
+        val cleaned = raw.lowercase()
+            .replace(Regex("[^a-z0-9 ]"), " ")
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .filterNot { it.length <= 2 && it !in setOf("it") } // drop short filler tokens
+        if (cleaned.isEmpty()) return null
+        return cleaned.take(2).joinToString(" ")
+    }
+
+    private fun jaccard(a: Set<String>, b: Set<String>): Double {
+        if (a.isEmpty() && b.isEmpty()) return 0.0
+        val intersection = a.intersect(b).size.toDouble()
+        val union = (a.size + b.size - intersection.toInt()).toDouble()
+        return if (union == 0.0) 0.0 else intersection / union
+    }
+
+    /**
+     * Min-max normalize a relevance-score vector so MMR can compare it against
+     * the [0, 1] Jaccard similarity without the raw score magnitude swallowing
+     * the diversity term.
+     */
+    private fun normalizeScores(scores: List<Double>): List<Double> {
+        if (scores.isEmpty()) return scores
+        val min = scores.min()
+        val max = scores.max()
+        val span = max - min
+        return if (span == 0.0) List(scores.size) { 1.0 } else scores.map { (it - min) / span }
     }
 
     fun buildRelatedItemsContext(items: List<SpatialFinItem>): String? {
