@@ -25,6 +25,22 @@ sealed interface VoiceAiEngine {
         onToken: ((String) -> Unit)? = null,
     ): String
 
+    /**
+     * Attempt a constrained tool call. Returns the first [ParsedToolCall] emitted by the
+     * model, or `null` if the backend doesn't support typed tools or the model replied
+     * with plain text. Callers that require structured output should fall back to the
+     * `runInference` + JSON parsing path when this returns null.
+     *
+     * LiteRT-LM backend supports this through `ConversationConfig.tools` + `OpenApiTool`.
+     * AICore / Gemini Nano (`mlkit-genai-prompt:1.0.0-beta2`) does not currently expose
+     * tools or response schemas, so its implementation returns null.
+     */
+    suspend fun runToolCall(
+        prompt: String,
+        toolDescriptionJson: String,
+        profile: LlmInferenceProfile = LlmInferenceProfile.COMMAND,
+    ): ParsedToolCall? = null
+
     fun close()
 }
 
@@ -70,6 +86,13 @@ class LiteRtEngine(private val instance: LlmModelInstance) : VoiceAiEngine {
         profile: LlmInferenceProfile,
         onToken: ((String) -> Unit)?,
     ): String = LlmChatModelHelper.runInference(instance, prompt, images, profile, onToken)
+
+    override suspend fun runToolCall(
+        prompt: String,
+        toolDescriptionJson: String,
+        profile: LlmInferenceProfile,
+    ): ParsedToolCall? =
+        LlmChatModelHelper.runToolCall(instance, prompt, toolDescriptionJson, profile)
 
     override fun close() {
         LlmChatModelHelper.close(instance)

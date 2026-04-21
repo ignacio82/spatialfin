@@ -292,7 +292,7 @@ For low-latency movement of complex player UIs:
 ### Request Pipeline (do not mash these layers together)
 
 1. **`SpatialVoiceService`** — speech recognition lifecycle, partial transcript, listening/processing state, soft-error retry for recognizer errors `5` and `7`.
-2. **`SpatialCommandCoordinator`** — keyword/replay-library matches, screen-aware parsing (`HOME` vs `PLAYER`), Gemini/Gemma JSON command parsing with strict retry.
+2. **`SpatialCommandCoordinator`** — keyword/replay-library matches, screen-aware parsing (`HOME` vs `PLAYER`), and model-backed parsing through `GemmaCommandParser`. The parser's primary path is LiteRT-LM typed tool calling (`ConversationConfig.tools` + a single `interpret_command` OpenAPI tool with a constrained `action` enum → `ParsedToolCall` with `Map<String, Any?>` arguments — no JSON string extraction, no retry). AICore falls back to JSON-in-text with one strict retry because `mlkit-genai-prompt:1.0.0-beta2` doesn't expose schemas yet.
 3. **`XrPlayerAction`** — typed action boundary between parsing and execution.
 4. **`PlayerSessionController`** — executes playback/search/selection actions; owns pending-selection state for follow-ups like "play the first one."
 5. **`SmartChatEngine`** — handles `ChatQuery`; builds prompt context **only after** a skill is selected.
@@ -384,14 +384,15 @@ User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoice
 ### Failure Triage Order
 
 1. **Speech layer** — did recognition start? soft errors `5`/`7`? did retry happen?
-2. **Parser layer** — was transcript normalized? keyword/replay match? Gemma JSON malformed?
+2. **Parser layer** — was transcript normalized? keyword/replay match? Did the LiteRT tool-call return `interpret_command` with a known `action`? Did the AICore JSON fallback truncate?
 3. **Skill layer** — which `selectedSkill`? `validatedInput` sensible? reply was `DIRECT`/`MODEL`/`FALLBACK`?
 4. **Execution / UI layer** — was `ChatQuery` actually handled on the current screen? did `recommendedItems` populate? did the overlay show feedback?
 
 ### Common Real Failure Patterns
 
 - **`TF_LITE_AUX not found in the model`** — NPU unsupported for that model/device. GPU fallback expected. Cache the failing backend.
-- **`GemmaCommandParser: raw response: {"`** — truncated JSON. Parser should retry with stricter instructions before falling through.
+- **`GemmaCommandParser: tool-call path failed — falling back to JSON parse`** — the LiteRT tool-call returned null or threw. Expected on AICore (Gemini Nano has no schema support in `mlkit-genai-prompt:1.0.0-beta2`); investigate on LiteRT if the model's been behaving. The JSON-in-text retry still runs behind this, so it's not a user-visible failure on its own.
+- **`GemmaCommandParser: raw response: {"`** — truncated JSON on the fallback path. Rare now that typed tool calling is primary on LiteRT; more likely on AICore. Parser retries once with a stricter instruction before falling through to `Unrecognized`.
 - **Speech soft errors `5` / `7`** — transient recognizer issues. One automatic retry expected.
 - **"Thinking…" never resolves** — usually not a parser problem. Check that `ChatQuery` is handled on the current screen and that feedback / results UI is rendered.
 

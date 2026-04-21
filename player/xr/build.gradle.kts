@@ -28,7 +28,7 @@ android {
         compose = true
     }
 
-
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
@@ -78,4 +78,8 @@ dependencies {
     implementation(libs.timber)
 
     testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.turbine)
 }

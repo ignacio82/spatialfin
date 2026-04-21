@@ -13,7 +13,9 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.OpenApiTool
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.tool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -271,6 +273,93 @@ object LlmChatModelHelper {
 
     fun close(instance: LlmModelInstance) {
         instance.engine.close()
+    }
+
+    /**
+     * Runs inference with a single OpenAPI-style tool attached and returns the first
+     * structured tool call the model emits. Null means either the model replied with
+     * plain text (no tool call) or the conversation errored — callers should then
+     * fall back to a text parser.
+     *
+     * `automaticToolCalling = false` so the model returns the tool call for us to
+     * dispatch; we never want LiteRT to execute the stub `execute()` (we don't know
+     * the domain at this layer). The stub returns an empty string, which is fine
+     * because we tear the conversation down after the first tool call anyway.
+     */
+    @OptIn(ExperimentalApi::class)
+    suspend fun runToolCall(
+        instance: LlmModelInstance,
+        prompt: String,
+        toolDescriptionJson: String,
+        profile: LlmInferenceProfile = LlmInferenceProfile.COMMAND,
+    ): ParsedToolCall? {
+        inferenceMutex.lock()
+
+        val openApiTool = object : OpenApiTool {
+            override fun getToolDescriptionJsonString(): String = toolDescriptionJson
+            // We never want LiteRT to execute the tool — automaticToolCalling is off and
+            // we tear down the conversation after extracting the first ToolCall. Stub
+            // satisfies the interface contract.
+            override fun execute(args: String): String = ""
+        }
+
+        val conversation = instance.engine.createConversation(
+            ConversationConfig(
+                tools = listOf(tool(openApiTool)),
+                automaticToolCalling = false,
+                samplerConfig = SamplerConfig(
+                    topK = profile.topK,
+                    topP = profile.topP.toDouble(),
+                    temperature = profile.temperature.toDouble(),
+                ),
+            ),
+        )
+
+        Timber.d(
+            "LiteRT: runToolCall profile=%s promptChars=%d backend=%s",
+            profile.name,
+            prompt.length,
+            instance.backendName,
+        )
+
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                var lastMessage: Message? = null
+                try {
+                    conversation.sendMessageAsync(
+                        prompt,
+                        object : MessageCallback {
+                            override fun onMessage(message: Message) {
+                                lastMessage = message
+                            }
+
+                            override fun onDone() {
+                                conversation.close()
+                                inferenceMutex.unlock()
+                                val call = lastMessage?.toolCalls?.firstOrNull()
+                                val parsed = call?.let {
+                                    ParsedToolCall(name = it.name, arguments = it.arguments)
+                                }
+                                continuation.resume(parsed)
+                            }
+
+                            override fun onError(throwable: Throwable) {
+                                conversation.close()
+                                inferenceMutex.unlock()
+                                Timber.w(throwable, "LiteRT: tool-call inference error")
+                                continuation.resumeWithException(throwable)
+                            }
+                        },
+                    )
+                } catch (e: Exception) {
+                    conversation.close()
+                    inferenceMutex.unlock()
+                    continuation.resumeWithException(e)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        }
     }
 
     private fun buildBackendOrder(
