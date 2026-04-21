@@ -80,6 +80,7 @@ import coil3.compose.AsyncImage
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
+import dev.jdtech.jellyfin.core.llm.VoiceCapability
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -169,6 +170,13 @@ fun BeamNavigationRoot(
     val voiceState by voiceController.voiceService.state.collectAsStateWithLifecycle()
     val voicePartial by voiceController.voiceService.partialTranscript.collectAsStateWithLifecycle()
     val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsStateWithLifecycle()
+    val voiceCapability by llmModelManager.voiceCapability.collectAsStateWithLifecycle()
+    // Show voice UI whenever the device can run a usable backend (AICore / NPU / GPU)
+    // or the user has a cloud API key. Hide it on CPU-only LiteRT — the experience
+    // is measured in tens of seconds per reply and users tap the mic expecting
+    // something closer to conversational. UNKNOWN keeps the UI visible during the
+    // initial probe so we don't flash-hide during boot.
+    val showVoiceUi = voiceCapability != VoiceCapability.CPU_ONLY
     val assistantSpokenReplies = appPreferences.getValue(appPreferences.voiceAssistantSpokenReplies)
     val assistantVoiceName = appPreferences.getValue(appPreferences.voiceAssistantVoice)
 
@@ -361,6 +369,7 @@ fun BeamNavigationRoot(
             voiceState = voiceState,
             voicePartial = voicePartial,
             onVoiceClick = onVoiceMicClick,
+            showVoice = showVoiceUi,
         )
     }
 
@@ -385,7 +394,7 @@ fun BeamNavigationRoot(
             Scaffold(
                 containerColor = Color.Transparent,
                 floatingActionButton = {
-                    if (showPrimaryNavigation) {
+                    if (showPrimaryNavigation && showVoiceUi) {
                         BeamVoiceFab(
                             voiceState = voiceState,
                             isTtsSpeaking = isTtsSpeaking,
@@ -848,6 +857,7 @@ private fun BeamSidebar(
     voiceState: VoiceState = VoiceState.IDLE,
     voicePartial: String = "",
     onVoiceClick: () -> Unit = {},
+    showVoice: Boolean = true,
     forceExpanded: Boolean = false,
 ) {
     val visibleTabs = if (isOfflineMode) {
@@ -904,17 +914,19 @@ private fun BeamSidebar(
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                     )
-                    IconButton(onClick = onVoiceClick) {
-                        Icon(
-                            imageVector = Icons.Rounded.Mic,
-                            contentDescription = "Voice",
-                            modifier = Modifier.size(22.dp),
-                            tint = if (voiceState == VoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (showVoice) {
+                        IconButton(onClick = onVoiceClick) {
+                            Icon(
+                                imageVector = Icons.Rounded.Mic,
+                                contentDescription = "Voice",
+                                modifier = Modifier.size(22.dp),
+                                tint = if (voiceState == VoiceState.LISTENING) Color(0xFF4FC3F7) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
-            if (voiceState == VoiceState.LISTENING && voicePartial.isNotBlank() && isExpanded) {
+            if (showVoice && voiceState == VoiceState.LISTENING && voicePartial.isNotBlank() && isExpanded) {
                 Text(
                     text = voicePartial,
                     style = MaterialTheme.typography.bodySmall,

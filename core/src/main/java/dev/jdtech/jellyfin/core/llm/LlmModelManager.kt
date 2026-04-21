@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.core.llm
 
 import android.content.Context
+import android.content.SharedPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
@@ -18,6 +19,13 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Whether the current on-device AI setup can drive a good voice experience.
+ * [CPU_ONLY] means LiteRT landed on CPU and there's no cloud API key to offload
+ * to — voice UX will be painfully slow and should be hidden rather than offered.
+ */
+enum class VoiceCapability { UNKNOWN, CAPABLE, CPU_ONLY }
 
 /**
  * App-wide singleton that owns the on-device voice AI engine lifecycle.
@@ -50,6 +58,23 @@ class LlmModelManager @Inject constructor(
     private val _engine = MutableStateFlow<VoiceAiEngine?>(null)
     val engine: StateFlow<VoiceAiEngine?> = _engine.asStateFlow()
 
+    private val _voiceCapability = MutableStateFlow(VoiceCapability.UNKNOWN)
+    /**
+     * Derived signal that UIs (Beam mic FAB, future Home/XR affordances) use to
+     * decide whether to surface voice at all. Recomputes when the active engine
+     * changes and when [AppPreferences.voiceAssistantCloudApiKey] is written.
+     */
+    val voiceCapability: StateFlow<VoiceCapability> = _voiceCapability.asStateFlow()
+
+    // Listener held as a field so it stays strongly referenced — SharedPreferences
+    // registers listeners via WeakReference, so a local would be GC'd immediately.
+    private val cloudKeyListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == appPreferences.voiceAssistantCloudApiKey.backendName) {
+                recomputeVoiceCapability()
+            }
+        }
+
     /** Direct reference to the current engine, null while nothing is ready. */
     val instance: VoiceAiEngine? get() = _engine.value
 
@@ -66,6 +91,7 @@ class LlmModelManager @Inject constructor(
     private var aiCoreDownloadJob: Job? = null
 
     init {
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(cloudKeyListener)
         scope.launch { probeAiCoreAndActivate() }
         scope.launch {
             downloadManager.downloadState.collect { downloadState ->
@@ -78,6 +104,27 @@ class LlmModelManager @Inject constructor(
                     initializeLiteRtEngine(downloadState.file.absolutePath)
                 }
             }
+        }
+    }
+
+    private fun recomputeVoiceCapability() {
+        val backend = _engine.value?.backendName
+        val hasCloudKey = !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).isNullOrBlank()
+        val next = when {
+            hasCloudKey -> VoiceCapability.CAPABLE
+            backend == null -> VoiceCapability.UNKNOWN
+            backend.equals("CPU", ignoreCase = true) -> VoiceCapability.CPU_ONLY
+            else -> VoiceCapability.CAPABLE
+        }
+        if (_voiceCapability.value != next) {
+            Timber.i(
+                "LlmModelManager: voice capability %s -> %s (backend=%s cloudKey=%b)",
+                _voiceCapability.value,
+                next,
+                backend,
+                hasCloudKey,
+            )
+            _voiceCapability.value = next
         }
     }
 
@@ -170,6 +217,7 @@ class LlmModelManager @Inject constructor(
         // If a prior LiteRT engine was active, tear it down — we'd rather not
         // keep two on-device LLMs warm in memory.
         if (previous is LiteRtEngine) previous.close()
+        recomputeVoiceCapability()
         Timber.i("AICore: engine activated")
     }
 
@@ -207,6 +255,7 @@ class LlmModelManager @Inject constructor(
                         Timber.i("LlmModelManager: GPU/NPU available, enabling Gemma")
                     }
                 }
+                recomputeVoiceCapability()
                 Timber.i("LlmModelManager: ready on %s", newInstance.backendName)
             } else {
                 heartbeat.cancel()
