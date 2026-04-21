@@ -142,6 +142,10 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            // TV global-search provider authority. Must stay in sync with the
+            // applicationId — two installs of the app can't share a provider
+            // authority, so debug/staging/release get their own.
+            resValue("string", "search_authority", "dev.spatialfin.debug.search")
         }
         release {
             // XR system-extension callbacks are still crashing in optimized builds with
@@ -159,10 +163,12 @@ android {
                 } else {
                     null
                 }
+            resValue("string", "search_authority", "dev.spatialfin.search")
         }
         create("staging") {
             initWith(getByName("release"))
             applicationIdSuffix = ".staging"
+            resValue("string", "search_authority", "dev.spatialfin.staging.search")
         }
     }
 
@@ -202,6 +208,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        // Required by the `resValue(...)` calls in buildTypes that generate
+        // `R.string.search_authority` per applicationId for the TV global-
+        // search provider.
+        resValues = true
     }
 
     compileOptions {

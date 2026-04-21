@@ -1,8 +1,10 @@
 package dev.jdtech.jellyfin.film.presentation.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.film.R as FilmR
 import dev.jdtech.jellyfin.models.CollectionType
@@ -17,6 +19,7 @@ import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.toView
+import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +39,8 @@ constructor(
     val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
+    private val watchNextScheduler: WatchNextScheduler,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state = _state.asStateFlow()
@@ -92,6 +97,11 @@ constructor(
                     // does N+1 API calls (one per library for latest media) and was
                     // blocking first paint by 200-500ms on slow TV connections.
                     _state.emit(_state.value.copy(isLoading = false))
+                    // Publish resume/next-up to Google TV's Watch Next row. No-op
+                    // on non-TV devices, so unconditional here is fine. Fire after
+                    // the sections are in _state so Watch Next mirrors what the
+                    // user just saw on the home screen.
+                    watchNextScheduler.syncNow(appContext)
                     try {
                         loadViews()
                     } catch (e: Exception) {

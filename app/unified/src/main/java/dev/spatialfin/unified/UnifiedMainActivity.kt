@@ -1,6 +1,8 @@
 package dev.spatialfin.unified
 
 import android.Manifest
+import android.app.SearchManager
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
@@ -182,7 +184,19 @@ class UnifiedMainActivity : AppCompatActivity() {
             )
         }
 
-        val initialSearchQueryExtra = intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY)
+        // `ACTION_SEARCH` lands here when the Google TV Launcher's search bar
+        // or the Assistant hands off a voice query (see the TV-flavor manifest
+        // overlay + `res/xml/tv_searchable.xml`). We treat it as the same signal
+        // as the companion-import / voice-follow-up `EXTRA_INITIAL_SEARCH_QUERY`,
+        // which downstream nav graphs already know how to consume.
+        val actionSearchQuery =
+            if (Intent.ACTION_SEARCH == intent.action) {
+                intent.getStringExtra(SearchManager.QUERY)
+            } else {
+                null
+            }
+        val initialSearchQueryExtra =
+            intent.getStringExtra(EXTRA_INITIAL_SEARCH_QUERY) ?: actionSearchQuery
 
         appLockManager.refreshState()
 
@@ -205,6 +219,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                             state = state,
                             appPreferences = appPreferences,
                             onReconnect = viewModel::reconnect,
+                            initialSearchQuery = initialSearchQueryExtra,
                         )
                     }
                 }

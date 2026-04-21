@@ -153,9 +153,18 @@ val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TvNavigationRoot(state: MainState, appPreferences: AppPreferences, onReconnect: () -> Unit = {}) {
+fun TvNavigationRoot(
+    state: MainState,
+    appPreferences: AppPreferences,
+    onReconnect: () -> Unit = {},
+    initialSearchQuery: String? = null,
+) {
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+    // Activity-scoped: the same VM that TvSearchScreen resolves via hiltViewModel().
+    // Pre-populating it before the user navigates lets ACTION_SEARCH / global
+    // search suggestions land on the Search route with the query already run.
+    val searchViewModel: dev.spatialfin.tv.TvSearchViewModel = hiltViewModel()
 
     val navStack = rememberSaveable(
         saver = listSaver<MutableList<TvRoute>, String>(
@@ -183,6 +192,15 @@ fun TvNavigationRoot(state: MainState, appPreferences: AppPreferences, onReconne
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(Unit) { homeViewModel.loadData() }
+
+    LaunchedEffect(initialSearchQuery) {
+        val query = initialSearchQuery?.trim().orEmpty()
+        if (query.isNotEmpty()) {
+            searchViewModel.setQuery(query)
+            searchViewModel.search()
+            navigate(TvRoute.Search)
+        }
+    }
 
     fun openItem(item: SpatialFinItem) {
         when (item) {

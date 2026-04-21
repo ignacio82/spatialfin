@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      TV-flavor overlay. Merged on top of app/unified/src/main/AndroidManifest.xml
+      when the `tv` product flavor is selected (Google Play Android TV bundle).
+
+      Three TV-specific things live here:
+
+        1. TvPlayerActivity is exported with a declarative
+           `spatialfin://play?id=...&kind=...&startMs=...` deep link so the
+           Google TV Launcher's Watch Next cards (and future Global Search /
+           AppFunctions hand-offs) can launch playback directly. See
+           `dev.jdtech.jellyfin.deeplink.PlayDeepLink`.
+
+        2. SpatialFinSearchProvider surfaces cached library content into Google
+           TV's global search suggestions. Authority is templated per build
+           variant via the `search_authority` string resource.
+
+        3. UnifiedMainActivity picks up `android.intent.action.SEARCH` so the
+           Assistant and launcher search bar can hand off a query string that
+           we route into the existing TV search screen.
+    -->
+    <application>
+        <activity
+            android:name="dev.jdtech.jellyfin.player.tv.TvPlayerActivity"
+            android:exported="true"
+            tools:node="merge">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="spatialfin" android:host="play" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".unified.UnifiedMainActivity"
+            tools:node="merge">
+            <intent-filter>
+                <action android:name="android.intent.action.SEARCH" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.searchable"
+                android:resource="@xml/tv_searchable" />
+            <meta-data
+                android:name="android.app.default_searchable"
+                android:value=".unified.UnifiedMainActivity" />
+        </activity>
+
+        <provider
+            android:name="dev.jdtech.jellyfin.search.SpatialFinSearchProvider"
+            android:authorities="${applicationId}.search"
+            android:exported="true" />
+    </application>
+</manifest>

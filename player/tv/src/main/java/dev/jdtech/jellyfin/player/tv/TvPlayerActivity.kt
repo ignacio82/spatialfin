@@ -102,6 +102,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.deeplink.PlayDeepLink
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -218,9 +219,16 @@ class TvPlayerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // ACTION_VIEW with a `spatialfin://play?id=...` URI lands here from the
+        // TV Launcher's Watch Next cards (and, eventually, Global Search /
+        // AppFunctions). Fold parsed fields into the same locals the explicit
+        // `createIntent` path populates, so the rest of onCreate doesn't branch.
+        val deepLink =
+            if (Intent.ACTION_VIEW == intent.action) PlayDeepLink.parse(intent.data) else null
+
         val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
-        val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
-        val itemKind = intent.getStringExtra(EXTRA_ITEM_KIND)
+        val itemIdString = deepLink?.itemId?.toString() ?: intent.getStringExtra(EXTRA_ITEM_ID)
+        val itemKind = deepLink?.kind ?: intent.getStringExtra(EXTRA_ITEM_KIND)
         val localMediaId = intent.getLongExtra(EXTRA_LOCAL_MEDIA_ID, 0L).takeIf { it > 0L }
         val networkVideoId = intent.getStringExtra(EXTRA_NETWORK_VIDEO_ID)
         val mediaSourceIndex =
@@ -236,11 +244,12 @@ class TvPlayerActivity : AppCompatActivity() {
                 null
             }
         val startPositionMs =
-            if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
-                intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).takeIf { it > 0L }
-            } else {
-                null
-            }
+            deepLink?.startPositionMs
+                ?: if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
+                    intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).takeIf { it > 0L }
+                } else {
+                    null
+                }
 
         Timber.i(
             "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s",
