@@ -491,7 +491,7 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
             val show = state.show!!
             val onFocusBackground = LocalFocusedBackground.current
             LaunchedEffect(show.id) { onFocusBackground(tvBackdropArtwork(show)) }
-            val metadata = buildList { getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add); if (state.seasons.isNotEmpty()) add("${state.seasons.size} seasons"); show.communityRating?.let { add("${"%.1f".format(it)}/10") } }
+            val metadata = buildList { getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add); if (state.seasons.isNotEmpty()) add("${state.seasons.size} seasons") }
             LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
                 item {
                     TvDetailHeroCard(show, "Series", show.genres.take(3).joinToString(" • "), metadata, show.overview, actions = {

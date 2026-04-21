@@ -951,7 +951,6 @@ fun BeamShowScreen(
                             add("${state.seasons.size} seasons")
                         }
                         show.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-                        show.communityRating?.let { add("${"%.1f".format(it)}/10") }
                         show.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
                     }
                 item {
@@ -1295,14 +1294,12 @@ fun BeamItemDetailScreen(
                                 itemData.productionYear?.let { add(it.toString()) }
                                 beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
                                 itemData.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-                                itemData.communityRating?.let { add("${"%.1f".format(it)}/10") }
                                 addAll(itemData.genres.take(2))
                             }
                             is SpatialFinEpisode -> {
                                 add(buildEpisodeLabel(itemData))
                                 itemData.premiereDate?.year?.let { add(it.toString()) }
                                 beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
-                                itemData.communityRating?.let { add("${"%.1f".format(it)}/10") }
                             }
                             is SpatialFinSeason -> {
                                 add(beamSeasonLabel(itemData))

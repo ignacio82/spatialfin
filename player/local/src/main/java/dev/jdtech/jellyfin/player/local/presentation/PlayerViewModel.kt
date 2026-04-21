@@ -1597,6 +1597,7 @@ constructor(
      */
     private fun nextLowerAutoStep(current: Long): Long? = when {
         current == 0L -> QualityOption.UHD.bps
+        current > QualityOption.UHD.bps -> QualityOption.UHD.bps
         current > QualityOption.FHD.bps -> QualityOption.FHD.bps
         current > QualityOption.HD.bps -> QualityOption.HD.bps
         current > QualityOption.SD.bps -> QualityOption.SD.bps

@@ -213,6 +213,7 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
     val shortLabel: (QualityOption) -> String = {
         when (it) {
             QualityOption.AUTO -> "Auto"
+            QualityOption.DIRECT_PLAY -> "Direct Play"
             QualityOption.UHD -> "4K"
             QualityOption.FHD -> "1080p"
             QualityOption.HD -> "720p"

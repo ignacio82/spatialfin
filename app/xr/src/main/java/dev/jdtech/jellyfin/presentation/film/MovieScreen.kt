@@ -395,7 +395,6 @@ private fun buildMovieHeroMetadata(movie: SpatialFinMovie): List<String> =
             add("${movie.runtimeTicks.div(600000000)} min")
         }
         movie.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-        movie.communityRating?.let { add("${"%.1f".format(it)}/10") }
         addAll(movie.genres.take(2))
     }
 

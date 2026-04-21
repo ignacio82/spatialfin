@@ -312,6 +312,5 @@ private fun buildShowHeroMetadata(
             add("${seasons.size} seasons")
         }
         show.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-        show.communityRating?.let { add("${"%.1f".format(it)}/10") }
         show.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
     }

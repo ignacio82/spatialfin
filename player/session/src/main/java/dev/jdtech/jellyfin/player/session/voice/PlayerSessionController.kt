@@ -496,6 +496,7 @@ class PlayerSessionController(
 
     private fun bitrateLabel(bps: Long): String = when (QualityOption.fromBps(bps)) {
         QualityOption.AUTO -> "Auto"
+        QualityOption.DIRECT_PLAY -> "Direct Play"
         QualityOption.UHD -> "4K"
         QualityOption.FHD -> "1080p"
         QualityOption.HD -> "720p"

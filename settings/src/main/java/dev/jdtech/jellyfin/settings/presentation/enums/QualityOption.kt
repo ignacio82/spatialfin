@@ -18,6 +18,7 @@ enum class QualityOption(
     @StringRes val labelRes: Int,
 ) {
     AUTO(0L, R.string.quality_auto),
+    DIRECT_PLAY(1_000_000_000L, R.string.quality_direct_play),
     UHD(40_000_000L, R.string.quality_2160p),
     FHD(10_000_000L, R.string.quality_1080p),
     HD(4_000_000L, R.string.quality_720p),
