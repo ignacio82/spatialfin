@@ -32,8 +32,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -362,6 +365,20 @@ private fun TvUsersScreen(onBack: () -> Unit, onUserSwitched: () -> Unit, viewMo
     }
 }
 
+// Home rails are nested inside the TvHomeScreen's LazyColumn, so
+// `initialNestedPrefetchItemCount` controls how many cards of a not-yet-visible
+// shelf get pre-composed as the user D-pads down. The default is 2; on weak TV
+// GPUs (Chromecast w/ Google TV, Amlogic Mali-G31) that leaves visible pop-in
+// when a new shelf slides in. 4 covers roughly the left-hand bias of the row.
+private const val TV_NESTED_PREFETCH_COUNT = 4
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun rememberTvShelfListState() =
+    rememberLazyListState(
+        prefetchStrategy = remember { LazyListPrefetchStrategy(TV_NESTED_PREFETCH_COUNT) },
+    )
+
 @Composable
 private fun TvContentShelf(title: String, items: List<SpatialFinItem>, showProgress: Boolean = false, onOpenItem: (SpatialFinItem) -> Unit) {
     if (items.isEmpty()) return
@@ -370,6 +387,7 @@ private fun TvContentShelf(title: String, items: List<SpatialFinItem>, showProgr
         LazyRow(
             modifier = Modifier.focusRestorer(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
+            state = rememberTvShelfListState(),
         ) {
             itemsIndexed(items.take(12), key = { _, it -> it.id }) { _, item ->
                 TvMediaCard(item, showProgress, Modifier.width(180.dp), { onOpenItem(item) })
@@ -386,6 +404,7 @@ private fun TvLibraryShelf(title: String, views: List<View>, onOpenLibrary: (Vie
         LazyRow(
             modifier = Modifier.focusRestorer(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
+            state = rememberTvShelfListState(),
         ) {
             itemsIndexed(views, key = { _, it -> it.id }) { _, view ->
                 TvLibraryCard(view, onClick = { onOpenLibrary(view) })
