@@ -97,7 +97,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 - `settings/src/main/java/dev/jdtech/jellyfin/settings/voice/VoiceTelemetryStore.kt`
 - `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` (voice state machine + lazy LLM/TTS service creation; used by both XR Home Space and the Beam phone shell)
 - `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` (XR gesture wiring + navigation surface for the controller)
-- `app/beam/src/main/java/dev/spatialfin/beam/BeamNavigationRoot.kt` (Beam-phone mic FAB, voice feedback overlay, recommendation sheet — delegates to `HomeVoiceController` for the same AI pipeline as XR)
+- `app/unified/src/main/java/dev/spatialfin/beam/BeamNavigationRoot.kt` (Beam-phone mic FAB, voice feedback overlay, recommendation sheet — delegates to `HomeVoiceController` for the same AI pipeline as XR)
 
 ---
 
@@ -107,7 +107,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 
 | Module | Purpose |
 |---|---|
-| `:app:unified` | The **only** application module (`applicationId = dev.spatialfin`). Single APK that branches at runtime on `DeviceClass`. Stages XR / TV / Beam sources into the build (see [Source Staging](#source-staging-quirk)). |
+| `:app:unified` | The **only** application module (`applicationId = dev.spatialfin`). Single APK that branches at runtime on `DeviceClass`. XR, TV, and Beam code all live in this module's `src/main/java` under their own packages (`dev.jdtech.jellyfin.*`, `dev.spatialfin.tv.*`, `dev.spatialfin.beam.*`). |
 | `:player:xr` | Immersive XR player, libass JNI, voice subsystem, spatial UI. |
 | `:player:local` | ExoPlayer/Media3 wrapper for local & Jellyfin playback (`PlayerViewModel`). |
 | `:player:session` | Player session/action layer; voice-typed actions (`XrPlayerAction`) and `PlayerSessionController`. |
@@ -120,23 +120,15 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 | `:settings` | DataStore-based preferences (`AppPreferences`), voice telemetry, smart-language settings. |
 | `:setup` | Server onboarding, login, address selection. |
 
-**Source dirs that exist on disk but are NOT registered Gradle modules:**
+**All app source lives under `app/unified/src/main/java`.** The former `app/xr/`, `app/tv/`, `app/beam/` trees have been consolidated into `:app:unified` (single source set, no staging task). Package layout inside `src/main/java`:
 
-- `app/xr/src/main/java`
-- `app/tv/src/main/java`
-- `app/beam/src/main/java`
+- `dev.jdtech.jellyfin.*` — the XR code (film screens, player XR helpers, voice composables).
+- `dev.spatialfin.presentation.theme.*` — shared XR theme / spacings.
+- `dev.spatialfin.tv.*` — TV home, detail, companion, users screens.
+- `dev.spatialfin.beam.*` — Beam Pro phone screens and view-models.
+- `dev.spatialfin.*` (top-level) — `UnifiedMainActivity`, `UnifiedApplication`, `DeviceClass`, companion log plumbing, nav root.
 
-These are **staged into `:app:unified`** at build time by `StageSourcesTask` in `app/unified/build.gradle.kts`. Editing files under `app/xr/...`, `app/tv/...`, or `app/beam/...` *does* affect the unified APK — Gradle copies (and patches `R`/`BuildConfig` imports for TV/Beam) before kotlinc runs. Do not delete these source trees without unwinding the staging task and migrating sources into `app/unified/src/main/java`.
-
-### Source Staging Quirk
-
-`app/unified/build.gradle.kts` defines `StageSourcesTask` (~line 26) which:
-
-1. Copies `app/{xr,tv,beam}/src/main/java` → `build/filteredSources/{xr,tv,beam}`.
-2. For TV/Beam, injects `import dev.spatialfin.R` and `import dev.spatialfin.BuildConfig` into every package declaration so the legacy code resolves the unified `R` class.
-3. Registers each filtered dir via `variant.sources.java?.addGeneratedSourceDirectory(...)` so AGP/Hilt/KSP see them as generated sources.
-
-If you add a new file under `app/xr/...`, `app/tv/...`, `app/beam/...`, no Gradle change is needed — the next build will pick it up. **But** Android Studio source navigation may lag; do an `./gradlew :app:unified:assembleLibreDebug` to refresh staged outputs if the IDE complains.
+Because everything is in one module now, TV/Beam files that reference `R` or `BuildConfig` resolve them via an explicit `import dev.spatialfin.R` / `import dev.spatialfin.BuildConfig` — no build-time source rewriting. If you touch a file and the IDE can't find `R`, add that import by hand.
 
 ### Player Module Cross-Reference
 
@@ -146,7 +138,7 @@ If you add a new file under `app/xr/...`, `app/tv/...`, `app/beam/...`, no Gradl
 
 ## Build Quirks
 
-- **Single application module** — `:app:unified` only. There is no `:app:xr` Gradle module; the directory exists for source staging only.
+- **Single application module** — `:app:unified` only. XR / TV / Beam packages all live inside its single `src/main/java` tree; there are no longer any `app/xr`, `app/tv`, or `app/beam` source directories.
 - **Product flavors** — `libre` (universal: phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only). Build types: `debug`, `staging` (release-derived, `.staging` suffix), `release`. See [Play Track Bundles](#play-track-bundles) for which bundle goes to which track.
 - **Upstream modules only declare `libre`** — the `tv` flavor uses `matchingFallbacks += "libre"` so library dependencies resolve cleanly. If you ever add a new `:foo` module, remember to keep its single flavor named `libre` (or add `matchingFallbacks` / a `tv` flavor there too).
 - **Release is `isMinifyEnabled = false`** — XR system-extension callbacks under `com.android.extensions.xr.*` were crashing with `AbstractMethodError` in optimized builds. Until the androidx.xr / R8 interaction is fixed, do not flip this on without testing the entire spatial UI. If you must minify, the keep rules in `app/unified/proguard-rules.pro` are the starting point.
@@ -446,7 +438,7 @@ User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoice
 
 ### TV Form-Factor Perf (Chromecast with Google TV / low-end Leanback)
 TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are cheap on XR / phone become visibly choppy on TV.
-- **No Compose `.blur()` on TV backgrounds.** `TvAmbientBackground` (`app/tv/.../TvNavigationRoot.kt`) uses scrim + radial gradients instead. Blur radii above ~24dp stall focus navigation on these SoCs.
+- **No Compose `.blur()` on TV backgrounds.** `TvAmbientBackground` (`app/unified/src/main/java/dev/spatialfin/tv/TvNavigationRoot.kt`) uses scrim + radial gradients instead. Blur radii above ~24dp stall focus navigation on these SoCs.
 - **Coil crossfade is disabled on TV.** The `SingletonImageLoader.Factory` in `UnifiedApplication.newImageLoader` branches on `DeviceClass`; TV loads images with crossfade off to avoid stacking fades during fast D-pad navigation.
 - **Ambient backdrop decodes at 960×540.** `TvAmbientBackground` wraps the URL in an `ImageRequest.Builder(...).size(960, 540)` — a full-screen 1920×1080 decode is 8 MB peak per frame on a 2 GB device.
 - **LLM eager init is skipped on TV.** `UnifiedApplication.eagerInitializeLlmIfNeeded` returns immediately for `DeviceClass.TV`. TV settings now expose voice-assistant preferences (picker, cloud key, Gemma/AICore management) to match Beam/XR, but TV has no active voice *listener* — eager init would warm an engine nothing on TV invokes. If you wire up a TV voice entry point later, flip this gate.

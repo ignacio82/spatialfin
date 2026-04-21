@@ -1,5 +1,6 @@
 package dev.spatialfin.beam
 
+import dev.spatialfin.R
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult

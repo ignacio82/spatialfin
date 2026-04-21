@@ -1,12 +1,4 @@
 import java.util.Properties
-import org.gradle.api.DefaultTask
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.provider.ListProperty
-import org.gradle.api.provider.Property
-import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
-import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.TaskAction
 
 plugins {
     alias(libs.plugins.android.application)
@@ -21,78 +13,6 @@ val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
-}
-
-abstract class StageSourcesTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val sourceDir: DirectoryProperty
-
-    @get:OutputDirectory
-    abstract val outputDir: DirectoryProperty
-
-    @get:Input
-    abstract val packageToPatch: Property<String>
-
-    @get:Input
-    abstract val injectedImports: ListProperty<String>
-
-    @TaskAction
-    fun stageSources() {
-        val packageToPatch = packageToPatch.orNull
-        val importsToInject = injectedImports.orNull.orEmpty()
-
-        project.delete(outputDir.get().asFile)
-        project.copy {
-            from(sourceDir)
-            into(outputDir)
-            if (!packageToPatch.isNullOrBlank() && importsToInject.isNotEmpty()) {
-                filter { line: String ->
-                    if (line.trimStart().startsWith("package $packageToPatch")) {
-                        buildString {
-                            append(line)
-                            append('\n')
-                            append(importsToInject.joinToString(separator = "\n") { "import $it" })
-                        }
-                    } else {
-                        line
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Source staging
-//
-// app:unified is the only application module, but we still keep the XR, TV,
-// and Beam source trees under their legacy directories. Copy them into build-
-// time staging dirs and register them through the Variant API so AGP/Hilt sees
-// them as generated sources. TV and Beam sources also need unified R and
-// BuildConfig imports injected while staging.
-// ---------------------------------------------------------------------------
-
-val filteredXrDir = layout.buildDirectory.dir("filteredSources/xr")
-val filteredTvDir = layout.buildDirectory.dir("filteredSources/tv")
-val filteredBeamDir = layout.buildDirectory.dir("filteredSources/beam")
-
-val prepareXrSources by tasks.registering(StageSourcesTask::class) {
-    sourceDir.set(layout.projectDirectory.dir("../xr/src/main/java"))
-    outputDir.set(filteredXrDir)
-    packageToPatch.set("")
-    injectedImports.set(emptyList())
-}
-val prepareTvSources by tasks.registering(StageSourcesTask::class) {
-    sourceDir.set(layout.projectDirectory.dir("../tv/src/main/java"))
-    outputDir.set(filteredTvDir)
-    packageToPatch.set("dev.spatialfin.tv")
-    injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
-}
-val prepareBeamSources by tasks.registering(StageSourcesTask::class) {
-    sourceDir.set(layout.projectDirectory.dir("../beam/src/main/java"))
-    outputDir.set(filteredBeamDir)
-    packageToPatch.set("dev.spatialfin.beam")
-    injectedImports.set(listOf("dev.spatialfin.R", "dev.spatialfin.BuildConfig"))
 }
 
 base.archivesName = "spatialfin"
@@ -313,39 +233,3 @@ dependencies {
     testImplementation(libs.turbine)
 }
 
-androidComponents {
-    onVariants(selector().all()) { variant ->
-        // Register the staged dirs through the Variant API so AGP wires the generated
-        // sources into javac/Hilt without relying on deprecated SourceSet mutation.
-        variant.sources.java?.addGeneratedSourceDirectory(
-            prepareXrSources,
-            StageSourcesTask::outputDir,
-        )
-        variant.sources.java?.addGeneratedSourceDirectory(
-            prepareTvSources,
-            StageSourcesTask::outputDir,
-        )
-        variant.sources.java?.addGeneratedSourceDirectory(
-            prepareBeamSources,
-            StageSourcesTask::outputDir,
-        )
-    }
-}
-
-afterEvaluate {
-    val prepareTasks = listOf(prepareXrSources, prepareTvSources, prepareBeamSources)
-    val extraDirs = listOf(
-        filteredXrDir.get().asFile,
-        filteredTvDir.get().asFile,
-        filteredBeamDir.get().asFile,
-    )
-
-    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-        dependsOn(prepareTasks)
-    }
-    tasks.matching { t -> t.name.let { it.startsWith("ksp") && it.contains("Kotlin") } }
-        .configureEach {
-            dependsOn(prepareTasks)
-            (this as? org.gradle.api.tasks.SourceTask)?.source(extraDirs)
-        }
-}

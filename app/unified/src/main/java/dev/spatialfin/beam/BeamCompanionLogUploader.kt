@@ -1,5 +1,6 @@
 package dev.spatialfin.beam
 
+import dev.spatialfin.BuildConfig
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
