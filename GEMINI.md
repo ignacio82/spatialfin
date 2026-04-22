@@ -466,6 +466,7 @@ TV runs on weak Amlogic GPUs (Mali-G31) and 2 GB RAM. Compose features that are 
 
 ### Dependency Management
 - `./gradlew versionCatalogUpdate` to bump `gradle/libs.versions.toml`. Always review the diff before committing.
+- **Avoid hardcoding versions:** Never hardcode version strings directly in the `[libraries]` section of `gradle/libs.versions.toml`. Always define a version in the `[versions]` block and use `version.ref` to maintain a single source of truth and ensure compatibility with automated update tools.
 
 ### Versioning
 - Bump both `APP_CODE` and `APP_NAME` in `buildSrc/src/main/kotlin/Versions.kt` for any Play Store bundle. Duplicate version codes are a hard reject.
