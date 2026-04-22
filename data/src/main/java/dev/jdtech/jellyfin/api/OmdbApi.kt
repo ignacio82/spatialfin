@@ -60,12 +60,25 @@ class OmdbApi(
 data class OmdbResult(
     @SerialName("Title") val title: String = "",
     @SerialName("Year") val year: String = "",
+    @SerialName("Rated") val rated: String = "",
+    @SerialName("Released") val released: String = "",
+    @SerialName("Runtime") val runtime: String = "",
     @SerialName("Director") val director: String = "",
     @SerialName("Writer") val writer: String = "",
+    @SerialName("Actors") val actors: String = "",
     @SerialName("Genre") val genre: String = "",
     @SerialName("Plot") val plot: String = "",
+    @SerialName("Awards") val awards: String = "",
     @SerialName("Poster") val poster: String = "",
+    @SerialName("Ratings") val ratings: List<OmdbRating> = emptyList(),
+    @SerialName("Metascore") val metascore: String = "",
     @SerialName("imdbRating") val imdbRating: String = "",
     @SerialName("imdbID") val imdbId: String = "",
     @SerialName("Response") val response: String = "",
+)
+
+@Serializable
+data class OmdbRating(
+    @SerialName("Source") val source: String = "",
+    @SerialName("Value") val value: String = "",
 )

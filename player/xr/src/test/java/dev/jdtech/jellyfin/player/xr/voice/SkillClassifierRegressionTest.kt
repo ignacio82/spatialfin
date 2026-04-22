@@ -100,6 +100,11 @@ class SkillClassifierRegressionTest {
 
             // ---- EXTERNAL_KNOWLEDGE ------------------------------------------
             Case("tell me about arrival", MediaSkillId.EXTERNAL_KNOWLEDGE),
+            // Critics-flavored phrasing routes here too so RT/Metacritic
+            // scores land via the OMDb path.
+            Case("what are critics saying about dune", MediaSkillId.EXTERNAL_KNOWLEDGE),
+            Case("what's the rotten tomatoes score for arrival", MediaSkillId.EXTERNAL_KNOWLEDGE),
+            Case("how good is the matrix", MediaSkillId.EXTERNAL_KNOWLEDGE),
 
             // ---- MOOD_SURPRISE -----------------------------------------------
             Case("surprise me", MediaSkillId.MOOD_SURPRISE),

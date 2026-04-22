@@ -1,5 +1,7 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
+import dev.jdtech.jellyfin.api.OmdbApi
+import dev.jdtech.jellyfin.api.OmdbResult
 import dev.jdtech.jellyfin.api.TmdbApi
 import dev.jdtech.jellyfin.core.llm.LlmInferenceProfile
 import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
@@ -7,6 +9,7 @@ import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import timber.log.Timber
 
 /** Shared HTTP client for the voice package. See note in [MediaSkillRegistry]. */
@@ -36,6 +39,7 @@ internal class ChatToolRegistry(
     private val tmdbApi: TmdbApi = TmdbApi(appPreferences, voiceHttpClient),
     private val wikipediaClient: WikipediaSummaryClient = WikipediaSummaryClient(voiceHttpClient),
     private val webSearchClient: WebSearchClient = WebSearchClient(appPreferences, voiceHttpClient),
+    private val omdbApi: OmdbApi = OmdbApi(appPreferences, voiceHttpClient),
 ) {
     data class ResearchNotes(
         val body: String,
@@ -57,36 +61,134 @@ internal class ChatToolRegistry(
         engine: VoiceAiEngine,
     ): ResearchNotes? {
         val webSearchAvailable = webSearchClient.isConfigured()
-        val prompt = buildToolSelectionPrompt(question, playerState)
-        val toolCall = try {
+
+        // Primary path: typed tool calling (LiteRT-LM). The model replies with a
+        // structured ParsedToolCall whose arguments are already typed. Nothing
+        // to parse.
+        val typedArgs: Map<String, Any?>? = try {
             withTimeoutOrNull(TOOL_CALL_TIMEOUT_MS) {
                 engine.runToolCall(
-                    prompt = prompt,
+                    prompt = buildToolSelectionPrompt(question, playerState),
                     toolDescriptionJson = buildResearchMediaTool(webSearchAvailable),
                     profile = LlmInferenceProfile.COMMAND,
                 )
-            }
+            }?.takeIf { it.name == "research_media" }?.arguments
         } catch (e: Exception) {
             Timber.d(e, "ChatTool: runToolCall failed")
-            return null
-        }
-        if (toolCall == null || toolCall.name != "research_media") {
-            Timber.d("ChatTool: no tool call emitted (toolCall=%s)", toolCall?.name)
-            return null
+            null
         }
 
-        val action = (toolCall.arguments["action"] as? String)?.lowercase() ?: return null
-        Timber.d("ChatTool: dispatching action=%s args=%s", action, toolCall.arguments.keys)
+        // Fallback path: JSON-in-text. AICore / Gemini Nano has no tool schema
+        // surface in mlkit-genai-prompt:1.0.0-beta2, so we prompt it to reply
+        // with a bare JSON object and parse it (same pattern GemmaCommandParser
+        // uses for its command-parse fallback). This is what lets the research
+        // pass engage on Pixel 10 Pro's Gemini Nano even without typed tools.
+        val args: Map<String, Any?>? = typedArgs ?: runJsonFallback(
+            engine = engine,
+            question = question,
+            playerState = playerState,
+            webSearchAvailable = webSearchAvailable,
+        )
+
+        if (args == null) {
+            Timber.d("ChatTool: no usable tool call emitted")
+            return null
+        }
+        val action = (args["action"] as? String)?.lowercase() ?: return null
+        Timber.d("ChatTool: dispatching action=%s args=%s strategy=%s", action, args.keys, if (typedArgs != null) "typed" else "json-fallback")
         return when (action) {
-            "lookup_title" -> executeLookupTitle(toolCall.arguments, playerState)
-            "lookup_person" -> executeLookupPerson(toolCall.arguments)
+            "lookup_title" -> executeLookupTitle(args, playerState)
+            "lookup_person" -> executeLookupPerson(args)
             "describe_current_item" -> executeDescribeCurrentItem(playerState)
-            "web_search" -> if (webSearchAvailable) executeWebSearch(toolCall.arguments) else null
+            "web_search" -> if (webSearchAvailable) executeWebSearch(args) else null
+            "none" -> null
             else -> {
                 Timber.d("ChatTool: unknown action=%s", action)
                 null
             }
         }
+    }
+
+    private suspend fun runJsonFallback(
+        engine: VoiceAiEngine,
+        question: String,
+        playerState: PlayerStateSnapshot,
+        webSearchAvailable: Boolean,
+    ): Map<String, Any?>? {
+        val prompt = buildJsonFallbackPrompt(question, playerState, webSearchAvailable)
+        val responseText = try {
+            withTimeoutOrNull(TOOL_CALL_TIMEOUT_MS) {
+                engine.runInference(prompt = prompt, profile = LlmInferenceProfile.COMMAND)
+            }
+        } catch (e: Exception) {
+            Timber.d(e, "ChatTool: JSON-fallback inference threw")
+            null
+        } ?: return null
+        val jsonStr = extractJsonObject(responseText) ?: run {
+            Timber.d("ChatTool: JSON-fallback response had no parseable JSON: %s", responseText.take(120))
+            return null
+        }
+        return try {
+            val obj = JSONObject(jsonStr)
+            val result = mutableMapOf<String, Any?>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next() as? String ?: continue
+                result[key] = obj.opt(key)
+            }
+            result
+        } catch (e: Exception) {
+            Timber.d(e, "ChatTool: JSON-fallback parse failed for %s", jsonStr)
+            null
+        }
+    }
+
+    private fun extractJsonObject(raw: String): String? {
+        val start = raw.indexOf('{')
+        if (start == -1) return null
+        var depth = 0
+        for (i in start until raw.length) {
+            when (raw[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return raw.substring(start, i + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun buildJsonFallbackPrompt(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        webSearchAvailable: Boolean,
+    ): String {
+        val context = buildString {
+            if (playerState.currentItemTitle.isNotBlank()) {
+                append("Currently playing: ${playerState.currentItemTitle}")
+                playerState.productionYear?.let { append(" ($it)") }
+                append(". ")
+            }
+        }
+        val webLine = if (webSearchAvailable) {
+            "\n  {\"action\": \"web_search\", \"query\": \"<short search query>\"}"
+        } else ""
+        return """
+            You are SpatialFin's research planner. The user asked: "$question".
+            ${context.ifBlank { "No media is currently playing." }}
+            If gathering one fact would help answer — a movie/show overview, a
+            person's background, or the details of what's on screen — reply
+            with EXACTLY ONE JSON object. Otherwise reply {"action": "none"}.
+
+            Valid shapes (pick one):
+              {"action": "lookup_title", "title": "<movie or show title>"}
+              {"action": "lookup_person", "name": "<person name>"}
+              {"action": "describe_current_item"}$webLine
+              {"action": "none"}
+
+            No prose, no explanation. Just the JSON object.
+        """.trimIndent()
     }
 
     private suspend fun executeLookupTitle(
@@ -95,16 +197,67 @@ internal class ChatToolRegistry(
     ): ResearchNotes? {
         val title = (args["title"] as? String)?.trim().orEmpty()
         if (title.isBlank()) return null
-        if (!tmdbApi.isConfigured()) {
-            val wiki = wikipediaClient.getSummary(title) ?: return null
-            return ResearchNotes(
-                body = "Wikipedia — ${wiki.title}: ${wiki.extract.take(WIKI_EXTRACT_CAP).trim()}",
-                debugInfo = "lookup_title wiki-only title=$title",
-            )
-        }
+
+        val tmdbSummary = if (tmdbApi.isConfigured()) {
+            tmdbTitleSummary(title, playerState)
+        } else null
+        val wiki = wikipediaClient.getSummary(title)?.extract?.let { trimToSentenceBoundary(it, WIKI_EXTRACT_CAP) }
+        val omdbLine = if (omdbApi.isConfigured()) {
+            val movie = omdbApi.searchMovie(title, playerState.productionYear)
+            val fallback = movie ?: omdbApi.searchSeries(title, playerState.productionYear)
+            fallback?.let { buildOmdbResearchLine(it) }
+        } else null
+
+        val body = listOfNotNull(
+            tmdbSummary,
+            omdbLine?.let { "OMDb — $title: $it" },
+            wiki?.let { "Wikipedia — $title: $it" },
+        ).joinToString("\n\n")
+        if (body.isBlank()) return null
+        return ResearchNotes(
+            body = body,
+            debugInfo = "lookup_title title=$title tmdb=${tmdbSummary != null} omdb=${omdbLine != null} wiki=${wiki != null}",
+        )
+    }
+
+    /**
+     * Compact ratings-first OMDb line. Voice replies bias toward score-heavy
+     * claims ("what are critics saying"), so we lead with RT/Metacritic/IMDb
+     * when available and trim awards/runtime to keep the line spoken-length.
+     * Returns null when OMDb had no ratings AND no awards worth surfacing.
+     */
+    private fun buildOmdbResearchLine(result: OmdbResult): String? {
+        if (result.response != "True") return null
+        val naSet = setOf("", "N/A")
+        val ratings = result.ratings
+            .mapNotNull { r ->
+                val label = when {
+                    r.source.contains("Rotten", ignoreCase = true) -> "Rotten Tomatoes"
+                    r.source.contains("Metacritic", ignoreCase = true) -> "Metacritic"
+                    r.source.contains("Internet Movie Database", ignoreCase = true) -> "IMDb"
+                    else -> null
+                } ?: return@mapNotNull null
+                val value = r.value.trim().takeIf { it !in naSet } ?: return@mapNotNull null
+                "$label $value"
+            }
+            .take(3)
+            .joinToString(", ")
+        val awards = result.awards.takeIf { it !in naSet }?.let { trimToSentenceBoundary(it, 120) }
+        val runtime = result.runtime.takeIf { it !in naSet }
+        val parts = mutableListOf<String>()
+        if (ratings.isNotBlank()) parts.add("ratings $ratings")
+        if (!awards.isNullOrBlank()) parts.add("awards — $awards")
+        if (!runtime.isNullOrBlank()) parts.add("runtime $runtime")
+        return parts.joinToString("; ").takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun tmdbTitleSummary(
+        title: String,
+        playerState: PlayerStateSnapshot,
+    ): String? {
         val movie = tmdbApi.searchMovies(title, playerState.productionYear).firstOrNull()
         val tv = tmdbApi.searchTv(title, playerState.productionYear).firstOrNull()
-        val summary = when {
+        return when {
             movie != null && (tv == null || movie.voteAverage >= tv.voteAverage) -> {
                 tmdbApi.getMovieDetails(movie.id)?.let { details ->
                     val director = details.credits?.crew
@@ -115,7 +268,7 @@ internal class ChatToolRegistry(
                         details.releaseDate?.take(4)?.takeIf { it.isNotBlank() }?.let { append(" ($it)") }
                         append(". ")
                         if (director != null) append("Directed by $director. ")
-                        append(details.overview.take(OVERVIEW_CAP).trim())
+                        append(trimToSentenceBoundary(details.overview, OVERVIEW_CAP))
                     }
                 }
             }
@@ -125,19 +278,12 @@ internal class ChatToolRegistry(
                         append("TMDB — ${details.name}")
                         details.firstAirDate?.take(4)?.takeIf { it.isNotBlank() }?.let { append(" ($it)") }
                         append(". ")
-                        append(details.overview.take(OVERVIEW_CAP).trim())
+                        append(trimToSentenceBoundary(details.overview, OVERVIEW_CAP))
                     }
                 }
             }
             else -> null
         }
-        val wiki = wikipediaClient.getSummary(title)?.extract?.take(WIKI_EXTRACT_CAP)?.trim()
-        val body = listOfNotNull(
-            summary,
-            wiki?.let { "Wikipedia — $title: $it" },
-        ).joinToString("\n\n")
-        if (body.isBlank()) return null
-        return ResearchNotes(body = body, debugInfo = "lookup_title title=$title tmdb=${summary != null} wiki=${wiki != null}")
     }
 
     private suspend fun executeLookupPerson(args: Map<String, Any?>): ResearchNotes? {
@@ -145,7 +291,7 @@ internal class ChatToolRegistry(
         if (name.isBlank()) return null
         val wiki = wikipediaClient.getSummary(name) ?: return null
         return ResearchNotes(
-            body = "Wikipedia — ${wiki.title}: ${wiki.extract.take(WIKI_EXTRACT_CAP).trim()}",
+            body = "Wikipedia — ${wiki.title}: ${trimToSentenceBoundary(wiki.extract, WIKI_EXTRACT_CAP)}",
             debugInfo = "lookup_person name=$name",
         )
     }
@@ -160,7 +306,7 @@ internal class ChatToolRegistry(
             hits.forEach { hit ->
                 appendLine()
                 append("- ${hit.title}")
-                if (hit.snippet.isNotBlank()) append(" — ${hit.snippet.take(WIKI_EXTRACT_CAP)}")
+                if (hit.snippet.isNotBlank()) append(" — ${trimToSentenceBoundary(hit.snippet, WIKI_EXTRACT_CAP)}")
             }
         }
         return ResearchNotes(body = body, debugInfo = "web_search query=$query hits=${hits.size}")

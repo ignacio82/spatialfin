@@ -1,5 +1,8 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
+import dev.jdtech.jellyfin.api.OmdbApi
+import dev.jdtech.jellyfin.api.OmdbRating
+import dev.jdtech.jellyfin.api.OmdbResult
 import dev.jdtech.jellyfin.api.TmdbApi
 import dev.jdtech.jellyfin.core.llm.ParsedToolCall
 import dev.jdtech.jellyfin.core.llm.VoiceAiEngine
@@ -39,6 +42,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("who wrote this movie", PlayerStateSnapshot(), engine)
@@ -57,6 +61,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("something", PlayerStateSnapshot(), engine)
@@ -75,6 +80,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather(
@@ -110,6 +116,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("what am I watching", PlayerStateSnapshot(), engine)
@@ -135,6 +142,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = wiki,
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("who is Denis Villeneuve", PlayerStateSnapshot(), engine)
@@ -158,6 +166,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = wiki,
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("who is nobody", PlayerStateSnapshot(), engine)
@@ -186,6 +195,7 @@ class ChatToolRegistryTest {
             tmdbApi = tmdb,
             wikipediaClient = wiki,
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("tell me about Arrival", PlayerStateSnapshot(), engine)
@@ -208,10 +218,96 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("lookup a title please", PlayerStateSnapshot(), engine)
         assertNull(notes)
+    }
+
+    @Test fun `lookup_title folds OMDb ratings into research notes when configured`() = runTest {
+        val engine = mockk<VoiceAiEngine>(relaxed = true)
+        coEvery { engine.runToolCall(any(), any(), any()) } returns ParsedToolCall(
+            name = "research_media",
+            arguments = mapOf("action" to "lookup_title", "title" to "Arrival"),
+        )
+
+        val tmdb = mockk<TmdbApi>()
+        every { tmdb.isConfigured() } returns false
+
+        val wiki = mockk<WikipediaSummaryClient>()
+        coEvery { wiki.getSummary("Arrival") } returns null
+
+        val omdb = mockk<OmdbApi>()
+        every { omdb.isConfigured() } returns true
+        coEvery { omdb.searchMovie("Arrival", any()) } returns OmdbResult(
+            title = "Arrival",
+            year = "2016",
+            runtime = "116 min",
+            genre = "Drama, Mystery, Sci-Fi",
+            director = "Denis Villeneuve",
+            plot = "A linguist contacts aliens.",
+            awards = "Won 1 Oscar. 71 wins & 268 nominations total",
+            ratings = listOf(
+                OmdbRating(source = "Internet Movie Database", value = "7.9/10"),
+                OmdbRating(source = "Rotten Tomatoes", value = "94%"),
+                OmdbRating(source = "Metacritic", value = "81/100"),
+            ),
+            metascore = "81",
+            imdbRating = "7.9",
+            imdbId = "tt2543164",
+            response = "True",
+        )
+
+        val registry = ChatToolRegistry(
+            appPreferences = appPreferences,
+            tmdbApi = tmdb,
+            wikipediaClient = wiki,
+            webSearchClient = mockk(relaxed = true),
+            omdbApi = omdb,
+        )
+
+        val notes = registry.gather("anything about Arrival", PlayerStateSnapshot(), engine)
+        assertNotNull(notes)
+        val body = notes!!.body
+        assertTrue("missing OMDb label: $body", body.contains("OMDb — Arrival"))
+        assertTrue("missing RT score: $body", body.contains("Rotten Tomatoes 94%"))
+        assertTrue("missing Metacritic score: $body", body.contains("Metacritic 81/100"))
+        assertTrue("missing IMDb score: $body", body.contains("IMDb 7.9/10"))
+    }
+
+    @Test fun `OMDb is skipped when not configured`() = runTest {
+        val engine = mockk<VoiceAiEngine>(relaxed = true)
+        coEvery { engine.runToolCall(any(), any(), any()) } returns ParsedToolCall(
+            name = "research_media",
+            arguments = mapOf("action" to "lookup_title", "title" to "Arrival"),
+        )
+
+        val tmdb = mockk<TmdbApi>()
+        every { tmdb.isConfigured() } returns false
+
+        val wiki = mockk<WikipediaSummaryClient>()
+        coEvery { wiki.getSummary("Arrival") } returns WikipediaSummary(
+            title = "Arrival",
+            extract = "Arrival is a 2016 American science fiction drama film.",
+            canonicalUrl = null,
+        )
+
+        val omdb = mockk<OmdbApi>()
+        every { omdb.isConfigured() } returns false
+
+        val registry = ChatToolRegistry(
+            appPreferences = appPreferences,
+            tmdbApi = tmdb,
+            wikipediaClient = wiki,
+            webSearchClient = mockk(relaxed = true),
+            omdbApi = omdb,
+        )
+
+        val notes = registry.gather("anything about Arrival", PlayerStateSnapshot(), engine)
+        assertNotNull(notes)
+        assertTrue("should not contain OMDb: ${notes!!.body}", !notes.body.contains("OMDb"))
+        coVerify(exactly = 0) { omdb.searchMovie(any(), any()) }
     }
 
     @Test fun `web_search returns research notes when client yields hits`() = runTest {
@@ -233,6 +329,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = webSearch,
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("anything about the next Dune", PlayerStateSnapshot(), engine)
@@ -257,6 +354,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = webSearch,
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("asking for trouble", PlayerStateSnapshot(), engine)
@@ -279,6 +377,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = webSearch,
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather("valid long question", PlayerStateSnapshot(), engine)
@@ -298,6 +397,7 @@ class ChatToolRegistryTest {
             tmdbApi = mockk(relaxed = true),
             wikipediaClient = mockk(relaxed = true),
             webSearchClient = mockk(relaxed = true),
+            omdbApi = mockk(relaxed = true),
         )
 
         val notes = registry.gather(

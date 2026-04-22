@@ -1,5 +1,7 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
+import dev.jdtech.jellyfin.api.OmdbApi
+import dev.jdtech.jellyfin.api.OmdbResult
 import dev.jdtech.jellyfin.api.TmdbApi
 import dev.jdtech.jellyfin.api.TmdbMovieDetails
 import dev.jdtech.jellyfin.api.TmdbMovieResult
@@ -60,6 +62,7 @@ internal class MediaSkillRegistry(
     // that removes duplication without a cascading refactor.
     private val httpClient = voiceHttpClient
     private val tmdbApi = TmdbApi(appPreferences, httpClient)
+    private val omdbApi = OmdbApi(appPreferences, httpClient)
     private val wikipediaClient = WikipediaSummaryClient(httpClient)
 
     suspend fun plan(
@@ -563,7 +566,7 @@ internal class MediaSkillRegistry(
                     // Source-labelled: users have asked to know whether a fact
                     // came from TMDB vs Wikipedia vs the model's own memory,
                     // especially when recommendations diverge from reviews.
-                    "Per Wikipedia — $target: ${extract.take(420).trim()}"
+                    "Per Wikipedia — $target: ${trimToSentenceBoundary(extract, 420)}"
                 } ?: "I couldn't find an external summary for $target."
             return MediaSkillPlan(
                 skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
@@ -577,24 +580,81 @@ internal class MediaSkillRegistry(
         }
 
         val tmdbSummary = externalTitleSummary(target, playerState)
-        val text =
-            when {
-                tmdbSummary != null && wikipedia != null ->
-                    "Per TMDB: ${tmdbSummary.first} Per Wikipedia: ${wikipedia.extract.take(260).trim()}"
-                tmdbSummary != null -> "Per TMDB: ${tmdbSummary.first}"
-                wikipedia != null -> "Per Wikipedia: ${wikipedia.extract.take(420).trim()}"
-                else -> "I couldn't find external details for $target."
+        val omdbLine = if (omdbApi.isConfigured()) {
+            val movie = omdbApi.searchMovie(target, playerState.productionYear)
+            val fallback = movie ?: omdbApi.searchSeries(target, playerState.productionYear)
+            fallback?.let { buildOmdbReplyLine(it) }
+        } else null
+        val isCriticsFocus = isCriticsRatingQuery(normalize(question))
+        val text = buildString {
+            // For critics-rating phrasing we lead with OMDb so RT/Metacritic
+            // land in the first breath of the spoken reply. Otherwise keep
+            // the TMDB/Wikipedia ordering users have been seeing.
+            if (isCriticsFocus && omdbLine != null) {
+                append("Per OMDb: $omdbLine")
+                tmdbSummary?.let { append(" Per TMDB: ${it.first}") }
+                wikipedia?.let { append(" Per Wikipedia: ${trimToSentenceBoundary(it.extract, 180)}") }
+            } else {
+                val parts = listOfNotNull(
+                    tmdbSummary?.let { "Per TMDB: ${it.first}" },
+                    wikipedia?.let { "Per Wikipedia: ${trimToSentenceBoundary(it.extract, 220)}" },
+                    omdbLine?.let { "Per OMDb: $it" },
+                )
+                if (parts.isEmpty()) {
+                    append("I couldn't find external details for $target.")
+                } else {
+                    append(parts.joinToString(" "))
+                }
             }
+        }
 
         return MediaSkillPlan(
             skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
             validatedInput = target,
-            taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB or Wikipedia).",
+            taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB, OMDb, or Wikipedia).",
             directAnswer = text,
             fallbackText = text,
-            debugInfo = buildExternalDebugInfo(target, wikipedia?.canonicalUrl, tmdbSummary?.second, letterboxdUrlFor(target)),
+            debugInfo = buildExternalDebugInfo(
+                target = target,
+                wikipediaUrl = wikipedia?.canonicalUrl,
+                tmdbUrl = tmdbSummary?.second,
+                letterboxdUrl = letterboxdUrlFor(target),
+                omdbHit = omdbLine != null,
+                criticsFocus = isCriticsFocus,
+            ),
             shouldSkipModel = true,
         )
+    }
+
+    /**
+     * Ratings/awards-first OMDb line for spoken replies. Parallel to
+     * [ChatToolRegistry.buildOmdbResearchLine] but tuned to read well
+     * standalone — there's no outer "OMDb — " label yet at this site.
+     * Returns null when OMDb has neither ratings nor awards nor runtime.
+     */
+    private fun buildOmdbReplyLine(result: OmdbResult): String? {
+        if (result.response != "True") return null
+        val naSet = setOf("", "N/A")
+        val ratings = result.ratings
+            .mapNotNull { r ->
+                val label = when {
+                    r.source.contains("Rotten", ignoreCase = true) -> "Rotten Tomatoes"
+                    r.source.contains("Metacritic", ignoreCase = true) -> "Metacritic"
+                    r.source.contains("Internet Movie Database", ignoreCase = true) -> "IMDb"
+                    else -> null
+                } ?: return@mapNotNull null
+                val value = r.value.trim().takeIf { it !in naSet } ?: return@mapNotNull null
+                "$label $value"
+            }
+            .take(3)
+            .joinToString(", ")
+        val awards = result.awards.takeIf { it !in naSet }?.let { trimToSentenceBoundary(it, 120) }
+        val runtime = result.runtime.takeIf { it !in naSet }
+        val parts = mutableListOf<String>()
+        if (ratings.isNotBlank()) parts.add(ratings)
+        if (!awards.isNullOrBlank()) parts.add(awards)
+        if (!runtime.isNullOrBlank()) parts.add(runtime)
+        return parts.joinToString("; ").takeIf { it.isNotBlank() }
     }
 
     private fun characterIdentificationPlan(
@@ -677,7 +737,7 @@ internal class MediaSkillRegistry(
                 if (director != null) append(", directed by $director")
                 if (details.voteAverage > 0.0) append(", with a TMDb rating of ${"%.1f".format(Locale.US, details.voteAverage)}")
                 append(". ")
-                append(details.overview.take(280).trim())
+                append(trimToSentenceBoundary(details.overview, 280))
             }.trim()
         return summary to "https://www.themoviedb.org/movie/${details.id}"
     }
@@ -698,7 +758,7 @@ internal class MediaSkillRegistry(
                 if (creator != null) append(", associated with $creator")
                 if (details.voteAverage > 0.0) append(", and a TMDb rating of ${"%.1f".format(Locale.US, details.voteAverage)}")
                 append(". ")
-                append(details.overview.take(280).trim())
+                append(trimToSentenceBoundary(details.overview, 280))
             }.trim()
         return summary to "https://www.themoviedb.org/tv/${details.id}"
     }
@@ -792,6 +852,43 @@ internal class MediaSkillRegistry(
             }
         }
 
+        // Critics-flavored rephrasings: strip the ratings framing and whatever
+        // "about / for / of (the)" linker precedes the title. Keeps the
+        // EXTERNAL_KNOWLEDGE path from demanding exact "tell me about X"
+        // phrasing for ratings questions.
+        val criticsPrefixes =
+            listOf(
+                "what are critics saying about",
+                "what are the critics saying about",
+                "what do critics say about",
+                "what did critics say about",
+                "what are the ratings for",
+                "what is the rating for",
+                "what's the rating for",
+                "how good is",
+                "how well reviewed is",
+                "how well reviewed was",
+                "what's the rotten tomatoes score for",
+                "rotten tomatoes score for",
+                "metacritic score for",
+                "imdb rating for",
+            )
+        criticsPrefixes.forEach { prefix ->
+            val regex = Regex("(?i)^$prefix\\s+(?:the\\s+)?")
+            if (regex.containsMatchIn(trimmed)) {
+                val stripped = trimmed.replace(regex, "").trim().trim('"')
+                // Fall back to the currently-playing item when the user said
+                // "how good is this" without naming a title.
+                if (stripped.equals("this", ignoreCase = true) ||
+                    stripped.equals("this movie", ignoreCase = true) ||
+                    stripped.equals("this show", ignoreCase = true)
+                ) {
+                    playerState.currentItemTitle.takeIf { it.isNotBlank() }?.let { return it }
+                }
+                return stripped
+            }
+        }
+
         return when {
             normalized.contains("director") && playerState.directors.isNotEmpty() -> playerState.directors.first()
             normalized.contains("actor") && playerState.castNames.isNotEmpty() -> playerState.castNames.first()
@@ -816,6 +913,8 @@ internal class MediaSkillRegistry(
         wikipediaUrl: String?,
         tmdbUrl: String?,
         letterboxdUrl: String?,
+        omdbHit: Boolean = false,
+        criticsFocus: Boolean = false,
     ): String =
         buildString {
             append("target=")
@@ -823,7 +922,27 @@ internal class MediaSkillRegistry(
             wikipediaUrl?.let { append(" wiki=").append(it) }
             tmdbUrl?.let { append(" tmdb=").append(it) }
             letterboxdUrl?.let { append(" letterboxd=").append(it) }
+            if (omdbHit) append(" omdb=hit")
+            if (criticsFocus) append(" focus=critics")
         }
+
+    /**
+     * True when the question is specifically about critical reception — the
+     * phrasing tells us to lead with Rotten Tomatoes / Metacritic / IMDb
+     * scores (OMDb data) rather than TMDB/Wikipedia prose. Keep permissive:
+     * false negatives fall through to the normal EXTERNAL_KNOWLEDGE layout,
+     * so a missed keyword just means the user hears a less-focused reply.
+     */
+    private fun isCriticsRatingQuery(normalized: String): Boolean =
+        normalized.contains("critic") ||
+            normalized.contains("rotten tomatoes") ||
+            normalized.contains("metacritic") ||
+            normalized.contains("how good is") ||
+            normalized.contains("how well reviewed") ||
+            normalized.contains("imdb") ||
+            Regex("\\brating\\b").containsMatchIn(normalized) ||
+            Regex("\\brated\\b").containsMatchIn(normalized) ||
+            Regex("\\breviews?\\b").containsMatchIn(normalized)
 
     private fun letterboxdUrlFor(target: String): String =
         "https://letterboxd.com/search/${encodeForUrl(target)}/"
@@ -943,6 +1062,7 @@ internal class MediaSkillRegistry(
             normalized.contains("wikipedia") ||
             normalized.contains("tmdb") ||
             normalized.contains("letterboxd") ||
+            isCriticsRatingQuery(normalized) ||
             (normalized.contains("external") && (normalized.contains("title") || normalized.contains("actor") || normalized.contains("director"))) ||
             ((normalized.startsWith("who is") || normalized.startsWith("who was")) &&
                 !isGenericCharacterQuery(normalized) &&

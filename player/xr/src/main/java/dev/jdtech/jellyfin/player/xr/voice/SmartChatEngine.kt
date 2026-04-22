@@ -231,9 +231,10 @@ class SmartChatEngine(
         // Tool-call research pass for GENERAL_CHAT: the skill registry already
         // gathers what's needed for every other skill, so engaging here is the
         // smallest wedge where the model might want to pull in TMDB/Wikipedia/
-        // current-item facts before generating. Gated on LiteRT with a non-CPU
-        // backend — AICore returns null from runToolCall (no schema support yet),
-        // and CPU-only LiteRT is already too slow to add a tool round trip to.
+        // current-item facts before generating. Gated on a non-CPU on-device
+        // backend — AICore uses a JSON-in-text fallback now that mlkit-genai-
+        // prompt still doesn't expose typed tool schemas, and CPU-only LiteRT
+        // is too slow to add a tool round trip to.
         val researchNotes: ChatToolRegistry.ResearchNotes? =
             if (plan.skillId == MediaSkillId.GENERAL_CHAT && shouldUseGemma() && question.length >= MIN_TOOL_CALL_QUESTION_LEN) {
                 modelManager.ensureInitialized()
@@ -283,30 +284,50 @@ class SmartChatEngine(
             } else {
                 try {
                     val currentInstance = llmInstance!!
-                    val responseText = withTimeoutOrNull(45_000L) {
+                    // GPU on a mid-tier mobile chip generates a full chat reply in
+                    // 30–45s; that far exceeds a conversational feel. Cap the
+                    // wall-clock budget and bail out earlier with whatever tokens
+                    // the model has already streamed (see [lastStreamed] below)
+                    // so "Thinking…" never sits longer than this cap without
+                    // the user seeing *something*. NPU / AICore are fast enough
+                    // to keep the full 45s budget.
+                    val timeoutMs = chatInferenceTimeoutMs(currentInstance.backendName)
+                    var lastStreamed: String = ""
+                    val responseText = withTimeoutOrNull(timeoutMs) {
                         currentInstance.runInference(
                             prompt = prompt,
                             images = visualContexts,
                             profile = LlmInferenceProfile.CHAT,
                             onToken = { partial ->
+                                lastStreamed = partial
                                 onTokenStream?.invoke(partial)
                             },
                         )
-                    } ?: throw TimeoutException("Inference timed out")
-                    if (responseText.isNotBlank()) {
+                    }
+                    val effectiveResponse = responseText
+                        ?: lastStreamed.takeIf { it.isNotBlank() }
+                        ?: run {
+                            Timber.w(
+                                "LiteRT: inference timed out on %s after %dms with no streamed tokens",
+                                currentInstance.backendName, timeoutMs,
+                            )
+                            null
+                        }
+                    if (!effectiveResponse.isNullOrBlank()) {
                         val prefixToRemove = "Model: "
-                        val cleanedResponse = if (responseText.startsWith(prefixToRemove)) {
-                            responseText.substring(prefixToRemove.length)
+                        val cleanedResponse = if (effectiveResponse.startsWith(prefixToRemove)) {
+                            effectiveResponse.substring(prefixToRemove.length)
                         } else {
-                            responseText
+                            effectiveResponse
                         }
                         val finalText =
                             cleanedResponse.trim()
                                 .ifBlank { fallbackText ?: "" }
                                 .takeIf { it.isNotBlank() }
+                        val strategy = if (responseText == null) "GEMMA_LITERT_PARTIAL" else "GEMMA_LITERT"
                         return@withContext AssistantReply(
                             text = finalizeReply(finalText),
-                            strategy = "GEMMA_LITERT",
+                            strategy = strategy,
                             debugInfo = plan.debugInfo.ifBlank { "LiteRT LM Engine" },
                             recommendedItems = recommendedItems,
                             selectedSkill = plan.skillId.name,
@@ -321,8 +342,16 @@ class SmartChatEngine(
         }
 
         if (gemmaEnabled) {
+            // We reached here because on-device inference failed or produced
+            // nothing usable (timeout with no streamed tokens, empty response,
+            // exception). The heuristic fallback is often empty for open-ended
+            // GENERAL_CHAT, which surfaces as "Sorry, I couldn't process that"
+            // — misleading after the user watched "Thinking…" for 30s. Tell
+            // them what actually happened.
+            val honestFallback = fallbackText
+                ?: "That one was too slow for on-device AI. Try a shorter question, or add a Gemini cloud key in settings for longer answers."
             return@withContext AssistantReply(
-                text = finalizeReply(fallbackText),
+                text = finalizeReply(honestFallback),
                 strategy = "HEURISTIC",
                 debugInfo = "${plan.debugInfo}; Gemma enabled; Gemini disabled; using heuristic fallback",
                 recommendedItems = recommendedItems,
@@ -404,6 +433,20 @@ class SmartChatEngine(
 
     fun shouldUseGemma(): Boolean =
         appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
+
+    /**
+     * Wall-clock budget for a single chat inference, keyed on the active
+     * backend. GPU on mid-tier mobile chips generates a full reply in 30–45s
+     * which is too long for a conversational UI; capping earlier and using
+     * whichever tokens streamed in that window keeps the "Thinking…" state
+     * from lingering, at the cost of occasionally shorter replies. NPU and
+     * AICore (Gemini Nano) are fast enough to keep the longer legacy budget.
+     */
+    private fun chatInferenceTimeoutMs(backendName: String): Long = when {
+        backendName.equals("GPU", ignoreCase = true) -> 25_000L
+        backendName.equals("CPU", ignoreCase = true) -> 45_000L
+        else -> 45_000L
+    }
 
     private fun hasGeminiApiKey(): Boolean =
         !appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim().isBlank()
