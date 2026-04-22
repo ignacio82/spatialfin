@@ -75,6 +75,13 @@ object CompanionLogUploader {
         val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim().removeSuffix("/")
         val setupToken = appPreferences.getValue(appPreferences.companionToken).trim()
         if (companionUrl.isEmpty() || setupToken.isEmpty()) return
+        // `shouldUpload()` already rejected unsafe URLs before enqueue, but
+        // re-check in case the URL changed mid-session — we must never put
+        // the X-Setup-Token on an http:// request to a public host.
+        if (!isSafeForSetupToken(companionUrl)) {
+            synchronized(lock) { pendingLogs.clear() }
+            return
+        }
 
         val batch =
             synchronized(lock) {
@@ -120,8 +127,46 @@ object CompanionLogUploader {
     private fun shouldUpload(): Boolean {
         if (!initialized) return false
         if (!appPreferences.getValue(appPreferences.loggingEnabled)) return false
-        return appPreferences.getValue(appPreferences.companionUrl).isNotBlank() &&
-            appPreferences.getValue(appPreferences.companionToken).isNotBlank()
+        val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim()
+        if (companionUrl.isBlank()) return false
+        if (!isSafeForSetupToken(companionUrl)) return false
+        return appPreferences.getValue(appPreferences.companionToken).isNotBlank()
+    }
+
+    /**
+     * Allow the X-Setup-Token on https://… unconditionally, and on http://…
+     * only when the host is clearly a local-network destination (loopback,
+     * .local mDNS, or RFC1918). The companion is almost always run on the
+     * same LAN without a TLS cert, so forcing HTTPS there would make the
+     * feature unusable — but we still must not leak the token over cleartext
+     * to a public host.
+     */
+    private fun isSafeForSetupToken(url: String): Boolean {
+        val lower = url.lowercase(Locale.US)
+        if (lower.startsWith("https://")) return true
+        if (!lower.startsWith("http://")) return false
+        val hostEnd = lower.indexOfAny(charArrayOf('/', '?', '#'), startIndex = 7)
+            .let { if (it == -1) lower.length else it }
+        val hostPort = lower.substring(7, hostEnd)
+        val host = hostPort.substringBefore(':').trim('[', ']')
+        if (host.isEmpty()) return false
+        return isLocalNetworkHost(host)
+    }
+
+    private fun isLocalNetworkHost(host: String): Boolean {
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+        if (host.endsWith(".local")) return true
+        val octets = host.split('.')
+        if (octets.size != 4) return false
+        val bytes = octets.map { it.toIntOrNull() ?: return false }
+        if (bytes.any { it !in 0..255 }) return false
+        val (a, b) = bytes[0] to bytes[1]
+        // RFC1918 + loopback /8 + link-local 169.254/16.
+        return a == 10 ||
+            (a == 172 && b in 16..31) ||
+            (a == 192 && b == 168) ||
+            a == 127 ||
+            (a == 169 && b == 254)
     }
 
     private fun priorityLabel(priority: Int): String =

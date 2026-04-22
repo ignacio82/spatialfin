@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.UriMatcher
+import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -41,17 +42,29 @@ class SpatialFinSearchProvider : ContentProvider() {
     }
 
     private lateinit var uriMatcher: UriMatcher
+    private var manifestAuthority: String = ""
     private val deps: Deps by lazy {
         EntryPointAccessors.fromApplication(requireAttachedContext(), Deps::class.java)
     }
 
+    override fun attachInfo(context: Context, info: ProviderInfo) {
+        // Pull the authority directly from the manifest-resolved ProviderInfo
+        // instead of re-deriving it from packageName. The manifest uses
+        // `${applicationId}.search`, so debug / staging / release installs
+        // get disjoint authorities — but that only holds if we read the
+        // same value the system registered. Re-deriving from packageName
+        // drifts the moment someone adds an applicationIdSuffix or changes
+        // the manifest template without updating this file.
+        manifestAuthority = info.authority?.substringBefore(';').orEmpty()
+        super.attachInfo(context, info)
+    }
+
     override fun onCreate(): Boolean {
-        val authority =
-            context?.packageName?.let { "$it.search" } ?: return false
+        if (manifestAuthority.isBlank()) return false
         uriMatcher =
             UriMatcher(UriMatcher.NO_MATCH).apply {
-                addURI(authority, SearchManager.SUGGEST_URI_PATH_QUERY, SUGGEST_ROOT)
-                addURI(authority, "${SearchManager.SUGGEST_URI_PATH_QUERY}/*", SUGGEST_WITH_QUERY)
+                addURI(manifestAuthority, SearchManager.SUGGEST_URI_PATH_QUERY, SUGGEST_ROOT)
+                addURI(manifestAuthority, "${SearchManager.SUGGEST_URI_PATH_QUERY}/*", SUGGEST_WITH_QUERY)
             }
         return true
     }

@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.settings.voice
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 
 data class VoiceTelemetryEntry(
@@ -28,16 +29,35 @@ data class VoiceTelemetrySummary(
     val recentEntries: List<VoiceTelemetryEntry> = emptyList(),
 )
 
-class VoiceTelemetryStore @Inject constructor(@ApplicationContext context: Context) {
+class VoiceTelemetryStore @Inject constructor(
+    @ApplicationContext context: Context,
+    private val appPreferences: AppPreferences,
+) {
     private val preferences =
         context.getSharedPreferences("voice_telemetry", Context.MODE_PRIVATE)
 
     fun record(entry: VoiceTelemetryEntry) {
         val previousEntry = recentEntries().firstOrNull()
-        val enrichedEntry =
+        val retryAdjusted =
             entry.copy(
                 retry = entry.retry || isRetryAttempt(entry, previousEntry),
             )
+        // Raw transcripts can carry PII (names, addresses, anything the user
+        // said out loud). They're persisted to plain SharedPreferences and
+        // can surface in the in-app telemetry dashboard / companion log
+        // uploads, so default to redacting them down to length metadata and
+        // only store the verbatim text when the user has explicitly opted
+        // in via AppPreferences.voiceAssistantStoreTranscripts.
+        val enrichedEntry =
+            if (appPreferences.getValue(appPreferences.voiceAssistantStoreTranscripts)) {
+                retryAdjusted
+            } else {
+                retryAdjusted.copy(
+                    transcript = redactTranscript(retryAdjusted.transcript),
+                    normalizedTranscript = redactTranscript(retryAdjusted.normalizedTranscript),
+                    validatedInput = redactTranscript(retryAdjusted.validatedInput),
+                )
+            }
         val totalAttempts = preferences.getInt(KEY_TOTAL_ATTEMPTS, 0) + 1
         val successfulAttempts =
             preferences.getInt(KEY_SUCCESSFUL_ATTEMPTS, 0) + if (enrichedEntry.success) 1 else 0
@@ -123,6 +143,12 @@ class VoiceTelemetryStore @Inject constructor(@ApplicationContext context: Conte
             resultDisposition = resultDispositionIndex?.let(parts::getOrNull).orEmpty(),
             details = parts.getOrElse(detailsIndex) { "" },
         )
+    }
+
+    private fun redactTranscript(raw: String): String {
+        if (raw.isEmpty()) return ""
+        val words = raw.trim().split(Regex("\\s+")).size
+        return "[redacted; ${raw.length} chars, $words words]"
     }
 
     private fun isRetryAttempt(

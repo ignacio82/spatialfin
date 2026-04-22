@@ -1,16 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
-    <!-- Allow cleartext network traffic -->
+    <!--
+      Base config keeps cleartext allowed because a great many Jellyfin /
+      Jellyseerr / companion deployments are reached by LAN IP (192.168.*,
+      10.*, 172.16-31.*) or a home-lab hostname without a real TLS cert.
+      Android's network_security_config can't express CIDR ranges, so we
+      cannot default to cleartextTrafficPermitted="false" without breaking
+      those setups.
+
+      Instead, the domain-config blocks below force HTTPS for every external
+      host that carries a credential (TMDB / OMDb / Gemini Cloud API keys)
+      or that the app would otherwise be fine downgrading. Any new external
+      provider that ships a key in a URL / header MUST get an entry here.
+    -->
     <base-config
         cleartextTrafficPermitted="true"
         tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
-            <!-- Trust pre-installed CAs -->
             <certificates src="system" />
-            <!-- Additionally trust user added CAs -->
             <certificates
                 src="user"
                 tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
+
+    <!-- TMDB (Bearer token / ?api_key=…) -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">themoviedb.org</domain>
+        <domain includeSubdomains="true">tmdb.org</domain>
+    </domain-config>
+
+    <!-- OMDb (?apikey=…) -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">omdbapi.com</domain>
+    </domain-config>
+
+    <!-- Gemini Cloud (?key=…) + other Google APIs -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">googleapis.com</domain>
+    </domain-config>
+
+    <!-- Wikipedia REST/API — no keys, but no reason to permit downgrade. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">wikipedia.org</domain>
+        <domain includeSubdomains="true">wikimedia.org</domain>
+    </domain-config>
 </network-security-config>

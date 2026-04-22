@@ -143,6 +143,18 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val voiceAssistantGemmaBackend = Preference("pref_voice_assistant_gemma_backend", "Requires Model")
     val voiceAssistantCpuInference = Preference("pref_voice_assistant_cpu_inference", false)
 
+    // Voice telemetry PII gate.
+    //
+    // The telemetry store writes each voice turn (transcript, normalized
+    // transcript, derived action / skill / disposition) to the private
+    // `voice_telemetry` SharedPreferences so the in-app Voice Telemetry
+    // dashboard can show recent activity. Transcripts can contain PII —
+    // names, addresses, medical terms, whatever the user said out loud —
+    // so the raw strings are redacted to length-only metadata unless the
+    // user explicitly opts in here. Everything else (latency, success,
+    // skill selection) is always recorded.
+    val voiceAssistantStoreTranscripts = Preference("pref_voice_assistant_store_transcripts", false)
+
     // Web search (voice AI grounding).
     //
     // Master switch for the `web_search` tool exposed in the chat tool-call pass.

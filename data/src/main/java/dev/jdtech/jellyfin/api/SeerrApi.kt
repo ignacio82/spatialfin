@@ -93,13 +93,12 @@ class SeerrApi(
                 ) ?: return@withContext SeerrSearchOutcome(
                     errorMessage = "Jellyseerr URL is invalid. Check the server URL in settings.",
                 )
-            Timber.i(
-                "Seerr search request url=%s query=%s keyConfigured=%b keyLength=%d",
-                request.url,
-                query,
-                apiKey.isNotBlank(),
-                apiKey.length,
-            )
+            // Intentionally don't log request.url — it can land in logcat or
+            // the companion log upload and, for any provider that puts the
+            // credential in the URL (TMDB / OMDb-style ?apikey=…), would
+            // exfiltrate the key. Seerr uses X-Api-Key today, but the same
+            // log-shape must stay key-safe if we ever switch transports.
+            Timber.i("Seerr search request keyConfigured=%b query=%s", apiKey.isNotBlank(), query)
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string() ?: return@withContext SeerrSearchOutcome()
@@ -107,11 +106,9 @@ class SeerrApi(
             } else {
                 val errorBody = response.body?.string().orEmpty()
                 Timber.e(
-                    "Seerr search failed http=%d message=%s url=%s keyLength=%d body=%s",
+                    "Seerr search failed http=%d message=%s body=%s",
                     response.code,
                     response.message,
-                    request.url,
-                    apiKey.length,
                     errorBody.take(400),
                 )
                 val bodyMessage = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"")
@@ -183,7 +180,7 @@ class SeerrApi(
                 Timber.i("Seerr request successful")
                 true
             } else {
-                Timber.e("Seerr request failed: ${response.code} ${response.message} url=${request.url}")
+                Timber.e("Seerr request failed: ${response.code} ${response.message}")
                 val errorBody = response.body?.string()
                 if (!errorBody.isNullOrBlank()) {
                     Timber.e("Seerr error body: $errorBody")
