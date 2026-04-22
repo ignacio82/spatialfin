@@ -1,6 +1,8 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.util.Base64
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 
 data class GeminiCloudStatus(
     val configured: Boolean,
@@ -38,6 +41,7 @@ class GeminiCloudService(
         reason: String,
         temperature: Double = 0.2,
         maxOutputTokens: Int = 256,
+        images: List<Bitmap> = emptyList(),
     ): GeminiCloudTextResult = withContext(Dispatchers.IO) {
         val apiKey = appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty().trim()
         if (apiKey.isBlank()) {
@@ -52,18 +56,35 @@ class GeminiCloudService(
                     ),
             )
         }
-        
+
         val startedAtMs = System.currentTimeMillis()
+        // Multimodal content: one text part + one inline-data part per image,
+        // base64-encoded PNG. The order matters — Gemini's docs recommend
+        // placing images before the text instruction so the model attends to
+        // the visual first, mirroring how on-device multimodal Gemma is
+        // trained (see LlmChatModelHelper.runInference which also prepends
+        // images to the Content list).
+        val parts = JSONArray().apply {
+            for (bitmap in images) {
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                put(
+                    JSONObject().put(
+                        "inlineData",
+                        JSONObject()
+                            .put("mimeType", "image/png")
+                            .put("data", base64),
+                    ),
+                )
+            }
+            put(JSONObject().put("text", prompt))
+        }
         val requestJson =
             JSONObject()
                 .put(
                     "contents",
-                    JSONArray().put(
-                        JSONObject().put(
-                            "parts",
-                            JSONArray().put(JSONObject().put("text", prompt)),
-                        ),
-                    ),
+                    JSONArray().put(JSONObject().put("parts", parts)),
                 ).put(
                     "generationConfig",
                     JSONObject()
@@ -81,10 +102,11 @@ class GeminiCloudService(
 
         try {
             Timber.d(
-                "GEMINI: cloud %s start model=%s promptChars=%s",
+                "GEMINI: cloud %s start model=%s promptChars=%s images=%s",
                 reason,
                 MODEL,
                 prompt.length,
+                images.size,
             )
             httpClient.newCall(request).execute().use { response ->
                 val responseBody = response.body.string()

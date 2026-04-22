@@ -26,6 +26,37 @@ import timber.log.Timber
 // is too weak to justify a 3–5s round trip.
 private const val MIN_TOOL_CALL_QUESTION_LEN = 12
 
+/**
+ * Heuristic: does the given reply text read like the on-device model giving up
+ * on identifying a character? Matches the canned phrase the
+ * CHARACTER_IDENTIFICATION prompt asks the model to emit ("I can't tell which
+ * character this is from the frame") plus a short list of near-variants small
+ * models commonly emit instead. Used to gate the cloud retry — we only pay for
+ * a cloud call when on-device has explicitly admitted defeat.
+ */
+internal fun looksLikeCharacterIdPunt(text: String?): Boolean {
+    // Null / blank input is the strongest punt signal — the model returned
+    // nothing usable. Cloud retry should absolutely fire there.
+    val normalized = text?.lowercase()?.trim() ?: return true
+    if (normalized.isBlank()) return true
+    val puntPhrases = listOf(
+        "can't tell",
+        "can't identify",
+        "cannot tell",
+        "cannot identify",
+        "unable to identify",
+        "unable to tell",
+        "don't know who",
+        "do not know who",
+        "not sure who",
+        "i'm not sure",
+        "im not sure",
+        "not confident",
+        "no cast metadata",
+    )
+    return puntPhrases.any { normalized.contains(it) }
+}
+
 data class AssistantPreferences(
     val verbosity: String = "balanced",
     val spoilerPolicy: String = "cautious",
@@ -254,8 +285,25 @@ class SmartChatEngine(
             Timber.d("ChatTool: researchNotes attached (%s)", researchNotes.debugInfo)
         }
 
+        // Either the skill pre-gathered notes (EXTERNAL_KNOWLEDGE) or the
+        // tool-call research pass produced them (GENERAL_CHAT). Prefer the
+        // skill-provided ones — they're source-labelled and already shaped as a
+        // cheat sheet, whereas the tool-call path returns best-effort text.
+        // If both exist (rare: only when a skill set notes AND the tool-call
+        // also engaged), concatenate so the model sees both signals.
+        val effectiveResearchNotes = when {
+            plan.researchNotes != null && researchNotes?.body != null ->
+                "${plan.researchNotes}\n\n${researchNotes.body}"
+            plan.researchNotes != null -> plan.researchNotes
+            else -> researchNotes?.body
+        }
         val prompt = if (plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION) {
-            buildCharacterIdentificationPrompt(playerState, plan.taskInstructions)
+            // subtitleContext is load-bearing: the character-ID prompt includes
+            // a "Recent dialogue" section so the model can correlate a name just
+            // spoken (e.g. "Jon, wait!") with the frame. Without it, the model
+            // has only the still image + cast list to work from and small
+            // multimodal models punt much more often.
+            buildCharacterIdentificationPrompt(playerState, plan.taskInstructions, subtitleContext)
         } else {
             buildPrompt(
                 question = question,
@@ -265,7 +313,7 @@ class SmartChatEngine(
                 assistantPreferences = assistantPreferences,
                 conversationHistory = conversationHistory,
                 relatedItemsContext = plan.relatedItemsContext,
-                researchNotes = researchNotes?.body,
+                researchNotes = effectiveResearchNotes,
                 taskInstructions = plan.taskInstructions,
                 lastPointerPosition = lastPointerPosition,
             )
@@ -325,6 +373,47 @@ class SmartChatEngine(
                                 .ifBlank { fallbackText ?: "" }
                                 .takeIf { it.isNotBlank() }
                         val strategy = if (responseText == null) "GEMMA_LITERT_PARTIAL" else "GEMMA_LITERT"
+
+                        // Cloud retry for CHARACTER_IDENTIFICATION punts. On-device
+                        // multimodal models (Gemini Nano / Gemma 4B) can usually
+                        // describe a frame but struggle to name specific characters
+                        // without very distinctive visual features. Cloud Gemini is
+                        // substantially better at this — so when on-device explicitly
+                        // admits it can't tell AND the user has a cloud key, try
+                        // cloud with the same frame + prompt before committing to
+                        // the punt. Budget-capped to one retry per turn.
+                        if (plan.skillId == MediaSkillId.CHARACTER_IDENTIFICATION &&
+                            hasGeminiApiKey() &&
+                            looksLikeCharacterIdPunt(finalText) &&
+                            visualContexts.isNotEmpty()
+                        ) {
+                            Timber.i("CHARACTER_ID: on-device punted ('%s'); retrying on cloud Gemini", finalText?.take(80))
+                            val cloudRetry = geminiCloudService.generateText(
+                                prompt = prompt,
+                                reason = "character-id-retry",
+                                temperature = 0.2,
+                                maxOutputTokens = 160,
+                                images = visualContexts,
+                            )
+                            if (cloudRetry.status.usedModel && !cloudRetry.text.isNullOrBlank() &&
+                                !looksLikeCharacterIdPunt(cloudRetry.text)
+                            ) {
+                                return@withContext AssistantReply(
+                                    text = finalizeReply(cloudRetry.text.trim()),
+                                    strategy = "CLOUD_CHARACTER_ID_RETRY",
+                                    debugInfo = "${plan.debugInfo}; on-device punted, cloud resolved; ${cloudRetry.status.details}",
+                                    recommendedItems = recommendedItems,
+                                    selectedSkill = plan.skillId.name,
+                                    validatedInput = plan.validatedInput,
+                                    resultDisposition = "MODEL",
+                                )
+                            }
+                            // Cloud also punted or failed — fall through to the
+                            // on-device punt. Better than pretending we have a
+                            // confident answer.
+                            Timber.i("CHARACTER_ID: cloud retry also punted or failed (%s)", cloudRetry.status.details)
+                        }
+
                         return@withContext AssistantReply(
                             text = finalizeReply(finalText),
                             strategy = strategy,
@@ -453,6 +542,7 @@ class SmartChatEngine(
 
     private fun shouldAttemptGemini(): Boolean = hasGeminiApiKey() && !shouldUseGemma()
 
+
     private fun buildSubtitleContext(
         question: String,
         lines: List<Pair<Long, String>>,
@@ -566,10 +656,12 @@ class SmartChatEngine(
     private fun buildCharacterIdentificationPrompt(
         playerState: PlayerStateSnapshot,
         taskInstructions: String,
+        subtitleContext: String,
     ): String = characterIdentificationPrompt(
         PromptContext(
             playerState = playerState,
             taskInstructions = taskInstructions,
+            subtitleContext = subtitleContext,
         ),
     ).render()
 

@@ -48,6 +48,16 @@ internal data class MediaSkillPlan(
     val fallbackText: String? = null,
     val debugInfo: String = "",
     val shouldSkipModel: Boolean = false,
+    /**
+     * Structured verified facts to hand the model as grounding context. Distinct
+     * from [relatedItemsContext] (which is "items in the user's library") —
+     * [researchNotes] is "sourced facts that should appear, unmodified, in the
+     * reply". Populated by skills that gather external data (EXTERNAL_KNOWLEDGE)
+     * so the model can rephrase the facts into natural speech rather than the
+     * concatenation short-circuit surfacing a robotic "Per TMDB: ... Per OMDb:
+     * ..." reply. Rendered by the chat prompt as a "Research notes" section.
+     */
+    val researchNotes: String? = null,
 )
 
 internal class MediaSkillRegistry(
@@ -561,21 +571,22 @@ internal class MediaSkillRegistry(
         val wikipedia = wikipediaClient.getSummary(target)
 
         if (personMode) {
-            val text =
-                wikipedia?.extract?.let { extract ->
-                    // Source-labelled: users have asked to know whether a fact
-                    // came from TMDB vs Wikipedia vs the model's own memory,
-                    // especially when recommendations diverge from reviews.
-                    "Per Wikipedia — $target: ${trimToSentenceBoundary(extract, 420)}"
-                } ?: "I couldn't find an external summary for $target."
+            val wikiExtract = wikipedia?.extract?.let { trimToSentenceBoundary(it, 420) }
+            val fallbackText =
+                wikiExtract?.let { "Per Wikipedia — $target: $it" }
+                    ?: "I couldn't find an external summary for $target."
+            val researchNotes = wikiExtract?.let { "Wikipedia — $target: $it" }
             return MediaSkillPlan(
                 skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
                 validatedInput = target,
-                taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB or Wikipedia).",
-                directAnswer = text,
-                fallbackText = text,
+                taskInstructions = externalKnowledgeRewriteInstructions(target),
+                directAnswer = fallbackText,
+                fallbackText = fallbackText,
+                researchNotes = researchNotes,
                 debugInfo = buildExternalDebugInfo(target, wikipedia?.canonicalUrl, null, letterboxdUrlFor(target)),
-                shouldSkipModel = true,
+                // Skip the model when there's nothing to rephrase — no sense
+                // paying an inference round trip to parrot "I couldn't find...".
+                shouldSkipModel = researchNotes == null,
             )
         }
 
@@ -586,10 +597,12 @@ internal class MediaSkillRegistry(
             fallback?.let { buildOmdbReplyLine(it) }
         } else null
         val isCriticsFocus = isCriticsRatingQuery(normalize(question))
-        val text = buildString {
-            // For critics-rating phrasing we lead with OMDb so RT/Metacritic
-            // land in the first breath of the spoken reply. Otherwise keep
-            // the TMDB/Wikipedia ordering users have been seeing.
+
+        // [fallbackText] is what we speak if the model isn't available or
+        // rephrases to nothing usable — it is the honest concatenated reply the
+        // old shouldSkipModel=true path used, preserved verbatim so we never
+        // degrade below the pre-rewrite baseline.
+        val fallbackText = buildString {
             if (isCriticsFocus && omdbLine != null) {
                 append("Per OMDb: $omdbLine")
                 tmdbSummary?.let { append(" Per TMDB: ${it.first}") }
@@ -600,20 +613,35 @@ internal class MediaSkillRegistry(
                     wikipedia?.let { "Per Wikipedia: ${trimToSentenceBoundary(it.extract, 220)}" },
                     omdbLine?.let { "Per OMDb: $it" },
                 )
-                if (parts.isEmpty()) {
-                    append("I couldn't find external details for $target.")
-                } else {
-                    append(parts.joinToString(" "))
-                }
+                if (parts.isEmpty()) append("I couldn't find external details for $target.")
+                else append(parts.joinToString(" "))
             }
         }
+
+        // [researchNotes] is the model's ground-truth cheat sheet. The
+        // labelled "TMDB:", "OMDb:", "Wikipedia:" prefixes make source
+        // attribution trivial when the rephrase prompt asks the model to
+        // cite. Critics-flavored queries surface OMDb first so the model
+        // doesn't bury the RT/Metacritic number the user actually asked for.
+        val researchNotes = buildString {
+            if (isCriticsFocus && omdbLine != null) {
+                appendLine("OMDb (ratings): $omdbLine")
+                tmdbSummary?.let { appendLine("TMDB: ${it.first}") }
+                wikipedia?.let { appendLine("Wikipedia: ${trimToSentenceBoundary(it.extract, 220)}") }
+            } else {
+                tmdbSummary?.let { appendLine("TMDB: ${it.first}") }
+                omdbLine?.let { appendLine("OMDb (ratings): $it") }
+                wikipedia?.let { appendLine("Wikipedia: ${trimToSentenceBoundary(it.extract, 260)}") }
+            }
+        }.trim().ifBlank { null }
 
         return MediaSkillPlan(
             skillId = MediaSkillId.EXTERNAL_KNOWLEDGE,
             validatedInput = target,
-            taskInstructions = "Task: Answer from external movie knowledge sources when available. If you quote a fact, name the source (TMDB, OMDb, or Wikipedia).",
-            directAnswer = text,
-            fallbackText = text,
+            taskInstructions = externalKnowledgeRewriteInstructions(target),
+            directAnswer = fallbackText,
+            fallbackText = fallbackText,
+            researchNotes = researchNotes,
             debugInfo = buildExternalDebugInfo(
                 target = target,
                 wikipediaUrl = wikipedia?.canonicalUrl,
@@ -622,9 +650,28 @@ internal class MediaSkillRegistry(
                 omdbHit = omdbLine != null,
                 criticsFocus = isCriticsFocus,
             ),
-            shouldSkipModel = true,
+            // When we have no notes to rephrase, short-circuit to the
+            // fallback text — there's nothing for the model to improve.
+            shouldSkipModel = researchNotes == null,
         )
     }
+
+    /**
+     * Rephrase-oriented task instructions for EXTERNAL_KNOWLEDGE replies. The
+     * skill already gathered verified facts and handed them to the model via
+     * [MediaSkillPlan.researchNotes]; the model's job is to turn that into one
+     * natural spoken paragraph, not to recite it. Explicit "don't invent",
+     * "keep numbers exact", and "name the source" guardrails compensate for
+     * small on-device models (Gemini Nano, Gemma) tending to either parrot
+     * the input verbatim or cheerfully hallucinate around it.
+     */
+    private fun externalKnowledgeRewriteInstructions(target: String): String =
+        "Task: Rephrase the verified facts under \"Research notes\" below into ONE natural spoken reply about $target. " +
+            "2-3 sentences, conversational tone, no preamble like \"here's what I found\" or \"based on research\". " +
+            "Use ONLY facts present in the notes — do NOT add details from your own memory. " +
+            "Keep numeric ratings exact (e.g. Rotten Tomatoes 88%, IMDb 8.0). " +
+            "When you cite a fact, name the source inline (OMDb, TMDB, or Wikipedia) so the listener can trust it. " +
+            "If the user asked about critics or ratings, lead with the review scores."
 
     /**
      * Ratings/awards-first OMDb line for spoken replies. Parallel to
@@ -663,6 +710,24 @@ internal class MediaSkillRegistry(
     ): MediaSkillPlan {
         val castPairs = playerState.castWithCharacters.take(12)
         val titleLine = playerState.currentItemTitle.ifBlank { "the current title" }
+
+        // Fast-fail when there's no cast metadata at all. A multimodal model
+        // staring at a frame with no reference names is a worst case: it'll
+        // happily describe what it sees ("a man with armor") for 15-20s,
+        // which is neither helpful nor an honest answer to "who is this".
+        // Skip the model and tell the user directly.
+        if (castPairs.isEmpty() && playerState.castNames.isEmpty()) {
+            val direct = "I don't have cast info for ${titleLine} yet — try again in a moment, or check the item's metadata on your Jellyfin server."
+            return MediaSkillPlan(
+                skillId = MediaSkillId.CHARACTER_IDENTIFICATION,
+                validatedInput = question.trim(),
+                taskInstructions = "",
+                directAnswer = direct,
+                fallbackText = direct,
+                debugInfo = "character-id cast=0 visual=true fast-fail=no-cast",
+                shouldSkipModel = true,
+            )
+        }
 
         val fallback = when {
             castPairs.isNotEmpty() ->
@@ -852,6 +917,21 @@ internal class MediaSkillRegistry(
             }
         }
 
+        // Substring variants: users say "what can you tell me about X", "what
+        // do you know about X", etc. Catch the two high-traffic phrasings by
+        // keeping everything that follows the anchor — same logic, looser
+        // leading pattern. [extractAfter] returns null when the phrase is
+        // absent so we fall through to the post-prefix fallbacks below.
+        listOf(
+            "tell me about",
+            "tell me more about",
+            "know about",
+        ).forEach { anchor ->
+            extractAfter(trimmed, anchor)?.let { tail ->
+                return stripLeadingDemonstrative(tail.trim().trim('"'))
+            }
+        }
+
         // Critics-flavored rephrasings: strip the ratings framing and whatever
         // "about / for / of (the)" linker precedes the title. Keeps the
         // EXTERNAL_KNOWLEDGE path from demanding exact "tell me about X"
@@ -896,6 +976,21 @@ internal class MediaSkillRegistry(
                 playerState.currentItemTitle
             else -> trimmed
         }
+    }
+
+    /**
+     * Case-insensitive: return the substring after the first occurrence of
+     * [anchor] followed by at least one space, or null if [anchor] is absent.
+     * Used by [extractExternalLookupTarget] for phrasings like "what can you
+     * tell me about X" where the relevant tail is whatever follows the
+     * "tell me about" anchor.
+     */
+    private fun extractAfter(source: String, anchor: String): String? {
+        val idx = source.indexOf(anchor, ignoreCase = true)
+        if (idx < 0) return null
+        val tail = source.substring(idx + anchor.length)
+        if (!tail.startsWith(' ') && !tail.startsWith('\t')) return null
+        return tail.trimStart()
     }
 
     /**
@@ -1068,8 +1163,29 @@ internal class MediaSkillRegistry(
     private fun isExternalKnowledgeQuery(
         normalized: String,
         playerState: PlayerStateSnapshot,
-    ): Boolean =
-        normalized.startsWith("tell me about") ||
+    ): Boolean {
+        // Phrasing variants users actually say in practice, captured from
+        // voice_telemetry after watching real sessions:
+        //   "tell me about X"                  ← original strict form
+        //   "what can you tell me about X"     ← extremely common
+        //   "can you tell me about X"
+        //   "what do you know about X"
+        //   "what's X about" / "what is X about"
+        // Matching any of these under a single `contains` covers the lot
+        // without turning isExternalKnowledgeQuery into a regex zoo.
+        val tellMeAboutPhrases = listOf(
+            "tell me about",
+            "know about",
+            "tell me more about",
+        )
+        val whatIsItAboutPhrases = listOf(
+            "what is it about",
+            "what's it about",
+            "what is this about",
+            "what's this about",
+        )
+        return tellMeAboutPhrases.any { normalized.contains(it) } ||
+            whatIsItAboutPhrases.any { normalized.contains(it) } ||
             normalized.startsWith("look up") ||
             normalized.contains("wikipedia") ||
             normalized.contains("tmdb") ||
@@ -1079,6 +1195,7 @@ internal class MediaSkillRegistry(
             ((normalized.startsWith("who is") || normalized.startsWith("who was")) &&
                 !isGenericCharacterQuery(normalized) &&
                 (playerState.castNames.isNotEmpty() || playerState.directors.isNotEmpty() || playerState.currentItemTitle.isNotBlank()))
+    }
 
     private fun normalize(input: String): String =
         input.lowercase(Locale.US)
