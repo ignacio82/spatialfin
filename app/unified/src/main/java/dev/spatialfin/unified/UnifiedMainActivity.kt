@@ -183,6 +183,22 @@ class UnifiedMainActivity : AppCompatActivity() {
             window.setBackgroundDrawable(
                 android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             )
+            // Create the XR Session synchronously in onCreate (not inside a
+            // Composable LaunchedEffect). Session.create(activity) registers a
+            // lifecycle observer against this Activity — if we let the Compose
+            // coroutine win the race after a config change has already destroyed
+            // the prior Activity, that observer can miss ON_DESTROY and leak
+            // the session (on XR that locks the next launch into a degraded
+            // state). onDestroy() below drops our reference; the library's
+            // lifecycle observer takes care of the internal teardown.
+            try {
+                val result = Session.create(this)
+                if (result is SessionCreateSuccess) {
+                    xrSessionState.value = result.session
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "XR session not available")
+            }
         }
 
         // `ACTION_SEARCH` lands here when the Google TV Launcher's search bar
@@ -253,20 +269,9 @@ class UnifiedMainActivity : AppCompatActivity() {
                             delay(350L)
                             requestStartupPermissionsIfNeeded()
                         }
-
-                        // Create XR session (no space mode requested yet).
-                        LaunchedEffect(Unit) {
-                            if (xrSessionState.value == null) {
-                                try {
-                                    val result = Session.create(this@UnifiedMainActivity)
-                                    if (result is SessionCreateSuccess) {
-                                        xrSessionState.value = result.session
-                                    }
-                                } catch (e: Exception) {
-                                    Timber.w(e, "XR session not available")
-                                }
-                            }
-                        }
+                        // XR session was created synchronously in onCreate so
+                        // the library's Activity-lifecycle observer binds
+                        // before any config-change teardown could race it.
 
                         if (!onboardingCompleted || !state.isLoading) {
                             CompositionLocalProvider(LocalOfflineMode provides state.isOfflineMode) {
@@ -329,6 +334,12 @@ class UnifiedMainActivity : AppCompatActivity() {
             getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(listener)
         }
         displayListener = null
+        // Drop our reference so neither Compose state nor the Activity
+        // instance keeps the Session alive past ON_DESTROY. The library
+        // observes Activity lifecycle internally and tears the session
+        // itself down on the same ON_DESTROY signal — Session.destroy()
+        // is private, so clearing the ref is the most we can do from here.
+        xrSessionState.value = null
     }
 
     private fun applyPhoneOrientation() {
