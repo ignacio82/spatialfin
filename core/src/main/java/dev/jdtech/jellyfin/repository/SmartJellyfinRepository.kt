@@ -442,16 +442,101 @@ constructor(
     private suspend fun <T> runWithFallback(
         online: suspend () -> T,
         offline: suspend () -> T,
-    ): T {
-        if (connectionMonitor.shouldUseOfflineRepository()) return offline()
+    ): T = fetchWithFallback(online, offline).value
+
+    /**
+     * Run a read with the same online-first / offline-fallback semantics as
+     * [runWithFallback], but return the result tagged with which repository
+     * actually produced it. Used by the `fetch*` methods that expose
+     * provenance to the UI.
+     */
+    private suspend fun <T> fetchWithFallback(
+        online: suspend () -> T,
+        offline: suspend () -> T,
+    ): Fetched<T> {
+        if (connectionMonitor.shouldUseOfflineRepository()) {
+            return Fetched(offline(), isOffline = true)
+        }
         return try {
-            online().also { connectionMonitor.markServerAccessible() }
+            Fetched(online().also { connectionMonitor.markServerAccessible() }, isOffline = false)
         } catch (throwable: Throwable) {
             if (!connectionMonitor.isConnectionFailure(throwable)) throw throwable
             connectionMonitor.markServerInaccessible()
-            offline()
+            Fetched(offline(), isOffline = true)
         }
     }
+
+    /**
+     * Provenance-aware variants of the most UI-loaded reads. These exist so
+     * Home / library screens can show a "showing cached data" banner without
+     * every caller having to migrate — the plain methods above still return
+     * unwrapped values. Add siblings here as new screens need them; migrating
+     * the whole interface would cascade through `JellyfinRepositoryImpl` and
+     * `JellyfinRepositoryOfflineImpl` with no incremental payoff.
+     */
+    suspend fun fetchUserViews(): Fetched<List<BaseItemDto>> =
+        fetchWithFallback(
+            online = { onlineRepository.getUserViews() },
+            offline = { offlineRepository.getUserViews() },
+        )
+
+    suspend fun fetchLibraries(): Fetched<List<SpatialFinCollection>> =
+        fetchWithFallback(
+            online = { onlineRepository.getLibraries() },
+            offline = { offlineRepository.getLibraries() },
+        )
+
+    suspend fun fetchSuggestions(): Fetched<List<SpatialFinItem>> =
+        fetchWithFallback(
+            online = { onlineRepository.getSuggestions() },
+            offline = { offlineRepository.getSuggestions() },
+        )
+
+    suspend fun fetchResumeItems(): Fetched<List<SpatialFinItem>> =
+        fetchWithFallback(
+            online = { onlineRepository.getResumeItems() },
+            offline = { offlineRepository.getResumeItems() },
+        )
+
+    suspend fun fetchLatestMedia(parentId: UUID): Fetched<List<SpatialFinItem>> =
+        fetchWithFallback(
+            online = { onlineRepository.getLatestMedia(parentId) },
+            offline = { offlineRepository.getLatestMedia(parentId) },
+        )
+
+    suspend fun fetchItems(
+        parentId: UUID?,
+        includeTypes: List<BaseItemKind>?,
+        recursive: Boolean,
+        sortBy: SortBy,
+        sortOrder: SortOrder,
+        startIndex: Int? = null,
+        limit: Int? = null,
+    ): Fetched<List<SpatialFinItem>> =
+        fetchWithFallback(
+            online = {
+                onlineRepository.getItems(
+                    parentId = parentId,
+                    includeTypes = includeTypes,
+                    recursive = recursive,
+                    sortBy = sortBy,
+                    sortOrder = sortOrder,
+                    startIndex = startIndex,
+                    limit = limit,
+                )
+            },
+            offline = {
+                offlineRepository.getItems(
+                    parentId = parentId,
+                    includeTypes = includeTypes,
+                    recursive = recursive,
+                    sortBy = sortBy,
+                    sortOrder = sortOrder,
+                    startIndex = startIndex,
+                    limit = limit,
+                )
+            },
+        )
 
     private suspend fun <T> runOnlineOnly(online: suspend () -> T): T {
         if (connectionMonitor.shouldUseOfflineRepository()) {

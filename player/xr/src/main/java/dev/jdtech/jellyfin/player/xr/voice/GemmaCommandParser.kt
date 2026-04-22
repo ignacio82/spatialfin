@@ -8,6 +8,7 @@ import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import timber.log.Timber
 
@@ -34,11 +35,13 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
     ): XrPlayerAction = withContext(Dispatchers.IO) {
         // --- Primary: typed tool call (LiteRT) ----------------------------------
         try {
-            val toolCall = engine.runToolCall(
-                prompt = buildToolCallPrompt(transcript, playerState),
-                toolDescriptionJson = INTERPRET_COMMAND_TOOL,
-                profile = LlmInferenceProfile.COMMAND,
-            )
+            val toolCall = withTimeoutOrNull(TOOL_CALL_TIMEOUT_MS) {
+                engine.runToolCall(
+                    prompt = buildToolCallPrompt(transcript, playerState),
+                    toolDescriptionJson = INTERPRET_COMMAND_TOOL,
+                    profile = LlmInferenceProfile.COMMAND,
+                )
+            }
             if (toolCall != null && toolCall.name == "interpret_command") {
                 Timber.d(
                     "GemmaCommandParser: tool-call action=%s argsKeys=%s",
@@ -431,6 +434,10 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
     }
 
     companion object {
+        // Deadline for a single LLM tool-call round trip. Matches
+        // ChatToolRegistry; a hung NPU run should never freeze the parser.
+        private const val TOOL_CALL_TIMEOUT_MS = 8_000L
+
         /**
          * Single-tool OpenAPI description passed to LiteRT-LM's
          * `ConversationConfig.tools`. `action` is a constrained string enum so the

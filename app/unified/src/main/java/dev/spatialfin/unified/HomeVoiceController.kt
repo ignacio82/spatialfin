@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
 import dev.jdtech.jellyfin.player.xr.voice.AssistantReply
+import dev.jdtech.jellyfin.player.xr.voice.AssistantSpeechTransitionEffect
 import dev.jdtech.jellyfin.player.xr.voice.GeminiCloudService
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
@@ -301,6 +302,16 @@ class HomeVoiceController(
                         tts.speak(reply, null, assistantVoiceName, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
                     }
                 } ?: "Sorry, I couldn't process that."
+                response.playRequest?.let { play ->
+                    val matched = runCatching { repository.getSearchItems(play.title) }
+                        .getOrDefault(emptyList())
+                        .firstOrNull()
+                    if (matched != null && navigation.launchItem(matched)) {
+                        followUpPending = false
+                        return HomeVoiceActionOutcome("Playing ${matched.name}", response)
+                    }
+                    Timber.w("VOICE: play_media title='%s' — no match, falling back to chat reply", play.title)
+                }
                 HomeVoiceActionOutcome(feedback, response)
             }
             is XrPlayerAction.CloseApp -> {
@@ -522,33 +533,26 @@ class HomeVoiceController(
             }
         }
 
-        // TTS state machine: handle the gap between "tts.speak() called" and
-        // "tts actually started speaking", and arm a follow-up window when speech ends.
-        LaunchedEffect(
-            isTtsSpeaking,
-            assistantSpeechPendingStart,
-            assistantSpeechStarted,
-            followUpPending,
-        ) {
-            if (assistantSpeechPendingStart && isTtsSpeaking) {
+        AssistantSpeechTransitionEffect(
+            isTtsSpeaking = isTtsSpeaking,
+            pendingStart = assistantSpeechPendingStart,
+            started = assistantSpeechStarted,
+            followUpPending = followUpPending,
+            followUpDeadlineMs = followUpDeadlineMs,
+            spokenReplyGraceMs = SPOKEN_REPLY_GRACE_MS,
+            onTtsStarted = {
                 assistantSpeechPendingStart = false
                 assistantSpeechStarted = true
-            } else if (assistantSpeechPendingStart && !isTtsSpeaking) {
-                delay(SPOKEN_REPLY_GRACE_MS)
-                if (assistantSpeechPendingStart && !isTtsSpeaking) {
-                    assistantSpeechPendingStart = false
-                    assistantSpeechStarted = false
-                    if (followUpPending && followUpDeadlineMs == 0L) {
-                        armFollowUpWindow("spoken-reply-did-not-start")
-                    }
-                }
-            } else if (!isTtsSpeaking && assistantSpeechStarted) {
+            },
+            onTtsSkipped = {
+                assistantSpeechPendingStart = false
                 assistantSpeechStarted = false
-                if (followUpPending && followUpDeadlineMs == 0L) {
-                    armFollowUpWindow("spoken-reply-finished")
-                }
-            }
-        }
+            },
+            onTtsFinished = {
+                assistantSpeechStarted = false
+            },
+            onArmFollowUpWindow = ::armFollowUpWindow,
+        )
 
         // Auto-start follow-up listening when the window is open and nothing is
         // currently speaking, recognizing, or processing.

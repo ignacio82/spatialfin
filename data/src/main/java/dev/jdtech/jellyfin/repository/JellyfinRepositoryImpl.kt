@@ -189,12 +189,24 @@ class JellyfinRepositoryImpl(
         sortOrder: SortOrder,
     ): Flow<PagingData<SpatialFinItem>> {
         return Pager(
-                config = PagingConfig(pageSize = 10, enablePlaceholders = false),
+                config = PagingConfig(pageSize = pageSizeForDevice(), enablePlaceholders = false),
                 pagingSourceFactory = {
                     ItemsPagingSource(this, parentId, includeTypes, recursive, sortBy, sortOrder)
                 },
             )
             .flow
+    }
+
+    // Larger screens (TV, XR) show enough items per page that a 10-item fetch
+    // forces a round-trip almost immediately; bump them up. Phone/Beam stays
+    // smaller to keep the initial-paint cost low.
+    private fun pageSizeForDevice(): Int {
+        val pm = context.packageManager
+        return when {
+            pm.hasSystemFeature("android.software.xr.api.spatial") -> 50
+            pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) -> 50
+            else -> 25
+        }
     }
 
     override suspend fun getPerson(personId: UUID): SpatialFinPerson =

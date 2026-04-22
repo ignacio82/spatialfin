@@ -2,10 +2,12 @@ package dev.spatialfin.unified
 
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
+import androidx.xr.runtime.math.Ray
 import androidx.xr.runtime.math.Vector3
+import androidx.xr.scenecore.Entity
+import androidx.xr.scenecore.EntityMoveListener
 import androidx.xr.scenecore.GroupEntity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 /**
@@ -60,36 +62,21 @@ class PanelPoseController(
     }
 
     /**
-     * Long-running pose tracking loop. Polls quickly while the user is moving the
-     * panel, but only persists the pose after motion settles — writing on every
-     * tick raced the MovableComponent's final pose with a stale intermediate
-     * sample, so the user's resting position could be overwritten.
+     * Persist the pose after each user-initiated move finishes. Driven by
+     * MovableComponent's EntityMoveListener rather than a polling loop so we
+     * don't wake the app 10×/s for nothing and don't race the final pose with a
+     * stale mid-motion sample.
      */
-    suspend fun trackEntityPose(entity: GroupEntity) {
-        var lastSampled: Pose? = null
-        var lastSaved: Pose? = null
-        var stillSinceMs: Long = 0L
-        while (true) {
-            val current = readEntityPose(entity)
-            if (current != null) {
-                if (!PanelPosePolicy.approximatelyEqual(current, lastSampled)) {
-                    lastSampled = current
-                    stillSinceMs = System.currentTimeMillis()
-                } else if (
-                    !PanelPosePolicy.approximatelyEqual(current, lastSaved) &&
-                    System.currentTimeMillis() - stillSinceMs >= POSE_STILL_DEBOUNCE_MS
-                ) {
-                    savePose(current)
-                    lastSaved = current
-                }
-            }
-            delay(POSE_SAMPLE_INTERVAL_MS)
+    fun moveListener(): EntityMoveListener = object : EntityMoveListener {
+        override fun onMoveEnd(
+            entity: Entity,
+            finalInputRay: Ray,
+            finalPose: Pose,
+            finalScale: Float,
+            updatedParent: Entity?,
+        ) {
+            savePose(finalPose)
         }
-    }
-
-    companion object {
-        const val POSE_SAMPLE_INTERVAL_MS = 100L
-        const val POSE_STILL_DEBOUNCE_MS = 300L
     }
 }
 

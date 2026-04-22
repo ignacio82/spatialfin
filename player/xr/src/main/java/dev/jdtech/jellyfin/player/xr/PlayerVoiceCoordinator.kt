@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.media3.common.Player
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.player.xr.voice.AssistantSpeechTransitionEffect
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceSynthesizer
@@ -248,36 +249,26 @@ internal fun rememberPlayerVoiceCoordinator(
         }
     }
 
-    // TTS transition state machine.
-    LaunchedEffect(
-        isTtsSpeaking,
-        state.assistantSpeechPendingStart,
-        state.assistantSpeechStarted,
-        state.followUpPending,
-    ) {
-        if (state.assistantSpeechPendingStart && isTtsSpeaking) {
-            state.onTtsStarted()
-        } else if (state.assistantSpeechPendingStart && !isTtsSpeaking) {
-            delay(1_500L)
-            if (state.assistantSpeechPendingStart && !isTtsSpeaking) {
-                state.clearAssistantSpeech()
-                if (state.clearResumeFlag()) {
-                    player.play()
-                }
-                if (state.followUpPending && state.followUpDeadlineMs == 0L) {
-                    state.armFollowUpWindow("spoken-reply-did-not-start", followUpListenWindowMs)
-                }
-            }
-        } else if (!isTtsSpeaking && state.assistantSpeechStarted) {
-            if (state.clearResumeFlag()) {
-                player.play()
-            }
+    AssistantSpeechTransitionEffect(
+        isTtsSpeaking = isTtsSpeaking,
+        pendingStart = state.assistantSpeechPendingStart,
+        started = state.assistantSpeechStarted,
+        followUpPending = state.followUpPending,
+        followUpDeadlineMs = state.followUpDeadlineMs,
+        spokenReplyGraceMs = 1_500L,
+        onTtsStarted = { state.onTtsStarted() },
+        onTtsSkipped = {
             state.clearAssistantSpeech()
-            if (state.followUpPending && state.followUpDeadlineMs == 0L) {
-                state.armFollowUpWindow("spoken-reply-finished", followUpListenWindowMs)
-            }
-        }
-    }
+            if (state.clearResumeFlag()) player.play()
+        },
+        onTtsFinished = {
+            if (state.clearResumeFlag()) player.play()
+            state.clearAssistantSpeech()
+        },
+        onArmFollowUpWindow = { reason ->
+            state.armFollowUpWindow(reason, followUpListenWindowMs)
+        },
+    )
 
     return state
 }

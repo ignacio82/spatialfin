@@ -43,7 +43,14 @@ class ItemsPagingSource(
         }
     }
 
-    override fun getRefreshKey(state: PagingState<Int, SpatialFinItem>): Int {
-        return 0
+    // Keys here are absolute startIndex offsets into the Jellyfin result set
+    // (see `load` — `position` is `startIndex`). The standard index-keyed
+    // recipe: land the refresh on the anchor page's own first-index so scroll
+    // position survives invalidation / rotation instead of snapping to 0.
+    override fun getRefreshKey(state: PagingState<Int, SpatialFinItem>): Int? {
+        val anchor = state.anchorPosition ?: return null
+        val closest = state.closestPageToPosition(anchor) ?: return null
+        return closest.prevKey?.plus(state.config.pageSize)
+            ?: closest.nextKey?.minus(state.config.pageSize)
     }
 }

@@ -75,6 +75,14 @@ internal class MediaSkillRegistry(
     private val omdbApi = OmdbApi(appPreferences, httpClient)
     private val wikipediaClient = WikipediaSummaryClient(httpClient)
 
+    // Short-TTL cache for EXTERNAL_KNOWLEDGE plans — those hit TMDB / Wikipedia
+    // / OMDb on every call, which is wasteful when the user asks about the same
+    // scene twice in quick succession. Other skills are either cheap or depend
+    // on volatile per-call state (subtitleContext, recommendationContext) and
+    // shouldn't be cached.
+    private val externalPlanCache =
+        VoiceResultCache<MediaSkillPlan>(ttlMs = EXTERNAL_PLAN_TTL_MS)
+
     suspend fun plan(
         question: String,
         playerState: PlayerStateSnapshot,
@@ -551,6 +559,26 @@ internal class MediaSkillRegistry(
     }
 
     private suspend fun externalKnowledgePlan(
+        question: String,
+        playerState: PlayerStateSnapshot,
+    ): MediaSkillPlan {
+        val cacheKey = externalPlanCacheKey(playerState, question)
+        externalPlanCache.getOrNull(cacheKey)?.let { return it.value }
+        val plan = externalKnowledgePlanUncached(question, playerState)
+        externalPlanCache.put(cacheKey, plan)
+        return plan
+    }
+
+    private fun externalPlanCacheKey(playerState: PlayerStateSnapshot, question: String): String =
+        buildString {
+            append(playerState.currentItemTitle)
+            append('|')
+            append(playerState.productionYear ?: "")
+            append("||")
+            append(question.trim().lowercase())
+        }
+
+    private suspend fun externalKnowledgePlanUncached(
         question: String,
         playerState: PlayerStateSnapshot,
     ): MediaSkillPlan {
@@ -1222,4 +1250,8 @@ internal class MediaSkillRegistry(
     }
 
     private fun encodeForUrl(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    companion object {
+        private const val EXTERNAL_PLAN_TTL_MS = 120_000L
+    }
 }

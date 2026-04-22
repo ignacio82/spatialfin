@@ -167,12 +167,13 @@ internal fun startVoiceCapture(
 
                     if (response.text != null) {
                         Timber.i(
-                            "VOICE: chat reply strategy=%s skill=%s recommendations=%d disposition=%s spokenReplies=%b",
+                            "VOICE: chat reply strategy=%s skill=%s recommendations=%d disposition=%s spokenReplies=%b playRequest=%s",
                             response.strategy,
                             response.selectedSkill,
                             response.recommendedItems.size,
                             response.resultDisposition,
                             assistantPreferences.spokenRepliesEnabled,
+                            response.playRequest?.title ?: "none",
                         )
                         onResult(response.text)
                         onConversationTurn(action.query, response.text)
@@ -180,6 +181,11 @@ internal fun startVoiceCapture(
                         if (assistantPreferences.spokenRepliesEnabled && firstChunk) {
                             Timber.i("VOICE: speaking chat reply chars=%d", response.text.length)
                             onSpokenReply(response.text, responseLanguageHint, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
+                        }
+                        response.playRequest?.let { play ->
+                            controller.dispatch(
+                                XrPlayerAction.Search(query = play.title, autoPlay = true)
+                            )
                         }
                         if (response.recommendedItems.isNotEmpty()) {
                             Timber.i(

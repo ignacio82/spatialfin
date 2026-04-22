@@ -183,6 +183,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             window.setBackgroundDrawable(
                 android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
             )
+            requestStartupPermissionsIfNeeded()
             // Create the XR Session synchronously in onCreate (not inside a
             // Composable LaunchedEffect). Session.create(activity) registers a
             // lifecycle observer against this Activity — if we let the Compose
@@ -265,10 +266,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                         val navController = rememberNavController()
                         val lifecycleOwner = LocalLifecycleOwner.current
 
-                        LaunchedEffect(Unit) {
-                            delay(350L)
-                            requestStartupPermissionsIfNeeded()
-                        }
                         // XR session was created synchronously in onCreate so
                         // the library's Activity-lifecycle observer binds
                         // before any config-change teardown could race it.
@@ -777,6 +774,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                         XR_APP_PANEL_HEIGHT_METERS,
                         0.1f,
                     )
+                m.addMoveListener(poseController.moveListener())
                 root.addComponent(m)
                 movableComponent.value = m
                 Timber.d("VOICE: Home movable permanently enabled")
@@ -788,11 +786,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                 delay(5000L)
                 controlsVisible = false
             }
-        }
-
-        LaunchedEffect(rootEntity.value) {
-            val root = rootEntity.value ?: return@LaunchedEffect
-            poseController.trackEntityPose(root)
         }
 
         DisposableEffect(session) {

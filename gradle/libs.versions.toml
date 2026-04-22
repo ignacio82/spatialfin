@@ -121,7 +121,7 @@ mlkit-genai-prompt = { module = "com.google.mlkit:genai-prompt", version.ref = "
 nfs4j = { module = "org.dcache:nfs4j-basic-client", version.ref = "nfs4j" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
-tflite-gpu = "com.google.android.gms:play-services-tflite-gpu:16.4.0"
+tflite-gpu = "com.google.android.gms:play-services-tflite-gpu:16.5.0"
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 
 [plugins]

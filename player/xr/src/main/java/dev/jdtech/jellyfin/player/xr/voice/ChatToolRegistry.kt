@@ -44,7 +44,17 @@ internal class ChatToolRegistry(
     data class ResearchNotes(
         val body: String,
         val debugInfo: String,
+        // Non-null when the model decided the user actually wants to play
+        // something ("just play Dune"). SmartChatEngine short-circuits when
+        // this is set and the caller dispatches it via the player action path;
+        // [body] is ignored in that case, so it can be blank.
+        val playRequest: PlayMediaRequest? = null,
     )
+
+    // Short-TTL cache keyed by (scene signature, question). A follow-up
+    // "who else is in this scene" on the same frame re-enters with identical
+    // inputs and would otherwise re-run TMDB/OMDB/Wikipedia/web-search.
+    private val researchCache = VoiceResultCache<ResearchNotes?>(ttlMs = RESEARCH_TTL_MS)
 
     /**
      * Run a single tool-selection pass on [engine]. Returns null if the model
@@ -56,6 +66,21 @@ internal class ChatToolRegistry(
      * seconds even on LiteRT GPU.
      */
     suspend fun gather(
+        question: String,
+        playerState: PlayerStateSnapshot,
+        engine: VoiceAiEngine,
+    ): ResearchNotes? {
+        val cacheKey = buildCacheKey(playerState, question)
+        researchCache.getOrNull(cacheKey)?.let { entry ->
+            Timber.d("ChatTool: cache hit key=%s hasNotes=%b", cacheKey, entry.value != null)
+            return entry.value
+        }
+        val notes = gatherUncached(question, playerState, engine)
+        researchCache.put(cacheKey, notes)
+        return notes
+    }
+
+    private suspend fun gatherUncached(
         question: String,
         playerState: PlayerStateSnapshot,
         engine: VoiceAiEngine,
@@ -101,12 +126,25 @@ internal class ChatToolRegistry(
             "lookup_person" -> executeLookupPerson(args)
             "describe_current_item" -> executeDescribeCurrentItem(playerState)
             "web_search" -> if (webSearchAvailable) executeWebSearch(args) else null
+            "play_media" -> executePlayMedia(args)
             "none" -> null
             else -> {
                 Timber.d("ChatTool: unknown action=%s", action)
                 null
             }
         }
+    }
+
+    private fun executePlayMedia(args: Map<String, Any?>): ResearchNotes? {
+        val title = (args["title"] as? String)?.trim().orEmpty()
+        if (title.isBlank()) return null
+        val year = (args["year"] as? Number)?.toInt()
+            ?: (args["year"] as? String)?.trim()?.toIntOrNull()
+        return ResearchNotes(
+            body = "",
+            debugInfo = "play_media title=$title year=${year ?: "?"}",
+            playRequest = PlayMediaRequest(title = title, year = year),
+        )
     }
 
     private suspend fun runJsonFallback(
@@ -177,11 +215,13 @@ internal class ChatToolRegistry(
         return """
             You are SpatialFin's research planner. The user asked: "$question".
             ${context.ifBlank { "No media is currently playing." }}
-            If gathering one fact would help answer — a movie/show overview, a
-            person's background, or the details of what's on screen — reply
-            with EXACTLY ONE JSON object. Otherwise reply {"action": "none"}.
+            If the user asked to play a specific title, reply with a play_media
+            object. Otherwise, if one fact would help answer, pick the matching
+            lookup. Otherwise reply {"action": "none"}. Reply with EXACTLY ONE
+            JSON object.
 
             Valid shapes (pick one):
+              {"action": "play_media", "title": "<movie or show title>"}
               {"action": "lookup_title", "title": "<movie or show title>"}
               {"action": "lookup_person", "name": "<person name>"}
               {"action": "describe_current_item"}$webLine
@@ -369,10 +409,13 @@ internal class ChatToolRegistry(
         return """
             You are SpatialFin's research planner. The user asked: "$question".
             ${context.ifBlank { "No media is currently playing." }}
-            If gathering one fact would help answer — a movie/show overview, a person's background,
-            or the details of what's on screen — call the `research_media` tool exactly once with
-            the best-fitting action. If no lookup would help (small talk, playback control,
-            already-answered facts), do not call the tool.
+            Decide what single action helps most:
+            - If the user asked to play a specific title ("play Dune", "put on The Office"),
+              call `research_media` with action="play_media" and the exact title.
+            - If gathering one fact would help answer (movie/show overview, person background,
+              details about what's on screen), call it with the matching lookup action.
+            - Otherwise (small talk, playback control, already-answered facts) do not call the tool.
+            Call it at most once.
         """.trimIndent()
     }
 
@@ -388,22 +431,24 @@ internal class ChatToolRegistry(
             add("lookup_person")
             add("describe_current_item")
             if (webSearchEnabled) add("web_search")
+            add("play_media")
         }.joinToString(", ") { "\"$it\"" }
         return """
         {
           "name": "research_media",
-          "description": "Gather one piece of grounded media context before answering the user. Fill only the fields that the chosen action requires.",
+          "description": "Gather grounded media context OR request playback before answering the user. Fill only the fields that the chosen action requires.",
           "parameters": {
             "type": "object",
             "properties": {
               "action": {
                 "type": "string",
-                "description": "Which lookup to perform.",
+                "description": "Which action to perform.",
                 "enum": [$actions]
               },
-              "title": { "type": "string", "description": "Movie or TV-show title for lookup_title." },
+              "title": { "type": "string", "description": "Movie or TV-show title for lookup_title or play_media." },
               "name":  { "type": "string", "description": "Person name for lookup_person." },
-              "query": { "type": "string", "description": "Free-form query string for web_search." }
+              "query": { "type": "string", "description": "Free-form query string for web_search." },
+              "year":  { "type": "integer", "description": "Optional release year disambiguator for play_media." }
             },
             "required": ["action"]
           }
@@ -411,10 +456,26 @@ internal class ChatToolRegistry(
         """
     }
 
+    private fun buildCacheKey(playerState: PlayerStateSnapshot, question: String): String {
+        val scene = buildString {
+            append(playerState.currentItemTitle)
+            append('|')
+            append(playerState.productionYear ?: "")
+            append('|')
+            append(playerState.currentSeriesName ?: "")
+            append('|')
+            append(playerState.currentSeasonNumber ?: "")
+            append('|')
+            append(playerState.currentEpisodeNumber ?: "")
+        }
+        return "$scene||${question.trim().lowercase()}"
+    }
+
     companion object {
         private const val TOOL_CALL_TIMEOUT_MS = 8_000L
         private const val OVERVIEW_CAP = 320
         private const val WIKI_EXTRACT_CAP = 360
         private const val WEB_SEARCH_MAX_HITS = 3
+        private const val RESEARCH_TTL_MS = 120_000L
     }
 }

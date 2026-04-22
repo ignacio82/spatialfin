@@ -71,6 +71,12 @@ data class AssistantReply(
     val selectedSkill: String = MediaSkillId.GENERAL_CHAT.name,
     val validatedInput: String = "",
     val resultDisposition: String = "MODEL",
+    /**
+     * Non-null when the tool-call research pass emitted a `play_media` action.
+     * Callers dispatch this via their player-action path (XR player → session
+     * controller Search+autoPlay; Home → resolve via repository and launch).
+     */
+    val playRequest: PlayMediaRequest? = null,
 )
 
 class SmartChatEngine(
@@ -285,6 +291,22 @@ class SmartChatEngine(
             } else null
         if (researchNotes != null) {
             Timber.d("ChatTool: researchNotes attached (%s)", researchNotes.debugInfo)
+        }
+
+        // The model asked for playback instead of research. Skip the chat
+        // round trip entirely — the caller will dispatch the play request via
+        // their player-action path.
+        researchNotes?.playRequest?.let { play ->
+            Timber.i("ChatTool: play_media short-circuit title=%s year=%s", play.title, play.year ?: "?")
+            return@withContext AssistantReply(
+                text = "Playing ${play.title}.",
+                strategy = "PLAY_MEDIA_TOOL",
+                debugInfo = "${plan.debugInfo}; ${researchNotes.debugInfo}",
+                selectedSkill = plan.skillId.name,
+                validatedInput = plan.validatedInput,
+                resultDisposition = "DIRECT",
+                playRequest = play,
+            )
         }
 
         // Either the skill pre-gathered notes (EXTERNAL_KNOWLEDGE) or the
