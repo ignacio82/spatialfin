@@ -98,6 +98,7 @@ internal class PlayerVoiceCoordinator {
         assistantVoiceName: String?,
         player: Player,
         tts: SpatialVoiceSynthesizer,
+        queueMode: Int = android.speech.tts.TextToSpeech.QUEUE_FLUSH,
     ) {
         if (!spokenRepliesEnabled || !tts.canSpeak()) {
             Timber.w(
@@ -119,7 +120,7 @@ internal class PlayerVoiceCoordinator {
         if (resumePlaybackAfterAssistantSpeech) {
             player.pause()
         }
-        tts.speak(text, languageHint, assistantVoiceName)
+        tts.speak(text, languageHint, assistantVoiceName, queueMode)
     }
 
     /**

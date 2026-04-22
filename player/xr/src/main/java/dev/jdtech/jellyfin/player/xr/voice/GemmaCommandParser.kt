@@ -48,6 +48,7 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
                 return@withContext mapToolCall(toolCall, transcript)
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.w(
                 e,
                 "GemmaCommandParser: tool-call path failed — falling back to JSON parse transcript=%s",
@@ -75,6 +76,7 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
                 val json = extractJson(responseText) ?: return@forEachIndexed
                 return@withContext mapModelAction(JSONObject(json), transcript)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(
                     e,
                     "GemmaCommandParser: parse attempt failed retry=%s transcript=%s",

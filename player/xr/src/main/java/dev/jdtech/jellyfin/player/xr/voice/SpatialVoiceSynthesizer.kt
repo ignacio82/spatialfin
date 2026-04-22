@@ -64,6 +64,7 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         text: String,
         languageHint: String? = null,
         voiceName: String? = null,
+        queueMode: Int = TextToSpeech.QUEUE_FLUSH,
     ) {
         if (!isInitialized) {
             Timber.w("TTS: speak ignored because engine is not initialized")
@@ -76,13 +77,14 @@ class SpatialVoiceSynthesizer(context: Context) : TextToSpeech.OnInitListener {
         }
         val utteranceId = "spatialfin_chat_${System.currentTimeMillis()}"
         Timber.i(
-            "TTS: speak requested id=%s chars=%d voiceName=%s appliedVoice=%b",
+            "TTS: speak requested id=%s chars=%d voiceName=%s appliedVoice=%b mode=%d",
             utteranceId,
             text.length,
             voiceName,
             applied,
+            queueMode,
         )
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        engine.speak(text, queueMode, null, utteranceId)
     }
 
     fun canSpeak(): Boolean = isInitialized && tts != null

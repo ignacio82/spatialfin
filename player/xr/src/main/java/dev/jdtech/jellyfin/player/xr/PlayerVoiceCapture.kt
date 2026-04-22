@@ -62,7 +62,7 @@ internal fun startVoiceCapture(
     onScheduleFollowUp: () -> Unit,
     onGetSuggestions: suspend () -> List<SpatialFinItem>,
     onResult: (String) -> Unit,
-    onSpokenReply: (String, String?) -> Unit,
+    onSpokenReply: (String, String?, Int) -> Unit,
     onCharacterScanActiveChanged: ((Boolean) -> Unit)? = null,
     subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
     scope: CoroutineScope,
@@ -131,6 +131,7 @@ internal fun startVoiceCapture(
                         }
                     }
 
+                    var firstChunk = true
                     val response = try {
                         chatEngine.query(
                             question = action.query,
@@ -147,6 +148,12 @@ internal fun startVoiceCapture(
                             lastPointerPosition = lastPointerPosition,
                             subtitleCacheFallback = subtitleCacheFallback,
                             onTokenStream = { partial -> onResult(partial) },
+                            onSentenceStream = { chunk ->
+                                if (assistantPreferences.spokenRepliesEnabled && chunk.isNotBlank()) {
+                                    onSpokenReply(chunk, responseLanguageHint, if (firstChunk) android.speech.tts.TextToSpeech.QUEUE_FLUSH else android.speech.tts.TextToSpeech.QUEUE_ADD)
+                                    firstChunk = false
+                                }
+                            }
                         )
                     } finally {
                         if (isCharacterIDQuery) onCharacterScanActiveChanged?.invoke(false)
@@ -170,9 +177,9 @@ internal fun startVoiceCapture(
                         onResult(response.text)
                         onConversationTurn(action.query, response.text)
                         onScheduleFollowUp()
-                        if (assistantPreferences.spokenRepliesEnabled) {
+                        if (assistantPreferences.spokenRepliesEnabled && firstChunk) {
                             Timber.i("VOICE: speaking chat reply chars=%d", response.text.length)
-                            onSpokenReply(response.text, responseLanguageHint)
+                            onSpokenReply(response.text, responseLanguageHint, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
                         }
                         if (response.recommendedItems.isNotEmpty()) {
                             Timber.i(
@@ -211,7 +218,7 @@ internal fun startVoiceCapture(
                     val feedback = dispatchVoiceParseResult(controller, parseResult)
                     onResult(feedback)
                     if (assistantPreferences.spokenRepliesEnabled && shouldSpeakVoiceFeedback(action)) {
-                        onSpokenReply(feedback, responseLanguageHint)
+                        onSpokenReply(feedback, responseLanguageHint, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
                     }
                     telemetryStore.record(
                         VoiceTelemetryEntry(

@@ -118,6 +118,8 @@ class SmartChatEngine(
         subtitleCacheFallback: ((fromMs: Long, toMs: Long) -> List<Pair<Long, String>>)? = null,
         /** Called on the IO thread with accumulating text as each token arrives. */
         onTokenStream: ((String) -> Unit)? = null,
+        /** Called when a complete sentence is generated, useful for chunked TTS. */
+        onSentenceStream: ((String) -> Unit)? = null,
     ): AssistantReply = withContext(Dispatchers.IO) {
         val subtitleContext = buildSubtitleContext(question, recentSubtitleLines, currentPositionMs, subtitleCacheFallback)
         val plan =
@@ -341,6 +343,8 @@ class SmartChatEngine(
                     // to keep the full 45s budget.
                     val timeoutMs = chatInferenceTimeoutMs(currentInstance.backendName)
                     var lastStreamed: String = ""
+                    var lastSentIndex = 0
+                    val sentenceEnds = listOf('.', '!', '?', '\n')
                     val responseText = withTimeoutOrNull(timeoutMs) {
                         currentInstance.runInference(
                             prompt = prompt,
@@ -349,6 +353,14 @@ class SmartChatEngine(
                             onToken = { partial ->
                                 lastStreamed = partial
                                 onTokenStream?.invoke(partial)
+                                val latestChar = partial.lastOrNull()
+                                if (latestChar != null && sentenceEnds.contains(latestChar) && partial.length - lastSentIndex > 20) {
+                                    val chunk = partial.substring(lastSentIndex, partial.length).trim()
+                                    if (chunk.isNotEmpty()) {
+                                        onSentenceStream?.invoke(chunk)
+                                    }
+                                    lastSentIndex = partial.length
+                                }
                             },
                         )
                     }
@@ -361,6 +373,13 @@ class SmartChatEngine(
                             )
                             null
                         }
+                    
+                    if (effectiveResponse != null && lastSentIndex < effectiveResponse.length) {
+                        val chunk = effectiveResponse.substring(lastSentIndex).trim()
+                        if (chunk.isNotEmpty()) {
+                            onSentenceStream?.invoke(chunk)
+                        }
+                    }
                     if (!effectiveResponse.isNullOrBlank()) {
                         val prefixToRemove = "Model: "
                         val cleanedResponse = if (effectiveResponse.startsWith(prefixToRemove)) {

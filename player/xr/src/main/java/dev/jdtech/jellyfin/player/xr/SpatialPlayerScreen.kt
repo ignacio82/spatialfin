@@ -665,14 +665,15 @@ fun SpatialPlayerScreen(
             )
         }
 
-    fun speakAssistantReply(text: String, languageHint: String?) {
+    fun speakAssistantReply(text: String, languageHint: String?, queueMode: Int = android.speech.tts.TextToSpeech.QUEUE_FLUSH) {
         voice.speakAssistantReply(
             text = text,
             languageHint = languageHint,
             spokenRepliesEnabled = assistantSpokenReplies,
             assistantVoiceName = assistantVoiceName,
             player = player,
-            tts = tts,
+            tts = voiceServices.tts,
+            queueMode = queueMode,
         )
     }
 
@@ -778,7 +779,7 @@ fun SpatialPlayerScreen(
             },
             onGetSuggestions = { viewModel.repository.getSuggestions() },
             onResult = { voice.voiceFeedback = it },
-            onSpokenReply = { text, lang -> speakAssistantReply(text, lang) },
+            onSpokenReply = { text, lang, queueMode -> speakAssistantReply(text, lang, queueMode) },
             onCharacterScanActiveChanged = { voice.characterScanActive = it },
             subtitleCacheFallback = subtitleContext.cacheFallback,
             scope = coroutineScope,

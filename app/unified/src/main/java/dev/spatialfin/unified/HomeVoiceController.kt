@@ -263,6 +263,7 @@ class HomeVoiceController(
                 val nano = ensureNano()
                 val cloud = ensureCloud()
                 val assistant = ensureChatEngine(nano, cloud)
+                var firstChunk = true
                 val response = assistant.query(
                     question = action.query,
                     playerState = homePlayerStateSnapshot(),
@@ -276,6 +277,15 @@ class HomeVoiceController(
                     recommendationContext = recommendationContext,
                     onGetSuggestions = { repository.getSuggestions() },
                     onTokenStream = onToken,
+                    onSentenceStream = { chunk ->
+                        val willSpeakReply = assistantSpokenReplies && tts.canSpeak()
+                        if (willSpeakReply && chunk.isNotBlank()) {
+                            assistantSpeechPendingStart = true
+                            assistantSpeechStarted = false
+                            tts.speak(chunk, null, assistantVoiceName, if (firstChunk) android.speech.tts.TextToSpeech.QUEUE_FLUSH else android.speech.tts.TextToSpeech.QUEUE_ADD)
+                            firstChunk = false
+                        }
+                    },
                 )
                 response.recommendedItems
                     .takeIf { it.isNotEmpty() }
@@ -285,10 +295,10 @@ class HomeVoiceController(
                     if (conversationHistory.size > 6) conversationHistory.removeAt(0)
                     val willSpeakReply = assistantSpokenReplies && tts.canSpeak()
                     scheduleFollowUp(willSpeakReply)
-                    if (willSpeakReply) {
+                    if (willSpeakReply && firstChunk) {
                         assistantSpeechPendingStart = true
                         assistantSpeechStarted = false
-                        tts.speak(reply, null, assistantVoiceName)
+                        tts.speak(reply, null, assistantVoiceName, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
                     }
                 } ?: "Sorry, I couldn't process that."
                 HomeVoiceActionOutcome(feedback, response)
