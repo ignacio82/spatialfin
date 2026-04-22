@@ -56,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.lazy.LazyColumn
@@ -897,6 +898,7 @@ fun BeamShowScreen(
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
     var showOverflow by rememberSaveable(showId) { mutableStateOf(false) }
+    var showEditExternalIds by rememberSaveable(showId) { mutableStateOf(false) }
 
     LaunchedEffect(showId) {
         viewModel.load(showId)
@@ -1017,6 +1019,13 @@ fun BeamShowScreen(
                                             showBulkDownloadDialog = true
                                         }
                                     )
+                                    androidx.compose.material3.DropdownMenuItem(
+                                        text = { Text("Edit external IDs") },
+                                        onClick = {
+                                            showOverflow = false
+                                            showEditExternalIds = true
+                                        }
+                                    )
                                 }
                             )
                         }
@@ -1072,6 +1081,27 @@ fun BeamShowScreen(
             },
             onDismiss = { showBulkDownloadDialog = false },
         )
+    }
+    if (showEditExternalIds) {
+        state.show?.let { show ->
+            val scope = rememberCoroutineScope()
+            dev.jdtech.jellyfin.presentation.film.components.EditExternalIdsDialog(
+                itemId = show.id,
+                initialTitle = show.name,
+                initialYear = show.productionYear,
+                onDismiss = { showEditExternalIds = false },
+                onSaved = {
+                    // Jellyfin queues its server-side metadata refresh
+                    // asynchronously — wait ~5s, then reload so the hero
+                    // card renders with the refreshed title / overview /
+                    // poster instead of the pre-edit values.
+                    scope.launch {
+                        kotlinx.coroutines.delay(5_000)
+                        viewModel.load(showId)
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -1228,6 +1258,7 @@ fun BeamItemDetailScreen(
     var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
     var showPlaybackOptions by rememberSaveable(itemId) { mutableStateOf(false) }
     var showOverflow by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showEditExternalIds by rememberSaveable(itemId) { mutableStateOf(false) }
     var showDeleteConfirm by rememberSaveable(itemId) { mutableStateOf(false) }
 
     LaunchedEffect(itemId) {
@@ -1426,6 +1457,26 @@ fun BeamItemDetailScreen(
                                             }
                                         )
                                     }
+                                    // Edit external IDs works for anything that
+                                    // Jellyfin writes providerIds onto. Movies
+                                    // and shows are the primary target; episodes
+                                    // are supported because an individual
+                                    // episode's IMDb ID is a valid override
+                                    // when the series mapping is right but the
+                                    // specific episode got misattributed.
+                                    // Collections/folders aren't writable.
+                                    if (itemData is SpatialFinMovie ||
+                                        itemData is SpatialFinShow ||
+                                        itemData is SpatialFinEpisode
+                                    ) {
+                                        androidx.compose.material3.DropdownMenuItem(
+                                            text = { Text("Edit external IDs") },
+                                            onClick = {
+                                                showOverflow = false
+                                                showEditExternalIds = true
+                                            }
+                                        )
+                                    }
                                 },
                                 onRefresh = {
                                     viewModel.refreshMetadata()
@@ -1555,6 +1606,41 @@ fun BeamItemDetailScreen(
                         maxBitrate = bitrate,
                     )
                     showPlaybackOptions = false
+                },
+            )
+        }
+    }
+    if (showEditExternalIds) {
+        val item = state.item
+        if (item != null) {
+            val year = when (item) {
+                is SpatialFinMovie -> item.productionYear
+                is SpatialFinShow -> item.productionYear
+                else -> null
+            }
+            val initialTitle = when (item) {
+                is SpatialFinEpisode ->
+                    buildString {
+                        if (item.seriesName.isNotBlank()) append(item.seriesName).append(" ")
+                        append("S").append(item.parentIndexNumber)
+                        append("E").append(item.indexNumber)
+                        if (item.name.isNotBlank()) append(" ").append(item.name)
+                    }
+                else -> item.name
+            }
+            val scope = rememberCoroutineScope()
+            dev.jdtech.jellyfin.presentation.film.components.EditExternalIdsDialog(
+                itemId = item.id,
+                initialTitle = initialTitle,
+                initialYear = year,
+                onDismiss = { showEditExternalIds = false },
+                onSaved = {
+                    // Wait for Jellyfin to finish its async refresh before
+                    // reloading. See BeamShowDetailScreen's onSaved handler.
+                    scope.launch {
+                        kotlinx.coroutines.delay(5_000)
+                        viewModel.load(itemId)
+                    }
                 },
             )
         }

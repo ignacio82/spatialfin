@@ -10,6 +10,7 @@ import org.jellyfin.sdk.api.client.HttpClientOptions
 import org.jellyfin.sdk.api.client.extensions.brandingApi
 import org.jellyfin.sdk.api.client.extensions.devicesApi
 import org.jellyfin.sdk.api.client.extensions.itemRefreshApi
+import org.jellyfin.sdk.api.client.extensions.itemUpdateApi
 import org.jellyfin.sdk.api.client.extensions.itemsApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
@@ -84,6 +85,7 @@ class JellyfinApi(
     val videosApi = api.videosApi
     val viewsApi = api.userViewsApi
     val itemRefreshApi = api.itemRefreshApi
+    val itemUpdateApi = api.itemUpdateApi
     val libraryApi = api.libraryApi
 
     companion object {

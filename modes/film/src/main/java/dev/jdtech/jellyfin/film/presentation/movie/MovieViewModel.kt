@@ -145,7 +145,25 @@ constructor(
                     loadMovie(movieId)
                 }
             }
+            is MovieAction.ReloadAfterMetadataEdit -> {
+                // Jellyfin's metadata refresh is queued server-side after our
+                // updateItem call, so a reload right now would still read the
+                // stale BaseItemDto. A 5s delay covers typical refresh times
+                // for a single item (IMDb/TMDB round trip + local DB write);
+                // on a slow server the user can scroll out and back in to pull
+                // again. Realtime-event-driven reload via observeRealtimeEvents
+                // is not guaranteed — Jellyfin doesn't emit LibraryChanged for
+                // single-item metadata refreshes, only for adds/removes.
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(METADATA_REFRESH_WAIT_MS)
+                    loadMovie(movieId)
+                }
+            }
             else -> Unit
         }
+    }
+
+    companion object {
+        private const val METADATA_REFRESH_WAIT_MS = 5_000L
     }
 }

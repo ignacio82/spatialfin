@@ -795,6 +795,63 @@ class JellyfinRepositoryImpl(
         }
     }
 
+    override suspend fun getItemProviderIds(itemId: UUID): Map<String, String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val dto = jellyfinApi.userLibraryApi.getItem(itemId, jellyfinApi.userId!!).content
+                // Jellyfin SDK exposes providerIds as Map<String, String?>? — filter
+                // out nulls and blanks so callers never see an entry they can't
+                // display. Keys stay in Jellyfin's canonical casing ("Imdb", "Tmdb")
+                // so writes via setItemProviderId round-trip cleanly.
+                dto.providerIds.orEmpty().mapNotNull { (key, value) ->
+                    val v = value?.trim().orEmpty()
+                    if (v.isBlank()) null else key to v
+                }.toMap()
+            }.getOrElse {
+                Timber.w(it, "Failed to read providerIds for %s", itemId)
+                emptyMap()
+            }
+        }
+
+    override suspend fun setItemProviderId(itemId: UUID, providerKey: String, value: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            val accepted = runCatching {
+                val current = jellyfinApi.userLibraryApi
+                    .getItem(itemId, jellyfinApi.userId!!)
+                    .content
+                // Rebuild the providerIds map: preserve every existing entry,
+                // set/clear just the one key the caller asked to touch. Passing
+                // a full BaseItemDto to updateItem preserves untouched fields;
+                // Jellyfin treats null providerIds as "leave alone", so we must
+                // always submit the complete map even when clearing a key.
+                val nextProviderIds = buildMap {
+                    current.providerIds?.forEach { (k, v) -> if (!v.isNullOrBlank()) put(k, v) }
+                    if (value.isNullOrBlank()) remove(providerKey) else put(providerKey, value.trim())
+                }
+                jellyfinApi.itemUpdateApi.updateItem(
+                    itemId = itemId,
+                    data = current.copy(providerIds = nextProviderIds),
+                )
+                true
+            }.getOrElse {
+                Timber.w(it, "Failed to update providerIds for %s (key=%s)", itemId, providerKey)
+                false
+            }
+            // Always kick a refresh — Jellyfin re-reads metadata from the new
+            // provider ID, which is the whole point of editing it. Harmless if
+            // the write actually failed: at worst we re-scan an unchanged item.
+            runCatching {
+                jellyfinApi.itemRefreshApi.refreshItem(
+                    itemId = itemId,
+                    metadataRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
+                    imageRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
+                    replaceAllMetadata = true,
+                    replaceAllImages = true,
+                )
+            }
+            accepted
+        }
+
     override suspend fun deleteItem(itemId: UUID): Boolean =
         withContext(Dispatchers.IO) {
             runCatching { jellyfinApi.libraryApi.deleteItem(itemId) }.isSuccess

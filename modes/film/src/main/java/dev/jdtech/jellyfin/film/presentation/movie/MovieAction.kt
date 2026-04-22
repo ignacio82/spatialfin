@@ -27,4 +27,12 @@ sealed interface MovieAction {
     data object OnHomeClick : MovieAction
 
     data class NavigateToPerson(val personId: UUID) : MovieAction
+
+    /**
+     * Fired after the user saves an IMDb ID from the external-IDs dialog.
+     * Handled by the ViewModel with a short delay so Jellyfin has time to
+     * finish its async metadata refresh before we re-fetch the movie and
+     * replace the UI with the newly-matched title, overview, and images.
+     */
+    data object ReloadAfterMetadataEdit : MovieAction
 }

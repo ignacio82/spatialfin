@@ -167,6 +167,24 @@ interface JellyfinRepository {
     /** Trigger Jellyfin's metadata refresh for an item. */
     suspend fun refreshItemMetadata(itemId: UUID)
 
+    /**
+     * Current provider IDs on the server (IMDb, TMDB, TVDB, etc). Keys are
+     * capitalised Jellyfin provider names — "Imdb", "Tmdb", "Tvdb". Returns
+     * an empty map when the item has no provider IDs set or when the fetch
+     * failed; callers should treat the distinction as "nothing to show".
+     */
+    suspend fun getItemProviderIds(itemId: UUID): Map<String, String>
+
+    /**
+     * Overwrite a single provider ID on an item and kick a metadata refresh.
+     * Passing [value] = null clears that key. Intended surface: an edit dialog
+     * that lets the user paste an IMDb ID for a library item that matched the
+     * wrong title (or had no match at all). Returns true when Jellyfin accepted
+     * the write — the subsequent refresh is triggered regardless, since a
+     * refresh on an already-correct item is harmless.
+     */
+    suspend fun setItemProviderId(itemId: UUID, providerKey: String, value: String?): Boolean
+
     /** Ask Jellyfin to delete an item from the library. Returns true on success. */
     suspend fun deleteItem(itemId: UUID): Boolean
 

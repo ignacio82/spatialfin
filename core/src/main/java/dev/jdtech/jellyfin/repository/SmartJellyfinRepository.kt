@@ -394,6 +394,22 @@ constructor(
         )
     }
 
+    override suspend fun getItemProviderIds(itemId: UUID): Map<String, String> =
+        runWithFallback(
+            online = { onlineRepository.getItemProviderIds(itemId) },
+            offline = { offlineRepository.getItemProviderIds(itemId) },
+        )
+
+    override suspend fun setItemProviderId(
+        itemId: UUID,
+        providerKey: String,
+        value: String?,
+    ): Boolean =
+        runWithFallback(
+            online = { onlineRepository.setItemProviderId(itemId, providerKey, value) },
+            offline = { offlineRepository.setItemProviderId(itemId, providerKey, value) },
+        )
+
     override suspend fun deleteItem(itemId: UUID): Boolean =
         runWithFallback(
             online = { onlineRepository.deleteItem(itemId) },

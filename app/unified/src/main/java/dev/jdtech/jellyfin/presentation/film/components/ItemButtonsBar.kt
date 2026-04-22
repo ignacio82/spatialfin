@@ -4,6 +4,7 @@ import android.app.DownloadManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -16,8 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -44,6 +49,7 @@ import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyEpisode
 import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.DownloadRequest
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -69,6 +75,15 @@ fun ItemButtonsBar(
     downloaderState: DownloaderState? = null,
     canPlay: Boolean = true,
     initialMaxBitrate: Long = 0L,
+    /**
+     * Called after the user saves a new IMDb ID from the overflow dialog.
+     * Repo-side, the save kicks a metadata refresh on Jellyfin; the callback
+     * lets the parent ViewModel schedule its own delayed reload to surface
+     * the freshly-fetched title / overview / images once the server finishes
+     * re-pulling. Default is a no-op — screens that don't care (previews,
+     * tests) don't have to thread anything.
+     */
+    onMetadataSaved: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -100,6 +115,9 @@ fun ItemButtonsBar(
 
     var qualitySelectionDialogOpen by remember { mutableStateOf(false) }
     var selectedMaxBitrate by remember { mutableStateOf<Long?>(initialMaxBitrate) }
+
+    var overflowMenuOpen by remember { mutableStateOf(false) }
+    var editExternalIdsDialogOpen by remember { mutableStateOf(false) }
 
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         Column(
@@ -177,6 +195,47 @@ fun ItemButtonsBar(
                         )
                     }
                 }
+                // 3-dots overflow: keeps "fix the metadata" out of the bar's
+                // default real estate but one tap away. Surfaced for anything
+                // Jellyfin actually stores providerIds on — movies, shows, and
+                // individual episodes. Seasons/collections aren't meaningfully
+                // writable (the series owns the IDs for a season's episodes,
+                // and collections aren't real Jellyfin items with externals).
+                if (item is SpatialFinMovie || item is SpatialFinShow || item is SpatialFinEpisode) {
+                    // The 3-dots overflow uses a dedicated tonal button so it
+                    // visually belongs with the other actions in the FlowRow
+                    // rather than squeezing in as a floating IconButton. The
+                    // anchor Box scopes the DropdownMenu to the button's
+                    // position — without it, the menu anchors to (0,0) on the
+                    // enclosing layout.
+                    Box {
+                        FilledTonalButton(
+                            onClick = { overflowMenuOpen = true },
+                            modifier = Modifier.height(64.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            ),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreHoriz,
+                                contentDescription = "More actions",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = overflowMenuOpen,
+                            onDismissRequest = { overflowMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Edit external IDs") },
+                                onClick = {
+                                    overflowMenuOpen = false
+                                    editExternalIdsDialogOpen = true
+                                },
+                            )
+                        }
+                    }
+                }
             }
             if (downloaderState != null) {
                 AnimatedVisibility(downloaderState.isDownloading) {
@@ -251,6 +310,34 @@ fun ItemButtonsBar(
                         qualitySelectionDialogOpen = false
                     },
                     onDismiss = { qualitySelectionDialogOpen = false }
+                )
+            }
+        }
+        if (editExternalIdsDialogOpen) {
+            val initialYear = when (item) {
+                is SpatialFinMovie -> item.productionYear
+                is SpatialFinShow -> item.productionYear
+                else -> null
+            }
+            // Episodes get composed as "Show — S1E2: Title" so OMDb has a
+            // fighting chance of matching the episode page rather than the
+            // series.  Yearless episodes stay as just the episode title.
+            val initialTitle = when (item) {
+                is SpatialFinEpisode ->
+                    buildString {
+                        if (item.seriesName.isNotBlank()) append(item.seriesName).append(" ")
+                        append("S").append(item.parentIndexNumber).append("E").append(item.indexNumber)
+                        if (item.name.isNotBlank()) append(" ").append(item.name)
+                    }
+                else -> item.name
+            }
+            SpatialDialog(onDismissRequest = { editExternalIdsDialogOpen = false }) {
+                EditExternalIdsDialog(
+                    itemId = item.id,
+                    initialTitle = initialTitle,
+                    initialYear = initialYear,
+                    onDismiss = { editExternalIdsDialogOpen = false },
+                    onSaved = onMetadataSaved,
                 )
             }
         }

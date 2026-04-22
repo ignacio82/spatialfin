@@ -23,4 +23,7 @@ sealed interface ShowAction {
     data class NavigateToItem(val item: SpatialFinItem) : ShowAction
 
     data class NavigateToPerson(val personId: UUID) : ShowAction
+
+    /** See MovieAction.ReloadAfterMetadataEdit. */
+    data object ReloadAfterMetadataEdit : ShowAction
 }

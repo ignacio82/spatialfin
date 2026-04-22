@@ -430,6 +430,19 @@ class JellyfinRepositoryOfflineImpl(
         // No-op offline — metadata refresh requires server access.
     }
 
+    override suspend fun getItemProviderIds(itemId: UUID): Map<String, String> = emptyMap()
+
+    override suspend fun setItemProviderId(
+        itemId: UUID,
+        providerKey: String,
+        value: String?,
+    ): Boolean {
+        // No-op offline — provider ID edits require a round trip to Jellyfin.
+        // UI surfaces the feature behind a connection check, so this path
+        // shouldn't fire in practice; returning false makes it a defensive stub.
+        return false
+    }
+
     override suspend fun deleteItem(itemId: UUID): Boolean {
         // Offline deletion isn't supported; downloads are managed via Downloader.
         return false
