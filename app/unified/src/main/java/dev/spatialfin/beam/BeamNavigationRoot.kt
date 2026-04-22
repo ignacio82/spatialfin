@@ -301,12 +301,18 @@ fun BeamNavigationRoot(
 
     val onVoiceMicClick: () -> Unit = {
         if (voiceController.isVoiceTurnBusy(voiceState, isTtsSpeaking)) {
+            // On Beam, a mic tap during TTS or listening means "stop". Don't
+            // re-arm the follow-up window — the recognizer re-opening 200ms
+            // after a stop and transcribing whatever the user says next is a
+            // UX bug, not a feature. (XR retains the auto-resume because the
+            // pinch-to-interrupt gesture there genuinely means "let me answer".)
             voiceController.interruptVoiceCommand(
                 scope = coroutineScope,
                 reason = "beam-mic-tap",
                 currentVoiceState = voiceState,
                 currentTtsSpeaking = isTtsSpeaking,
                 requestFollowUp = { startVoiceCommand("beam-follow-up-interrupt") },
+                resumeAfterInterrupt = false,
             )
         } else {
             startVoiceCommand("beam-mic-tap")

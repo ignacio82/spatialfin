@@ -422,9 +422,14 @@ class HomeVoiceController(
     }
 
     /**
-     * Cancel an in-flight turn and (when appropriate) re-arm a follow-up window.
-     * If the user interrupts mid-spoken-reply, [requestFollowUp] is invoked after a
-     * short delay so the user can immediately answer.
+     * Cancel an in-flight turn. By default re-arms a follow-up window when the
+     * interrupt comes mid-spoken-reply so the user can immediately answer —
+     * appropriate for XR's pinch gesture where the user's intent is "I want
+     * to say something now". For surfaces where a tap genuinely means "stop"
+     * (Beam mic-tap on a phone), callers should pass [resumeAfterInterrupt] =
+     * false to skip the follow-up rearm entirely; otherwise the recognizer
+     * re-opens 200ms after the stop and surprises the user by transcribing
+     * whatever they say next.
      */
     fun interruptVoiceCommand(
         scope: CoroutineScope,
@@ -432,9 +437,10 @@ class HomeVoiceController(
         currentVoiceState: VoiceState,
         currentTtsSpeaking: Boolean,
         requestFollowUp: () -> Unit,
+        resumeAfterInterrupt: Boolean = true,
     ) {
         if (!isVoiceTurnBusy(currentVoiceState, currentTtsSpeaking)) return
-        val shouldResumeFollowUp = HomeVoicePolicy.shouldResumeFollowUpAfterInterrupt(
+        val shouldResumeFollowUp = resumeAfterInterrupt && HomeVoicePolicy.shouldResumeFollowUpAfterInterrupt(
             followUpPending = followUpPending,
             isTtsSpeaking = currentTtsSpeaking,
             assistantSpeechPendingStart = assistantSpeechPendingStart,
