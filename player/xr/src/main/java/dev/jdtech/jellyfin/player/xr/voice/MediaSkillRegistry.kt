@@ -848,7 +848,7 @@ internal class MediaSkillRegistry(
         prefixes.forEach { prefix ->
             val regex = Regex("(?i)^$prefix\\s+")
             if (regex.containsMatchIn(trimmed)) {
-                return trimmed.replace(regex, "").trim().trim('"')
+                return stripLeadingDemonstrative(trimmed.replace(regex, "").trim().trim('"'))
             }
         }
 
@@ -885,7 +885,7 @@ internal class MediaSkillRegistry(
                 ) {
                     playerState.currentItemTitle.takeIf { it.isNotBlank() }?.let { return it }
                 }
-                return stripped
+                return stripLeadingDemonstrative(stripped)
             }
         }
 
@@ -896,6 +896,18 @@ internal class MediaSkillRegistry(
                 playerState.currentItemTitle
             else -> trimmed
         }
+    }
+
+    /**
+     * Strip a leading "the movie" / "the film" / "the show" / "the series" /
+     * "the book" phrase from an extracted lookup target. "tell me about the
+     * movie Blade Runner" otherwise yields the literal target "the movie Blade
+     * Runner", which then 404s Wikipedia's direct page-summary endpoint and
+     * hides the actual intent behind a search fallback.
+     */
+    private fun stripLeadingDemonstrative(target: String): String {
+        val regex = Regex("(?i)^the\\s+(movie|film|show|series|book|novel|tv\\s+show)\\s+")
+        return target.replace(regex, "").trim()
     }
 
     private fun isLikelyPersonLookup(question: String, playerState: PlayerStateSnapshot): Boolean {

@@ -106,7 +106,7 @@ internal class WikipediaSummaryClient(
     }
 
     private fun searchAndFetchSummary(query: String): WikipediaSummary? {
-        val url = "$WIKIPEDIA_SEARCH_URL?srsearch=${encode(query)}&format=json"
+        val url = buildSearchUrl(query)
         val request =
             Request.Builder()
                 .url(url)
@@ -159,7 +159,7 @@ internal class WikipediaSummaryClient(
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
-    private companion object {
+    companion object {
         private const val WIKIPEDIA_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary"
         private const val WIKIPEDIA_SEARCH_URL = "https://en.wikipedia.org/w/api.php?action=query&list=search"
         // How many search hits to probe when the top one is a disambiguation
@@ -170,5 +170,15 @@ internal class WikipediaSummaryClient(
         // identify themselves. OkHttp's default UA gets throttled on some endpoints.
         private const val USER_AGENT =
             "SpatialFin/1.0 (voice assistant; https://github.com/ignacio82/SpatialFin)"
+
+        /**
+         * Build the `action=query&list=search` URL for the given query. Exposed
+         * for unit testing — a previous revision joined with `?srsearch=` instead
+         * of `&srsearch=`, which made Wikipedia's API read `list=search?srsearch=...`
+         * as one broken parameter and silently return zero hits. A snapshot test
+         * against the string here is the cheapest defence against that recurring.
+         */
+        internal fun buildSearchUrl(query: String): String =
+            "$WIKIPEDIA_SEARCH_URL&srsearch=${URLEncoder.encode(query, "UTF-8")}&format=json"
     }
 }
