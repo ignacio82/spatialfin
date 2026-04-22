@@ -195,8 +195,23 @@ internal class ChatToolRegistry(
         args: Map<String, Any?>,
         playerState: PlayerStateSnapshot,
     ): ResearchNotes? {
-        val title = (args["title"] as? String)?.trim().orEmpty()
+        var title = (args["title"] as? String)?.trim().orEmpty()
         if (title.isBlank()) return null
+
+        val normalized = title.lowercase()
+        val isCurrentItemRef = normalized == "this" || 
+            normalized == "this movie" || 
+            normalized == "this show" || 
+            normalized == "this title" ||
+            normalized.contains("on my screen") ||
+            normalized.contains("on the screen") ||
+            normalized.contains("playing right now") ||
+            normalized.contains("playing now") ||
+            normalized.contains("currently playing")
+
+        if (isCurrentItemRef && playerState.currentItemTitle.isNotBlank()) {
+            title = playerState.currentItemTitle
+        }
 
         val tmdbSummary = if (tmdbApi.isConfigured()) {
             tmdbTitleSummary(title, playerState)

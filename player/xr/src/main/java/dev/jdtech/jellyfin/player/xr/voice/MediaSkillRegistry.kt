@@ -893,9 +893,16 @@ internal class MediaSkillRegistry(
         val trimmed = question.trim()
         val normalized = normalize(trimmed)
 
-        if ((normalized.contains("this movie") || normalized.contains("this show") || normalized.contains("this title")) &&
-            playerState.currentItemTitle.isNotBlank()
-        ) {
+        val isCurrentItemRef = normalized.contains("this movie") || 
+            normalized.contains("this show") || 
+            normalized.contains("this title") ||
+            normalized.contains("on my screen") ||
+            normalized.contains("on the screen") ||
+            normalized.contains("playing right now") ||
+            normalized.contains("playing now") ||
+            normalized.contains("currently playing")
+
+        if (isCurrentItemRef && playerState.currentItemTitle.isNotBlank()) {
             return playerState.currentItemTitle
         }
 
