@@ -34,6 +34,7 @@ kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.11.0"
 ksp = "2.3.6"
 ktfmt = "0.26.0"
+litertlm = "0.10.2"
 material = "1.13.0"
 media3-ffmpeg-decoder = "1.9.0+1"
 mlkit-barcode-scanning = "17.3.0"
@@ -43,6 +44,7 @@ nfs4j = "0.27.2"
 okhttp = "5.3.2"
 robolectric = "4.16.1"
 smbj = "0.14.0"
+tflite-gpu = "16.5.0"
 timber = "5.0.1"
 turbine = "1.2.1"
 version-catalog-update = "1.1.0"
@@ -60,7 +62,7 @@ androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
 androidx-compose-foundation = { module = "androidx.compose.foundation:foundation", version.ref = "androidx-compose" }
-androidx-compose-material-icons-extended = "androidx.compose.material:material-icons-extended:1.7.8"
+androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version = "1.7.8" }
 androidx-compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "androidx-compose-material3" }
 androidx-compose-material3-adaptive-navigation-suite = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "androidx-compose-material3" }
 androidx-compose-runtime = { module = "androidx.compose.runtime:runtime", version.ref = "androidx-compose" }
@@ -92,7 +94,7 @@ androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref =
 androidx-window = { module = "androidx.window:window", version.ref = "androidx-window" }
 androidx-work = { module = "androidx.work:work-runtime", version.ref = "androidx-work" }
 androidx-xr-compose = { module = "androidx.xr.compose:compose", version.ref = "androidx-xr-runtime" }
-androidx-xr-compose-material3 = "androidx.xr.compose.material3:material3:1.0.0-alpha16"
+androidx-xr-compose-material3 = { module = "androidx.xr.compose.material3:material3", version = "1.0.0-alpha16" }
 androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr-runtime" }
 androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr-scenecore" }
 bcprov-jdk18on = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov-jdk18on" }
@@ -109,7 +111,7 @@ junit4 = { module = "junit:junit", version.ref = "junit" }
 kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
-litertlm-android = "com.google.ai.edge.litertlm:litertlm-android:0.10.2"
+litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 media3-ffmpeg-decoder = { module = "org.jellyfin.media3:media3-ffmpeg-decoder", version.ref = "media3-ffmpeg-decoder" }
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcode-scanning" }
@@ -120,7 +122,7 @@ nfs4j = { module = "org.dcache:nfs4j-basic-client", version.ref = "nfs4j" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
-tflite-gpu = "com.google.android.gms:play-services-tflite-gpu:16.5.0"
+tflite-gpu = { module = "com.google.android.gms:play-services-tflite-gpu", version.ref = "tflite-gpu" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 

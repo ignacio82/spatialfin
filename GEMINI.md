@@ -178,6 +178,8 @@ const val APP_NAME = "2.5.2"   // semver
 
 Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject. `APP_CODE` is the `libre` bundle's versionCode; the `tv` flavor automatically derives `APP_CODE + 1_000_000` (see [Play Track Bundles](#play-track-bundles)), so bumping `APP_CODE` bumps both bundles.
 
+**Pre-Bundle Requirement:** Before building a bundle for the Play Store, you MUST run `./gradlew versionCatalogUpdate` to check for library updates. If any updates are found, notify the user, commit the changes to `gradle/libs.versions.toml`, and advise the user to perform regression testing before final bundle generation.
+
 `./gradlew versionCatalogUpdate` updates `gradle/libs.versions.toml`. Always review `git diff gradle/libs.versions.toml` before committing — XR / Compose / Media3 patch bumps occasionally break the build.
 
 ---
