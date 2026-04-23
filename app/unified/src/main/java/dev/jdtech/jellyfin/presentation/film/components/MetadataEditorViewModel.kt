@@ -95,10 +95,12 @@ class MetadataEditorViewModel @Inject constructor(
     }
 
     /**
-     * Fire the OMDb title lookup. The API's `?t=...` endpoint returns the
-     * single highest-confidence match or nothing — no pagination, no list.
-     * For ambiguous titles the user disambiguates by adding a year to the
-     * query string ("Dune 2021"); [extractYearFromQuery] parses it out.
+     * Fire the OMDb lookup. Accepts either a title ("Dune 2021") or an IMDb
+     * ID ("tt1160419") in the same text field — the shape of the input picks
+     * the endpoint. Title path uses `?t=...` which returns the single
+     * highest-confidence match; ID path uses `?i=...` which is an exact
+     * lookup. Either returns one result or nothing; the dialog shows one at
+     * a time and the user retypes to refine.
      */
     fun searchOmdb() {
         val raw = _state.value.searchQuery.trim()
@@ -109,18 +111,21 @@ class MetadataEditorViewModel @Inject constructor(
             )
             return
         }
-        val (title, year) = extractYearFromQuery(raw)
         _state.value = _state.value.copy(isSearching = true, error = null, searchResult = null)
         viewModelScope.launch {
-            // Try movie first (common case), then series. Either call can return
-            // null on miss; fall through rather than surfacing an OMDb-specific
-            // error so the user just sees "no match".
-            val result = omdbApi.searchMovie(title, year)
-                ?: omdbApi.searchSeries(title, year)
+            val result = if (LOOKS_LIKE_IMDB_ID.matches(raw)) {
+                omdbApi.findByImdbId(raw)
+            } else {
+                val (title, year) = extractYearFromQuery(raw)
+                // Try movie first (common case), then series. Either call can
+                // return null on miss; fall through rather than surfacing an
+                // OMDb-specific error so the user just sees "no match".
+                omdbApi.searchMovie(title, year) ?: omdbApi.searchSeries(title, year)
+            }
             _state.value = _state.value.copy(
                 isSearching = false,
                 searchResult = result,
-                error = if (result == null) "No OMDb match for \"$title\"${year?.let { " ($it)" }.orEmpty()}." else null,
+                error = if (result == null) "No OMDb match for \"$raw\"." else null,
             )
         }
     }

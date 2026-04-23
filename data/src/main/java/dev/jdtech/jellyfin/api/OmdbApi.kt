@@ -26,11 +26,19 @@ class OmdbApi(
     suspend fun searchSeries(title: String, year: Int? = null): OmdbResult? =
         search(title, year, type = "series")
 
-    private suspend fun search(title: String, year: Int?, type: String): OmdbResult? =
+    suspend fun findByImdbId(imdbId: String): OmdbResult? {
+        val key = apiKey() ?: return null
+        return fetch("$BASE_URL?i=${encode(imdbId)}&apikey=$key")
+    }
+
+    private suspend fun search(title: String, year: Int?, type: String): OmdbResult? {
+        val key = apiKey() ?: return null
+        val yearParam = year?.let { "&y=$it" } ?: ""
+        return fetch("$BASE_URL?t=${encode(title)}&type=$type$yearParam&apikey=$key")
+    }
+
+    private suspend fun fetch(url: String): OmdbResult? =
         withContext(Dispatchers.IO) {
-            val key = apiKey() ?: return@withContext null
-            val yearParam = year?.let { "&y=$it" } ?: ""
-            val url = "$BASE_URL?t=${encode(title)}&type=$type$yearParam&apikey=$key"
             val request = Request.Builder().url(url).build()
             try {
                 val response = client.newCall(request).execute()
@@ -39,11 +47,11 @@ class OmdbApi(
                     val result = json.decodeFromString<OmdbResult>(body)
                     if (result.response == "True") result else null
                 } else {
-                    Timber.e("OMDb search failed: ${response.code}")
+                    Timber.e("OMDb request failed: ${response.code}")
                     null
                 }
             } catch (e: Exception) {
-                Timber.e(e, "OMDb search error")
+                Timber.e(e, "OMDb request error")
                 null
             }
         }

@@ -122,8 +122,8 @@ fun EditExternalIdsDialog(
 
             HorizontalDivider()
 
-            // ---- Search by title ---------------------------------------
-            Text("Search OMDb by title", style = MaterialTheme.typography.titleSmall)
+            // ---- Search by title or IMDb ID ----------------------------
+            Text("Search OMDb by title or IMDb ID", style = MaterialTheme.typography.titleSmall)
             if (!state.omdbConfigured) {
                 Text(
                     "OMDb API key isn't set — search is disabled, but you can still paste an IMDb ID above.",
@@ -135,8 +135,8 @@ fun EditExternalIdsDialog(
                 value = state.searchQuery,
                 onValueChange = { viewModel.updateSearchQuery(it) },
                 singleLine = true,
-                label = { Text("Title (optionally with year)") },
-                placeholder = { Text("The Matrix 1999") },
+                label = { Text("Title with year, or IMDb ID") },
+                placeholder = { Text("The Matrix 1999  •  tt0133093") },
                 enabled = state.omdbConfigured,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.searchOmdb() }),
