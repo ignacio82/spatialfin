@@ -4,10 +4,10 @@ object Versions {
     const val APP_CODE = 90
     const val APP_NAME = "2.5.2"
 
-    const val COMPILE_SDK = 36
+    const val COMPILE_SDK = 37
     const val TARGET_SDK = 35
     const val MIN_SDK = 31
-    const val BUILD_TOOLS = "36.0.0"
+    const val BUILD_TOOLS = "37.0.0"
 
     val JAVA = JavaVersion.VERSION_21
 }

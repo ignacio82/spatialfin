@@ -9,8 +9,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
@@ -21,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -66,6 +72,8 @@ import androidx.fragment.app.FragmentActivity
 import androidx.compose.ui.res.stringResource
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.language.LanguageCatalog
+import dev.jdtech.jellyfin.settings.language.LanguageOption
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.settings.presentation.models.IntSelectOption
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceCategory
@@ -383,45 +391,55 @@ fun BeamSettingsScreen(
             item {
                 BeamSettingsSection(title = "Language") {
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_preferred_audio_language,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.preferredAudioLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_preferred_subtitle_language,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.preferredSubtitleLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_anime_audio_language,
                             descriptionStringRes = SettingsR.string.settings_anime_audio_language_summary,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.animeAudioLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_anime_subtitle_language,
                             descriptionStringRes = SettingsR.string.settings_anime_subtitle_language_summary,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.animeSubtitleLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_non_anime_audio_language,
                             descriptionStringRes = SettingsR.string.settings_non_anime_audio_language_summary,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.nonAnimeAudioLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
@@ -434,11 +452,13 @@ fun BeamSettingsScreen(
                         appPreferences = appPreferences,
                     )
                     BeamPreferenceRow(
-                        preference = PreferenceStringInput(
+                        preference = PreferenceSelect(
                             nameStringResource = SettingsR.string.settings_non_anime_subtitle_language,
                             descriptionStringRes = SettingsR.string.settings_non_anime_subtitle_language_summary,
-                            placeholderRes = SettingsR.string.language_code_placeholder,
                             backendPreference = appPreferences.nonAnimeSubtitleLanguage,
+                            options = SettingsR.array.languages,
+                            optionValues = SettingsR.array.languages_values,
+                            optionsIncludeNull = true,
                         ),
                         appPreferences = appPreferences,
                     )
@@ -450,15 +470,7 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
-                    BeamPreferenceRow(
-                        preference = PreferenceStringInput(
-                            nameStringResource = SettingsR.string.smart_spoken_languages,
-                            descriptionStringRes = SettingsR.string.smart_spoken_languages_summary,
-                            placeholderRes = SettingsR.string.smart_spoken_languages_placeholder,
-                            backendPreference = appPreferences.smartSpokenLanguages,
-                        ),
-                        appPreferences = appPreferences,
-                    )
+                    BeamSmartSpokenLanguagesRow(appPreferences = appPreferences)
                 }
             }
         }
@@ -474,15 +486,6 @@ fun BeamSettingsScreen(
                             backendPreference = appPreferences.theme,
                             options = SettingsR.array.theme,
                             optionValues = SettingsR.array.theme_values,
-                        ),
-                        appPreferences = appPreferences,
-                    )
-                    BeamPreferenceRow(
-                        preference = PreferenceSwitch(
-                            nameStringResource = SettingsR.string.dynamic_colors,
-                            descriptionStringRes = SettingsR.string.dynamic_colors_summary,
-                            enabled = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S,
-                            backendPreference = appPreferences.dynamicColors,
                         ),
                         appPreferences = appPreferences,
                     )
@@ -1139,6 +1142,127 @@ private fun BeamSettingsCategoryCard(
             )
         }
     }
+}
+
+@Composable
+private fun BeamSmartSpokenLanguagesRow(appPreferences: AppPreferences) {
+    val context = LocalContext.current
+    val allLanguages = remember { LanguageCatalog.all(context) }
+    var showDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedCodes by rememberSaveable {
+        mutableStateOf(
+            (appPreferences.getValue(appPreferences.smartSpokenLanguages) ?: "")
+                .split(",")
+                .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+        )
+    }
+    val displayNames = selectedCodes.mapNotNull { code ->
+        allLanguages.firstOrNull { it.code.equals(code, ignoreCase = true) }?.displayName
+    }
+    val label = if (displayNames.isEmpty()) "(none)" else displayNames.joinToString(", ")
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${stringResource(SettingsR.string.smart_spoken_languages)} · $label",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            stringResource(SettingsR.string.smart_spoken_languages_summary),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = { showDialog = true }) { Text("Edit") }
+    }
+
+    if (showDialog) {
+        BeamSmartSpokenLanguagesDialog(
+            allLanguages = allLanguages,
+            initialSelection = selectedCodes,
+            onDismiss = { showDialog = false },
+            onSave = { newCodes ->
+                selectedCodes = newCodes
+                appPreferences.setValue(
+                    appPreferences.smartSpokenLanguages,
+                    newCodes.joinToString(",").ifBlank { null },
+                )
+                showDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun BeamSmartSpokenLanguagesDialog(
+    allLanguages: List<LanguageOption>,
+    initialSelection: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var selection by rememberSaveable { mutableStateOf(initialSelection) }
+    val filtered = remember(query, allLanguages) {
+        if (query.isBlank()) {
+            allLanguages
+        } else {
+            val needle = query.trim().lowercase()
+            allLanguages.filter { lang ->
+                lang.displayName.lowercase().contains(needle) ||
+                    lang.code.lowercase().contains(needle) ||
+                    lang.aliases.any { it.lowercase().contains(needle) }
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(SettingsR.string.smart_spoken_languages)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search…") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    items(filtered, key = { it.code }) { lang ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selection = if (lang.code in selection) {
+                                        selection - lang.code
+                                    } else {
+                                        selection + lang.code
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = lang.code in selection,
+                                onCheckedChange = { checked ->
+                                    selection = if (checked) {
+                                        selection + lang.code
+                                    } else {
+                                        selection - lang.code
+                                    }
+                                },
+                            )
+                            Text(lang.displayName)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(selection) }) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

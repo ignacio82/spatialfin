@@ -642,10 +642,9 @@ private fun TvDiagnosticsPrefs(appPreferences: AppPreferences) {
 private fun TvInterfacePrefs(appPreferences: AppPreferences) {
     TvPrefSectionTitle("Interface")
     // TV still benefits from theme selection — a bright home screen behind
-    // the settings pane is jarring at night. Dynamic colors only work on
-    // Android 12+ (and only when the system supports Material You).
+    // the settings pane is jarring at night. Dynamic colors are XR-only and
+    // not exposed here.
     var theme by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.theme).orEmpty().ifBlank { "system" }) }
-    var dynamicColors by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.dynamicColors)) }
     var homeSuggestions by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeSuggestions)) }
     var homeContinue by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeContinueWatching)) }
     var homeNextUp by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.homeNextUp)) }
@@ -662,13 +661,6 @@ private fun TvInterfacePrefs(appPreferences: AppPreferences) {
             appPreferences.setValue(appPreferences.theme, theme)
         },
     )
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-        TvPrefSwitchRow(
-            title = "Dynamic colors",
-            checked = dynamicColors,
-            onCheckedChange = { dynamicColors = it; appPreferences.setValue(appPreferences.dynamicColors, it) },
-        )
-    }
     TvPrefSwitchRow(
         title = "Display suggestions",
         checked = homeSuggestions,

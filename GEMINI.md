@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.5.2 (90)**, `compileSdk 36`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000090`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.5.2 (90)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000090`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -37,10 +37,11 @@ When working in this repo, read files in this order unless the task is narrowly 
 
 1. `README.md` — user-facing feature surface
 2. `GEMINI.md` — this file (technical context, gotchas)
-3. `buildSrc/src/main/kotlin/Versions.kt` — current version + SDK targets
-4. `settings.gradle.kts` — authoritative module list
-5. `app/unified/build.gradle.kts` — the only application build script (XR/Beam/TV staging happens here)
-6. The relevant module under `app/`, `player/`, `core/`, `data/`, `modes/`, `settings/`, `setup/`
+3. `DESIGN.md` — visual identity, design tokens, and form-factor (XR/Beam/TV) design constraints. Follows the open-sourced [Google Labs `DESIGN.md` standard](https://github.com/google-labs-code/design.md) (YAML frontmatter with `colors` / `typography` / `rounded` / `spacing` / `components` tokens, then a canonical markdown body: Overview → Colors → Typography → Layout → Elevation & Depth → Shapes → Components → Do's and Don'ts). Treat the frontmatter as machine-readable and keep it in sync with any new component that picks up a distinct token surface.
+4. `buildSrc/src/main/kotlin/Versions.kt` — current version + SDK targets
+5. `settings.gradle.kts` — authoritative module list
+6. `app/unified/build.gradle.kts` — the only application build script (XR/Beam/TV staging happens here)
+7. The relevant module under `app/`, `player/`, `core/`, `data/`, `modes/`, `settings/`, `setup/`
 
 Prefer source files and build files over generated artifacts or store assets.
 

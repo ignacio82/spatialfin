@@ -8,11 +8,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import dev.jdtech.jellyfin.settings.R as SettingsR
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -120,17 +127,20 @@ private fun BeamRenderSwitch(preference: PreferenceSwitch, appPreferences: AppPr
  * branch used by SettingsViewModel.computePreferences() so Beam's renderer
  * handles both cases without crashing.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPreferences) {
-    val names = stringArrayResource(preference.options)
-    val values = stringArrayResource(preference.optionValues)
+    val rawNames = stringArrayResource(preference.options)
+    val rawValues = stringArrayResource(preference.optionValues)
     val shortNames = preference.shortOptionsRes?.let { stringArrayResource(it) }
+    // "null" here is the "clear this preference" sentinel — rendered as an empty
+    // string value that BeamRenderSelect maps back to null on persist.
+    val nullLabel = stringResource(SettingsR.string.pref_language_none)
+    val names = if (preference.optionsIncludeNull) listOf(nullLabel) + rawNames.toList() else rawNames.toList()
+    val values = if (preference.optionsIncludeNull) listOf("") + rawValues.toList() else rawValues.toList()
     val isLongBacked = remember(preference.backendPreference) {
         (preference.backendPreference as PreferenceBackend<*>).defaultValue is Long
     }
-    // Local fallback for the simple auto-persist flow. When the caller passes
-    // a non-null `preference.value` (stateful flow — see app-lock) we use that
-    // instead so external rollbacks reflect in the UI on the next recomposition.
     var internalRaw by rememberSaveable(preference.backendPreference.backendName) {
         mutableStateOf(
             if (isLongBacked) {
@@ -142,8 +152,27 @@ private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPr
         )
     }
     val currentRaw = preference.value ?: internalRaw
-    val currentLabel = values.indexOf(currentRaw).takeIf { it >= 0 }?.let { names[it] }
+    val normalizedCurrent = if (preference.optionsIncludeNull && currentRaw.isNullOrEmpty()) "" else currentRaw.orEmpty()
+    val currentLabel = values.indexOf(normalizedCurrent).takeIf { it >= 0 }?.let { names[it] }
         ?: currentRaw.orEmpty()
+
+    val persist: (String) -> Unit = { optionValue ->
+        val storedValue = if (preference.optionsIncludeNull && optionValue.isEmpty()) null else optionValue
+        internalRaw = storedValue
+        if (preference.autoPersist) {
+            if (isLongBacked) {
+                @Suppress("UNCHECKED_CAST")
+                appPreferences.setValue(
+                    preference.backendPreference as PreferenceBackend<Long>,
+                    storedValue?.toLongOrNull() ?: 0L,
+                )
+            } else {
+                appPreferences.setValue(preference.backendPreference, storedValue)
+            }
+        }
+        preference.onUpdate(storedValue)
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "${stringResource(preference.nameStringResource)} · $currentLabel",
@@ -156,28 +185,48 @@ private fun BeamRenderSelect(preference: PreferenceSelect, appPreferences: AppPr
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            names.forEachIndexed { index, name ->
-                val optionValue = values.getOrNull(index) ?: return@forEachIndexed
-                val buttonLabel = shortNames?.getOrNull(index) ?: name
-                Button(
-                    onClick = {
-                        internalRaw = optionValue
-                        if (preference.autoPersist) {
-                            if (isLongBacked) {
-                                @Suppress("UNCHECKED_CAST")
-                                appPreferences.setValue(
-                                    preference.backendPreference as PreferenceBackend<Long>,
-                                    optionValue.toLongOrNull() ?: 0L,
-                                )
-                            } else {
-                                appPreferences.setValue(preference.backendPreference, optionValue)
-                            }
-                        }
-                        preference.onUpdate(optionValue)
-                    },
+        // Above ~6 options a Row of buttons overflows and scrolls sideways;
+        // switch to a dropdown so long catalogues (languages, timezones, etc.)
+        // stay usable on phone screens.
+        if (names.size > 6) {
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it },
+            ) {
+                OutlinedTextField(
+                    value = currentLabel,
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth(),
+                )
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
                 ) {
-                    Text(if (optionValue == currentRaw) "• $buttonLabel" else buttonLabel)
+                    names.forEachIndexed { index, name ->
+                        val optionValue = values.getOrNull(index) ?: return@forEachIndexed
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            onClick = {
+                                persist(optionValue)
+                                expanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                names.forEachIndexed { index, name ->
+                    val optionValue = values.getOrNull(index) ?: return@forEachIndexed
+                    val buttonLabel = shortNames?.getOrNull(index) ?: name
+                    Button(onClick = { persist(optionValue) }) {
+                        Text(if (optionValue == normalizedCurrent) "• $buttonLabel" else buttonLabel)
+                    }
                 }
             }
         }
