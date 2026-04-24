@@ -299,6 +299,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                                         appPreferences = appPreferences,
                                         initialSearchQuery = initialSearchQueryExtra,
                                         onReconnect = viewModel::reconnect,
+                                        currentUser = state.currentUser,
+                                        currentServerAddress = state.currentServerAddress,
                                     )
                                 }
                             }
@@ -323,6 +325,10 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appLockManager.refreshState()
+        // Catches user-switch / signin / signout that happened during this
+        // composition without an Activity recreate, so the rail's profile
+        // avatar (and other auth-derived state) stays in sync.
+        viewModel.refresh()
     }
 
     override fun onDestroy() {
@@ -698,6 +704,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                 onReconnect = onReconnect,
                 xrSpaceMode = XrSpaceMode.HOME,
                 onEnterFullSpace = onEnterFullSpace,
+                currentUser = state.currentUser,
+                currentServerAddress = state.currentServerAddress,
             )
             VoiceControlOverlay(
                 state = voiceState,
@@ -846,6 +854,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 onReconnect = onReconnect,
                                 xrSpaceMode = XrSpaceMode.FULL,
                                 onEnterHomeSpace = onEnterHomeSpace,
+                                currentUser = state.currentUser,
+                                currentServerAddress = state.currentServerAddress,
                             )
                             VoiceControlOverlay(
                                 state = voiceState,

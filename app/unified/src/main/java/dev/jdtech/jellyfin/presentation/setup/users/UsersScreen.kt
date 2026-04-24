@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.presentation.components.XrConfirmDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
@@ -128,6 +129,7 @@ private fun UsersScreenLayout(
                     items(state.users) { user ->
                         UserItem(
                             name = user.name,
+                            avatarUri = userPrimaryImageUri(state.serverAddress, user.id),
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { onAction(UsersAction.OnUserClick(userId = user.id)) },
                             onLongClick = {
@@ -139,6 +141,7 @@ private fun UsersScreenLayout(
                     items(state.publicUsers) { user ->
                         UserItem(
                             name = user.name,
+                            avatarUri = userPrimaryImageUri(state.serverAddress, user.id),
                             modifier = Modifier.fillMaxWidth().alpha(0.7f),
                             onClick = {
                                 onAction(UsersAction.OnPublicUserClick(username = user.name))

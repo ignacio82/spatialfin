@@ -43,18 +43,29 @@ constructor(
     private fun check() {
         viewModelScope.launch {
             _state.emit(MainState(isLoading = true))
+            val serverId = appPreferences.getValue(appPreferences.currentServer)
+            val serverData = serverId?.let { database.getServerWithAddressAndUser(it) }
             val mainState =
                 MainState(
                     isLoading = false,
                     isDynamicColors = checkIsDynamicColors(),
                     hasServers = checkHasServers(),
-                    hasCurrentServer = checkHasCurrentServer(),
-                    hasCurrentUser = checkHasCurrentUser(),
+                    hasCurrentServer = serverData?.server != null,
+                    hasCurrentUser = serverData?.user != null,
                     isOfflineMode = connectionMonitor.state.value.effectiveOfflineMode,
+                    currentUser = serverData?.user,
+                    currentServerAddress = serverData?.address?.address,
                 )
             _state.emit(mainState)
         }
     }
+
+    /**
+     * Re-runs the auth/server query and re-emits MainState.
+     * Call after the active user changes (e.g. on return from UsersScreen)
+     * so the navigation rail's profile avatar refreshes without an Activity recreate.
+     */
+    fun refresh() = check()
 
     private fun observeOfflineState() {
         viewModelScope.launch {
@@ -81,26 +92,10 @@ constructor(
         }
     }
 
-    private fun checkHasServers(): Boolean {
-        val nServers = database.getServersCount()
-        return nServers > 0
-    }
+    private fun checkHasServers(): Boolean = database.getServersCount() > 0
 
-    private fun checkHasCurrentServer(): Boolean {
-        return appPreferences.getValue(appPreferences.currentServer)?.let {
-            database.get(it) != null
-        } == true
-    }
-
-    private fun checkHasCurrentUser(): Boolean {
-        return appPreferences.getValue(appPreferences.currentServer)?.let {
-            database.getServerCurrentUser(it) != null
-        } == true
-    }
-
-    private fun checkIsDynamicColors(): Boolean {
-        return appPreferences.getValue(appPreferences.dynamicColors)
-    }
+    private fun checkIsDynamicColors(): Boolean =
+        appPreferences.getValue(appPreferences.dynamicColors)
 
 }
 
@@ -111,4 +106,6 @@ data class MainState(
     val hasCurrentServer: Boolean = false,
     val hasCurrentUser: Boolean = false,
     val isOfflineMode: Boolean = false,
+    val currentUser: User? = null,
+    val currentServerAddress: String? = null,
 )

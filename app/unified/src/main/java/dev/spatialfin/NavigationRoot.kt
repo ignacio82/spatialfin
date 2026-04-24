@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import coil3.compose.AsyncImage
+import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
+import dev.jdtech.jellyfin.models.User
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ViewInAr
@@ -198,6 +207,10 @@ fun NavigationRoot(
     onEnterFullSpace: (() -> Unit)? = null,
     /** Called to enter Home Space (Multitask) mode. Only relevant in Full Space. */
     onEnterHomeSpace: (() -> Unit)? = null,
+    /** Active Jellyfin user; powers the XR rail's profile-avatar / switch-user button. */
+    currentUser: User? = null,
+    /** Active Jellyfin server base URL; combined with `currentUser` to build the avatar URL. */
+    currentServerAddress: String? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -328,9 +341,18 @@ fun NavigationRoot(
                         }
                     }
                 }
-                // XR space-mode toggle: shown in the nav rail on XR devices.
+                // XR-only footer: profile/switch-user button stacked above the
+                // space-mode toggle. Both share a single Spacer.weight(1f) so the
+                // group floats to the bottom of the rail.
                 if (xrSpaceMode != null) {
                     if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
+                    if (currentUser != null) {
+                        XrProfileRailButton(
+                            user = currentUser,
+                            serverAddress = currentServerAddress,
+                            onClick = { navController.safeNavigate(UsersRoute) },
+                        )
+                    }
                     val (toggleLabel, toggleAction) = when (xrSpaceMode) {
                         XrSpaceMode.HOME -> "Immersive" to onEnterFullSpace
                         XrSpaceMode.FULL -> "Multitask" to onEnterHomeSpace
@@ -764,5 +786,47 @@ private fun NavHostController.safePopBackStack(): Boolean {
         this.popBackStack()
     } else {
         false
+    }
+}
+
+/**
+ * Circular avatar that opens the user-switcher when tapped. Loads the active
+ * user's Jellyfin PrimaryImage and falls back to a single-letter initials
+ * disc when the URL is null or the request fails (server not configured,
+ * user has no avatar uploaded, offline cache miss, etc.).
+ */
+@Composable
+private fun XrProfileRailButton(
+    user: User,
+    serverAddress: String?,
+    onClick: () -> Unit,
+) {
+    val avatarUri = userPrimaryImageUri(serverAddress, user.id)
+    val initial = user.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (avatarUri != null) {
+            AsyncImage(
+                model = avatarUri,
+                contentDescription = "Switch user (${user.name})",
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        // Initials underneath act as the fallback if the image fails to load.
+        // AsyncImage paints opaque on success and covers them.
+        Text(
+            text = initial,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
