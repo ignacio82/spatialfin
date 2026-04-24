@@ -402,8 +402,15 @@ constructor(
      * 1. Skip if a cache already exists for this item.
      * 2. Download from an existing external Jellyfin subtitle track (fastest path — the URL is
      *    already embedded in the PlaybackInfo response).
-     * 3. If no external subtitles are present, search OpenSubtitles via the Jellyfin plugin,
-     *    download the best match server-side, then fetch the newly created stream URL.
+     * 3. Otherwise fall back to an embedded subtitle stream via Jellyfin's deliveryUrl.
+     *
+     * If neither path yields a cache, the AI gracefully degrades to the in-memory rolling
+     * buffer alone. We deliberately do NOT trigger Jellyfin's OpenSubtitles auto-download as
+     * a side effect: that writes a sibling `<media>.<lang>.srt` next to the video file, which
+     * shifts every embedded MediaStream.Index on the next metadata refresh and desyncs
+     * Jellyfin's own subtitle cache — selecting "Spanish" ends up rendering Thai, etc.
+     * Users who want a fresh subtitle for an item with none can still use the manual
+     * "Search subtitles" dialog (see [searchRemoteSubtitles] / [downloadRemoteSubtitles]).
      *
      * This runs on a background IO dispatcher and never blocks or affects playback.
      */
@@ -432,76 +439,33 @@ constructor(
         // Jellyfin constructs a deliveryUrl for ALL text subtitle tracks (embedded or external),
         // stored in SpatialFinMediaStream.path = baseUrl + deliveryUrl.
         // This is the primary path for embedded MKV subtitle tracks.
-        if (item.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN) {
-            runCatching {
-                val sources = repository.getMediaSources(itemId, includePath = true)
-                // Pick the best subtitle stream: prefer SDH (hearing-impaired), otherwise any text track.
-                // We do NOT filter by isExternal — embedded tracks also have valid deliveryUrls.
-                val subtitleStream = sources
-                    .flatMap { it.mediaStreams }
-                    .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
-                    .let { streams ->
-                        streams.firstOrNull { it.codec in listOf("srt", "subrip", "ass", "ssa", "vtt", "webvtt") }
-                            ?: streams.firstOrNull()
-                    }
-                Timber.i(
-                    "SubtitleCache: phase1.5 streams=%d chosen=%s path=%s",
-                    sources.flatMap { it.mediaStreams }.count { it.type == MediaStreamType.SUBTITLE },
-                    subtitleStream?.codec, subtitleStream?.path?.take(80),
-                )
-                if (subtitleStream?.path != null) {
-                    val count = subtitleCacheManager.downloadAndCache(
-                        itemId,
-                        android.net.Uri.parse(subtitleStream.path),
-                        accessToken,
-                    )
-                    Timber.i("SubtitleCache: phase1.5 embedded → %d lines for %s", count, itemId)
-                    if (count > 0) return@runCatching
-                }
-            }.onFailure { e ->
-                Timber.w(e, "SubtitleCache: phase1.5 failed for %s", itemId)
-            }
-            if (subtitleCacheManager.hasCache(itemId)) return
-        }
-
-        // ── Phase 2: OpenSubtitles via Jellyfin plugin ────────────────────────
-        // Only attempt for Jellyfin items (local/network items have no itemId in Jellyfin).
         if (item.contentSource != dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN) return
-
         runCatching {
-            val language = appPreferences.getValue(appPreferences.preferredSubtitleLanguage) ?: "en"
-            val results = repository.searchRemoteSubtitles(itemId, language)
-            Timber.i("SubtitleCache: phase2 OpenSubtitles results=%d for %s", results.size, itemId)
-            if (results.isEmpty()) return
-
-            // Prefer hearing-impaired (SDH) subtitles — most information-dense for AI context.
-            val best = results.firstOrNull { it.hearingImpaired == true }
-                ?: results.firstOrNull { it.forced != true }
-                ?: results.firstOrNull()
-            val subtitleId = best?.id ?: return
-
-            // Tell the Jellyfin server to download the subtitle from the external provider.
-            repository.downloadRemoteSubtitles(itemId, subtitleId)
-
-            // Re-fetch media sources to get the streaming URL for the newly added subtitle.
             val sources = repository.getMediaSources(itemId, includePath = true)
+            // Pick the best subtitle stream: prefer SDH (hearing-impaired), otherwise any text track.
+            // We do NOT filter by isExternal — embedded tracks also have valid deliveryUrls.
             val subtitleStream = sources
                 .flatMap { it.mediaStreams }
-                .firstOrNull { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
-
+                .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
+                .let { streams ->
+                    streams.firstOrNull { it.codec in listOf("srt", "subrip", "ass", "ssa", "vtt", "webvtt") }
+                        ?: streams.firstOrNull()
+                }
+            Timber.i(
+                "SubtitleCache: phase1.5 streams=%d chosen=%s path=%s",
+                sources.flatMap { it.mediaStreams }.count { it.type == MediaStreamType.SUBTITLE },
+                subtitleStream?.codec, subtitleStream?.path?.take(80),
+            )
             if (subtitleStream?.path != null) {
                 val count = subtitleCacheManager.downloadAndCache(
                     itemId,
                     android.net.Uri.parse(subtitleStream.path),
                     accessToken,
                 )
-                Timber.i(
-                    "SubtitleCache: phase2 OpenSubtitles → %d lines for %s",
-                    count, itemId,
-                )
+                Timber.i("SubtitleCache: phase1.5 embedded → %d lines for %s", count, itemId)
             }
         }.onFailure { e ->
-            Timber.w(e, "SubtitleCache: phase2 OpenSubtitles failed for %s", itemId)
+            Timber.w(e, "SubtitleCache: phase1.5 failed for %s", itemId)
         }
     }
 
