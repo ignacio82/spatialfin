@@ -53,17 +53,12 @@ fun PlayerPauseOverlay(
     /** Optional logo rendered top-left in place of the title text. Caller owns
      *  image loading (Coil lives in platform modules, not in :core). */
     logoSlot: (@Composable () -> Unit)? = null,
+    /** When true, drops the dimming gradient and the top-left title/logo so only
+     *  the top-right wall-clock remains. Used while the full player controls
+     *  overlay is on-screen — the controls already show the logo and we don't
+     *  want to double-dim the video. */
+    minimal: Boolean = false,
 ) {
-    // Re-trigger composition once per minute so the wall-clock ticks while the
-    // overlay is visible. Cheap — just flips a Long in remember.
-    var tick by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(visible) {
-        while (visible) {
-            tick = System.currentTimeMillis()
-            delay(30_000L)
-        }
-    }
-
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(),
@@ -73,67 +68,110 @@ fun PlayerPauseOverlay(
         Box(
             modifier =
                 Modifier.fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color(0x99000000), Color.Transparent, Color.Transparent),
-                        )
+                    .then(
+                        if (minimal) {
+                            Modifier
+                        } else {
+                            Modifier.background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color(0x99000000), Color.Transparent, Color.Transparent),
+                                )
+                            )
+                        }
                     )
                     .padding(contentPadding)
         ) {
-            Column(modifier = Modifier.align(Alignment.TopStart)) {
-                if (logoSlot != null) {
-                    logoSlot()
-                } else {
-                    androidx.compose.foundation.text.BasicText(
-                        text = title,
-                        style =
-                            TextStyle(
-                                color = Color.White,
-                                fontSize = titleFontSize,
-                                fontWeight = FontWeight.Bold,
-                            ),
-                    )
-                }
-                if (!subtitle.isNullOrBlank()) {
-                    androidx.compose.foundation.text.BasicText(
-                        text = subtitle,
-                        style =
-                            TextStyle(
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = subtitleFontSize,
-                            ),
-                    )
+            if (!minimal) {
+                Column(modifier = Modifier.align(Alignment.TopStart)) {
+                    if (logoSlot != null) {
+                        logoSlot()
+                    } else {
+                        androidx.compose.foundation.text.BasicText(
+                            text = title,
+                            style =
+                                TextStyle(
+                                    color = Color.White,
+                                    fontSize = titleFontSize,
+                                    fontWeight = FontWeight.Bold,
+                                ),
+                        )
+                    }
+                    if (!subtitle.isNullOrBlank()) {
+                        androidx.compose.foundation.text.BasicText(
+                            text = subtitle,
+                            style =
+                                TextStyle(
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = subtitleFontSize,
+                                ),
+                        )
+                    }
                 }
             }
-            Column(
+            PauseClockContent(
+                visible = visible,
+                positionMs = positionMs,
+                durationMs = durationMs,
                 modifier = Modifier.align(Alignment.TopEnd),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                val clock = remember(tick) { formatClock(tick) }
-                val remainingMs = (durationMs - positionMs).coerceAtLeast(0L)
-                val eta =
-                    remember(tick, remainingMs) { formatEta(tick, remainingMs) }
-                val remaining = remember(remainingMs) { formatRemaining(remainingMs) }
-                androidx.compose.foundation.text.BasicText(
-                    text = clock,
-                    style =
-                        TextStyle(
-                            color = Color.White,
-                            fontSize = clockFontSize,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                )
-                androidx.compose.foundation.text.BasicText(
-                    text = "Ends $eta · $remaining left",
-                    style =
-                        TextStyle(
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = etaFontSize,
-                        ),
-                )
-            }
+                clockFontSize = clockFontSize,
+                etaFontSize = etaFontSize,
+            )
         }
+    }
+}
+
+/**
+ * Just the top-right digital clock + "Ends at XX:XX · Nm left" block, no backdrop
+ * or positioning container. Use when you want the wall-clock affordance outside
+ * of the full [PlayerPauseOverlay] — e.g. an XR SpatialPanel, or a phone/TV
+ * overlay that keeps its own Box layout.
+ *
+ * Pass `visible` so the internal tick coroutine pauses when off-screen; the
+ * composable itself always renders (the caller decides visibility). Rendering
+ * is Material-free so this is safe to call from any player module.
+ */
+@Composable
+fun PauseClockContent(
+    visible: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    modifier: Modifier = Modifier,
+    clockFontSize: TextUnit = 18.sp,
+    etaFontSize: TextUnit = 14.sp,
+) {
+    var tick by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(visible) {
+        while (visible) {
+            tick = System.currentTimeMillis()
+            delay(30_000L)
+        }
+    }
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        val clock = remember(tick) { formatClock(tick) }
+        val remainingMs = (durationMs - positionMs).coerceAtLeast(0L)
+        val eta = remember(tick, remainingMs) { formatEta(tick, remainingMs) }
+        val remaining = remember(remainingMs) { formatRemaining(remainingMs) }
+        androidx.compose.foundation.text.BasicText(
+            text = clock,
+            style =
+                TextStyle(
+                    color = Color.White,
+                    fontSize = clockFontSize,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+        )
+        androidx.compose.foundation.text.BasicText(
+            text = "Ends at $eta · $remaining left",
+            style =
+                TextStyle(
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = etaFontSize,
+                ),
+        )
     }
 }
 

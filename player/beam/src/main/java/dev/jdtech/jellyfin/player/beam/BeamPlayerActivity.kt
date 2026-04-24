@@ -925,10 +925,12 @@ private fun BeamPlayerScreen(
                 )
             }
 
-            // Fladder-style pause overlay — logo or title top-left, wall-clock + ETA top-right.
-            // Shown only when the full controller overlay is hidden so they don't stack.
+            // Fladder-style pause overlay — logo / title top-left, wall-clock + ETA top-right.
+            // Hidden while the full controller overlay is on-screen so the top-right clock doesn't
+            // collide with the top action row (Mic / SyncPlay / Quality). The controls auto-hide,
+            // at which point the pause overlay takes over.
             dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
-                visible = !isPlaying && !controlsVisible && !isPipMode,
+                visible = !isPlaying && !isPipMode && !controlsVisible,
                 title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
                 subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
                 positionMs = currentPosition,
@@ -1118,13 +1120,24 @@ private fun BeamControllerOverlay(
                     Modifier.weight(1f).padding(start = 8.dp)
                 },
             ) {
-                Text(
-                    text = uiState.currentItemTitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val pauseLogoUri = uiState.currentItemLogoUri?.takeIf { !isPlaying }
+                if (pauseLogoUri != null) {
+                    coil3.compose.AsyncImage(
+                        model = pauseLogoUri,
+                        contentDescription = uiState.currentItemTitle,
+                        modifier = Modifier.heightIn(max = 48.dp).widthIn(max = 240.dp),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        alignment = Alignment.CenterStart,
+                    )
+                } else {
+                    Text(
+                        text = uiState.currentItemTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 buildBeamPlayerSubtitle(uiState)?.let { subtitle ->
                     Text(
                         text = subtitle,

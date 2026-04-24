@@ -80,6 +80,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -1628,6 +1629,79 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value
         if (uiRoot != null) {
             SceneCoreEntity(factory = { uiRoot }, modifier = SubspaceModifier) {
+                // ── Pause Overlays (logo top-left, wall-clock top-right) ─────────────────────
+                // Show / movie logo + wall-clock tuck into the corners of the video while paused.
+                // Matches the Jellyfin Android TV top-panel affordance — a visual breadcrumb of
+                // what's playing plus a quick glanceable clock + ETA when the viewer steps away.
+                //
+                // The `scaledVideoWidthDp` / `scaledVideoHeightDp` values are computed in the
+                // uiRoot's *unscaled* dp space. The video surface is scaled visually by
+                // `videoPanelScale` via `videoRoot.setScale`, but the Subspace layout does not
+                // apply the parent entity's scale to child SpatialPanels — their dp offsets and
+                // sizes remain in unscaled units. To have our overlay panels line up with the
+                // video's real visual bounds, we pre-multiply by `videoPanelScale` here.
+                val visualVideoWidthDp = scaledVideoWidthDp * videoPanelScale
+                val visualVideoHeightDp = scaledVideoHeightDp * videoPanelScale
+                val cornerInsetDp = 12f
+
+                val logoUri = uiState.currentItemLogoUri
+                if (logoUri != null) {
+                    val logoPanelWidthDp = (visualVideoWidthDp * 0.26f).coerceAtLeast(240f)
+                    val logoPanelHeightDp = (visualVideoHeightDp * 0.12f).coerceAtLeast(120f)
+                    val logoPanelXDp = -(visualVideoWidthDp / 2f - logoPanelWidthDp / 2f - cornerInsetDp)
+                    val logoPanelYDp = visualVideoHeightDp / 2f - logoPanelHeightDp / 2f - cornerInsetDp
+                    SpatialPanel(
+                        modifier = SubspaceModifier
+                            .width(logoPanelWidthDp.dp)
+                            .height(logoPanelHeightDp.dp)
+                            .offset(x = logoPanelXDp.dp, y = logoPanelYDp.dp, z = 80.dp),
+                    ) {
+                        AnimatedVisibility(
+                            visible = isActuallyPaused && !isLocked,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                        ) {
+                            AsyncImage(
+                                model = logoUri,
+                                contentDescription = uiState.currentItemTitle,
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.TopStart,
+                                modifier = Modifier.fillMaxSize().padding(12.dp),
+                            )
+                        }
+                    }
+                }
+
+                val clockPanelWidthDp = (visualVideoWidthDp * 0.20f).coerceAtLeast(320f)
+                val clockPanelHeightDp = (visualVideoHeightDp * 0.10f).coerceAtLeast(140f)
+                val clockPanelXDp = visualVideoWidthDp / 2f - clockPanelWidthDp / 2f - cornerInsetDp
+                val clockPanelYDp = visualVideoHeightDp / 2f - clockPanelHeightDp / 2f - cornerInsetDp
+                SpatialPanel(
+                    modifier = SubspaceModifier
+                        .width(clockPanelWidthDp.dp)
+                        .height(clockPanelHeightDp.dp)
+                        .offset(x = clockPanelXDp.dp, y = clockPanelYDp.dp, z = 80.dp),
+                ) {
+                    AnimatedVisibility(
+                        visible = isActuallyPaused && !isLocked,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(12.dp),
+                            contentAlignment = Alignment.TopEnd,
+                        ) {
+                            dev.jdtech.jellyfin.core.presentation.components.PauseClockContent(
+                                visible = isActuallyPaused && !isLocked,
+                                positionMs = currentPosition,
+                                durationMs = duration,
+                                clockFontSize = 64.sp,
+                                etaFontSize = 36.sp,
+                            )
+                        }
+                    }
+                }
+
                 // XR hit testing against a fully transparent hidden panel is unreliable on
                 // device. Keep a small dedicated reveal target near the bottom of the video
                 // so controls can always be brought back after auto-hide.

@@ -727,11 +727,13 @@ private fun TvPlayerScreen(
             )
         }
 
-        // Fladder-style pause overlay: logo or title top-left, wall-clock + ETA top-right.
-        // Only shown when paused AND the full controller overlay is hidden, so the
-        // two surfaces don't stack awkwardly.
+        // Fladder-style pause overlay: logo / title top-left, wall-clock + ETA top-right.
+        // Stays visible whenever the video is paused so the user can glance at the wall-clock;
+        // when the full controller overlay is on-screen we drop the gradient and the top-left
+        // title (both are already rendered by the controls) and keep only the clock.
         dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
-            visible = !isPlaying && !controlsVisible && !isPipMode,
+            visible = !isPlaying && !isPipMode,
+            minimal = controlsVisible,
             title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
             subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
             positionMs = currentPosition,
@@ -884,13 +886,24 @@ private fun TvControllerOverlay(
                 },
             )
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(
-                    text = uiState.currentItemTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val pauseLogoUri = uiState.currentItemLogoUri?.takeIf { !isPlaying }
+                if (pauseLogoUri != null) {
+                    coil3.compose.AsyncImage(
+                        model = pauseLogoUri,
+                        contentDescription = uiState.currentItemTitle,
+                        modifier = Modifier.heightIn(max = 72.dp).widthIn(max = 360.dp),
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.CenterStart,
+                    )
+                } else {
+                    Text(
+                        text = uiState.currentItemTitle,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 buildPlayerSubtitle(uiState)?.let { subtitle ->
                     Text(
                         text = subtitle,

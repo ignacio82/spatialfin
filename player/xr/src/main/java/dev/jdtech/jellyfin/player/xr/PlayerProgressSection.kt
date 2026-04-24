@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,6 +33,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -40,6 +44,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
  *
  * Extracted from SpatialPlayerScreen.kt.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProgressSection(
     uiState: PlayerViewModel.UiState,
@@ -66,9 +71,9 @@ fun ProgressSection(
         if (currentChapterName != null) {
             Text(
                 text = currentChapterName,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isDragging) Color.White else Color.White.copy(alpha = 0.55f),
-                modifier = Modifier.padding(bottom = 6.dp),
+                style = MaterialTheme.typography.headlineSmall,
+                color = if (isDragging) Color.White else Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.padding(bottom = 10.dp),
             )
         }
 
@@ -130,13 +135,13 @@ fun ProgressSection(
                     Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(24.dp)
+                            .height(56.dp)
                             .align(Alignment.Center),
                     ) {
                         val padPx = sliderHPad.toPx()
                         val trackWidth = size.width - 2 * padPx
-                        val markerH = 32f
-                        val markerW = 8f
+                        val markerH = 72f
+                        val markerW = 14f
                         val centerY = size.height / 2f
                         chapters.forEach { chapter ->
                             val fraction = (chapter.startPosition.toFloat() / duration.toFloat())
@@ -150,6 +155,7 @@ fun ProgressSection(
                         }
                     }
                 }
+                val sliderInteractionSource = remember { MutableInteractionSource() }
                 Slider(
                     value = sliderValue,
                     onValueChange = {
@@ -162,9 +168,23 @@ fun ProgressSection(
                         isDragging = false
                         resetAutoHide()
                     },
+                    interactionSource = sliderInteractionSource,
+                    thumb = {
+                        SliderDefaults.Thumb(
+                            interactionSource = sliderInteractionSource,
+                            thumbSize = DpSize(48.dp, 48.dp),
+                        )
+                    },
+                    track = { sliderState ->
+                        SliderDefaults.Track(
+                            sliderState = sliderState,
+                            modifier = Modifier.height(16.dp),
+                        )
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 24.dp)
+                        .height(56.dp),
                 )
             }
             Text(
