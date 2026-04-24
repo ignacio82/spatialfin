@@ -390,6 +390,7 @@ class XrPlayerActivity : AppCompatActivity() {
         )
         super.onPause()
         viewModel.updatePlaybackProgress()
+        killProcessIfFinishing("onPause")
     }
 
     override fun onStop() {
@@ -429,6 +430,7 @@ class XrPlayerActivity : AppCompatActivity() {
         }
         mediaSession?.release()
         mediaSession = null
+        killProcessIfFinishing("onStop")
     }
 
     override fun onDestroy() {
@@ -475,6 +477,22 @@ class XrPlayerActivity : AppCompatActivity() {
 
     private fun recordLaunchPhase(phase: String) {
         PlayerLaunchBreadcrumbs.markPending(this, "XrPlayerActivity:$phase")
+    }
+
+    /**
+     * Workaround for https://issuetracker.google.com/issues/503521336.
+     * `SurfaceEntity.dispose()` leaks 2 per-eye `MaterialInstance`s of Filament's "Split
+     * Engine Placeholder" material. When `Session.destroy()` runs at ON_DESTROY (via the
+     * observer registered by `Session.create()`), `FMaterial::terminate` asserts and the
+     * process SIGABRTs. We host this Activity in a `:xrplayer` process and end the process
+     * ourselves before the lifecycle observer fires; any `startActivity()` queued before
+     * `finish()` is honored by the system in a fresh `:xrplayer` instance.
+     */
+    private fun killProcessIfFinishing(stage: String) {
+        if (!isFinishing) return
+        recordLaunchPhase("exit:kill-process:$stage")
+        Timber.w("XrPlayerActivity killing :xrplayer process at %s to bypass Session.destroy SIGABRT", stage)
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun requestHomeSpaceMode(stage: String) {

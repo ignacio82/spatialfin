@@ -12,6 +12,7 @@
             android:name="dev.jdtech.jellyfin.player.xr.XrPlayerActivity"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
             android:autoRemoveFromRecents="true"
+            android:process=":xrplayer"
             android:resizeableActivity="true"
             android:theme="@style/Theme.SpatialFin.XrPlayer">
             <property
