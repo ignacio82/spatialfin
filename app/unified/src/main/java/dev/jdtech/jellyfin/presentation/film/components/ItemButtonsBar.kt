@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -129,18 +130,16 @@ fun ItemButtonsBar(
                 horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.small),
             ) {
+                // Primary row: only "what to play" decisions stay inline so the
+                // bar is exactly one row across XR / Beam / TV. Everything else
+                // (Trailer, SyncPlay, Version, Quality, Download, Edit IDs) lives
+                // in the 3-dots overflow. Watched and Favorite stay inline as
+                // icon-only toggles so their state is still visible at a glance.
                 PlayButton(
                     item = item,
                     onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate, false) },
                     enabled = item.canPlay && canPlay,
                 )
-                if (item.canPlay && canPlay) {
-                    XrActionButton(
-                        label = "Multitask",
-                        icon = CoreR.drawable.ic_picture_in_picture,
-                        onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate, true) },
-                    )
-                }
                 if (item.playbackPositionTicks.div(600000000) > 0) {
                     XrActionButton(
                         label = "Restart",
@@ -148,86 +147,156 @@ fun ItemButtonsBar(
                         onClick = { onPlayClick(true, selectedMediaSourceIndex, selectedMaxBitrate, false) },
                     )
                 }
-                onSyncPlayClick?.let { syncClick ->
-                    XrActionButton(label = "SyncPlay", icon = CoreR.drawable.ic_tv, onClick = syncClick)
-                }
-                trailerUri?.let { uri ->
-                    XrActionButton(label = "Trailer", icon = CoreR.drawable.ic_film, onClick = { onTrailerClick(uri) })
-                }
-                if (item.sources.size > 1) {
+                if (item.canPlay && canPlay) {
                     XrActionButton(
-                        label = "Version",
-                        icon = CoreR.drawable.ic_database,
-                        onClick = { mediaSourceSelectionDialogOpen = true },
+                        label = "Multitask",
+                        icon = CoreR.drawable.ic_picture_in_picture,
+                        onClick = { onPlayClick(false, selectedMediaSourceIndex, selectedMaxBitrate, true) },
                     )
                 }
-                XrActionButton(
-                    label = "Quality",
-                    icon = CoreR.drawable.ic_sparkles,
-                    onClick = { qualitySelectionDialogOpen = true },
-                )
-                XrActionButton(
-                    label = if (item.played) "Watched" else "Mark Watched",
+                XrIconActionButton(
                     icon = CoreR.drawable.ic_check,
+                    contentDescription = if (item.played) "Watched" else "Mark Watched",
                     onClick = onMarkAsPlayedClick,
                     emphasized = item.played,
                     iconTint = if (item.played) Color.Red else LocalContentColor.current,
                 )
-                XrActionButton(
-                    label = if (item.favorite) "Favorite" else "Add Favorite",
+                XrIconActionButton(
                     icon = if (item.favorite) CoreR.drawable.ic_heart_filled else CoreR.drawable.ic_heart,
+                    contentDescription = if (item.favorite) "Favorite" else "Add Favorite",
                     onClick = onMarkAsFavoriteClick,
                     emphasized = item.favorite,
                     iconTint = if (item.favorite) Color.Red else LocalContentColor.current,
                 )
-                if (downloaderState != null && !downloaderState.isDownloading) {
-                    if (item.isDownloaded()) {
-                        XrActionButton(
-                            label = "Delete Download",
-                            icon = CoreR.drawable.ic_trash,
-                            onClick = { deleteDownloadDialogOpen = true },
-                        )
-                    } else if (item.canDownload) {
-                        XrActionButton(
-                            label = "Download",
-                            icon = CoreR.drawable.ic_download,
-                            onClick = { downloadOptionsDialogOpen = true },
+                // 3-dots overflow holds every secondary action. The anchor Box
+                // scopes the DropdownMenu to the button's position; without it
+                // the menu anchors at (0,0) of the enclosing layout.
+                Box {
+                    FilledTonalButton(
+                        onClick = { overflowMenuOpen = true },
+                        modifier = Modifier.height(64.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        ),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MoreHoriz,
+                            contentDescription = "More actions",
+                            modifier = Modifier.size(22.dp),
                         )
                     }
-                }
-                // 3-dots overflow: keeps "fix the metadata" out of the bar's
-                // default real estate but one tap away. Surfaced for anything
-                // Jellyfin actually stores providerIds on — movies, shows, and
-                // individual episodes. Seasons/collections aren't meaningfully
-                // writable (the series owns the IDs for a season's episodes,
-                // and collections aren't real Jellyfin items with externals).
-                if (item is SpatialFinMovie || item is SpatialFinShow || item is SpatialFinEpisode) {
-                    // The 3-dots overflow uses a dedicated tonal button so it
-                    // visually belongs with the other actions in the FlowRow
-                    // rather than squeezing in as a floating IconButton. The
-                    // anchor Box scopes the DropdownMenu to the button's
-                    // position — without it, the menu anchors to (0,0) on the
-                    // enclosing layout.
-                    Box {
-                        FilledTonalButton(
-                            onClick = { overflowMenuOpen = true },
-                            modifier = Modifier.height(64.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            ),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreHoriz,
-                                contentDescription = "More actions",
-                                modifier = Modifier.size(22.dp),
+                    DropdownMenu(
+                        expanded = overflowMenuOpen,
+                        onDismissRequest = { overflowMenuOpen = false },
+                    ) {
+                        trailerUri?.let { uri ->
+                            DropdownMenuItem(
+                                text = { Text("Trailer") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(CoreR.drawable.ic_film),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenuOpen = false
+                                    onTrailerClick(uri)
+                                },
                             )
                         }
-                        DropdownMenu(
-                            expanded = overflowMenuOpen,
-                            onDismissRequest = { overflowMenuOpen = false },
-                        ) {
+                        onSyncPlayClick?.let { syncClick ->
+                            DropdownMenuItem(
+                                text = { Text("SyncPlay") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(CoreR.drawable.ic_tv),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenuOpen = false
+                                    syncClick()
+                                },
+                            )
+                        }
+                        if (item.sources.size > 1) {
+                            DropdownMenuItem(
+                                text = { Text("Version") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(CoreR.drawable.ic_database),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                onClick = {
+                                    overflowMenuOpen = false
+                                    mediaSourceSelectionDialogOpen = true
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Quality") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(CoreR.drawable.ic_sparkles),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            },
+                            onClick = {
+                                overflowMenuOpen = false
+                                qualitySelectionDialogOpen = true
+                            },
+                        )
+                        if (downloaderState != null && !downloaderState.isDownloading) {
+                            if (item.isDownloaded()) {
+                                DropdownMenuItem(
+                                    text = { Text("Delete Download") },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter = painterResource(CoreR.drawable.ic_trash),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        overflowMenuOpen = false
+                                        deleteDownloadDialogOpen = true
+                                    },
+                                )
+                            } else if (item.canDownload) {
+                                DropdownMenuItem(
+                                    text = { Text("Download") },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter = painterResource(CoreR.drawable.ic_download),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        overflowMenuOpen = false
+                                        downloadOptionsDialogOpen = true
+                                    },
+                                )
+                            }
+                        }
+                        // Edit external IDs is only meaningful for items Jellyfin
+                        // stores providerIds on — movies, shows, individual
+                        // episodes. Seasons/collections aren't writable that way.
+                        if (item is SpatialFinMovie || item is SpatialFinShow || item is SpatialFinEpisode) {
                             DropdownMenuItem(
                                 text = { Text("Edit external IDs") },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Edit,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
                                 onClick = {
                                     overflowMenuOpen = false
                                     editExternalIdsDialogOpen = true
@@ -370,6 +439,33 @@ private fun XrActionButton(
         )
         Spacer(Modifier.width(12.dp))
         Text(label, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun XrIconActionButton(
+    icon: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+    emphasized: Boolean = false,
+    iconTint: Color = LocalContentColor.current,
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.height(64.dp),
+        colors =
+            ButtonDefaults.filledTonalButtonColors(
+                containerColor =
+                    if (emphasized) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.secondaryContainer,
+            ),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(22.dp),
+            tint = iconTint,
+        )
     }
 }
 
