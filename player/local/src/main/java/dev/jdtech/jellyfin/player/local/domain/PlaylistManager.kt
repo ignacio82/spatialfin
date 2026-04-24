@@ -22,6 +22,10 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
@@ -315,7 +319,11 @@ class PlaylistManager @Inject internal constructor(
                 s.index, s.codec, s.isExternal, s.language, s.path,
             )
         }
-        val externalSubtitles =
+        // Media3's SingleSampleMediaPeriod loads the entire subtitle into a single
+        // ByteBuffer via Arrays.copyOf (doubles on grow), so an N-byte track needs ~2N
+        // of heap. Probe Content-Length on IO dispatchers in parallel and drop tracks
+        // above MAX_SUBTITLE_BYTES so Media3 never attempts the load.
+        val externalSubtitles = coroutineScope {
             subtitleStreams
                 .map { mediaStream ->
                     ExternalSubtitle(
@@ -330,22 +338,22 @@ class PlaylistManager @Inject internal constructor(
                         },
                     )
                 }
-                .filter { sub ->
-                    // Media3's SingleSampleMediaPeriod loads the entire subtitle into a
-                    // single ByteBuffer via Arrays.copyOf (doubles on grow), so an N-byte
-                    // track needs ~2N of heap. Probe Content-Length and drop tracks above
-                    // MAX_SUBTITLE_BYTES so Media3 never attempts the load.
-                    val probedBytes = probeSubtitleSize(sub.uri.toString())
-                    if (probedBytes == null) return@filter true
-                    val tooBig = probedBytes > MAX_SUBTITLE_BYTES
-                    if (tooBig) {
+                .map { sub ->
+                    async(Dispatchers.IO) { sub to probeSubtitleSize(sub.uri.toString()) }
+                }
+                .awaitAll()
+                .mapNotNull { (sub, probedBytes) ->
+                    if (probedBytes != null && probedBytes > MAX_SUBTITLE_BYTES) {
                         Timber.w(
                             "Subtitle sideload DROPPED (too large %d bytes > cap %d): title=%s lang=%s uri=%s",
                             probedBytes, MAX_SUBTITLE_BYTES, sub.title, sub.language, sub.uri,
                         )
+                        null
+                    } else {
+                        sub
                     }
-                    !tooBig
                 }
+        }
         val trickplayInfo =
             when (this) {
                 is SpatialFinSources -> {
