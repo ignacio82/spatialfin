@@ -134,32 +134,22 @@ internal class PlayerTrackSelector(
             if (seriesOverride?.subtitlesEnabled == false) {
                 null
             } else if (seriesOverrideSubtitleSignature != null) {
+                // Explicit user pick by signature — respect even a forced/signs track.
                 subtitleGroups.firstOrNull { group ->
                     subtitleTrackSignature(group) == seriesOverrideSubtitleSignature
-                } ?: subtitleGroups
-                    .filter { group ->
-                        seriesOverrideSubtitle != null &&
-                            groupMatchesLanguage(group, seriesOverrideSubtitle)
-                    }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = seriesOverrideSubtitle) }
+                } ?: autoPickDialogueSubtitle(subtitleGroups, seriesOverrideSubtitle)
             } else if (seriesOverrideSubtitle != null) {
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, seriesOverrideSubtitle) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = seriesOverrideSubtitle) }
+                autoPickDialogueSubtitle(subtitleGroups, seriesOverrideSubtitle)
             } else if (defaultSubtitleDisabled && audioUnderstood) {
                 null
             } else if (!preferredSubtitleForContent.isNullOrBlank()) {
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, preferredSubtitleForContent) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredSubtitleForContent) }
+                autoPickDialogueSubtitle(subtitleGroups, preferredSubtitleForContent)
                     ?.takeIf { !audioUnderstood || isAnime }
             } else if (audioUnderstood) {
                 null
             } else {
                 spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                    subtitleGroups
-                        .filter { group -> groupMatchesLanguage(group, preferredCode) }
-                        .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredCode) }
+                    autoPickDialogueSubtitle(subtitleGroups, preferredCode)
                 }
             }
 
@@ -274,9 +264,7 @@ internal class PlayerTrackSelector(
             player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
         val selectedSubtitleGroup =
             spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                subtitleGroups
-                    .filter { group -> groupMatchesLanguage(group, preferredCode) }
-                    .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredCode) }
+                autoPickDialogueSubtitle(subtitleGroups, preferredCode)
             } ?: return
 
         val subtitleLanguage = groupPrimaryLanguage(selectedSubtitleGroup)
@@ -371,6 +359,35 @@ internal class PlayerTrackSelector(
 
     private fun audioTrackSignature(group: Tracks.Group): String =
         PlayerTrackSignatures.audio(group)
+
+    /**
+     * Automatic dialogue-subtitle picker: finds the best full-dialogue subtitle group for
+     * [preferredLanguageCode], excluding forced / signs-only tracks.
+     *
+     * Forced tracks (and similar "Signs & Songs" tracks) only contain translations of
+     * on-screen text and a handful of karaoke / title events — they're useless to a viewer
+     * who doesn't speak the audio language. Auto-selecting one would leave most of the
+     * dialogue un-subtitled. This helper hard-filters those tracks out so the smart
+     * selector never lands on them, and only falls back to scoring via [scoreSubtitleGroup]
+     * for tiebreaking among full tracks (e.g. "Full Dialogue" vs "SDH").
+     *
+     * Returns null if [preferredLanguageCode] is null/blank or if no non-forced track
+     * matches — the caller is expected to leave subtitles off in that case rather than
+     * surprise the user with signs-only output. Manual picks via [switchToTrack] and
+     * explicit signature restores stay free to select a forced track.
+     */
+    private fun autoPickDialogueSubtitle(
+        groups: List<Tracks.Group>,
+        preferredLanguageCode: String?,
+    ): Tracks.Group? {
+        if (preferredLanguageCode.isNullOrBlank()) return null
+        return groups
+            .filter { group ->
+                groupMatchesLanguage(group, preferredLanguageCode) &&
+                    !PlayerTrackHeuristics.isForcedOrSignsOnly(group)
+            }
+            .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredLanguageCode) }
+    }
 
     private fun scoreSubtitleGroup(
         group: Tracks.Group,
