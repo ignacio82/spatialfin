@@ -132,11 +132,10 @@ class ShowViewModel @Inject constructor(
                 }
             }
             is ShowAction.ReloadAfterMetadataEdit -> {
-                // See MovieViewModel's note: Jellyfin's metadata refresh is
-                // async, so a short delay lets the server finish re-pulling
-                // from IMDb before we re-read the item. 5s suffices for most
-                // items; slower refreshes show stale data until the next
-                // manual navigation.
+                // See MovieViewModel.ReloadAfterMetadataEdit. Immediate reload
+                // shows the new IMDb ID; the delayed second pass catches the
+                // async server-side metadata rescan.
+                viewModelScope.launch { loadShow(showId) }
                 viewModelScope.launch {
                     kotlinx.coroutines.delay(METADATA_REFRESH_WAIT_MS)
                     loadShow(showId)
@@ -147,6 +146,6 @@ class ShowViewModel @Inject constructor(
     }
 
     companion object {
-        private const val METADATA_REFRESH_WAIT_MS = 5_000L
+        private const val METADATA_REFRESH_WAIT_MS = 15_000L
     }
 }

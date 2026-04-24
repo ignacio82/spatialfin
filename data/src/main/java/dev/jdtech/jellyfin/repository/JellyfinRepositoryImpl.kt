@@ -827,41 +827,89 @@ class JellyfinRepositoryImpl(
 
     override suspend fun setItemProviderId(itemId: UUID, providerKey: String, value: String?): Boolean =
         withContext(Dispatchers.IO) {
-            val accepted = runCatching {
-                val current = jellyfinApi.userLibraryApi
+            // Jellyfin's POST /Items/{id} (ItemUpdateApi.updateItem) returns HTTP
+            // 400 when we round-trip a full BaseItemDto — the SDK payload
+            // includes read-only fields (Id, ServerId, media source IDs, etc.)
+            // that the server rejects. The web UI's "Identify" button doesn't
+            // use that endpoint at all; it uses ItemLookupApi, which is what
+            // we call here.
+            //
+            // Flow (mirrors the web UI's Identify dialog):
+            //   1. getSeriesRemoteSearchResults / getMovieRemoteSearchResults
+            //      with the new IMDb ID — the server queries its metadata
+            //      providers and returns hydrated RemoteSearchResults.
+            //   2. applySearchCriteria with the first hit — the server writes
+            //      the providerIds back, replaces metadata + images, and
+            //      triggers the refresh itself (no separate refreshItem call
+            //      needed).
+            //
+            // Episodes aren't supported by the Identify flow — the web UI
+            // disables that button on episodes for the same reason. Callers
+            // should edit the parent series instead.
+            runCatching {
+                val item = jellyfinApi.userLibraryApi
                     .getItem(itemId, jellyfinApi.userId!!)
                     .content
-                // Rebuild the providerIds map: preserve every existing entry,
-                // set/clear just the one key the caller asked to touch. Passing
-                // a full BaseItemDto to updateItem preserves untouched fields;
-                // Jellyfin treats null providerIds as "leave alone", so we must
-                // always submit the complete map even when clearing a key.
-                val nextProviderIds = buildMap {
-                    current.providerIds?.forEach { (k, v) -> if (!v.isNullOrBlank()) put(k, v) }
-                    if (value.isNullOrBlank()) remove(providerKey) else put(providerKey, value.trim())
-                }
-                jellyfinApi.itemUpdateApi.updateItem(
-                    itemId = itemId,
-                    data = current.copy(providerIds = nextProviderIds),
+                val providerIds = mapOf(providerKey to value.orEmpty())
+                Timber.i(
+                    "setItemProviderId: item=%s kind=%s key=%s newValue=%s",
+                    itemId, item.type, providerKey, value,
                 )
+                val results = when (item.type) {
+                    BaseItemKind.SERIES -> jellyfinApi.itemLookupApi
+                        .getSeriesRemoteSearchResults(
+                            org.jellyfin.sdk.model.api.SeriesInfoRemoteSearchQuery(
+                                searchInfo = org.jellyfin.sdk.model.api.SeriesInfo(
+                                    name = item.name,
+                                    year = item.productionYear,
+                                    providerIds = providerIds,
+                                    isAutomated = false,
+                                ),
+                                itemId = itemId,
+                                includeDisabledProviders = false,
+                            ),
+                        )
+                        .content
+                    BaseItemKind.MOVIE -> jellyfinApi.itemLookupApi
+                        .getMovieRemoteSearchResults(
+                            org.jellyfin.sdk.model.api.MovieInfoRemoteSearchQuery(
+                                searchInfo = org.jellyfin.sdk.model.api.MovieInfo(
+                                    name = item.name,
+                                    year = item.productionYear,
+                                    providerIds = providerIds,
+                                    isAutomated = false,
+                                ),
+                                itemId = itemId,
+                                includeDisabledProviders = false,
+                            ),
+                        )
+                        .content
+                    else -> {
+                        Timber.w("setItemProviderId: unsupported kind=%s for item=%s", item.type, itemId)
+                        return@runCatching false
+                    }
+                }
+                val match = results.firstOrNull { !it.providerIds.isNullOrEmpty() }
+                    ?: results.firstOrNull()
+                if (match == null) {
+                    Timber.w("setItemProviderId: remote search returned no hits for %s", itemId)
+                    return@runCatching false
+                }
+                Timber.i(
+                    "setItemProviderId: applying remote result name=%s providerIds=%s",
+                    match.name, match.providerIds,
+                )
+                jellyfinApi.itemLookupApi.applySearchCriteria(
+                    itemId = itemId,
+                    replaceAllImages = true,
+                    data = match,
+                )
+                Timber.i("setItemProviderId: applySearchCriteria accepted for %s", itemId)
                 true
             }.getOrElse {
-                Timber.w(it, "Failed to update providerIds for %s (key=%s)", itemId, providerKey)
+                Timber.w(it, "setItemProviderId failed for %s (key=%s)", itemId, providerKey)
                 false
             }
-            // Always kick a refresh — Jellyfin re-reads metadata from the new
-            // provider ID, which is the whole point of editing it. Harmless if
-            // the write actually failed: at worst we re-scan an unchanged item.
-            runCatching {
-                jellyfinApi.itemRefreshApi.refreshItem(
-                    itemId = itemId,
-                    metadataRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
-                    imageRefreshMode = org.jellyfin.sdk.model.api.MetadataRefreshMode.FULL_REFRESH,
-                    replaceAllMetadata = true,
-                    replaceAllImages = true,
-                )
-            }
-            accepted
         }
 
     override suspend fun deleteItem(itemId: UUID): Boolean =
@@ -968,8 +1016,26 @@ class JellyfinRepositoryImpl(
 
     private fun parseRealtimeItemIds(ids: List<String>): Set<UUID> =
         ids.mapNotNull { id ->
-            runCatching { UUID.fromString(id) }
+            // Jellyfin's websocket emits item ids in the 32-char dashless hex
+            // form ("fbae46090958aa929b8afa8ab0b68901") rather than canonical
+            // 8-4-4-4-12. Insert dashes so UUID.fromString accepts it, and
+            // fall back to the straight parse for any server that emits the
+            // canonical form.
+            runCatching {
+                if (DASHLESS_UUID.matches(id)) {
+                    UUID.fromString(
+                        "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-" +
+                            "${id.substring(16, 20)}-${id.substring(20, 32)}",
+                    )
+                } else {
+                    UUID.fromString(id)
+                }
+            }
                 .onFailure { Timber.w(it, "Ignoring non-UUID realtime item id %s", id) }
                 .getOrNull()
         }.toSet()
+
+    companion object {
+        private val DASHLESS_UUID = Regex("^[0-9a-fA-F]{32}$")
+    }
 }

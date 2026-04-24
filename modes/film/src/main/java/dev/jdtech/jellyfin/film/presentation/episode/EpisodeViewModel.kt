@@ -108,7 +108,8 @@ constructor(
                 }
             }
             is EpisodeAction.ReloadAfterMetadataEdit -> {
-                // See MovieViewModel's note on the 5s wait.
+                // See MovieViewModel.ReloadAfterMetadataEdit.
+                viewModelScope.launch { loadEpisode(episodeId) }
                 viewModelScope.launch {
                     kotlinx.coroutines.delay(METADATA_REFRESH_WAIT_MS)
                     loadEpisode(episodeId)
@@ -119,6 +120,6 @@ constructor(
     }
 
     companion object {
-        private const val METADATA_REFRESH_WAIT_MS = 5_000L
+        private const val METADATA_REFRESH_WAIT_MS = 15_000L
     }
 }

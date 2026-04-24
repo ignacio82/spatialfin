@@ -31,6 +31,19 @@ class OmdbApi(
         return fetch("$BASE_URL?i=${encode(imdbId)}&apikey=$key")
     }
 
+    /**
+     * OMDb's `?s=` search. Unlike `?t=` (which returns a single best guess),
+     * this returns up to 10 candidates per page, letting the caller show a
+     * picker when the title is ambiguous ("Universe", "The Office", etc.).
+     * Not all entries carry rich metadata — use [findByImdbId] on the chosen
+     * entry if the detail view needs plot/genre.
+     */
+    suspend fun searchMany(query: String, year: Int? = null): List<OmdbSearchEntry> {
+        val key = apiKey() ?: return emptyList()
+        val yearParam = year?.let { "&y=$it" } ?: ""
+        return fetchSearch("$BASE_URL?s=${encode(query)}$yearParam&apikey=$key")
+    }
+
     private suspend fun search(title: String, year: Int?, type: String): OmdbResult? {
         val key = apiKey() ?: return null
         val yearParam = year?.let { "&y=$it" } ?: ""
@@ -43,7 +56,7 @@ class OmdbApi(
             try {
                 val response = client.newCall(request).execute()
                 if (response.isSuccessful) {
-                    val body = response.body?.string() ?: return@withContext null
+                    val body = response.body.string()
                     val result = json.decodeFromString<OmdbResult>(body)
                     if (result.response == "True") result else null
                 } else {
@@ -53,6 +66,25 @@ class OmdbApi(
             } catch (e: Exception) {
                 Timber.e(e, "OMDb request error")
                 null
+            }
+        }
+
+    private suspend fun fetchSearch(url: String): List<OmdbSearchEntry> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder().url(url).build()
+            try {
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body.string()
+                    val result = json.decodeFromString<OmdbSearchResponse>(body)
+                    if (result.response == "True") result.search else emptyList()
+                } else {
+                    Timber.e("OMDb search failed: ${response.code}")
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "OMDb search error")
+                emptyList()
             }
         }
 
@@ -89,4 +121,20 @@ data class OmdbResult(
 data class OmdbRating(
     @SerialName("Source") val source: String = "",
     @SerialName("Value") val value: String = "",
+)
+
+@Serializable
+data class OmdbSearchEntry(
+    @SerialName("Title") val title: String = "",
+    @SerialName("Year") val year: String = "",
+    @SerialName("imdbID") val imdbId: String = "",
+    @SerialName("Type") val type: String = "",
+    @SerialName("Poster") val poster: String = "",
+)
+
+@Serializable
+private data class OmdbSearchResponse(
+    @SerialName("Search") val search: List<OmdbSearchEntry> = emptyList(),
+    @SerialName("totalResults") val totalResults: String = "",
+    @SerialName("Response") val response: String = "",
 )
