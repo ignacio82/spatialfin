@@ -695,10 +695,16 @@ class JellyfinRepositoryImpl(
         itemId: UUID,
         positionTicks: Long,
         playedPercentage: Int,
+        markedPlayed: Boolean,
     ) {
         Timber.d("Sending stop $itemId")
         withContext(Dispatchers.IO) {
             when {
+                markedPlayed -> {
+                    // Played status already committed (e.g. outro reached) — don't downgrade.
+                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
+                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                }
                 playedPercentage < 10 -> {
                     database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
                     database.setPlayed(jellyfinApi.userId!!, itemId, false)

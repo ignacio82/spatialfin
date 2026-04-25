@@ -562,6 +562,7 @@ private fun TvPlayerScreen(
             currentPosition = player.currentPosition
             duration = player.duration.coerceAtLeast(0L)
             isPlaying = player.isPlaying
+            viewModel.updateCurrentSegment()
             delay(500L)
         }
     }

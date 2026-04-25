@@ -366,9 +366,14 @@ class JellyfinRepositoryOfflineImpl(
         itemId: UUID,
         positionTicks: Long,
         playedPercentage: Int,
+        markedPlayed: Boolean,
     ) {
         withContext(Dispatchers.IO) {
             when {
+                markedPlayed -> {
+                    database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
+                    database.setPlayed(jellyfinApi.userId!!, itemId, true)
+                }
                 playedPercentage < 10 -> {
                     database.setPlaybackPositionTicks(itemId, jellyfinApi.userId!!, 0)
                     database.setPlayed(jellyfinApi.userId!!, itemId, false)

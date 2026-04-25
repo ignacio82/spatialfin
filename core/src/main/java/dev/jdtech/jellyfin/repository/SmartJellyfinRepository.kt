@@ -343,11 +343,16 @@ constructor(
         )
     }
 
-    override suspend fun postPlaybackStop(itemId: UUID, positionTicks: Long, playedPercentage: Int) {
+    override suspend fun postPlaybackStop(
+        itemId: UUID,
+        positionTicks: Long,
+        playedPercentage: Int,
+        markedPlayed: Boolean,
+    ) {
         runWrite(
-            online = { onlineRepository.postPlaybackStop(itemId, positionTicks, playedPercentage) },
+            online = { onlineRepository.postPlaybackStop(itemId, positionTicks, playedPercentage, markedPlayed) },
             offline = {
-                offlineRepository.postPlaybackStop(itemId, positionTicks, playedPercentage)
+                offlineRepository.postPlaybackStop(itemId, positionTicks, playedPercentage, markedPlayed)
             },
         )
     }

@@ -257,6 +257,11 @@ constructor(
     private var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()
     private var currentMediaSourceStreams: List<SpatialFinMediaStream> = emptyList()
 
+    // Items already auto-marked as played this session (e.g. on outro entry). Stops
+    // postPlaybackStop from downgrading the played flag if the user exits during the
+    // outro before the >90% threshold.
+    private val sessionMarkedPlayedItemIds: MutableSet<UUID> = mutableSetOf()
+
     // Segments preferences
     var segmentsSkipButton: Boolean = false
     private var segmentsSkipButtonTypes: Set<String> = emptySet()
@@ -782,10 +787,12 @@ constructor(
                         PlayerContentSource.JELLYFIN -> {
                             if (mediaId != null) {
                                 Timber.d("Sending playback stop")
+                                val itemUuid = UUID.fromString(mediaId)
                                 repository.postPlaybackStop(
-                                    UUID.fromString(mediaId),
+                                    itemUuid,
                                     position.times(10000),
                                     if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
+                                    markedPlayed = itemUuid in sessionMarkedPlayedItemIds,
                                 )
                             }
                         }
@@ -871,6 +878,16 @@ constructor(
 
             val milliSeconds = player.currentPosition
 
+            // Once the playhead enters an OUTRO segment, mark the item as watched even
+            // if the user closes the player before the >90% threshold.
+            if (currentMediaItemSegments.any { segment ->
+                    segment.type == SpatialFinSegmentType.OUTRO &&
+                        milliSeconds in segment.startTicks..<segment.endTicks
+                }
+            ) {
+                markCurrentItemPlayedOnOutro()
+            }
+
             // Get current segment, - 100 milliseconds to avoid showing button after segment ends
             val currentSegment =
                 currentMediaItemSegments.find { segment ->
@@ -904,6 +921,21 @@ constructor(
                 }
             } else {
                 _uiState.update { it.copy(currentSegment = null) }
+            }
+        }
+    }
+
+    private fun markCurrentItemPlayedOnOutro() {
+        val item = currentPlayerItem() ?: return
+        if (item.contentSource != PlayerContentSource.JELLYFIN) return
+        if (!sessionMarkedPlayedItemIds.add(item.itemId)) return
+        viewModelScope.launch {
+            try {
+                repository.markAsPlayed(item.itemId)
+                Timber.i("Marked %s as played (entered outro segment)", item.itemId)
+            } catch (e: Exception) {
+                Timber.w(e, "markAsPlayed on outro failed for %s", item.itemId)
+                sessionMarkedPlayedItemIds.remove(item.itemId)
             }
         }
     }
@@ -1003,9 +1035,10 @@ constructor(
                             syncPlay.ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
-                            if (segmentsSkipButton || segmentsAutoSkip) {
-                                getSegments(item.itemId)
-                            }
+                            // Always fetch segments for Jellyfin items: even when the user has
+                            // skip-button/auto-skip off, we use the OUTRO segment to auto-mark
+                            // the item as watched.
+                            getSegments(item.itemId)
 
                             if (appPreferences.getValue(appPreferences.playerTrickplay)) {
                                 getTrickplay(item)
@@ -1104,10 +1137,12 @@ constructor(
                     when (currentPlayerItem()?.contentSource) {
                         PlayerContentSource.JELLYFIN -> {
                             if (mediaId == null) return@launch
+                            val itemUuid = UUID.fromString(mediaId)
                             repository.postPlaybackStop(
-                                UUID.fromString(mediaId),
+                                itemUuid,
                                 position.times(10000),
                                 if (duration > 0) position.div(duration.toFloat()).times(100).toInt() else 0,
+                                markedPlayed = itemUuid in sessionMarkedPlayedItemIds,
                             )
                         }
                         PlayerContentSource.LOCAL -> {
