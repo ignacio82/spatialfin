@@ -24,11 +24,15 @@ import androidx.tv.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.Surface
+import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -572,9 +576,16 @@ private class TvCompanionPairingServer(
 @Composable
 fun TvCompanionScreen(
     onBack: () -> Unit,
+    onRefresh: () -> Unit = {},
     viewModel: TvCompanionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(state) {
+        if (state is TvCompanionState.Success) {
+            onRefresh()
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.startPairing()
@@ -605,11 +616,10 @@ fun TvCompanionScreen(
         when (val current = state) {
             TvCompanionState.Idle -> Unit
             TvCompanionState.Applying -> {
-                Card(onClick = {}, 
-                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
-                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
-                ) {
-                    Column(
+                Surface(
+                    colors = SurfaceDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = RoundedCornerShape(30.dp),
+                ) {                    Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -620,11 +630,10 @@ fun TvCompanionScreen(
                 }
             }
             is TvCompanionState.Error -> {
-                Card(onClick = {}, 
-                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
-                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
-                ) {
-                    Column(
+                Surface(
+                    colors = SurfaceDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = RoundedCornerShape(30.dp),
+                ) {                    Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -638,35 +647,42 @@ fun TvCompanionScreen(
                 }
             }
             TvCompanionState.Success -> {
-                Card(onClick = {}, 
-                    colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
-                    shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
-                ) {
-                    Column(
+                Surface(
+                    colors = SurfaceDefaults.colors(containerColor = Color(0xCC131A24)),
+                    shape = RoundedCornerShape(30.dp),
+                ) {                    Column(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text("Companion import complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Fin Player TV now has the imported server, users, preferences, and saved companion sync connection.")
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = onBack) { Text("Done") }
-                            OutlinedButton(onClick = viewModel::startPairing) { Text("Pair Again") }
+                            Button(onClick = { onRefresh(); onBack() }) { Text("Done") }
+                            OutlinedButton(onClick = { onRefresh(); viewModel.startPairing() }) { Text("Pair Again") }
                         }
                     }
                 }
             }
             is TvCompanionState.Ready -> {
                 val qrBitmap = remember(current.qrContent) { generateQrBitmap(current.qrContent, 720) }
+                var secondsLeft by remember(current.payload.expires_at_epoch_ms) {
+                    mutableStateOf(((current.payload.expires_at_epoch_ms - System.currentTimeMillis()) / 1000).coerceAtLeast(0).toInt())
+                }
+                LaunchedEffect(current.payload.expires_at_epoch_ms) {
+                    while (secondsLeft > 0) {
+                        delay(1000)
+                        secondsLeft = ((current.payload.expires_at_epoch_ms - System.currentTimeMillis()) / 1000).coerceAtLeast(0).toInt()
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
-                    Card(onClick = {}, 
-                        colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
-                        shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
-                    ) {
-                        Box(
+                    Surface(
+                        colors = SurfaceDefaults.colors(containerColor = Color(0xCC131A24)),
+                        shape = RoundedCornerShape(30.dp),
+                    ) {                        Box(
                             modifier = Modifier.padding(28.dp),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -686,10 +702,10 @@ fun TvCompanionScreen(
                         }
                     }
 
-                    Card(onClick = {}, 
+                    Surface(
                         modifier = Modifier.weight(1f),
-                        colors = CardDefaults.colors(containerColor = Color(0xCC131A24)),
-                        shape = CardDefaults.shape(RoundedCornerShape(30.dp)),
+                        colors = SurfaceDefaults.colors(containerColor = Color(0xCC131A24)),
+                        shape = RoundedCornerShape(30.dp),
                     ) {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(28.dp),
@@ -707,7 +723,10 @@ fun TvCompanionScreen(
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = viewModel::startPairing) { Text("Refresh Code") }
+                                val minutes = secondsLeft / 60
+                                val seconds = secondsLeft % 60
+                                val countdownText = String.format("%02d:%02d", minutes, seconds)
+                                Button(onClick = viewModel::startPairing) { Text("Refresh Code ($countdownText)") }
                                 OutlinedButton(onClick = onBack) { Text("Back") }
                             }
                         }

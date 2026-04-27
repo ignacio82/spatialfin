@@ -135,6 +135,7 @@ class TvPlayerActivity : AppCompatActivity() {
         private const val EXTRA_NETWORK_VIDEO_ID = "networkVideoId"
         private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
+        private const val EXTRA_TRAILER = "trailer"
         // Placeholder — TV player doesn't show the SyncPlay dialog yet. The
         // extra is threaded through so detail-screen SyncPlay buttons can flip
         // this on once the TV dialog lands.
@@ -150,6 +151,7 @@ class TvPlayerActivity : AppCompatActivity() {
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
+            trailer: Boolean = false,
         ): Intent =
             Intent(context, TvPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -159,6 +161,7 @@ class TvPlayerActivity : AppCompatActivity() {
                 maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
                 startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
+                if (trailer) putExtra(EXTRA_TRAILER, true)
             }
 
         fun createIntentForLocalMedia(
@@ -187,6 +190,8 @@ class TvPlayerActivity : AppCompatActivity() {
             startFromBeginning: Boolean = false,
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
+            trailer: Boolean = false,
+            maxBitrate: Long? = null,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
@@ -197,6 +202,8 @@ class TvPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
+                        trailer = trailer,
+                        maxBitrate = maxBitrate,
                     )
                 is SpatialFinEpisode ->
                     createIntent(
@@ -206,6 +213,8 @@ class TvPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
+                        trailer = trailer,
+                        maxBitrate = maxBitrate,
                     )
                 else -> null
             }
@@ -659,6 +668,8 @@ private fun TvPlayerScreen(
                     this.player = player
                     useController = false
                     setBackgroundColor(android.graphics.Color.BLACK)
+                    // Ensure we start playing once the view is ready
+                    player.play()
                 }
             }
 
@@ -926,49 +937,6 @@ private fun TvControllerOverlay(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TvOverlayTextButton(
-                    label = "Audio",
-                    onClick = {
-                        onInteraction()
-                        onOpenDialog(TvPlayerDialog.Audio)
-                    },
-                )
-                TvOverlayTextButton(
-                    label = "Subtitles",
-                    onClick = {
-                        onInteraction()
-                        onOpenDialog(TvPlayerDialog.Subtitle)
-                    },
-                )
-                if (uiState.currentChapters.isNotEmpty()) {
-                    TvOverlayTextButton(
-                        label = "Chapters",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Chapters)
-                        },
-                    )
-                }
-                if (sourcesLoading || availableSources.size > 1) {
-                    TvOverlayTextButton(
-                        label = "Source",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Source)
-                        },
-                    )
-                }
-                if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
-                    TvOverlayTextButton(
-                        label = "Quality",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Quality)
-                        },
-                    )
-                }
-            }
         }
 
         Column(
@@ -1045,6 +1013,75 @@ private fun TvControllerOverlay(
                     modifier = Modifier.align(Alignment.End),
                 )
             }
+
+            // Centralized action bar above progress
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TvOverlayTextButton(
+                    label = "Audio",
+                    onClick = {
+                        onInteraction()
+                        onOpenDialog(TvPlayerDialog.Audio)
+                    },
+                )
+                TvOverlayTextButton(
+                    label = "Subtitles",
+                    onClick = {
+                        onInteraction()
+                        onOpenDialog(TvPlayerDialog.Subtitle)
+                    },
+                )
+                if (uiState.currentChapters.isNotEmpty()) {
+                    TvOverlayTextButton(
+                        label = "Chapters",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Chapters)
+                        },
+                    )
+                }
+                if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
+                    TvOverlayTextButton(
+                        label = "Quality",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Quality)
+                        },
+                    )
+                }
+                if (sourcesLoading || availableSources.size > 1) {
+                    TvOverlayTextButton(
+                        label = "Source",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Source)
+                        },
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                if (availableSources.size > 1) {
+                    TvOverlayTextButton(
+                        label = "Switch Source",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Source)
+                        },
+                    )
+                }
+                TvOverlayTextButton(
+                    label = "Auto Quality",
+                    onClick = {
+                        onInteraction()
+                        onSelectQuality(0L)
+                    },
+                )
+            }
+
             ProgressSection(
                 uiState = uiState,
                 player = player,
@@ -1052,38 +1089,6 @@ private fun TvControllerOverlay(
                 duration = duration,
                 resetAutoHide = onInteraction,
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (availableSources.size > 1) {
-                        TvOverlayTextButton(
-                            label = "Switch Source",
-                            onClick = {
-                                onInteraction()
-                                onOpenDialog(TvPlayerDialog.Source)
-                            },
-                        )
-                    }
-                    TvOverlayTextButton(
-                        label = "Auto Quality",
-                        onClick = {
-                            onInteraction()
-                            onSelectQuality(0L)
-                        },
-                    )
-                    if (availableSources.size > 1) {
-                        TvOverlayTextButton(
-                            label = "Default Source",
-                            onClick = {
-                                onInteraction()
-                                onSelectSource(0)
-                            },
-                        )
-                    }
-                }
-            }
         }
     }
 }

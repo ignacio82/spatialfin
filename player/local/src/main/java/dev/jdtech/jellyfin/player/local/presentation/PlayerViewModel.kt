@@ -251,7 +251,7 @@ constructor(
     private var items: MutableList<PlayerItem> = mutableListOf()
 
     private val eventTrackSelector = DefaultTrackSelector(application)
-    var playWhenReady = true
+    var playWhenReady = false
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
     private var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()

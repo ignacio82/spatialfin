@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 data class TvItemDetailState(
     val item: SpatialFinItem? = null,
     val availableVersions: List<SpatialFinMovie> = emptyList(),
+    val people: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> = emptyList(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
 )
@@ -43,20 +44,32 @@ constructor(
     fun load(itemId: UUID) {
         viewModelScope.launch {
             _state.emit(TvItemDetailState(isLoading = true))
-            runCatching { repository.getItem(itemId) }
-                .onSuccess { item ->
-                    val versions = if (item is SpatialFinMovie) loadAvailableVersions(item) else emptyList()
-                    _state.emit(
-                        TvItemDetailState(
-                            item = item,
-                            availableVersions = versions,
-                            isLoading = false,
-                        )
+            runCatching {
+                val item = repository.getItem(itemId)
+                val versions = if (item is SpatialFinMovie) loadAvailableVersions(item) else emptyList()
+                val people = when (item) {
+                    is SpatialFinMovie -> item.people
+                    is SpatialFinEpisode -> {
+                        // For episodes, try to get series people if episode people are empty
+                        if (item.people.isNotEmpty()) item.people
+                        else runCatching { repository.getShow(item.seriesId).people }.getOrDefault(emptyList())
+                    }
+                    is SpatialFinShow -> item.people
+                    else -> emptyList()
+                }
+                Triple(item, versions, people)
+            }.onSuccess { (item, versions, people) ->
+                _state.emit(
+                    TvItemDetailState(
+                        item = item,
+                        availableVersions = versions,
+                        people = people,
+                        isLoading = false,
                     )
-                }
-                .onFailure { error ->
-                    _state.emit(TvItemDetailState(isLoading = false, error = error))
-                }
+                )
+            }.onFailure { error ->
+                _state.emit(TvItemDetailState(isLoading = false, error = error))
+            }
         }
     }
 
@@ -119,14 +132,13 @@ constructor(
         }.getOrDefault(listOf(movie))
     }
 }
-
 data class TvShowState(
     val show: SpatialFinShow? = null,
     val seasons: List<SpatialFinSeason> = emptyList(),
+    val people: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> = emptyList(),
     val nextUp: SpatialFinEpisode? = null,
     val isLoading: Boolean = false,
     val error: Throwable? = null,
-    val bulkDownload: BulkDownloadState = BulkDownloadState(),
 )
 
 @HiltViewModel
@@ -153,6 +165,7 @@ constructor(
                     TvShowState(
                         show = show,
                         seasons = seasons,
+                        people = show.people,
                         nextUp = nextUp,
                         isLoading = false,
                     )
@@ -182,23 +195,6 @@ constructor(
                 else repository.markAsPlayed(current.id)
             }
             load(current.id)
-        }
-    }
-
-    fun downloadShow(showId: UUID, settings: BulkDownloadSettings) {
-        viewModelScope.launch {
-            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
-            runCatching {
-                val seasons = repository.getSeasons(showId)
-                val episodes = seasons.flatMap { season ->
-                    repository.getEpisodes(seriesId = season.seriesId, seasonId = season.id, limit = 200)
-                }
-                downloader.downloadItems(episodes, settings)
-            }.onSuccess { result ->
-                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
-            }.onFailure {
-                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = BulkDownloadResult(0, 0, 1))) }
-            }
         }
     }
 }

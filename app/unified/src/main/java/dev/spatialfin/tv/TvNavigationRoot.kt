@@ -93,6 +93,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -114,8 +115,11 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.NavigationDrawer
 import androidx.tv.material3.NavigationDrawerItem
+import androidx.tv.material3.Surface
+import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.core.presentation.components.FloatingProgressBar
 import dev.jdtech.jellyfin.core.presentation.components.MetadataPill
 import dev.jdtech.jellyfin.film.presentation.home.HomeState
@@ -239,21 +243,49 @@ fun TvNavigationRoot(
                                 leadingContent = { Icon(imageVector = item.icon, contentDescription = null) },
                             ) { Text(text = item.label) }
                         }
+
+                        val user = state.currentUser
+                        if (user != null) {
+                            Spacer(Modifier.weight(1f))
+                            NavigationDrawerItem(
+                                selected = currentRoute == TvRoute.Users,
+                                onClick = { navigate(TvRoute.Users) },
+                                leadingContent = {
+                                    val avatarUri = userPrimaryImageUri(state.currentServerAddress, user.id)
+                                    if (avatarUri != null) {
+                                        AsyncImage(
+                                            model = avatarUri,
+                                            contentDescription = "Profile",
+                                            modifier = Modifier.size(24.dp).clip(RoundedCornerShape(12.dp)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        val initial = user.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+                                        Box(
+                                            modifier = Modifier.size(24.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(initial, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        }
+                                    }
+                                },
+                            ) { Text(text = user.name) }
+                        }
                     }
                 }
             ) {
-                Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp, top = 24.dp, bottom = 12.dp)) {
+                Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp)) {
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.loadData() })
                         TvRoute.Search -> TvSearchScreen(::openItem)
                         TvRoute.Library -> TvLibraryScreen(selectedView, homeState.views.map { it.view }, { popBack() }, { selectedView = it }, ::openItem)
-                        TvRoute.Detail -> TvItemDetailScreen(selectedItemId?.let(UUID::fromString), { popBack() }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, { selectedShowId = it.toString(); navigate(TvRoute.Show) }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) })
+                        TvRoute.Detail -> TvItemDetailScreen(selectedItemId?.let(UUID::fromString), { popBack() }, ::openItem, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, { selectedShowId = it.toString(); navigate(TvRoute.Show) }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) })
                         TvRoute.Show -> TvShowScreen(selectedShowId?.let(UUID::fromString), { popBack() }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) })
                         TvRoute.Season -> TvSeasonScreen(selectedSeasonId?.let(UUID::fromString), { popBack() }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) })
                         TvRoute.Person -> selectedPersonId?.let(UUID::fromString)?.let { pid -> dev.jdtech.jellyfin.presentation.film.PersonScreen(pid, { popBack() }, { navigate(TvRoute.Home) }, ::openItem) } ?: popBack()
                         TvRoute.Settings -> TvSettingsScreen(state, appPreferences, homeState.server?.name, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { navigate(TvRoute.Users) })
                         TvRoute.Users -> TvUsersScreen({ popBack() }, { navigate(TvRoute.Home) })
-                        TvRoute.Companion -> TvCompanionScreen({ popBack() })
+                        TvRoute.Companion -> TvCompanionScreen({ popBack() }, { homeViewModel.loadData() })
                     }
                 }
             }
@@ -280,7 +312,11 @@ private fun TvAmbientBackground(backgroundModel: Any?) {
 private fun TvHomeScreen(homeState: HomeState, state: MainState, appPreferences: AppPreferences, onOpenLibrary: (View) -> Unit, onOpenItem: (SpatialFinItem) -> Unit, onOpenCompanion: () -> Unit, onOpenSearch: () -> Unit, onRefresh: () -> Unit) {
     var heroFocusParked by rememberSaveable { mutableStateOf(false) }
     if (!state.hasCurrentUser || !state.hasServers) {
-        LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 42.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+            contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+        ) {
             item { TvOnboardingHero(tvCompanionConfigured(appPreferences), onOpenCompanion) }
         }
         return
@@ -296,7 +332,11 @@ private fun TvHomeScreen(homeState: HomeState, state: MainState, appPreferences:
         homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.Movies }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added movies", it.items)) }
         homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.TvShows }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added TV", it.items)) }
     }
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 42.dp)) {
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         if (featuredItems.isNotEmpty()) item {
             Carousel(itemCount = featuredItems.size, autoScrollDurationMillis = 5000L, modifier = Modifier.fillMaxWidth().height(LocalConfiguration.current.screenHeightDp.dp * 0.35f)) { index ->
                 val item = featuredItems[index]
@@ -322,22 +362,11 @@ private fun TvHomeScreen(homeState: HomeState, state: MainState, appPreferences:
 
 @Composable
 private fun TvSettingsScreen(state: MainState, appPreferences: AppPreferences, serverName: String?, onOpenCompanion: () -> Unit, onOpenSearch: () -> Unit, onOpenUsers: () -> Unit) {
-    val companionConfigured = tvCompanionConfigured(appPreferences)
-    LazyColumn(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 38.dp)) {
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvStatusCard("Server", serverName ?: "Not selected", if (state.hasServers) "TV content routes are configured" else "Add a server from companion or manual setup", Modifier.weight(1f))
-                TvStatusCard("Account", if (state.hasCurrentUser) "Ready" else "Needs sign in", if (state.hasCurrentUser) "Playback, search, and details are active" else "Choose a user to personalize shelves", Modifier.weight(1f))
-                TvStatusCard("Companion", if (companionConfigured) "Connected" else "Not paired", if (companionConfigured) "Companion sync is available in the background" else "Use QR or code pairing from your phone", Modifier.weight(1f))
-            }
-        }
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvActionTile(if (companionConfigured) "Reconnect companion" else "Pair companion", "Show a TV QR or manual code so your phone can push servers, users, preferences, and sync state.", Icons.Rounded.Link, Modifier.weight(1f), onOpenCompanion)
-                TvActionTile("Search from TV", "Jump into title and people search without returning to the home hero.", Icons.AutoMirrored.Rounded.ManageSearch, Modifier.weight(1f), onOpenSearch)
-                TvActionTile("Switch user", "Pick a different Jellyfin account for this TV without re-entering credentials.", Icons.Rounded.People, Modifier.weight(1f), onOpenUsers)
-            }
-        }
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         item {
             Text("Preferences", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         }
@@ -352,7 +381,11 @@ private fun TvUsersScreen(onBack: () -> Unit, onUserSwitched: () -> Unit, viewMo
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.loadUsers() }
     LaunchedEffect(viewModel) { viewModel.events.collect { if (it is dev.jdtech.jellyfin.setup.presentation.users.UsersEvent.NavigateToHome) onUserSwitched() } }
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         item { Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) { TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack) } }
         item { TvPageHeaderCard("Switch user", state.serverName?.let { "Connected to $it" } ?: "Choose a user to continue.") }
         if (state.users.isEmpty() && state.publicUsers.isEmpty()) item { TvPlaceholderScreen("No users", "No saved or public users are available for this server yet.") }
@@ -419,7 +452,13 @@ private fun TvLibraryScreen(view: View?, availableViews: List<View>, onBackToHom
     if (view == null && availableViews.isEmpty()) { TvPlaceholderScreen("Library unavailable", "No libraries available."); return }
     var offlineOnly by remember { mutableStateOf(false) }
     val filteredItems = remember(view?.items, offlineOnly) { val base = view?.items.orEmpty(); if (offlineOnly) base.filter { it.isDownloaded() } else base }
-    LazyVerticalGrid(columns = GridCells.Fixed(5), modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(5),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         if (view == null) { item(span = { GridItemSpan(5) }) { TvLibraryShelf("Available libraries", availableViews, onSelectView) }; return@LazyVerticalGrid }
         item(span = { GridItemSpan(5) }) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -436,7 +475,13 @@ private fun TvLibraryScreen(view: View?, availableViews: List<View>, onBackToHom
 @Composable
 private fun TvSearchScreen(onOpenItem: (SpatialFinItem) -> Unit, viewModel: dev.spatialfin.tv.TvSearchViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LazyVerticalGrid(columns = GridCells.Fixed(5), modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(5),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         item(span = { GridItemSpan(5) }) { Spacer(Modifier.height(0.dp)) }
         item(span = { GridItemSpan(5) }) {
             Card(onClick = {}, colors = CardDefaults.colors(containerColor = Color.White.copy(alpha = 0.04f)), shape = CardDefaults.shape(RoundedCornerShape(28.dp))) {
@@ -460,7 +505,7 @@ private fun TvSearchScreen(onOpenItem: (SpatialFinItem) -> Unit, viewModel: dev.
 }
 
 @Composable
-private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenPerson: (UUID) -> Unit, onOpenShow: (UUID) -> Unit, onOpenSeason: (UUID) -> Unit, viewModel: TvItemDetailViewModel = hiltViewModel()) {
+private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (SpatialFinItem) -> Unit, onOpenPerson: (UUID) -> Unit, onOpenShow: (UUID) -> Unit, onOpenSeason: (UUID) -> Unit, viewModel: TvItemDetailViewModel = hiltViewModel()) {
     if (itemId == null) { TvPlaceholderScreen("Item unavailable", "No item selected."); return }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -482,32 +527,67 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenPerson: 
                 else -> item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }
             }
             val metadata = buildList {
-                when (item) {
-                    is SpatialFinMovie -> { item.productionYear?.let { add(it.toString()) }; tvRuntimeLabel(item.runtimeTicks)?.let(::add); item.communityRating?.let { add("${"%.1f".format(it)}/10") } }
-                    is SpatialFinEpisode -> { add(tvEpisodeLabel(item)); tvRuntimeLabel(item.runtimeTicks)?.let(::add); item.communityRating?.let { add("${"%.1f".format(it)}/10") } }
-                    is SpatialFinSeason -> { add(tvSeasonLabel(item)); item.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") } }
+                when (val i = item) {
+                    is SpatialFinMovie -> {
+                        i.productionYear?.let { add(it.toString()) }
+                        tvRuntimeLabel(i.runtimeTicks)?.let(::add)
+                        i.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
+                        addAll(i.genres.take(2))
+                    }
+                    is SpatialFinEpisode -> {
+                        add(tvEpisodeLabel(i))
+                        i.premiereDate?.year?.let { add(it.toString()) }
+                        tvRuntimeLabel(i.runtimeTicks)?.let(::add)
+                    }
+                    is SpatialFinSeason -> { add(tvSeasonLabel(i)); i.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") } }
                     else -> Unit
                 }
             }
-            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+            ) {
                 item {
                     TvDetailHeroCard(item, tvItemLabel(item), supportingLine, metadata, item.overview, actions = {
-                        if (item is SpatialFinMovie || item is SpatialFinEpisode) {
-                            TvHeroButton(if (item.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity) }
-                            if (item.playbackPositionTicks > 0L) TvHeroButton("Restart", Icons.Rounded.Replay, false) { TvPlayerActivity.createIntentForSpatialItem(context, item, startFromBeginning = true)?.let(context::startActivity) }
+                        val i = item
+                        if (i is SpatialFinMovie || i is SpatialFinEpisode) {
+                            val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
+                            TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i)?.let(context::startActivity) }
+                            if (i.playbackPositionTicks > 0L) TvHeroButton("Restart", Icons.Rounded.Replay, false) { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity) }
+                            
+                            TvHeroButton("SyncPlay", painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), false) {
+                                TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity)
+                            }
+
+                            val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
+                            if (trailerUrl != null) {
+                                TvHeroButton("Trailer", Icons.Rounded.Tv, false) {
+                                    TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity)
+                                }
+                            }
+                            
+                            TvHeroButton("Auto Quality", Icons.Rounded.Refresh, false) {
+                                // Just a shortcut to play with auto quality enabled (default)
+                                TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity)
+                            }
                         }
-                        if (item is SpatialFinEpisode) {
-                            TvHeroButton("Series", Icons.Rounded.Tv, false) { onOpenShow(item.seriesId) }
-                            TvHeroButton("Season", Icons.AutoMirrored.Rounded.List, false) { onOpenSeason(item.seasonId) }
+                        if (i is SpatialFinEpisode) {
+                            TvHeroButton("Series", Icons.Rounded.Tv, false) { onOpenShow(i.seriesId) }
+                            TvHeroButton("Season", Icons.AutoMirrored.Rounded.List, false) { onOpenSeason(i.seasonId) }
                         }
                         TvHeroButton(if (item.favorite) "Favorited" else "Favorite", if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, false, item.favorite) { viewModel.toggleFavorite() }
                         TvHeroButton(if (item.played) "Watched" else "Mark watched", if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, false, item.played) { viewModel.togglePlayed() }
                         TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack)
                     })
                 }
+                if (state.availableVersions.size > 1) {
+                    item {
+                        TvVersionRow(state.availableVersions, currentId = item.id, onVersionClick = { onOpenItem(it) })
+                    }
+                }
                 if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = it.startPosition)?.let(context::startActivity) } }
-                val actors = (item as? SpatialFinMovie)?.people?.filter { it.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR }.orEmpty()
-                if (actors.isNotEmpty()) item { TvCastRow(actors, onOpenPerson) }
+                if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
             }
         }
     }
@@ -530,18 +610,25 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
             val onFocusBackground = LocalFocusedBackground.current
             LaunchedEffect(show.id) { onFocusBackground(tvBackdropArtwork(show)) }
             val metadata = buildList { getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add); if (state.seasons.isNotEmpty()) add("${state.seasons.size} seasons") }
-            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+            ) {
                 item {
                     TvDetailHeroCard(show, "Series", show.genres.take(3).joinToString(" • "), metadata, show.overview, actions = {
-                        state.nextUp?.let { next -> TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) } }
+                        val next = state.nextUp
+                        if (next != null) {
+                            TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) }
+                        }
                         TvHeroButton(if (show.favorite) "Favorited" else "Favorite", if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, false, show.favorite) { viewModel.toggleFavorite() }
+                        TvHeroButton(if (show.played) "Watched" else "Mark watched", if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, false, show.played) { viewModel.togglePlayed() }
                         TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack)
                     })
                 }
                 state.nextUp?.let { item { TvEpisodeHighlightCard(it) { onOpenEpisode(it.id) } } }
                 if (state.seasons.isNotEmpty()) item { TvSeasonStrip(state.seasons, onOpenSeason) }
-                val actors = show.people.filter { it.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR }
-                if (actors.isNotEmpty()) item { TvCastRow(actors, onOpenPerson) }
+                if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
             }
         }
     }
@@ -552,7 +639,13 @@ private fun TvSeasonScreen(seasonId: UUID?, onBack: () -> Unit, onOpenEpisode: (
     if (seasonId == null) { TvPlaceholderScreen("Season unavailable", "No season selected."); return }
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(seasonId) { viewModel.load(seasonId) }
-    LazyVerticalGrid(columns = GridCells.Fixed(5), modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(18.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 36.dp)) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(5),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
         item(span = { GridItemSpan(5) }) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack) } }
         if (state.episodes.isEmpty()) item(span = { GridItemSpan(5) }) { TvPlaceholderScreen("No episodes", "Empty season.") }
         else gridItems(state.episodes, key = { it.id }) { TvMediaCard(it, false, Modifier.fillMaxWidth(), { onOpenEpisode(it.id) }) }
@@ -563,18 +656,18 @@ private fun TvSeasonScreen(seasonId: UUID?, onBack: () -> Unit, onOpenEpisode: (
 @Composable
 private fun TvDetailHeroCard(item: SpatialFinItem, eyebrow: String, supportingLine: String?, metadata: List<String>, overview: String, actions: @Composable () -> Unit, footer: @Composable (ColumnScope.() -> Unit)? = null) {
     Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(30.dp)).background(Color(0x77131A24))) {
-        Box(modifier = Modifier.fillMaxWidth().height(340.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().height(460.dp)) {
             AsyncImage(model = tvBackdropArtwork(item), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.55f)
-            Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent), endX = 1200f)))
+            Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent), endX = 1400f)))
             Row(modifier = Modifier.fillMaxSize().padding(28.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
-                Box(modifier = Modifier.width(200.dp).height(300.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xFF0F1720))) { AsyncImage(model = tvPrimaryArtwork(item), contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                Box(modifier = Modifier.width(260.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(24.dp)).background(Color(0xFF0F1720))) { AsyncImage(model = tvPrimaryArtwork(item), contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                 Column(modifier = Modifier.weight(1f).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(text = eyebrow, style = MaterialTheme.typography.labelLarge, color = Color(0xFFD7DEE8))
                     Text(text = item.name, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     supportingLine?.let { Text(text = it, style = MaterialTheme.typography.titleMedium, color = Color(0xFFE6EBF2), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     if (metadata.isNotEmpty()) { FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { metadata.forEach { TvMetadataPill(it) } } }
                     if (item.ratings.isNotEmpty()) RatingsRow(item.ratings)
-                    Text(text = overview, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD5DCE6), maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    Text(text = overview, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD5DCE6), maxLines = 10, overflow = TextOverflow.Ellipsis)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { actions() }
                 }
             }
@@ -808,7 +901,7 @@ private fun TvPageHeaderCard(title: String, body: String) {
 
 @Composable
 internal fun TvPlaceholderScreen(title: String, body: String) {
-    Card(onClick = {}, modifier = Modifier.fillMaxWidth(), colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(RoundedCornerShape(30.dp))) {
+    Surface(modifier = Modifier.fillMaxWidth(), colors = SurfaceDefaults.colors(containerColor = Color(0x77131A24)), shape = RoundedCornerShape(30.dp)) {
         Column(Modifier.fillMaxWidth().padding(32.dp)) { Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text(body, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
@@ -837,6 +930,82 @@ private fun TvHeroButton(label: String, icon: ImageVector? = null, primary: Bool
             Spacer(Modifier.width(6.dp))
         }
         Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvHeroButton(label: String, icon: Painter, primary: Boolean = true, selected: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val baseContainer = if (primary || selected) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.16f)
+    val baseContent = if (primary || selected) Color.Black else Color.White
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = ButtonDefaults.shape(shape = RoundedCornerShape(999.dp)),
+        colors = ButtonDefaults.colors(
+            containerColor = baseContainer,
+            contentColor = baseContent,
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+            pressedContainerColor = Color.White,
+            pressedContentColor = Color.Black,
+        ),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Icon(icon, null, Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun TvVersionRow(versions: List<SpatialFinMovie>, currentId: UUID, onVersionClick: (SpatialFinMovie) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Other Versions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(versions, key = { it.id }) { version ->
+                TvVersionCard(version, selected = version.id == currentId) { onVersionClick(version) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvVersionCard(version: SpatialFinMovie, selected: Boolean, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    val borderColor = if (isFocused) MaterialTheme.colorScheme.primary else if (selected) MaterialTheme.colorScheme.secondary else Color.Transparent
+    val borderWidth = if (isFocused || selected) 2.dp else 0.dp
+    
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .width(200.dp)
+            .height(100.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .border(borderWidth, borderColor, RoundedCornerShape(18.dp)),
+        colors = CardDefaults.colors(containerColor = if (selected) Color(0xAA1A2433) else Color(0x77131A24)),
+        shape = CardDefaults.shape(RoundedCornerShape(18.dp))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = version.versionChipLabel(),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                color = if (selected) MaterialTheme.colorScheme.primary else Color.White
+            )
+            if (selected) {
+                Text(
+                    text = "Current",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+        }
     }
 }
 

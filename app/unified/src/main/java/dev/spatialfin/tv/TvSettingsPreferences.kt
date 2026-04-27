@@ -16,10 +16,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
@@ -44,6 +47,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import dagger.hilt.android.EntryPointAccessors
@@ -94,11 +99,11 @@ internal fun TvSettingsPreferences(
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         // Left pane: category list
-        Column(
-            modifier = Modifier.width(280.dp).verticalScroll(rememberScrollState()),
+        LazyColumn(
+            modifier = Modifier.width(280.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TV_SETTINGS_CATEGORIES.forEach { cat ->
+            items(TV_SETTINGS_CATEGORIES, key = { it.key }) { cat ->
                 TvSettingsCategoryTile(
                     title = cat.title,
                     subtitle = cat.subtitle,
@@ -145,17 +150,22 @@ private fun TvSettingsCategoryTile(title: String, subtitle: String, selected: Bo
         selected -> Color.White.copy(alpha = 0.08f)
         else -> Color.Transparent
     }
-    Box(
+    Card(
+        onClick = onSelect,
         modifier = Modifier
             .fillMaxWidth()
-            .background(bg, RoundedCornerShape(16.dp))
-            .border(2.dp, borderColor, RoundedCornerShape(16.dp))
             .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .clickable(onClick = onSelect)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
+            .border(2.dp, borderColor, RoundedCornerShape(16.dp)),
+        colors = CardDefaults.colors(
+            containerColor = bg,
+            focusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(16.dp)),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 subtitle,
@@ -211,9 +221,18 @@ private fun TvPrefTextField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { androidx.compose.material3.Text(label) },
+            label = { androidx.compose.material3.Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.border,
+            ),
         )
     }
 }
@@ -562,15 +581,24 @@ private fun TvPrefSecretField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { androidx.compose.material3.Text(label) },
+            label = { androidx.compose.material3.Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) },
             singleLine = true,
             visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
                 androidx.compose.material3.TextButton(onClick = { revealed = !revealed }) {
-                    androidx.compose.material3.Text(if (revealed) "Hide" else "Show")
+                    androidx.compose.material3.Text(if (revealed) "Hide" else "Show", color = MaterialTheme.colorScheme.primary)
                 }
             },
             modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.border,
+            ),
         )
     }
 }
