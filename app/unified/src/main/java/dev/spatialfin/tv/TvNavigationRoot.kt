@@ -61,6 +61,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
@@ -72,6 +73,8 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -511,7 +514,11 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
     val context = LocalContext.current
     val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(itemId) { viewModel.load(itemId) }
-    LaunchedEffect(state.item?.id) { if (state.item != null) runCatching { playFocus.requestFocus() } }
+    LaunchedEffect(state.item?.id) {
+        if (state.item != null) {
+            runCatching { playFocus.requestFocus() }
+        }
+    }
     when {
         state.isLoading -> TvPlaceholderScreen("Loading details", "Fetching item...")
         state.error != null -> TvPlaceholderScreen("Couldn't load item", state.error?.localizedMessage ?: "Error")
@@ -543,51 +550,40 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                     else -> Unit
                 }
             }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
-            ) {
-                item {
-                    TvDetailHeroCard(item, tvItemLabel(item), supportingLine, metadata, item.overview, actions = {
-                        val i = item
-                        if (i is SpatialFinMovie || i is SpatialFinEpisode) {
-                            val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
-                            TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i)?.let(context::startActivity) }
-                            if (i.playbackPositionTicks > 0L) TvHeroButton("Restart", Icons.Rounded.Replay, false) { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity) }
-                            
-                            TvHeroButton("SyncPlay", painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), false) {
-                                TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity)
-                            }
-
-                            val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
-                            if (trailerUrl != null) {
-                                TvHeroButton("Trailer", Icons.Rounded.Tv, false) {
-                                    TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity)
+            Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                TvDetailHeroCard(item, tvItemLabel(item), supportingLine, metadata, item.overview, onBack = onBack, actions = {
+                    val i = item
+                    if (i is SpatialFinMovie || i is SpatialFinEpisode) {
+                        val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
+                        val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
+                        TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i)?.let(context::startActivity) }
+                        if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity) }
+                        TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (item.played) "Watched" else "Mark watched", item.played) { viewModel.togglePlayed() }
+                        TvIconHeroButton(if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (item.favorite) "Favorited" else "Favorite", item.favorite) { viewModel.toggleFavorite() }
+                        Box {
+                            var menuOpen by remember { mutableStateOf(false) }
+                            TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { menuOpen = true }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(text = { androidx.compose.material3.Text("SyncPlay") }, leadingIcon = { androidx.compose.material3.Icon(painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity) })
+                                DropdownMenuItem(text = { androidx.compose.material3.Text("Auto Quality") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Refresh, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity) })
+                                if (trailerUrl != null) DropdownMenuItem(text = { androidx.compose.material3.Text("Trailer") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity) })
+                                if (i is SpatialFinEpisode) {
+                                    DropdownMenuItem(text = { androidx.compose.material3.Text("Series") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; onOpenShow(i.seriesId) })
+                                    DropdownMenuItem(text = { androidx.compose.material3.Text("Season") }, leadingIcon = { androidx.compose.material3.Icon(Icons.AutoMirrored.Rounded.List, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; onOpenSeason(i.seasonId) })
                                 }
                             }
-                            
-                            TvHeroButton("Auto Quality", Icons.Rounded.Refresh, false) {
-                                // Just a shortcut to play with auto quality enabled (default)
-                                TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity)
-                            }
                         }
-                        if (i is SpatialFinEpisode) {
-                            TvHeroButton("Series", Icons.Rounded.Tv, false) { onOpenShow(i.seriesId) }
-                            TvHeroButton("Season", Icons.AutoMirrored.Rounded.List, false) { onOpenSeason(i.seasonId) }
-                        }
-                        TvHeroButton(if (item.favorite) "Favorited" else "Favorite", if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, false, item.favorite) { viewModel.toggleFavorite() }
-                        TvHeroButton(if (item.played) "Watched" else "Mark watched", if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, false, item.played) { viewModel.togglePlayed() }
-                        TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack)
-                    })
-                }
-                if (state.availableVersions.size > 1) {
-                    item {
-                        TvVersionRow(state.availableVersions, currentId = item.id, onVersionClick = { onOpenItem(it) })
                     }
+                })
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    contentPadding = PaddingValues(bottom = 48.dp),
+                ) {
+                    if (state.availableVersions.size > 1) item { TvVersionRow(state.availableVersions, currentId = item.id, onVersionClick = { onOpenItem(it) }) }
+                    if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = it.startPosition)?.let(context::startActivity) } }
+                    if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
                 }
-                if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = it.startPosition)?.let(context::startActivity) } }
-                if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
             }
         }
     }
@@ -600,7 +596,11 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
     val context = LocalContext.current
     val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(showId) { viewModel.load(showId) }
-    LaunchedEffect(state.show?.id) { if (state.show != null) runCatching { playFocus.requestFocus() } }
+    LaunchedEffect(state.show?.id) {
+        if (state.show != null) {
+            runCatching { playFocus.requestFocus() }
+        }
+    }
     when {
         state.isLoading -> TvPlaceholderScreen("Loading series", "Fetching seasons...")
         state.error != null -> TvPlaceholderScreen("Error", state.error?.localizedMessage ?: "Unknown")
@@ -610,25 +610,34 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
             val onFocusBackground = LocalFocusedBackground.current
             LaunchedEffect(show.id) { onFocusBackground(tvBackdropArtwork(show)) }
             val metadata = buildList { getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add); if (state.seasons.isNotEmpty()) add("${state.seasons.size} seasons") }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
-            ) {
-                item {
-                    TvDetailHeroCard(show, "Series", show.genres.take(3).joinToString(" • "), metadata, show.overview, actions = {
-                        val next = state.nextUp
-                        if (next != null) {
-                            TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) }
+            Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                TvDetailHeroCard(show, "Series", show.genres.take(3).joinToString(" • "), metadata, show.overview, onBack = onBack, actions = {
+                    val next = state.nextUp
+                    if (next != null) {
+                        TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) }
+                    }
+                    TvIconHeroButton(if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (show.played) "Watched" else "Mark watched", show.played) { viewModel.togglePlayed() }
+                    TvIconHeroButton(if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (show.favorite) "Favorited" else "Favorite", show.favorite) { viewModel.toggleFavorite() }
+                    val showTrailer = show.trailer
+                    if (showTrailer != null) {
+                        Box {
+                            var menuOpen by remember { mutableStateOf(false) }
+                            TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { menuOpen = true }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                DropdownMenuItem(text = { androidx.compose.material3.Text("Trailer") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true)?.let(context::startActivity) })
+                            }
                         }
-                        TvHeroButton(if (show.favorite) "Favorited" else "Favorite", if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, false, show.favorite) { viewModel.toggleFavorite() }
-                        TvHeroButton(if (show.played) "Watched" else "Mark watched", if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, false, show.played) { viewModel.togglePlayed() }
-                        TvHeroButton("Back", Icons.AutoMirrored.Rounded.ArrowBack, false, onClick = onBack)
-                    })
+                    }
+                })
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    contentPadding = PaddingValues(bottom = 48.dp),
+                ) {
+                    state.nextUp?.let { item { TvEpisodeHighlightCard(it) { onOpenEpisode(it.id) } } }
+                    if (state.seasons.isNotEmpty()) item { TvSeasonStrip(state.seasons, onOpenSeason) }
+                    if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
                 }
-                state.nextUp?.let { item { TvEpisodeHighlightCard(it) { onOpenEpisode(it.id) } } }
-                if (state.seasons.isNotEmpty()) item { TvSeasonStrip(state.seasons, onOpenSeason) }
-                if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
             }
         }
     }
@@ -654,25 +663,28 @@ private fun TvSeasonScreen(seasonId: UUID?, onBack: () -> Unit, onOpenEpisode: (
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TvDetailHeroCard(item: SpatialFinItem, eyebrow: String, supportingLine: String?, metadata: List<String>, overview: String, actions: @Composable () -> Unit, footer: @Composable (ColumnScope.() -> Unit)? = null) {
-    Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(30.dp)).background(Color(0x77131A24))) {
-        Box(modifier = Modifier.fillMaxWidth().height(460.dp)) {
-            AsyncImage(model = tvBackdropArtwork(item), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.55f)
-            Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent), endX = 1400f)))
-            Row(modifier = Modifier.fillMaxSize().padding(28.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Bottom) {
-                Box(modifier = Modifier.width(260.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(24.dp)).background(Color(0xFF0F1720))) { AsyncImage(model = tvPrimaryArtwork(item), contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                Column(modifier = Modifier.weight(1f).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = eyebrow, style = MaterialTheme.typography.labelLarge, color = Color(0xFFD7DEE8))
-                    Text(text = item.name, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    supportingLine?.let { Text(text = it, style = MaterialTheme.typography.titleMedium, color = Color(0xFFE6EBF2), maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    if (metadata.isNotEmpty()) { FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { metadata.forEach { TvMetadataPill(it) } } }
-                    if (item.ratings.isNotEmpty()) RatingsRow(item.ratings)
-                    Text(text = overview, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD5DCE6), maxLines = 10, overflow = TextOverflow.Ellipsis)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { actions() }
-                }
+private fun TvDetailHeroCard(item: SpatialFinItem, eyebrow: String, supportingLine: String?, metadata: List<String>, overview: String, onBack: (() -> Unit)? = null, actions: @Composable () -> Unit) {
+    Box(modifier = Modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(30.dp)).background(Color(0x77131A24))) {
+        AsyncImage(model = tvBackdropArtwork(item), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.55f)
+        Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xF20C1016), Color(0xB00C1016), Color.Transparent), endX = 1400f)))
+        Row(modifier = Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.Top) {
+            Box(modifier = Modifier.fillMaxHeight().aspectRatio(2f / 3f).clip(RoundedCornerShape(20.dp)).background(Color(0xFF0F1720))) { AsyncImage(model = tvPrimaryArtwork(item), contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Column(modifier = Modifier.weight(1f).padding(end = 56.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = eyebrow, style = MaterialTheme.typography.labelLarge, color = Color(0xFFD7DEE8))
+                Text(text = item.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                supportingLine?.let { Text(text = it, style = MaterialTheme.typography.titleSmall, color = Color(0xFFE6EBF2), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                if (metadata.isNotEmpty()) { FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { metadata.forEach { TvMetadataPill(it) } } }
+                if (item.ratings.isNotEmpty()) RatingsRow(item.ratings)
+                Text(text = overview, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD5DCE6), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.weight(1f))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { actions() }
             }
         }
-        if (footer != null) Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = footer)
+        if (onBack != null) {
+            Box(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
+                TvIconHeroButton(icon = Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", onClick = onBack)
+            }
+        }
     }
 }
 
@@ -955,6 +967,29 @@ private fun TvHeroButton(label: String, icon: Painter, primary: Boolean = true, 
         Icon(icon, null, Modifier.size(16.dp))
         Spacer(Modifier.width(6.dp))
         Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvIconHeroButton(icon: ImageVector, contentDescription: String, selected: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val baseContainer = if (selected) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.16f)
+    val baseContent = if (selected) Color.Black else Color.White
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        shape = ButtonDefaults.shape(shape = RoundedCornerShape(999.dp)),
+        colors = ButtonDefaults.colors(
+            containerColor = baseContainer,
+            contentColor = baseContent,
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+            pressedContainerColor = Color.White,
+            pressedContentColor = Color.Black,
+        ),
+        contentPadding = PaddingValues(10.dp),
+    ) {
+        Icon(icon, contentDescription, Modifier.size(18.dp))
     }
 }
 
