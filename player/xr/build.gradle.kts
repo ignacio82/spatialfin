@@ -10,9 +10,7 @@ android {
     compileSdk = Versions.COMPILE_SDK
     buildToolsVersion = Versions.BUILD_TOOLS
 
-    defaultConfig {
-        minSdk = Versions.MIN_SDK
-    }
+    defaultConfig { minSdk = Versions.MIN_SDK }
 
     buildTypes {
         named("release") { isMinifyEnabled = false }
@@ -24,9 +22,7 @@ android {
         targetCompatibility = Versions.JAVA
     }
 
-    buildFeatures {
-        compose = true
-    }
+    buildFeatures { compose = true }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
