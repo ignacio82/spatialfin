@@ -103,7 +103,7 @@ internal class WebSearchClient(
         val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim().removeSuffix("/")
         val setupToken = appPreferences.getValue(appPreferences.companionToken).trim()
         if (companionUrl.isEmpty() || setupToken.isEmpty()) return null
-        val encoded = URLEncoder.encode(query, Charsets.UTF_8)
+        val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
         return Request.Builder()
             .url("$companionUrl/api/v1/search?q=$encoded")
             .header("Accept", "application/json")

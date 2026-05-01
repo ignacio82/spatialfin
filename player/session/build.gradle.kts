@@ -1,6 +1,4 @@
-plugins {
-    alias(libs.plugins.android.library)
-}
+plugins { alias(libs.plugins.android.library) }
 
 android {
     namespace = "dev.jdtech.jellyfin.player.session"

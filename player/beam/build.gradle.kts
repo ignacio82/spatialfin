@@ -17,9 +17,7 @@ android {
         register("staging") { initWith(getByName("release")) }
     }
 
-    buildFeatures {
-        compose = true
-    }
+    buildFeatures { compose = true }
 
     // jniLibs come transitively from player:xr (libass .so files)
 
