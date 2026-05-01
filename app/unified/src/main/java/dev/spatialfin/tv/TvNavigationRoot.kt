@@ -277,7 +277,12 @@ fun TvNavigationRoot(
                     }
                 }
             ) {
-                Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp)) {
+                val contentFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+                LaunchedEffect(currentRoute) {
+                    kotlinx.coroutines.delay(50)
+                    try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
+                }
+                Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.loadData() })
                         TvRoute.Search -> TvSearchScreen(::openItem)
