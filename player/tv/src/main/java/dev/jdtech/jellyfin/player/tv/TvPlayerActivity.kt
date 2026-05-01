@@ -611,12 +611,24 @@ private fun TvPlayerScreen(
                             }
                         }
                         Key.DirectionUp,
-                        Key.DirectionDown,
+                        Key.DirectionDown -> {
+                            if (!controlsVisible) {
+                                revealControls()
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         Key.DirectionCenter,
                         Key.Enter,
                         Key.NumPadEnter -> {
                             if (!controlsVisible) {
-                                revealControls()
+                                val segment = uiState.currentSegment
+                                if (segment != null) {
+                                    viewModel.skipSegment(segment)
+                                } else {
+                                    revealControls()
+                                }
                                 true
                             } else {
                                 false
@@ -766,6 +778,32 @@ private fun TvPlayerScreen(
                 }
             },
         )
+
+        AnimatedVisibility(
+            visible = !controlsVisible && !isPipMode && uiState.currentSegment != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 64.dp, end = 32.dp),
+        ) {
+            uiState.currentSegment?.let { segment ->
+                Button(
+                    onClick = { viewModel.skipSegment(segment) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White.copy(alpha = 0.15f),
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = stringResource(uiState.currentSkipButtonStringRes) + " \u23CE",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
     }
 
     if (isPipMode) return
