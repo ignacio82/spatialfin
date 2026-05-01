@@ -128,7 +128,7 @@ internal class WebSearchClient(
             val snippet = sequenceOf("snippet", "content", "pretty_url")
                 .mapNotNull { key -> entry.optString(key).takeIf { it.isNotBlank() } }
                 .firstOrNull()
-                ?.replace(Regex("\\s+"), " ")
+                ?.replace(WHITESPACE_REGEX, " ")
                 ?.trim()
                 ?.take(SNIPPET_CHAR_CAP)
                 .orEmpty()
@@ -139,5 +139,6 @@ internal class WebSearchClient(
 
     companion object {
         private const val SNIPPET_CHAR_CAP = 320
+        private val WHITESPACE_REGEX = Regex("\\s+")
     }
 }
