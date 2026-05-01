@@ -22,9 +22,7 @@ android {
         targetCompatibility = Versions.JAVA
     }
 
-    buildFeatures {
-        compose = true
-    }
+    buildFeatures { compose = true }
 }
 
 dependencies {

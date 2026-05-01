@@ -26,12 +26,13 @@ android {
 dependencies {
     implementation(projects.data)
     implementation(libs.timber)
-    
+
     // Media3
     implementation(libs.androidx.media3.exoplayer)
-    
+
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 }
+
 dependencies { testImplementation("junit:junit:4.13.2") }

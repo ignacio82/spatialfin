@@ -86,6 +86,16 @@ class SmartChatEngine(
     val modelManager: LlmModelManager,
     private val repository: JellyfinRepository,
 ) {
+    companion object {
+        private val REGEX_MINUTES_AGO = Regex("(\\d+)\\s*minutes?\\s*ago")
+        private val REGEX_LAST_N_MINUTES = Regex("last\\s+(\\d+)\\s*minutes?")
+        private val REGEX_LAST_N_SECONDS = Regex("last\\s+(\\d+)\\s*seconds?")
+        private val REGEX_LAST_MINUTE = Regex("\\blast\\s+minute\\b")
+        private val REGEX_NON_ALPHANUMERIC = Regex("[^a-z0-9\\s]")
+        private val REGEX_WHITESPACE = Regex("\\s+")
+        private val REGEX_WHAT_IS_IT = Regex(".*\\bwhat (is|am) (i|this|it)\\b.*")
+    }
+
     private val llmInstance: VoiceAiEngine?
         get() = modelManager.instance
     private val mediaSkillRegistry = MediaSkillRegistry(repository, appPreferences)
@@ -593,10 +603,10 @@ class SmartChatEngine(
         val normalized = question.lowercase()
 
         // Extract time window from the question.
-        val minutesAgoMatch = Regex("(\\d+)\\s*minutes?\\s*ago").find(normalized)
-        val lastNMinutesMatch = Regex("last\\s+(\\d+)\\s*minutes?").find(normalized)
-        val lastNSecondsMatch = Regex("last\\s+(\\d+)\\s*seconds?").find(normalized)
-        val lastMinuteMatch = if (lastNMinutesMatch == null) Regex("\\blast\\s+minute\\b").find(normalized) else null
+        val minutesAgoMatch = REGEX_MINUTES_AGO.find(normalized)
+        val lastNMinutesMatch = REGEX_LAST_N_MINUTES.find(normalized)
+        val lastNSecondsMatch = REGEX_LAST_N_SECONDS.find(normalized)
+        val lastMinuteMatch = if (lastNMinutesMatch == null) REGEX_LAST_MINUTE.find(normalized) else null
         val targetWindowMs: LongRange = when {
             minutesAgoMatch != null -> {
                 val n = minutesAgoMatch.groupValues[1].toLongOrNull() ?: 2L
@@ -647,7 +657,7 @@ class SmartChatEngine(
     }
 
     private fun confidenceGatedAnswer(question: String, playerState: PlayerStateSnapshot): String? {
-        val n = question.lowercase().replace(Regex("[^a-z0-9\\s]"), " ").trim()
+        val n = question.lowercase().replace(REGEX_NON_ALPHANUMERIC, " ").trim()
 
         if (n.contains("who directed") || (n.contains("director") && !n.contains("style") && !n.contains("vision"))) {
             return if (playerState.directors.isNotEmpty()) {
@@ -670,7 +680,7 @@ class SmartChatEngine(
             return if (!rating.isNullOrBlank()) "Rated $rating." else null
         }
 
-        if (n.matches(Regex(".*\\bwhat (is|am) (i|this|it)\\b.*")) || (n.contains("title") && n.contains("what"))) {
+        if (n.matches(REGEX_WHAT_IS_IT) || (n.contains("title") && n.contains("what"))) {
             return playerState.currentItemTitle.takeIf { it.isNotBlank() }?.let { "You're watching $it." }
         }
 
@@ -778,14 +788,14 @@ class SmartChatEngine(
     ): String? {
         val normalized =
             question.lowercase()
-                .replace(Regex("[^a-z0-9\\s]"), " ")
-                .replace(Regex("\\s+"), " ")
+                .replace(REGEX_NON_ALPHANUMERIC, " ")
+                .replace(REGEX_WHITESPACE, " ")
                 .trim()
         if (normalized.isBlank()) return null
 
         val isTimeBasedSummary = (normalized.contains("last minute") || normalized.contains("last few minutes") ||
-            Regex("last\\s+\\d+\\s*minutes?").containsMatchIn(normalized) ||
-            Regex("last\\s+\\d+\\s*seconds?").containsMatchIn(normalized)) ||
+            REGEX_LAST_N_MINUTES.containsMatchIn(normalized) ||
+            REGEX_LAST_N_SECONDS.containsMatchIn(normalized)) ||
             (normalized.contains("summarize") && (normalized.contains("minute") || normalized.contains("second") ||
                 normalized.contains("scene") || normalized.contains("just now")))
 
