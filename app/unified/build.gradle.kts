@@ -11,6 +11,7 @@ plugins {
 
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
+
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
@@ -41,8 +42,8 @@ android {
         create("release") {
             storeFile =
                 (project.findProperty("SPATIALFIN_KEYSTORE") as String?
-                    ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))?.let { file(it) }
-                    ?: System.getenv("SPATIALFIN_KEYSTORE")?.let { file(it) }
+                        ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))
+                    ?.let { file(it) } ?: System.getenv("SPATIALFIN_KEYSTORE")?.let { file(it) }
             storePassword =
                 project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEYSTORE_PASSWORD")
@@ -94,9 +95,7 @@ android {
 
     flavorDimensions += "variant"
     productFlavors {
-        create("libre") {
-            dimension = "variant"
-        }
+        create("libre") { dimension = "variant" }
         // TV-only variant for Google Play's Android TV track. Google TV
         // Streamer and other Leanback devices install this bundle; XR and
         // Beam Pro continue to receive the `libre` bundle unchanged.
@@ -140,7 +139,6 @@ android {
         sourceCompatibility = Versions.JAVA
         targetCompatibility = Versions.JAVA
     }
-
 }
 
 dependencies {
@@ -232,4 +230,3 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.turbine)
 }
-
