@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,9 +35,11 @@ import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
 import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.UiText
+import dev.jdtech.jellyfin.presentation.film.components.ActiveDownloadRow
 import dev.jdtech.jellyfin.presentation.film.components.CollectionGrid
 import dev.jdtech.jellyfin.presentation.film.components.DeleteDownloadDialog
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
+import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -54,7 +58,7 @@ fun DownloadsScreen(
 
     DownloadsScreenLayout(
         state = state,
-        activeDownloadCount = activeDownloads.size,
+        activeDownloads = activeDownloads,
         storageUsedBytes = storageUsedBytes,
         onDeleteItem = { pendingDeleteItem = it },
         onAction = { action ->
@@ -79,13 +83,16 @@ fun DownloadsScreen(
 @Composable
 private fun DownloadsScreenLayout(
     state: CollectionState,
-    activeDownloadCount: Int = 0,
+    activeDownloads: List<ActiveDownloadEntry> = emptyList(),
     storageUsedBytes: Long = 0L,
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
     onAction: (CollectionAction) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
     val context = LocalContext.current
+    val gridTopPadding =
+        if (activeDownloads.isEmpty()) safePadding.top + 96.dp
+        else safePadding.top + 116.dp + (88.dp * activeDownloads.size.coerceAtMost(3))
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -104,9 +111,9 @@ private fun DownloadsScreenLayout(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                if (activeDownloadCount > 0) {
+                if (activeDownloads.isNotEmpty()) {
                     Text(
-                        text = "$activeDownloadCount downloading",
+                        text = "${activeDownloads.size} downloading",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -117,6 +124,21 @@ private fun DownloadsScreenLayout(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+            if (activeDownloads.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    activeDownloads.take(3).forEach { entry ->
+                        ActiveDownloadRow(entry = entry)
+                    }
+                    if (activeDownloads.size > 3) {
+                        Text(
+                            text = "+ ${activeDownloads.size - 3} more queued",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -132,7 +154,7 @@ private fun DownloadsScreenLayout(
                 sections = state.sections,
                 innerPadding =
                     PaddingValues(
-                        top = safePadding.top + 96.dp,
+                        top = gridTopPadding,
                         bottom = safePadding.bottom,
                     ),
                 onAction = onAction,
@@ -158,7 +180,7 @@ private fun DownloadsScreenLayoutPreview() {
                             )
                         )
                 ),
-            activeDownloadCount = 2,
+            activeDownloads = emptyList(),
             storageUsedBytes = 4_500_000_000L,
             onDeleteItem = {},
             onAction = {},

@@ -3,8 +3,11 @@ package dev.jdtech.jellyfin.film.presentation.season
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,8 +17,12 @@ import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.ItemFields
 
 @HiltViewModel
-class SeasonViewModel @Inject constructor(private val repository: JellyfinRepository) :
-    ViewModel() {
+class SeasonViewModel
+@Inject
+constructor(
+    private val repository: JellyfinRepository,
+    private val downloader: Downloader,
+) : ViewModel() {
     private val _state = MutableStateFlow(SeasonState())
     val state = _state.asStateFlow()
     private var hasLoadedSeason = false
@@ -89,7 +96,17 @@ class SeasonViewModel @Inject constructor(private val repository: JellyfinReposi
                     loadSeason(seasonId)
                 }
             }
+            is SeasonAction.DownloadEpisodes -> downloadEpisodes(action.episodes)
             else -> Unit
+        }
+    }
+
+    private fun downloadEpisodes(episodes: List<SpatialFinEpisode>) {
+        if (episodes.isEmpty()) return
+        viewModelScope.launch {
+            _state.emit(_state.value.copy(isQueuingBulkDownload = true, bulkDownloadResult = null))
+            val result = downloader.downloadItems(episodes, BulkDownloadSettings())
+            _state.emit(_state.value.copy(isQueuingBulkDownload = false, bulkDownloadResult = result))
         }
     }
 }

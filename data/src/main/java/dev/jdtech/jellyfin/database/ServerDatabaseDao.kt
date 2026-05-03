@@ -229,6 +229,9 @@ interface ServerDatabaseDao {
     @Query("SELECT * FROM downloadtasks WHERE kind = 'PRIMARY' AND status != 8 ORDER BY updatedAt DESC")
     fun observeActiveDownloadTasks(): Flow<List<DownloadTaskDto>>
 
+    @Query("SELECT * FROM downloadtasks WHERE kind = 'PRIMARY' AND status = 8")
+    fun getCompletedPrimaryDownloadTasks(): List<DownloadTaskDto>
+
     @Query("UPDATE userdata SET played = :played WHERE userId = :userId AND itemId = :itemId")
     fun setPlayed(userId: UUID, itemId: UUID, played: Boolean)
 

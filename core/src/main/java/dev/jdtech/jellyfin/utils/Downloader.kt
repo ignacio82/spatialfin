@@ -67,4 +67,11 @@ interface Downloader {
     fun observeActiveDownloads(): Flow<List<ActiveDownloadEntry>>
 
     suspend fun getStorageUsedBytes(): Long
+
+    /**
+     * Verify every "completed" download still exists on disk with the expected
+     * size. Files that are missing or truncated are auto-requeued for
+     * download. Idempotent — safe to call from app start and from screen open.
+     */
+    fun verifyDownloads()
 }

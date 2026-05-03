@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import androidx.work.WorkManager
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -23,6 +24,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
 import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
+import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
 import dev.spatialfin.BuildConfig
 import dev.spatialfin.CompanionLiveSyncClient
 import dev.spatialfin.CompanionLogUploader
@@ -85,6 +87,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         if (capabilities.hasLeanback) {
             watchNextScheduler.schedulePeriodic(this)
         }
+        DownloadIntegrityWorker.enqueue(WorkManager.getInstance(this))
     }
 
     private fun applyNightMode() {

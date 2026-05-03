@@ -6,7 +6,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -23,7 +22,6 @@ object DownloaderModule {
     fun provideDownloader(
         application: Application,
         serverDatabase: ServerDatabaseDao,
-        jellyfinApi: JellyfinApi,
         jellyfinRepository: JellyfinRepository,
         appPreferences: AppPreferences,
         workManager: WorkManager,
@@ -32,7 +30,6 @@ object DownloaderModule {
         return DownloaderImpl(
             application,
             serverDatabase,
-            jellyfinApi,
             jellyfinRepository,
             appPreferences,
             workManager,

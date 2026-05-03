@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.film.presentation.season
 
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import java.util.UUID
 
@@ -21,4 +22,6 @@ sealed interface SeasonAction {
     data class NavigateToItem(val item: SpatialFinItem) : SeasonAction
 
     data class NavigateToSeries(val seriesId: UUID) : SeasonAction
+
+    data class DownloadEpisodes(val episodes: List<SpatialFinEpisode>) : SeasonAction
 }

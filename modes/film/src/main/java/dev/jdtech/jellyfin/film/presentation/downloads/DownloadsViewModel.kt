@@ -74,6 +74,7 @@ constructor(
 
     init {
         observeRealtimeEvents()
+        downloader.verifyDownloads()
     }
 
     fun loadItems() {
