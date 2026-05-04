@@ -90,7 +90,6 @@ constructor(
                     loadOfflineLibrarySections()
                     _state.emit(_state.value.copy(isLoading = false))
                 } else {
-                    _state.update { it.copy(offlineLibrarySections = emptyList()) }
                     loadSuggestions()
                     // Resolve the main loading spinner as soon as the above-the-fold
                     // content (resume / next-up / suggestions) is in. loadViews()
@@ -106,6 +105,12 @@ constructor(
                         loadViews()
                     } catch (e: Exception) {
                         Timber.w(e, "loadViews failed after first paint")
+                    }
+
+                    if (!connectionMonitor.state.value.serverAccessible) {
+                        loadOfflineLibrarySections()
+                    } else {
+                        _state.update { it.copy(offlineLibrarySections = emptyList()) }
                     }
                 }
             } catch (e: Exception) {
@@ -278,6 +283,7 @@ constructor(
     fun onAction(action: HomeAction) {
         when (action) {
             is HomeAction.OnRetryClick -> {
+                connectionMonitor.triggerRefresh()
                 loadData()
             }
             else -> Unit
