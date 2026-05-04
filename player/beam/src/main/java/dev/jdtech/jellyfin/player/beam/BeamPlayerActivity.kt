@@ -235,6 +235,7 @@ class BeamPlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
         val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
