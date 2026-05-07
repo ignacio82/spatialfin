@@ -3,6 +3,9 @@
 Living document. Order is by user impact × cost-to-fix. Update or remove
 entries as they ship; do not let this file rot.
 
+**Status markers:** ✅ shipped (commit hash) · ⏭️ deferred · 🚫 dropped (with
+reason). Mark in the same commit that lands the change.
+
 ## Why this exists
 
 Anchored in an audit triggered by a recurring user-reported bug: "sometimes
@@ -155,25 +158,34 @@ feature) · **P2** (paper cut) · **P3** (polish).
 
 ## Sprint 0 — fix the offline empty screen (this week)
 
-1. Make `HomeViewModel.loadData()` always end with offline sections
-   populated. In the outer catch, also call `loadOfflineLibrarySections()`
-   before returning, and ensure the success path always populates them when
-   `serverAccessible` is false.
-2. Widen `ServerConnectionMonitor.isConnectionFailure` to also treat any
-   `Throwable` whose cause chain contains an `IOException`, plus a small
-   allowlist of common SDK wrappers. Add a unit test feeding it the real
-   exception types we've seen in the wild.
-3. Make `JellyfinRepositoryOfflineImpl.getStreamUrl` return a typed
-   `OfflineNotSupportedException` (or null) instead of `error(...)`. Audit
-   callers.
-4. Trigger an initial `loadData()` from `observeConnectionState` the first
-   time a state flows in (or call `loadData()` once unconditionally from
-   `init {}`), so cold-start probes that complete late don't strand the UI.
-5. Render an explicit "Showing downloads only" empty state when
-   `isOfflineMode = true` and there are zero downloaded items, instead of a
-   blank panel.
-6. Add a Robolectric test for `HomeViewModel` that simulates: cold-start
-   offline, mid-load throw, repeated retries.
+1. ✅ (`a65e620`) Make `HomeViewModel.loadData()` always end with offline
+   sections populated. The outer catch now calls `loadOfflineLibrarySections()`
+   (wrapped in `runCatching`) and marks the server inaccessible if the
+   failure looks network-shaped, so the offline status card surfaces.
+2. ✅ (`a65e620`) Widen `ServerConnectionMonitor.isConnectionFailure` to
+   walk the cause chain. Pure logic extracted to
+   `isApparentConnectionFailure`; new `ServerConnectionFailureTest` in
+   `:core` locks the contract (direct + wrapped + SSL + cancellation +
+   non-network cases).
+3. 🚫 `JellyfinRepositoryOfflineImpl.getStreamUrl` is dead code in
+   practice — `SmartJellyfinRepository.getStreamUrl` calls
+   `runOnlineOnly { onlineRepository.getStreamUrl(...) }`, so the offline
+   impl's `error(...)` is never reached through the public facade. Re-open
+   if/when something injects the offline impl directly.
+4. ⏭️ Trigger an initial `loadData()` from `observeConnectionState` —
+   narrow race; the catch-block fallback in (1) closes the user-visible
+   failure mode for the cold-start probe scenario. Revisit if telemetry
+   shows residual blanks.
+5. ⏭️ Explicit "Showing downloads only" empty state — already covered by
+   the existing `HomeStatusCard` once `markServerInaccessible()` fires
+   from the catch block (which (1) now does). Revisit only if users
+   report blank panels with zero downloads + no error icon.
+6. ⏭️ HomeViewModel Robolectric test — the policy is covered by the new
+   `ServerConnectionFailureTest`. A behavioral test of `HomeViewModel`
+   needs `Dispatchers.Default` injection (currently hardcoded in
+   `loadData()`); rolling that into the bug fix would balloon the diff.
+   Test infra is wired up in `:modes:film` so the follow-up commit can
+   land cleanly.
 
 ## Sprint 1 — bug fixes adjacent to the user's pain (next 1–2 weeks)
 
