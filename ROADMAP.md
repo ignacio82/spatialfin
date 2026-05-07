@@ -204,10 +204,16 @@ feature) · **P2** (paper cut) · **P3** (polish).
     next-up episode via `repository.getNextUp()`. Both Beam call sites
     (search-result tap, voice-search dialog selection) now route through it.
     TV equivalent left as a follow-up; same pattern transposes cleanly.
-11. ⏭️ Surface SyncPlay leave-group failure in `PlayerViewModel.onCleared`
-    (Timber.e + retry once on next session join). Next commit.
-12. ⏭️ Move libass `cachedBitmap` off `mutableStateOf<Bitmap?>` into a
-    stable holder. Next commit.
+11. ✅ `PlayerViewModel.onCleared` now Timber.e's the leave failure and
+    arms a `pendingSyncPlayLeave` preference. `PlayerViewModel.init`
+    drains the flag on next launch by firing a fire-and-forget leave
+    call so the user isn't stuck in an orphan group server-side.
+12. ✅ The actual perf cost was at the consumer site, not the holder.
+    Moved `libass.bitmap` / `libass.hasContent` reads inside the
+    `SpatialPanel` content lambda in `SpatialPlayerScreen` so the
+    SceneCoreEntity scope no longer recomposes per libass frame. The
+    `key(libass.frameVersion)` already scoped the inner Image swap;
+    this stops the sibling Media3-fallback branch from recomposing too.
 13. ✅ `libs.versions.toml` icons-extended now uses `version.ref` against a
     new `androidx-compose-material-icons-extended = "1.7.8"` entry in
     `[versions]`. Comment notes that Google froze the artifact at 1.7.8 in

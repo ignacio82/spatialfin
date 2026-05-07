@@ -338,6 +338,19 @@ constructor(
         // Add comprehensive logging for network, buffering, and dropped frames for ExoPlayer
         (player as? ExoPlayer)?.addAnalyticsListener(EventLogger(eventTrackSelector))
 
+        // If a previous PlayerViewModel.onCleared armed the pending-leave
+        // flag (network down, server briefly unreachable, process killed
+        // mid-leave), retry once now so the user isn't stuck "in" an
+        // orphan SyncPlay group server-side. Best-effort; clear the flag
+        // either way so a permanently-broken state doesn't loop.
+        if (appPreferences.getValue(appPreferences.pendingSyncPlayLeave)) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { repository.leaveSyncPlayGroup() }
+                    .onSuccess { Timber.i("PlayerViewModel: drained pending SyncPlay leave") }
+                    .onFailure { Timber.w(it, "PlayerViewModel: pending SyncPlay leave retry failed") }
+                appPreferences.setValue(appPreferences.pendingSyncPlayLeave, false)
+            }
+        }
         viewModelScope.launch {
             repository.observePlayStateMessages().collect { message ->
                 message.data?.let { request ->
@@ -1404,8 +1417,23 @@ constructor(
         Timber.d("Clearing Player ViewModel")
         // viewModelScope is cancelled before onCleared() is called, so use a detached scope.
         if (syncPlay.isActive()) {
+            val orphanedGroupId = syncPlay.activeGroupId
+            // Optimistically arm the retry flag now: if the process is killed
+            // before the launch below runs, the next launch still cleans up.
+            // The success path clears the flag.
+            appPreferences.setValue(appPreferences.pendingSyncPlayLeave, true)
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
                 runCatching { repository.leaveSyncPlayGroup() }
+                    .onSuccess {
+                        appPreferences.setValue(appPreferences.pendingSyncPlayLeave, false)
+                    }
+                    .onFailure {
+                        Timber.e(
+                            it,
+                            "PlayerViewModel: failed to leave SyncPlay group %s; will retry next launch",
+                            orphanedGroupId,
+                        )
+                    }
             }
         }
         releasePlayer()

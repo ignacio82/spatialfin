@@ -75,6 +75,13 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
     val playerForceDirectPlay = Preference("pref_player_force_direct_play", false)
 
+    // SyncPlay — set to true if PlayerViewModel.onCleared failed to leave a
+    // group (network down at activity destroy, server briefly unreachable,
+    // etc.). PlayerViewModel.init drains it on the next launch by firing
+    // a fire-and-forget leave call so the user isn't stuck "in" an orphan
+    // group on the server side.
+    val pendingSyncPlayLeave = Preference("pref_pending_syncplay_leave", false)
+
     // Downloads
     val downloadOverMobileData = Preference("pref_downloads_mobile_data", false)
     val downloadWhenRoaming = Preference("pref_downloads_roaming", false)

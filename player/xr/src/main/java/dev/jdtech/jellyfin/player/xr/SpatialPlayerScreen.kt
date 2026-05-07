@@ -1562,14 +1562,19 @@ fun SpatialPlayerScreen(
                 // briefly render it at the subtitle root origin before the panel offset lands,
                 // which shows up as a flash below the screen.
                 if (libass.useLibass) {
-                    val currentBitmap = libass.bitmap
-                    val showLibassContent = libass.hasContent && currentBitmap != null
                     SpatialPanel(
                         modifier = SubspaceModifier
                             .width(subtitlePanelWidthDp.dp)
                             .height(subtitlePanelHeightDp.dp)
                             .offset(x = 0.dp, y = 0.dp, z = (subtitlePanelZDp + 50f).dp),
                     ) {
+                        // Read libass.bitmap / libass.hasContent / libass.frameVersion
+                        // INSIDE the panel's content lambda, not at the SceneCoreEntity
+                        // scope above. The libass render loop bumps these on every
+                        // frame; reading at the outer scope used to recompose the
+                        // SpatialPanel's siblings (the Media3 fallback branch) too.
+                        val currentBitmap = libass.bitmap
+                        val showLibassContent = libass.hasContent && currentBitmap != null
                         if (showLibassContent) {
                             key(libass.overlayAttachmentVersion, libass.frameVersion) {
                                 Image(
