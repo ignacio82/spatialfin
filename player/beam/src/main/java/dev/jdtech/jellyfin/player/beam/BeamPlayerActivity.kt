@@ -95,9 +95,12 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSeason
+import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
@@ -216,6 +219,62 @@ class BeamPlayerActivity : AppCompatActivity() {
                     )
                 else -> null
             }
+
+        /**
+         * Resolves a Show / Season / BoxSet to a playable next-up episode and
+         * builds an intent for it. Movies and Episodes pass through unchanged
+         * (no repository round-trip). Returns null only when the item really
+         * has nothing playable — e.g. a fully-watched show with no next-up,
+         * or a BoxSet of non-episode children — and the caller should fall
+         * back to a detail screen instead of silently dropping the tap.
+         *
+         * Voice "play <show>" used to silently drop here; this routes it to
+         * the obvious continuation episode the way Jellyfin web does.
+         */
+        suspend fun resolveAndCreateIntentForSpatialItem(
+            context: Context,
+            repository: JellyfinRepository,
+            item: SpatialFinItem,
+            startFromBeginning: Boolean = false,
+            openSyncPlayDialogOnStart: Boolean = false,
+            startPositionMs: Long? = null,
+        ): Intent? {
+            createIntentForSpatialItem(
+                context = context,
+                item = item,
+                startFromBeginning = startFromBeginning,
+                openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
+                startPositionMs = startPositionMs,
+            )?.let { return it }
+
+            val nextEpisode =
+                runCatching {
+                    when (item) {
+                        is SpatialFinShow -> repository.getNextUp(seriesId = item.id).firstOrNull()
+                        is SpatialFinSeason ->
+                            repository.getNextUp(seriesId = item.seriesId).firstOrNull()
+                                ?: repository.getEpisodes(
+                                    seriesId = item.seriesId,
+                                    seasonId = item.id,
+                                ).firstOrNull { !it.played }
+                        is SpatialFinBoxSet ->
+                            repository.getNextUp().firstOrNull { it.seriesId == item.id }
+                        else -> null
+                    }
+                }
+                    .onFailure { Timber.w(it, "resolveAndCreateIntent: next-up lookup failed for %s", item.id) }
+                    .getOrNull()
+            return nextEpisode?.let {
+                createIntent(
+                    context = context,
+                    itemId = it.id,
+                    itemKind = "Episode",
+                    startFromBeginning = startFromBeginning,
+                    openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
+                    startPositionMs = startPositionMs,
+                )
+            }
+        }
     }
 
     @Inject lateinit var repository: JellyfinRepository
@@ -683,8 +742,12 @@ private fun BeamPlayerScreen(
                 },
                 onCloseApp = onBackClick,
                 onLaunchSearchResult = { item ->
-                    BeamPlayerActivity.createIntentForSpatialItem(latestContext, item)?.let { intent ->
-                        latestContext.startActivity(intent)
+                    coroutineScope.launch {
+                        BeamPlayerActivity.resolveAndCreateIntentForSpatialItem(
+                            context = latestContext,
+                            repository = viewModel.repository,
+                            item = item,
+                        )?.let { intent -> latestContext.startActivity(intent) }
                     }
                 },
                 onSearchQuery = { query -> viewModel.repository.getSearchItems(query) },
@@ -1058,8 +1121,12 @@ private fun BeamPlayerScreen(
                 voiceSearchError = null
             },
             onSelect = { item ->
-                BeamPlayerActivity.createIntentForSpatialItem(context, item)?.let { intent ->
-                    context.startActivity(intent)
+                coroutineScope.launch {
+                    BeamPlayerActivity.resolveAndCreateIntentForSpatialItem(
+                        context = context,
+                        repository = viewModel.repository,
+                        item = item,
+                    )?.let { intent -> context.startActivity(intent) }
                 }
             },
         )

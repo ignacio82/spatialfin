@@ -16,6 +16,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.DownloadTaskDto
+import dev.jdtech.jellyfin.models.DownloadTaskKind
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
@@ -25,14 +26,14 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 /**
- * Sweeps every PRIMARY download task that the DB believes is finished
- * (status = STATUS_SUCCESSFUL) and verifies the file actually exists on disk
- * with the expected length. If the file is missing or truncated — which can
- * happen if the user cleared app storage, swapped SD cards, or a previous
- * encryption pass left things half-written — the source row is flipped back
- * to its in-progress path so isDownloaded() reflects reality, and the
- * ResumableDownloadWorker is re-enqueued so the file is re-downloaded
- * automatically.
+ * Sweeps every download task — PRIMARY video and SUBTITLE sidecar — that the
+ * DB believes is finished (status = STATUS_SUCCESSFUL) and verifies the file
+ * actually exists on disk with the expected length. If the file is missing
+ * or truncated — which can happen if the user cleared app storage, swapped
+ * SD cards, or a previous encryption pass left things half-written — the
+ * source / mediastream row is flipped back to its in-progress path so
+ * isDownloaded() reflects reality, and the ResumableDownloadWorker is
+ * re-enqueued so the file is re-downloaded automatically.
  *
  * Idempotent: enqueue with ExistingWorkPolicy.KEEP from app start and from
  * the Downloads screen.
@@ -49,7 +50,9 @@ constructor(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result =
         withContext(Dispatchers.IO) {
-            val tasks = database.getCompletedPrimaryDownloadTasks()
+            val tasks =
+                database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) +
+                    database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE)
             var checked = 0
             var requeued = 0
             for (task in tasks) {
@@ -57,14 +60,18 @@ constructor(
                 if (!isBroken(task)) continue
 
                 Timber.w(
-                    "DownloadIntegrityWorker: broken finalize taskId=%s finalPath=%s exists=%s actualLen=%s expectedLen=%s",
+                    "DownloadIntegrityWorker: broken finalize taskId=%s kind=%s finalPath=%s exists=%s actualLen=%s expectedLen=%s",
                     task.id,
+                    task.kind,
                     task.finalPath,
                     File(task.finalPath).exists(),
                     File(task.finalPath).takeIf(File::exists)?.length(),
                     task.totalBytes,
                 )
-                requeueBrokenTask(task)
+                runCatching { requeueBrokenTask(task) }
+                    .onFailure {
+                        Timber.e(it, "DownloadIntegrityWorker: requeue failed taskId=%s", task.id)
+                    }
                 requeued++
             }
             Timber.i("DownloadIntegrityWorker: checked=%d requeued=%d", checked, requeued)
@@ -81,17 +88,24 @@ constructor(
     }
 
     private fun requeueBrokenTask(task: DownloadTaskDto) {
-        // Drop any half-written final + temp files so the next pass starts
-        // from byte 0 instead of resuming against a corrupt range.
-        File(task.finalPath).takeIf(File::exists)?.delete()
-        File(task.tempPath).takeIf(File::exists)?.delete()
-
-        // Flip the source path back to the temp/in-progress path so
-        // isDownloaded() reflects "not yet downloaded" until the resumable
-        // worker re-finalizes — otherwise the badge would still claim
-        // success while we re-download.
+        // Crash-safety order: DB updates first, file deletes after. If we
+        // crash between the DB flip and the file delete, the DB already says
+        // "not downloaded" so the next worker run re-downloads to tempPath
+        // and renames over the orphan finalPath. The reverse order would
+        // leave a STATUS_SUCCESSFUL row pointing at a deleted file until the
+        // next integrity sweep — the user sees a "Downloaded" badge for a
+        // file that won't play.
         if (task.tempPath.isNotBlank()) {
-            database.setSourcePath(task.sourceId, task.tempPath)
+            when (task.kind) {
+                // Flip the source / mediastream path back to the in-progress
+                // path so isDownloaded() reflects reality until the worker
+                // re-finalizes. Subtitles live on mediastreams.path, not
+                // sources.path.
+                DownloadTaskKind.PRIMARY ->
+                    database.setSourcePath(task.sourceId, task.tempPath)
+                DownloadTaskKind.SUBTITLE ->
+                    task.mediaStreamId?.let { database.setMediaStreamPath(it, task.tempPath) }
+            }
         }
         database.updateDownloadTask(
             id = task.id,
@@ -105,6 +119,12 @@ constructor(
             errorMessage = "File missing — re-downloading",
             updatedAt = System.currentTimeMillis(),
         )
+
+        // Drop any half-written final + temp files so the next pass starts
+        // from byte 0 instead of resuming against a corrupt range.
+        File(task.finalPath).takeIf(File::exists)?.delete()
+        File(task.tempPath).takeIf(File::exists)?.delete()
+
         enqueueResumableDownload(task.id, itemTitleForItemId(task.itemId))
     }
 

@@ -97,6 +97,36 @@ constructor(
             )
 
             val existingBytes = tempFile.takeIf(File::exists)?.length() ?: 0L
+
+            // Pre-check free space before opening a network connection. Without
+            // this, a storage-full device burns MAX_AUTO_RETRIES on the same
+            // IOException ("ENOSPC") and never tells the user why; with this
+            // we fail fast (Result.failure → no auto-retry), surface a clear
+            // message in the Downloads UI, and post a notification the user
+            // can act on.
+            val totalKnown = task.totalBytes
+            if (totalKnown != null && totalKnown > 0L && parentDir != null) {
+                val remaining = (totalKnown - existingBytes).coerceAtLeast(0L)
+                val needed = remaining + LOW_STORAGE_SAFETY_MARGIN_BYTES
+                val usable = parentDir.usableSpace
+                if (usable < needed) {
+                    Timber.w(
+                        "Resumable worker low storage taskId=%s usable=%s needed=%s remaining=%s",
+                        taskId, usable, needed, remaining,
+                    )
+                    val mbNeeded = remaining / 1_048_576L
+                    val mbAvailable = usable / 1_048_576L
+                    val message = "Not enough storage — need ${mbNeeded} MB, have ${mbAvailable} MB"
+                    markFailed(
+                        taskId, existingBytes, task.totalBytes,
+                        task.eTag, task.lastModified, message,
+                    )
+                    showLowStorageNotification(
+                        params.inputData.getString(KEY_ITEM_TITLE), mbNeeded, mbAvailable,
+                    )
+                    return@withContext Result.failure()
+                }
+            }
             val requestBuilder = Request.Builder().url(task.requestUrl)
             task.accessToken?.takeIf { it.isNotBlank() }?.let {
                 requestBuilder.header("X-Emby-Token", it)
@@ -398,6 +428,20 @@ constructor(
         notificationManager.notify(("complete:$itemTitle").hashCode(), notification)
     }
 
+    private fun showLowStorageNotification(itemTitle: String?, mbNeeded: Long, mbAvailable: Long) {
+        ensureNotificationChannel()
+        val notificationManager =
+            appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val title = itemTitle?.takeIf { it.isNotBlank() } ?: "Download paused"
+        val notification = NotificationCompat.Builder(appContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(CoreR.drawable.ic_download)
+            .setContentTitle("Not enough storage for $title")
+            .setContentText("Need ${mbNeeded} MB, have ${mbAvailable} MB free")
+            .setAutoCancel(true)
+            .build()
+        notificationManager.notify(("low-storage:$itemTitle").hashCode(), notification)
+    }
+
     private fun markFailed(
         taskId: String,
         bytesDownloaded: Long,
@@ -511,6 +555,12 @@ constructor(
         private const val NOTIFICATION_CHANNEL_ID = "resumable_downloads"
         private const val PROGRESS_UPDATE_BYTES = 512L * 1024L
         private const val MAX_AUTO_RETRIES = 5
+
+        // Headroom kept free on the download volume even when a download is
+        // technically still going to fit. Filling the filesystem to its last
+        // byte makes Android system services misbehave (DropBoxManager,
+        // SQLite WALs, package installs), so we stop sooner.
+        private const val LOW_STORAGE_SAFETY_MARGIN_BYTES = 64L * 1_048_576L
         // AES-CTR: 16-byte block, 16-byte IV. The cipher is the same shape
         // Media3's AesCipherDataSource uses, so it can decrypt on playback.
         private const val AES_CTR_TRANSFORMATION = "AES/CTR/NoPadding"

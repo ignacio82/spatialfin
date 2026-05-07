@@ -189,18 +189,29 @@ feature) · **P2** (paper cut) · **P3** (polish).
 
 ## Sprint 1 — bug fixes adjacent to the user's pain (next 1–2 weeks)
 
-7. Sweep subtitle tasks in `DownloadIntegrityWorker`.
-8. Pre-check disk space in `ResumableDownloadWorker`; surface "low storage"
-   notification.
-9. Reorder `DownloadIntegrityWorker:83-95` so DB flips PENDING **before**
-   file deletion (crash-safe).
-10. Fix `BeamPlayerActivity.createIntentForSpatialItem` to route Show /
-    Season / BoxSet to detail or auto-resolve next-episode.
-11. Surface SyncPlay leave-group failure in `PlayerViewModel.onCleared`
-    (Timber.e + retry once on next session join).
-12. Move libass `cachedBitmap` off `mutableStateOf<Bitmap?>` into a stable
-    holder.
-13. Switch `libs.versions.toml:65` to `version.ref`.
+7. ✅ Sweep PRIMARY + SUBTITLE in `DownloadIntegrityWorker`. New
+   `getCompletedDownloadTasks(kind)` DAO method drives both kinds; subtitle
+   broken-task path flips `mediastreams.path` back to tempPath before re-enqueue.
+8. ✅ Pre-check disk space in `ResumableDownloadWorker` against
+   `parentDir.usableSpace` with a 64 MB safety margin. On insufficient,
+   `Result.failure()` (no auto-retry), task marked FAILED with a clear
+   "need X MB, have Y MB" message, and a low-storage notification posted.
+9. ✅ Reorder `requeueBrokenTask` so DB flip happens **before** file delete.
+   Crash-safety: a process kill mid-requeue leaves the DB consistent and the
+   worker re-downloads; the orphan finalPath is overwritten by the rename.
+10. ✅ `BeamPlayerActivity.resolveAndCreateIntentForSpatialItem` is the new
+    suspending companion that auto-resolves Show / Season / BoxSet to a
+    next-up episode via `repository.getNextUp()`. Both Beam call sites
+    (search-result tap, voice-search dialog selection) now route through it.
+    TV equivalent left as a follow-up; same pattern transposes cleanly.
+11. ⏭️ Surface SyncPlay leave-group failure in `PlayerViewModel.onCleared`
+    (Timber.e + retry once on next session join). Next commit.
+12. ⏭️ Move libass `cachedBitmap` off `mutableStateOf<Bitmap?>` into a
+    stable holder. Next commit.
+13. ✅ `libs.versions.toml` icons-extended now uses `version.ref` against a
+    new `androidx-compose-material-icons-extended = "1.7.8"` entry in
+    `[versions]`. Comment notes that Google froze the artifact at 1.7.8 in
+    mid-2025 in favor of Material Symbols.
 
 ## Sprint 2 — perf foundations (2–3 weeks)
 
