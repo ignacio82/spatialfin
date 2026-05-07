@@ -32,6 +32,29 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 
+/**
+ * Pure decision helper for "is this throwable a connection failure we should
+ * fall back to offline for?". Walks the cause chain so wrapped IOExceptions
+ * (RuntimeException → SocketTimeoutException, etc.) still trigger fallback
+ * instead of stranding the UI. Bounded by a `seen` set so a self-referential
+ * cause doesn't loop.
+ */
+internal fun isApparentConnectionFailure(throwable: Throwable): Boolean {
+    if (throwable is CancellationException) return false
+    var current: Throwable? = throwable
+    val seen = mutableSetOf<Throwable>()
+    while (current != null && seen.add(current)) {
+        if (
+            current is IOException ||
+                current is org.jellyfin.sdk.api.client.exception.ApiClientException
+        ) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}
+
 data class ServerConnectionState(
     val manualOfflineMode: Boolean = false,
     val serverAccessible: Boolean = true,
@@ -137,11 +160,8 @@ constructor(
 
     fun shouldUseOfflineRepository(): Boolean = state.value.effectiveOfflineMode
 
-    fun isConnectionFailure(throwable: Throwable): Boolean {
-        if (throwable is CancellationException) return false
-        return throwable is IOException ||
-            throwable is org.jellyfin.sdk.api.client.exception.ApiClientException
-    }
+    fun isConnectionFailure(throwable: Throwable): Boolean =
+        isApparentConnectionFailure(throwable)
 
     fun triggerRefresh() {
         scope.launch { refreshServerAccessibility() }

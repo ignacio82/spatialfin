@@ -114,6 +114,22 @@ constructor(
                     }
                 }
             } catch (e: Exception) {
+                Timber.w(e, "loadData failed; attempting offline fallback")
+                // Mark the server inaccessible if the failure looks network-shaped.
+                // This ensures the status card surfaces a "Reconnect" affordance
+                // even when the exception slipped past SmartJellyfinRepository's
+                // own runWithFallback (e.g. unexpected exception types, partial
+                // failures of the offline impl during a fallback).
+                if (connectionMonitor.isConnectionFailure(e)) {
+                    connectionMonitor.markServerInaccessible()
+                }
+                // Always try to populate downloaded content. Without this, a
+                // partial-failure online attempt leaves the home screen empty
+                // even though we have local content the user could watch right
+                // now. Wrapped in its own try/catch so a broken offline DB
+                // doesn't mask the original error.
+                runCatching { loadOfflineLibrarySections() }
+                    .onFailure { Timber.w(it, "offline fallback also failed") }
                 _state.emit(_state.value.copy(error = e, isLoading = false))
             }
         }
