@@ -253,7 +253,7 @@
                                     <ul class="explorer-list">
                                         <li><strong>Server Connectivity:</strong> Deep integration with Jellyfin for libraries and collections.</li>
                                         <li><strong>Seerr Integration:</strong> Connect Jellyseerr or Overseerr to search and request media.</li>
-                                        <li><strong>FCast Foundation <em>(in development)</em>:</strong> A new <code>:fcast</code> module ships the full <a href="https://fcast.org" style="color: var(--primary); text-decoration: none;">FCast</a> v3 protocol — codec for all 19 opcodes, mDNS discovery, a coroutine TCP sender client, and a foreground receiver service. Lets SpatialFin push the current Jellyfin stream to any FCast-capable receiver and accept inbound media (YouTube via Grayjay, public HLS/DASH URLs) directly into the headset, with optional autopromote into Full Space on inbound Play.</li>
+                                        <li><strong>FCast Sender + Receiver:</strong> SpatialFin speaks the full <a href="https://fcast.org" style="color: var(--primary); text-decoration: none;">FCast</a> v3 protocol. As a <em>sender</em>, the XR player orbiter and the Beam phone player both expose a Cast button — pick a receiver via mDNS auto-discovery or manual entry to push the current Jellyfin stream to any FCast-capable TV or PC. As a <em>receiver</em>, an opt-in foreground service accepts inbound media (YouTube via Grayjay, public HLS/DASH URLs) directly into the headset with optional autopromote into XR Full Space.</li>
                                     </ul>
                                 </div>
                             </div>
