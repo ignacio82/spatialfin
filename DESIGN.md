@@ -121,7 +121,7 @@ spacing:
   orbiterOffset: "20dp"
   xrPanelWidth: "1792dp"
   xrPanelHeight: "1008dp"
-  xrSpawnDistance: "1.75m"
+  xrSpawnDistance: "3.5m"
   xrDialogPushback: "125dp"
 components:
   spatialPanel:
@@ -226,7 +226,7 @@ sizing adjusts by form factor:
   subtitles carry their own style.
 
 Keep line height generous on XR (≥ 1.3x font size) — subpixel density is high
-but reading at 1.75m means the eye trades off acuity for comfort.
+but reading at 3.5m means the eye trades off acuity for comfort.
 
 ## Layout
 
