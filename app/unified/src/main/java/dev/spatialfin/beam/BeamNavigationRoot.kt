@@ -384,6 +384,7 @@ fun BeamNavigationRoot(
     CompositionLocalProvider(
         LocalBeamBackground provides { beamBackgroundUrl = it },
         LocalBeamWidth provides beamWidth,
+        dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {
             CinematicBackdrop(
@@ -786,17 +787,6 @@ fun BeamNavigationRoot(
             }
         }
     }
-            if (showPrimaryNavigation) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 12.dp, end = 16.dp),
-                ) {
-                    dev.spatialfin.fcast.session.FCastCastIconButton(
-                        sessionManager = fcastSession,
-                    )
-                }
-            }
             BeamVoiceFeedbackOverlay(
                 feedback = voiceController.voiceFeedback,
                 isListening = voiceState == VoiceState.LISTENING,
@@ -827,6 +817,7 @@ private fun BeamBottomNavigationRow(
     } else {
         primaryTabs
     }
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f),
@@ -870,6 +861,40 @@ private fun BeamBottomNavigationRow(
                     }
                 }
             }
+            // Cast peer to the Network tab — visually identical "tab cell" so it
+            // sits flush with the rest of the bar but routes to the global FCast
+            // picker instead of a navigation destination.
+            if (fcastSession != null) {
+                val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
+                val castSelected = pickedReceiver != null
+                Surface(
+                    onClick = { fcastSession.showPicker() },
+                    color = if (castSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
+                            contentDescription = "Cast",
+                            modifier = Modifier.size(22.dp),
+                            tint = if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "Cast",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            softWrap = false,
+                            color = if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -891,6 +916,7 @@ private fun BeamSidebar(
     } else {
         primaryTabs
     }
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
 
     var userExpanded by rememberSaveable { mutableStateOf(false) }
     val isExpanded = forceExpanded || userExpanded
@@ -992,6 +1018,45 @@ private fun BeamSidebar(
                                     if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+            // Cast peer rendered with the same row geometry so it lives in the
+            // sidebar next to the Network tab. It opens the global FCast picker
+            // rather than navigating to a destination.
+            if (fcastSession != null) {
+                val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
+                val castSelected = pickedReceiver != null
+                Surface(
+                    onClick = { fcastSession.showPicker() },
+                    color =
+                        if (castSelected) MaterialTheme.colorScheme.primaryContainer
+                        else Color.Transparent,
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = if (isExpanded) 16.dp else 0.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = if (isExpanded) Arrangement.spacedBy(12.dp) else Arrangement.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
+                            contentDescription = "Cast",
+                            modifier = Modifier.size(22.dp),
+                            tint =
+                                if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (isExpanded) {
+                            Text(
+                                text = "Cast",
+                                style = MaterialTheme.typography.labelLarge,
+                                color =
+                                    if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (castSelected) FontWeight.SemiBold else FontWeight.Medium,
                             )
                         }
                     }

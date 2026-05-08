@@ -53,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -993,6 +994,7 @@ fun BeamShowScreen(
                                     contentDescription = if (show.played) "Watched" else "Mark watched"
                                 )
                             }
+                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -1188,6 +1190,7 @@ fun BeamSeasonScreen(
                                     )
                                 }
                             }
+                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -1406,6 +1409,7 @@ fun BeamItemDetailScreen(
                                 )
                             }
 
+                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -3025,6 +3029,30 @@ private fun openServerItem(
         is SpatialFinShow -> onOpenShow(item.id)
         is SpatialFinSeason -> onOpenSeason(item.id)
         else -> onOpenItem(item.id)
+    }
+}
+
+/**
+ * Cast affordance peer to the 3-dots overflow on Beam hero cards. Resolves the FCast session
+ * manager from the composition local installed by [BeamNavigationRoot]; renders nothing on
+ * surfaces that don't have one in scope (TV, previews). Place immediately to the left of
+ * [BeamOverflowMenu] so the row reads as <play actions> | <cast> | <overflow>.
+ */
+@Composable
+private fun BeamCastIconButton() {
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current ?: return
+    val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
+    val tint = if (pickedReceiver != null) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        androidx.compose.material3.LocalContentColor.current
+    }
+    androidx.compose.material3.FilledTonalIconButton(onClick = { fcastSession.showPicker() }) {
+        androidx.compose.material3.Icon(
+            painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
+            contentDescription = "Cast",
+            tint = tint,
+        )
     }
 }
 

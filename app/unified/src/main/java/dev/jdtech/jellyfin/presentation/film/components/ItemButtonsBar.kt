@@ -33,6 +33,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -168,6 +169,20 @@ fun ItemButtonsBar(
                     emphasized = item.favorite,
                     iconTint = if (item.favorite) Color.Red else LocalContentColor.current,
                 )
+                // Cast affordance sits immediately left of the 3-dots overflow on
+                // playable items, matching Google Cast UX where the cast button is
+                // an always-visible peer of the playback controls. Only render
+                // when there's an FCastSessionManager in scope (XR/Beam, not TV).
+                val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+                if (fcastSession != null && item.canPlay) {
+                    val pickedReceiver by fcastSession.pickedReceiver.collectAsState()
+                    XrIconActionButton(
+                        icon = CoreR.drawable.ic_cast,
+                        contentDescription = "Cast to receiver",
+                        onClick = { fcastSession.showPicker() },
+                        emphasized = pickedReceiver != null,
+                    )
+                }
                 // 3-dots overflow holds every secondary action. The anchor Box
                 // scopes the DropdownMenu to the button's position; without it
                 // the menu anchors at (0,0) of the enclosing layout.

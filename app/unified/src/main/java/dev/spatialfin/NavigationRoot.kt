@@ -269,6 +269,9 @@ fun NavigationRoot(
     // The XR panel is wider than the comfortable interaction zone. A full-width Row would push
     // the NavigationRail too far left, outside the XR FOV. We cap the inner row at 1920dp and
     // center it so the rail stays within comfortable viewing range.
+    androidx.compose.runtime.CompositionLocalProvider(
+        dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -344,18 +347,12 @@ fun NavigationRoot(
                         }
                     }
                 }
-                // XR-only footer: profile/switch-user button stacked above the
-                // space-mode toggle. Both share a single Spacer.weight(1f) so the
-                // group floats to the bottom of the rail.
+                // XR-only footer: cast button sits directly above the
+                // profile/switch-user avatar, which stacks above the space-mode
+                // toggle. The group shares a single Spacer.weight(1f) so it
+                // floats to the bottom of the rail.
                 if (xrSpaceMode != null) {
                     if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
-                    if (currentUser != null) {
-                        XrProfileRailButton(
-                            user = currentUser,
-                            serverAddress = currentServerAddress,
-                            onClick = { navController.safeNavigate(UsersRoute) },
-                        )
-                    }
                     if (fcastSession != null) {
                         val pickedReceiver by fcastSession.pickedReceiver.collectAsState()
                         NavigationRailItem(
@@ -363,11 +360,18 @@ fun NavigationRoot(
                             onClick = { fcastSession.showPicker() },
                             icon = {
                                 Icon(
-                                    painter = painterResource(CoreR.drawable.ic_globe),
+                                    painter = painterResource(CoreR.drawable.ic_cast),
                                     contentDescription = "Cast",
                                 )
                             },
                             label = { Text(text = "Cast") },
+                        )
+                    }
+                    if (currentUser != null) {
+                        XrProfileRailButton(
+                            user = currentUser,
+                            serverAddress = currentServerAddress,
+                            onClick = { navController.safeNavigate(UsersRoute) },
                         )
                     }
                     val (toggleLabel, toggleAction) = when (xrSpaceMode) {
@@ -746,6 +750,7 @@ fun NavigationRoot(
                     .widthIn(max = 360.dp),
             )
         }
+    }
     }
 }
 

@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -32,6 +33,15 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet
 import kotlinx.coroutines.launch
+
+/**
+ * Composition-local pointer to the process-singleton [FCastSessionManager]. The form-factor root
+ * (NavigationRoot for XR, BeamNavigationRoot for Beam) installs it once via
+ * `CompositionLocalProvider(LocalFCastSession provides fcastSession)` so that hero / detail
+ * components below can drop a cast affordance next to their existing 3-dots overflow without
+ * threading the manager through every screen signature. Null on form factors that don't cast (TV).
+ */
+val LocalFCastSession = compositionLocalOf<FCastSessionManager?> { null }
 
 /**
  * Persistent cast affordance for any toolbar / nav surface. Renders the FCast globe icon, tints
@@ -55,7 +65,7 @@ fun FCastCastIconButton(
         modifier = modifier,
     ) {
         Icon(
-            painter = painterResource(CoreR.drawable.ic_globe),
+            painter = painterResource(CoreR.drawable.ic_cast),
             contentDescription = "Cast to FCast receiver",
             tint = tint,
         )
@@ -122,7 +132,7 @@ fun FCastMiniController(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                painter = painterResource(CoreR.drawable.ic_globe),
+                painter = painterResource(CoreR.drawable.ic_cast),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
             )

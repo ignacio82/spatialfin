@@ -1307,7 +1307,7 @@ private fun BeamControllerOverlay(
                 }
             }
             IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Cast) }) {
-                Icon(painterResource(CoreR.drawable.ic_tv), "Cast to FCast receiver", tint = Color.White)
+                Icon(painterResource(CoreR.drawable.ic_cast), "Cast to FCast receiver", tint = Color.White)
             }
             IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Audio) }) {
                 Icon(painterResource(CoreR.drawable.ic_speaker), "Audio", tint = Color.White)

@@ -115,7 +115,7 @@ internal fun SecondaryControlsOrbiter(
             }
             IconButton(onClick = onFCastClick, modifier = Modifier.size(100.dp)) {
                 Icon(
-                    painterResource(CoreR.drawable.ic_globe),
+                    painterResource(CoreR.drawable.ic_cast),
                     contentDescription = "Cast to FCast receiver",
                     tint = if (fcastActive) Color(0xFF4FC3F7) else Color.White,
                     modifier = Modifier.size(64.dp),
