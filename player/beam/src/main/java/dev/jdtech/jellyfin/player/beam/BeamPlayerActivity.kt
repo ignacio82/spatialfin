@@ -280,6 +280,7 @@ class BeamPlayerActivity : AppCompatActivity() {
     @Inject lateinit var repository: JellyfinRepository
     @Inject lateinit var serverDatabase: dev.jdtech.jellyfin.database.ServerDatabaseDao
     @Inject lateinit var contentKeyManager: dev.jdtech.jellyfin.security.ContentKeyManager
+    @Inject lateinit var fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
@@ -403,6 +404,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                     viewModel = viewModel,
                     libassRenderer = libassRenderer,
                     isPipMode = isPipMode,
+                    fcastController = fcastController,
                     onBackClick = { finish() },
                     onSelectQuality = { bitrate ->
                         val itemId = viewModel.uiState.value.currentItemId?.let(UUID::fromString)
@@ -660,6 +662,7 @@ private fun BeamPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,
     isPipMode: Boolean,
+    fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController,
     onBackClick: () -> Unit,
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
@@ -722,9 +725,9 @@ private fun BeamPlayerScreen(
     val latestControlsVisible by rememberUpdatedState(controlsVisible)
     val speechSynthesizer = remember(context) { BeamSpeechSynthesizer(context.applicationContext) }
 
-    // FCast casting controller — survives dialog dismiss so an active cast keeps streaming when
-    // the user closes the picker. Disposed when the screen leaves composition.
-    val fcastCastingController = dev.jdtech.jellyfin.fcast.ui.rememberFCastCastingController()
+    // FCast casting controller — process-singleton so an active cast survives Activity rotation
+    // and any later launch through the global picker. Never call shutdown() here.
+    val fcastCastingController = fcastController
 
     val sessionController =
         remember(viewModel, player) {
@@ -758,6 +761,48 @@ private fun BeamPlayerScreen(
                 getAvailableSyncPlayGroups = { latestSyncPlayState.availableGroups },
                 setPassthroughEnabled = {},
                 getPassthroughEnabled = { false },
+                onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
+                    val item = player.currentMediaItem
+                    val cfg = item?.localConfiguration
+                    val url = cfg?.uri?.toString()
+                        ?: return@onCastToFCastReceiver "Nothing is playing to cast"
+                    val container = cfg.mimeType
+                        ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
+                        ?: "video/mp4"
+                    val title = viewModel.uiState.value.currentItemTitle
+                    val play = dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
+                        url = url,
+                        container = container,
+                        positionSeconds = (player.currentPosition.coerceAtLeast(0L)) / 1000.0,
+                        title = title,
+                    )
+                    val host = action.host
+                    val port = action.port
+                    val receiver = if (host != null && port != null) {
+                        dev.jdtech.jellyfin.fcast.sender.FCastReceiver(
+                            host = host,
+                            port = port,
+                            name = action.name ?: host,
+                        )
+                    } else {
+                        activeDialog = BeamPlayerDialog.Cast
+                        return@onCastToFCastReceiver "Open the cast picker to choose a receiver"
+                    }
+                    runCatching {
+                        player.pause()
+                        fcastCastingController.startCast(receiver, play)
+                    }.fold(
+                        onSuccess = { "Casting to ${receiver.name}" },
+                        onFailure = { "Cast failed: ${it.message ?: "unknown error"}" },
+                    )
+                },
+                onStopFCastCasting = {
+                    runCatching { fcastCastingController.stopCast() }
+                        .fold(
+                            onSuccess = { "Casting stopped" },
+                            onFailure = { "Stop failed: ${it.message ?: "unknown error"}" },
+                        )
+                },
             )
         }
 
@@ -1111,8 +1156,9 @@ private fun BeamPlayerScreen(
                 onDismiss = { activeDialog = null },
             )
         BeamPlayerDialog.Cast -> {
-            // The picker + casting controller live in :fcast. We own a controller per BeamPlayerScreen
-            // life so a long-running cast survives dialog dismiss.
+            // The picker + casting controller live in :fcast. The controller is the
+            // process-singleton, so a cast started here keeps streaming after the
+            // Activity exits.
             dev.jdtech.jellyfin.fcast.ui.FCastSenderHost(
                 visible = true,
                 buildPlayMessage = {
@@ -1123,6 +1169,8 @@ private fun BeamPlayerScreen(
                         cfg.mimeType
                             ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
                             ?: "video/mp4"
+                    // Pause-on-cast: stop the local decoder so the receiver takes over.
+                    player.pause()
                     dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
                         url = url,
                         container = container,

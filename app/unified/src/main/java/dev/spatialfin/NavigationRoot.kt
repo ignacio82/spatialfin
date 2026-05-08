@@ -39,6 +39,7 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -211,6 +212,8 @@ fun NavigationRoot(
     currentUser: User? = null,
     /** Active Jellyfin server base URL; combined with `currentUser` to build the avatar URL. */
     currentServerAddress: String? = null,
+    /** Process-singleton FCast session manager. Null on form factors that don't cast (TV). */
+    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -351,6 +354,20 @@ fun NavigationRoot(
                             user = currentUser,
                             serverAddress = currentServerAddress,
                             onClick = { navController.safeNavigate(UsersRoute) },
+                        )
+                    }
+                    if (fcastSession != null) {
+                        val pickedReceiver by fcastSession.pickedReceiver.collectAsState()
+                        NavigationRailItem(
+                            selected = pickedReceiver != null,
+                            onClick = { fcastSession.showPicker() },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(CoreR.drawable.ic_globe),
+                                    contentDescription = "Cast",
+                                )
+                            },
+                            label = { Text(text = "Cast") },
                         )
                     }
                     val (toggleLabel, toggleAction) = when (xrSpaceMode) {
@@ -718,6 +735,16 @@ fun NavigationRoot(
                 AboutScreen(navigateBack = { navController.safePopBackStack() })
             }
             }
+        }
+        if (fcastSession != null) {
+            dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
+            dev.spatialfin.fcast.session.FCastMiniController(
+                sessionManager = fcastSession,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 16.dp, end = 16.dp)
+                    .widthIn(max = 360.dp),
+            )
         }
     }
 }

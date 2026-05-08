@@ -150,6 +150,7 @@ fun BeamNavigationRoot(
     repository: JellyfinRepository,
     llmModelManager: LlmModelManager,
     voiceTelemetryStore: VoiceTelemetryStore,
+    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager,
     onReconnect: () -> Unit = {},
     onFinishApp: () -> Unit = {},
 ) {
@@ -213,15 +214,16 @@ fun BeamNavigationRoot(
         }
     }
 
-    val navigation = remember(context) {
+    val navigation = remember(context, fcastSession) {
         object : HomeVoiceNavigation {
             override fun launchItem(item: SpatialFinItem): Boolean {
-                val intent = BeamPlayerActivity.createIntentForSpatialItem(context, item)
-                if (intent != null &&
-                    runCatching { context.startActivity(intent) }.isSuccess
-                ) {
-                    return true
-                }
+                val routed = dev.spatialfin.fcast.session.launchPlayback(
+                    context = context,
+                    sessionManager = fcastSession,
+                    scope = coroutineScope,
+                    item = item,
+                ) { BeamPlayerActivity.createIntentForSpatialItem(context, item) }
+                if (routed) return true
                 // Non-playable (Show/Season/BoxSet) or playback couldn't start — jump to detail.
                 return when (item) {
                     is SpatialFinMovie -> {
@@ -410,12 +412,18 @@ fun BeamNavigationRoot(
                     }
                 },
                 bottomBar = {
-                    if (useBottomNav) {
-                        BeamBottomNavigationRow(
-                            currentRoute = currentRoute,
-                            isOfflineMode = state.isOfflineMode,
-                            onNavigate = { currentRoute = it },
+                    Column {
+                        dev.spatialfin.fcast.session.FCastMiniController(
+                            sessionManager = fcastSession,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )
+                        if (useBottomNav) {
+                            BeamBottomNavigationRow(
+                                currentRoute = currentRoute,
+                                isOfflineMode = state.isOfflineMode,
+                                onNavigate = { currentRoute = it },
+                            )
+                        }
                     }
                 },
             ) { innerPadding ->
@@ -778,6 +786,17 @@ fun BeamNavigationRoot(
             }
         }
     }
+            if (showPrimaryNavigation) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 12.dp, end = 16.dp),
+                ) {
+                    dev.spatialfin.fcast.session.FCastCastIconButton(
+                        sessionManager = fcastSession,
+                    )
+                }
+            }
             BeamVoiceFeedbackOverlay(
                 feedback = voiceController.voiceFeedback,
                 isListening = voiceState == VoiceState.LISTENING,
@@ -792,6 +811,7 @@ fun BeamNavigationRoot(
                 },
                 onDismiss = { voiceController.clearRecommendationContext() },
             )
+            dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
 }
 }
 }

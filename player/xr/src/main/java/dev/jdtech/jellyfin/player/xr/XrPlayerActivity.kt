@@ -53,6 +53,8 @@ class XrPlayerActivity : AppCompatActivity() {
 
     @Inject lateinit var voiceTelemetryStore: VoiceTelemetryStore
 
+    @Inject lateinit var fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController
+
     private val viewModel: PlayerViewModel by viewModels()
 
     private var xrSession: Session? = null
@@ -350,6 +352,7 @@ class XrPlayerActivity : AppCompatActivity() {
                             }
                         },
                         telemetryStore = voiceTelemetryStore,
+                        fcastController = fcastController,
                         onBackClick = { requestFinish("xr-player-back") }
                     )
                 } else {

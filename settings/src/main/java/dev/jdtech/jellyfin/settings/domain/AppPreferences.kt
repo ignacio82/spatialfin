@@ -119,6 +119,10 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // When an inbound FCast Play arrives in Home Space, request Full Space automatically. Off
     // means stay in the current space and let the user pick.
     val fcastReceiverAutopromote = Preference("pref_fcast_receiver_autopromote", true)
+    // Last receiver the user picked from the global cast picker. Stored as "host:port" so the
+    // picker can pre-select it on next open. Session-only by intent: we never auto-reconnect on
+    // cold start (would surprise users by routing playback to a TV in a different room).
+    val lastUsedFCastReceiverHostPort = Preference<String?>("pref_fcast_last_receiver", null)
 
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)

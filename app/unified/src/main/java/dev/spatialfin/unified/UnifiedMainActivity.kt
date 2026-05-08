@@ -136,6 +136,9 @@ class UnifiedMainActivity : AppCompatActivity() {
     @Inject
     lateinit var appLockManager: AppLockManager
 
+    @Inject
+    lateinit var fcastSession: dev.spatialfin.fcast.session.FCastSessionManager
+
     private val llmModelManager: LlmModelManager by lazy(LazyThreadSafetyMode.NONE) {
         modelManager.get()
     }
@@ -251,6 +254,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 repository = repository,
                                 llmModelManager = llmModelManager,
                                 voiceTelemetryStore = voiceTelemetryStore,
+                                fcastSession = fcastSession,
                                 onReconnect = viewModel::reconnect,
                                 onFinishApp = { finishAndRemoveTask() },
                             )
@@ -301,6 +305,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                         onReconnect = viewModel::reconnect,
                                         currentUser = state.currentUser,
                                         currentServerAddress = state.currentServerAddress,
+                                        fcastSession = fcastSession,
                                     )
                                 }
                             }
@@ -384,7 +389,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         val spaceUiState by spaceController.uiState.collectAsState()
 
         LaunchedEffect(session) {
-            spaceController.applyLaunchPreference()
+            spaceController.applyLaunchPreference(isCasting = { fcastSession.hasCastIntent() })
         }
 
         // Expose Full Space entry to the FCast receiver wiring so an inbound Play can autopromote
@@ -479,7 +484,8 @@ class UnifiedMainActivity : AppCompatActivity() {
         // Navigation surface the controller invokes when a parsed voice intent
         // resolves to a media item or a screen jump. Closure captures the latest
         // navController/context so per-call lookups stay current.
-        val navigation = remember(navController, context) {
+        val voiceCoroutineScope = rememberCoroutineScope()
+        val navigation = remember(navController, context, fcastSession) {
             object : HomeVoiceNavigation {
                 private fun navigateToItem(item: SpatialFinItem): Boolean {
                     if (navController.currentBackStackEntry?.lifecycle?.currentState !=
@@ -517,12 +523,13 @@ class UnifiedMainActivity : AppCompatActivity() {
                 }
 
                 override fun launchItem(item: SpatialFinItem): Boolean {
-                    val playbackIntent = XrPlayerActivity.createIntentForItem(context, item)
-                    if (playbackIntent != null) {
-                        if (runCatching { context.startActivity(playbackIntent) }.isSuccess) {
-                            return true
-                        }
-                    }
+                    val routed = dev.spatialfin.fcast.session.launchPlayback(
+                        context = context,
+                        sessionManager = fcastSession,
+                        scope = voiceCoroutineScope,
+                        item = item,
+                    ) { XrPlayerActivity.createIntentForItem(context, item) }
+                    if (routed) return true
                     return navigateToItem(item)
                 }
 
@@ -716,6 +723,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 onEnterFullSpace = onEnterFullSpace,
                 currentUser = state.currentUser,
                 currentServerAddress = state.currentServerAddress,
+                fcastSession = fcastSession,
             )
             VoiceControlOverlay(
                 state = voiceState,
@@ -866,6 +874,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 onEnterHomeSpace = onEnterHomeSpace,
                                 currentUser = state.currentUser,
                                 currentServerAddress = state.currentServerAddress,
+                                fcastSession = fcastSession,
                             )
                             VoiceControlOverlay(
                                 state = voiceState,

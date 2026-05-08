@@ -229,6 +229,7 @@ fun SpatialPlayerScreen(
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
     onLaunchSearchResult: (SpatialFinItem) -> Unit,
     telemetryStore: VoiceTelemetryStore,
+    fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController,
     onBackClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -611,9 +612,9 @@ fun SpatialPlayerScreen(
         lastReportedMovePose.value = targetPose
     }
 
-    // FCast casting controller — survives picker dismiss so an active cast keeps streaming when
-    // the user closes the dialog. Disposed when the screen leaves composition.
-    val fcastCastingController = dev.jdtech.jellyfin.fcast.ui.rememberFCastCastingController()
+    // FCast casting controller — process-singleton so an active cast keeps streaming across
+    // screen / Activity boundaries. We never call shutdown() here; that's process-scope only.
+    val fcastCastingController = fcastController
     val fcastCastingState by fcastCastingController.status.collectAsState()
 
     val sessionController =
@@ -668,6 +669,47 @@ fun SpatialPlayerScreen(
                     }
                 },
                 onResetScreenPlacement = ::resetScreenPlacementToDefault,
+                onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
+                    val item = player.currentMediaItem
+                    val cfg = item?.localConfiguration
+                    val url = cfg?.uri?.toString()
+                        ?: return@onCastToFCastReceiver "Nothing is playing to cast"
+                    val container = cfg.mimeType
+                        ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
+                        ?: "video/mp4"
+                    val play = dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
+                        url = url,
+                        container = container,
+                        positionSeconds = (player.currentPosition.coerceAtLeast(0L)) / 1000.0,
+                        title = uiState.currentItemTitle,
+                    )
+                    val host = action.host
+                    val port = action.port
+                    val receiver = if (host != null && port != null) {
+                        dev.jdtech.jellyfin.fcast.sender.FCastReceiver(
+                            host = host,
+                            port = port,
+                            name = action.name ?: host,
+                        )
+                    } else {
+                        activeDialog = "fcast"
+                        return@onCastToFCastReceiver "Open the cast picker to choose a receiver"
+                    }
+                    runCatching {
+                        player.pause()
+                        fcastCastingController.startCast(receiver, play)
+                    }.fold(
+                        onSuccess = { "Casting to ${receiver.name}" },
+                        onFailure = { "Cast failed: ${it.message ?: "unknown error"}" },
+                    )
+                },
+                onStopFCastCasting = {
+                    runCatching { fcastCastingController.stopCast() }
+                        .fold(
+                            onSuccess = { "Casting stopped" },
+                            onFailure = { "Stop failed: ${it.message ?: "unknown error"}" },
+                        )
+                },
             )
         }
 
@@ -1937,6 +1979,9 @@ fun SpatialPlayerScreen(
                                             )
                                         coroutineScope.launch {
                                             runCatching {
+                                                // Pause-on-cast: hand off to the receiver and stop
+                                                // burning the local decoder. Matches Google Cast UX.
+                                                player.pause()
                                                 fcastCastingController.startCast(receiver, play)
                                             }
                                         }

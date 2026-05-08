@@ -46,8 +46,18 @@ class XrSpaceController(
 
     val currentMode: XrSpaceMode get() = _uiState.value.mode
 
-    /** Read the launch preference and enter Full Space if configured and capable. */
-    fun applyLaunchPreference() {
+    /**
+     * Read the launch preference and enter Full Space if configured and capable.
+     *
+     * If [isCasting] reports an active FCast session, the guard short-circuits — there's nothing
+     * to render immersively while a remote receiver is doing the playback, and flipping into Full
+     * Space would just show the user a black void.
+     */
+    fun applyLaunchPreference(isCasting: () -> Boolean = { false }) {
+        if (isCasting()) {
+            Timber.d("XrSpaceController: skipping Full Space promotion — cast is active")
+            return
+        }
         val launchMode = appPreferences.getValue(appPreferences.xrLaunchMode)
         val lastUsed = appPreferences.getValue(appPreferences.xrLastUsedMode)
         val wantFull = when (launchMode) {

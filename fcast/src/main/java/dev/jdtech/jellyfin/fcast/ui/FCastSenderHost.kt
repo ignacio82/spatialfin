@@ -1,7 +1,6 @@
 package dev.jdtech.jellyfin.fcast.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,23 +12,11 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import timber.log.Timber
 
 /**
- * Drop-in host that wires together [FCastReceiverPickerDialog] and a screen-owned
- * [FCastCastingController]. Use it from any player surface as:
- *
- * ```kotlin
- * val controller = remember { FCastCastingController() }
- * FCastSenderHost(
- *     visible = showPicker,
- *     buildPlayMessage = { /* construct from current player state */ },
- *     controller = controller,
- *     onDismiss = { showPicker = false },
- * )
- * ```
- *
- * The host owns nothing about the surface's UI — it only renders the picker dialog when [visible]
- * and dispatches the picked receiver to the controller. The controller's lifecycle (shutdown on
- * dispose) is delegated back to the caller because the same controller may live longer than this
- * composable (e.g. across orbiter open/close).
+ * Drop-in host that wires together [FCastReceiverPickerDialog] and a caller-owned
+ * [FCastCastingController]. The host owns nothing about the surface's UI — it only renders the
+ * picker dialog when [visible] and dispatches the picked receiver to the controller. Lifecycle
+ * is the caller's: in SpatialFin the controller is a Hilt @Singleton, so callers pass it in via
+ * DI rather than creating one per-screen.
  */
 @Composable
 fun FCastSenderHost(
@@ -66,17 +53,4 @@ fun FCastSenderHost(
             }
         }
     }
-}
-
-/**
- * Disposable wrapper that calls [FCastCastingController.shutdown] when the composition leaves.
- * Use as `rememberFCastCastingController()` from a screen-level scope.
- */
-@Composable
-fun rememberFCastCastingController(): FCastCastingController {
-    val controller = remember { FCastCastingController() }
-    DisposableEffect(controller) {
-        onDispose { controller.shutdown() }
-    }
-    return controller
 }
