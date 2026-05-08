@@ -722,6 +722,10 @@ private fun BeamPlayerScreen(
     val latestControlsVisible by rememberUpdatedState(controlsVisible)
     val speechSynthesizer = remember(context) { BeamSpeechSynthesizer(context.applicationContext) }
 
+    // FCast casting controller — survives dialog dismiss so an active cast keeps streaming when
+    // the user closes the picker. Disposed when the screen leaves composition.
+    val fcastCastingController = dev.jdtech.jellyfin.fcast.ui.rememberFCastCastingController()
+
     val sessionController =
         remember(viewModel, player) {
             PlayerSessionController(
@@ -1106,6 +1110,31 @@ private fun BeamPlayerScreen(
                 onLeaveGroup = { viewModel.leaveSyncPlayGroup() },
                 onDismiss = { activeDialog = null },
             )
+        BeamPlayerDialog.Cast -> {
+            // The picker + casting controller live in :fcast. We own a controller per BeamPlayerScreen
+            // life so a long-running cast survives dialog dismiss.
+            dev.jdtech.jellyfin.fcast.ui.FCastSenderHost(
+                visible = true,
+                buildPlayMessage = {
+                    val item = player.currentMediaItem ?: return@FCastSenderHost null
+                    val cfg = item.localConfiguration ?: return@FCastSenderHost null
+                    val url = cfg.uri.toString()
+                    val container =
+                        cfg.mimeType
+                            ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
+                            ?: "video/mp4"
+                    dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
+                        url = url,
+                        container = container,
+                        positionSeconds = (player.currentPosition.coerceAtLeast(0L)) / 1000.0,
+                        title = uiState.currentItemTitle,
+                    )
+                },
+                controller = fcastCastingController,
+                onDismiss = { activeDialog = null },
+                onCastFailed = { reason -> voiceFeedback = "Cast failed: $reason" },
+            )
+        }
         null -> Unit
     }
 
@@ -1141,6 +1170,7 @@ private enum class BeamPlayerDialog {
     Quality,
     Source,
     SyncPlay,
+    Cast,
 }
 
 @Composable
@@ -1227,6 +1257,9 @@ private fun BeamControllerOverlay(
                         )
                     }
                 }
+            }
+            IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Cast) }) {
+                Icon(painterResource(CoreR.drawable.ic_tv), "Cast to FCast receiver", tint = Color.White)
             }
             IconButton(onClick = { onOpenDialog(BeamPlayerDialog.Audio) }) {
                 Icon(painterResource(CoreR.drawable.ic_speaker), "Audio", tint = Color.White)

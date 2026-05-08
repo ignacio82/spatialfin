@@ -611,6 +611,11 @@ fun SpatialPlayerScreen(
         lastReportedMovePose.value = targetPose
     }
 
+    // FCast casting controller — survives picker dismiss so an active cast keeps streaming when
+    // the user closes the dialog. Disposed when the screen leaves composition.
+    val fcastCastingController = dev.jdtech.jellyfin.fcast.ui.rememberFCastCastingController()
+    val fcastCastingState by fcastCastingController.status.collectAsState()
+
     val sessionController =
         remember(player, viewModel, activity) {
             PlayerSessionController(
@@ -1738,6 +1743,7 @@ fun SpatialPlayerScreen(
                                     resetAutoHide()
                                 },
                                 onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
+                                onFCastClick = { activeDialog = "fcast"; resetAutoHide() },
                                 onVoiceClick = {
                                     requestVoiceCommand()
                                     resetAutoHide()
@@ -1746,6 +1752,7 @@ fun SpatialPlayerScreen(
                                 voiceAvailable = voiceService.isAvailable(),
                                 voiceState = voiceState,
                                 syncPlayActive = syncPlayState.activeGroup != null,
+                                fcastActive = fcastCastingState == dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
                             )
                         }
                     }
@@ -1903,6 +1910,41 @@ fun SpatialPlayerScreen(
                                 people = uiState.currentPeople,
                                 onDismiss = { activeDialog = null },
                             )
+                        }
+                    }
+                    if (activeDialog == "fcast") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            Surface(shape = RoundedCornerShape(32.dp)) {
+                                dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet(
+                                    onReceiverPicked = { receiver ->
+                                        val item = player.currentMediaItem
+                                        val cfg = item?.localConfiguration
+                                        val url = cfg?.uri?.toString()
+                                        if (url == null) {
+                                            activeDialog = null
+                                            return@FCastReceiverPickerSheet
+                                        }
+                                        val container =
+                                            cfg.mimeType
+                                                ?: dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.guessContainer(url)
+                                                ?: "video/mp4"
+                                        val play =
+                                            dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder.build(
+                                                url = url,
+                                                container = container,
+                                                positionSeconds = (player.currentPosition.coerceAtLeast(0L)) / 1000.0,
+                                                title = uiState.currentItemTitle,
+                                            )
+                                        coroutineScope.launch {
+                                            runCatching {
+                                                fcastCastingController.startCast(receiver, play)
+                                            }
+                                        }
+                                        activeDialog = null
+                                    },
+                                    onDismiss = { activeDialog = null },
+                                )
+                            }
                         }
                     }
                     if (activeDialog == "syncplay") {

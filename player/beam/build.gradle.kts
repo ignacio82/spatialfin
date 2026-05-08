@@ -30,6 +30,7 @@ android {
 dependencies {
     // player:xr provides LibassRenderer, jniLibs, and (for app:unified) the XR voice classes
     api(projects.player.xr)
+    implementation(projects.fcast)
 
     implementation(libs.jellyfin.core)
     implementation(projects.core)

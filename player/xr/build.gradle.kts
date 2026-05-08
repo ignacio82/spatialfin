@@ -35,6 +35,7 @@ dependencies {
     implementation(projects.player.session)
     implementation(projects.data)
     implementation(projects.settings)
+    implementation(projects.fcast)
 
     // Android core
     implementation(libs.androidx.activity.compose)
