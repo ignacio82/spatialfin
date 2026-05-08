@@ -34,6 +34,15 @@ class PlayerSessionController(
     private val onAdjustScale: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
     private val onAdjustDistance: (delta: Float?, reset: Boolean) -> Unit = { _, _ -> },
     private val onResetScreenPlacement: () -> Unit = {},
+    /**
+     * Cast the current item to an FCast receiver. The screen wires this to the FCast subsystem
+     * (`:fcast` module) so the controller stays free of the FCast dependency. Returns user-facing
+     * feedback to surface in the voice/UI overlay.
+     */
+    private val onCastToFCastReceiver: suspend (XrPlayerAction.CastToFCastReceiver) -> String = {
+        "Casting is not configured"
+    },
+    private val onStopFCastCasting: suspend () -> String = { "Not casting" },
 ) {
     private var pendingSelection: PendingSelection? = null
 
@@ -232,6 +241,8 @@ class PlayerSessionController(
                 // papering over with a placeholder that the user would see as stuck.
                 throw IllegalStateException("ChatQuery must be handled upstream and not dispatched here")
             }
+            is XrPlayerAction.CastToFCastReceiver -> onCastToFCastReceiver(action)
+            is XrPlayerAction.StopFCastCasting -> onStopFCastCasting()
             is XrPlayerAction.Unrecognized -> {
                 "Sorry, I didn't understand: ${action.transcript}"
             }

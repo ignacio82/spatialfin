@@ -125,6 +125,16 @@
                 <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
             </intent-filter>
         </receiver>
+
+        <!-- Inbound FCast Activity. Launched by FCastReceiverService when an external sender pushes
+             a Play frame with a non-Jellyfin URL. Not exported — only the in-process receiver
+             service ever fires this Intent. -->
+        <activity
+            android:name="dev.spatialfin.fcast.FCastInboundPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
     </application>
 
 </manifest>

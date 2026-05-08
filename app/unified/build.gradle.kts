@@ -145,6 +145,7 @@ dependencies {
     // Shared modules
     implementation(project(":core"))
     implementation(project(":data"))
+    implementation(project(":fcast"))
     implementation(project(":settings"))
     implementation(project(":setup"))
     implementation(project(":modes:film"))
@@ -203,6 +204,7 @@ dependencies {
     // Navigation & paging
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
 

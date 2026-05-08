@@ -31,6 +31,7 @@ import dev.spatialfin.CompanionLogUploader
 import dev.spatialfin.DiagnosticsExport
 import dev.spatialfin.LogFileTree
 import dev.spatialfin.beam.BeamCompanionLogUploader
+import dev.spatialfin.fcast.FCastReceiverWiring
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import okio.Path.Companion.toOkioPath
@@ -88,6 +89,15 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             watchNextScheduler.schedulePeriodic(this)
         }
         DownloadIntegrityWorker.enqueue(WorkManager.getInstance(this))
+
+        // FCast: install the receiver router + start the foreground service if the user enabled
+        // it. The router is registered even when the service is off so that flipping the pref on
+        // later (without an app restart) wires up correctly the moment the service starts.
+        FCastReceiverWiring.installOnAppStart(
+            context = this,
+            prefs = appPreferences,
+            deviceClass = deviceClass,
+        )
     }
 
     private fun applyNightMode() {

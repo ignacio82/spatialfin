@@ -96,5 +96,20 @@ sealed interface XrPlayerAction {
 
     data class ChatQuery(val query: String) : XrPlayerAction
 
+    /**
+     * Cast the currently-playing item to an FCast receiver.
+     * - [name] is the receiver display name (mDNS instance name or user-configured alias).
+     *   When null the resolver should prompt for a picker.
+     * - [host] / [port] override discovery when supplied — used by manual-IP entry.
+     */
+    data class CastToFCastReceiver(
+        val name: String? = null,
+        val host: String? = null,
+        val port: Int? = null,
+    ) : XrPlayerAction
+
+    /** Stop casting and clean up the FCast sender connection. No-op if nothing is being cast. */
+    data object StopFCastCasting : XrPlayerAction
+
     data class Unrecognized(val transcript: String) : XrPlayerAction
 }

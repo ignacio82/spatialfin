@@ -111,6 +111,15 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val companionToken = Preference("pref_companion_token", "")
     val lastCompanionSyncTime = Preference("pref_last_companion_sync_time", 0L)
 
+    // FCast — sender (cast OUT to FCast receivers) defaults on; receiver (accept media INTO
+    // SpatialFin) defaults off because it requires a foreground service + persistent notification.
+    val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
+    val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
+    val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
+    // When an inbound FCast Play arrives in Home Space, request Full Space automatically. Off
+    // means stay in the current space and let the user pick.
+    val fcastReceiverAutopromote = Preference("pref_fcast_receiver_autopromote", true)
+
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)

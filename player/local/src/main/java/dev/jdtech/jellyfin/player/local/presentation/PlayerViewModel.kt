@@ -686,6 +686,52 @@ constructor(
         }
     }
 
+    /**
+     * Phase 3 of the FCast feature: play an arbitrary external HTTP/HLS/DASH stream that did
+     * **not** come from a Jellyfin item. Bypasses [JellyfinRepository] entirely — Media3 builds
+     * its source from the URL + MIME hint we pass.
+     *
+     * Headers and DRM are intentionally not threaded through here; the cast surface that calls
+     * this (FCast receiver, future Cast / share-sheet flows) deals in public LAN-or-internet URLs
+     * where headers are rarely meaningful. Add them when a real flow demands it.
+     */
+    fun playExternalStream(
+        url: String,
+        container: String?,
+        startPositionMs: Long = 0L,
+        title: String? = null,
+    ) {
+        player.removeListener(this)
+        player.addListener(this)
+        Timber.i("playExternalStream url=%s container=%s startMs=%d", url, container, startPositionMs)
+
+        // Drop any prior item bookkeeping — external streams have no Jellyfin item / next-prev queue.
+        items = mutableListOf()
+        currentMediaItemIndex = 0
+        currentMediaItemSegments = emptyList()
+
+        val mediaId = "fcast-external"
+        val builder = MediaItem.Builder()
+            .setMediaId(mediaId)
+            .setUri(url)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title ?: "External stream")
+                    .build(),
+            )
+        when {
+            container != null -> builder.setMimeType(container)
+            url.contains(".m3u8", ignoreCase = true) ->
+                builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+            url.contains(".mpd", ignoreCase = true) ->
+                builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD)
+        }
+
+        player.setMediaItem(builder.build(), startPositionMs.coerceAtLeast(0L))
+        player.prepare()
+        player.play()
+    }
+
     fun initializeNetworkPlayer(networkVideoId: String, startFromBeginning: Boolean) {
         player.removeListener(this)
         player.addListener(this)

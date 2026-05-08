@@ -118,6 +118,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 | `:player:tv` | TV-form-factor player (Leanback). |
 | `:modes:film` | Browse/detail screens for movies/shows/episodes/collections, search. |
 | `:data` | Jellyfin/TMDB/Seerr/OMDB API clients, Room DB, downloads, repositories, network shares (SMB/NFS), mDNS discovery. |
+| `:fcast` | FCast protocol sender + receiver. Pure-Kotlin codec (`FCastFrame` / `FCastMessage`), `FCastSenderClient`, `FCastCastingController`, mDNS discovery + advertiser, `FCastReceiverServer`, foreground `FCastReceiverService`, `FCastIngressRouter` + `ExternalStreamPlayer` extension points. No Jellyfin/Compose/Hilt deps so it stays JVM-testable. |
 | `:core` | Shared UI components, LLM model manager, download workers, sync workers. |
 | `:settings` | DataStore-based preferences (`AppPreferences`), voice telemetry, smart-language settings. |
 | `:setup` | Server onboarding, login, address selection. |
@@ -217,7 +218,15 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Continue Watching filter | `data/.../repository/ResumeFilter.kt` | pure object (`ResumeFilterTest`) |
 | Track signature ids | `player/local/.../presentation/PlayerTrackSignatures.kt` | pure object (`PlayerTrackSignaturesTest`) |
 | SMB/NFS bridge | `data/.../network/{Smb,Nfs}FileClient.kt`, `NetworkStreamProxy.kt` | clients + local HTTP proxy |
-| mDNS discovery | `data/.../network/NetworkDiscovery.kt` | discovery |
+| mDNS discovery (Jellyfin/SMB/NFS) | `data/.../network/NetworkDiscovery.kt` | discovery |
+| FCast wire codec | `fcast/.../protocol/FCastFrame.kt`, `FCastMessage.kt`, `FCastPayloads.kt` | pure framing + serializers |
+| FCast sender (cast out) | `fcast/.../sender/FCastSenderClient.kt`, `FCastCastingController.kt`, `PlayMessageBuilder.kt` | coroutine TCP client + lifecycle wrapper |
+| FCast discovery + advertise | `fcast/.../discovery/FCastDiscovery.kt`, `FCastReceiverAdvertiser.kt` | mDNS browse / register on `_fcast._tcp` |
+| FCast receiver (cast in) | `fcast/.../receiver/FCastReceiverServer.kt`, `FCastReceiverSession.kt`, `FCastReceiverService.kt` | foreground service + per-sender sessions |
+| FCast→player adapters | `fcast/.../receiver/FCastIngressRouter.kt`, `ExternalStream.kt` | router interface + `ExternalStreamPlayer` extension point for arbitrary-URL playback |
+| FCast inbound player Activity | `app/unified/.../fcast/FCastInboundPlayerActivity.kt` | 2D ExoPlayer Activity that plays whatever URL inbound FCast hands it. Avoids the SpatialPlayerScreen surgery for v1; immersive XR routing is a follow-up. |
+| FCast app wiring + autopromote | `app/unified/.../fcast/FCastReceiverWiring.kt` | builds the `ExternalStreamPlayer`, calls `XrSpaceController.enterFullSpace()` on inbound Play when `fcastReceiverAutopromote` is on, registers the router with `FCastReceiverService` from `UnifiedApplication.onCreate`. |
+| FCast picker UI | `fcast/.../ui/FCastReceiverPickerSheet.kt`, `FCastSenderHost.kt` | drop-in Compose receiver picker (mDNS browse + manual host:port) + sender-host that wraps a `FCastCastingController`. Player surfaces opt in via `FCastSenderHost(visible = ..., buildPlayMessage = ..., controller = ...)`. |
 | Downloads | `core/.../work/` workers + `data/.../downloads/DownloadStorageManager.kt` | WorkManager (prep → resumable → integrity sweep) |
 | Google TV Watch Next sync | `core/.../watchnext/WatchNextSync.kt` + `WatchNextScheduler.kt` + `core/.../work/WatchNextWorker.kt` | WorkManager + tvprovider |
 | Play deep link (`spatialfin://play`) | `core/.../deeplink/PlayDeepLink.kt` | shared URI build/parse |

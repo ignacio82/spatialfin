@@ -387,6 +387,16 @@ class UnifiedMainActivity : AppCompatActivity() {
             spaceController.applyLaunchPreference()
         }
 
+        // Expose Full Space entry to the FCast receiver wiring so an inbound Play can autopromote
+        // (when the pref allows) before launching the inbound player Activity. Cleared on dispose
+        // so a stale Activity reference can't fire after the user backgrounds the app.
+        DisposableEffect(spaceController) {
+            dev.spatialfin.fcast.FCastReceiverWiring.requestEnterFullSpace = {
+                spaceController.enterFullSpace()
+            }
+            onDispose { dev.spatialfin.fcast.FCastReceiverWiring.requestEnterFullSpace = null }
+        }
+
         // ------------------------------------------------------------------
         // Voice setup (shared across both space modes)
         // ------------------------------------------------------------------
