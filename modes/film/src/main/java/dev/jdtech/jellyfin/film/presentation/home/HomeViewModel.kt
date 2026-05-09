@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 @HiltViewModel
@@ -78,59 +79,80 @@ constructor(
         Timber.i("Loading data")
         viewModelScope.launch(Dispatchers.Default) {
             _state.emit(_state.value.copy(isLoading = true, error = null))
-            try {
-                appPreferences.getValue(appPreferences.currentServer)?.let { serverId ->
-                    loadServerName(serverId)
-                }
-
-                loadResumeItems()
-                loadNextUpItems()
-                if (connectionMonitor.shouldUseOfflineRepository()) {
-                    _state.update { it.copy(suggestionsSection = null, views = emptyList()) }
-                    loadOfflineLibrarySections()
-                    _state.emit(_state.value.copy(isLoading = false))
-                } else {
-                    loadSuggestions()
-                    // Resolve the main loading spinner as soon as the above-the-fold
-                    // content (resume / next-up / suggestions) is in. loadViews()
-                    // does N+1 API calls (one per library for latest media) and was
-                    // blocking first paint by 200-500ms on slow TV connections.
-                    _state.emit(_state.value.copy(isLoading = false))
-                    // Publish resume/next-up to Google TV's Watch Next row. No-op
-                    // on non-TV devices, so unconditional here is fine. Fire after
-                    // the sections are in _state so Watch Next mirrors what the
-                    // user just saw on the home screen.
-                    watchNextScheduler.syncNow(appContext)
-                    try {
-                        loadViews()
-                    } catch (e: Exception) {
-                        Timber.w(e, "loadViews failed after first paint")
+            // Watchdog: a wedged HTTP/2 connection pool can leave SDK calls
+            // looping through retries far longer than any single per-request
+            // timeout. Cap the entire load so the UI never gets stuck in an
+            // endless "Loading your room" state.
+            val completed = withTimeoutOrNull(LOAD_TIMEOUT_MS) {
+                try {
+                    appPreferences.getValue(appPreferences.currentServer)?.let { serverId ->
+                        loadServerName(serverId)
                     }
 
-                    if (!connectionMonitor.state.value.serverAccessible) {
+                    loadResumeItems()
+                    loadNextUpItems()
+                    if (connectionMonitor.shouldUseOfflineRepository()) {
+                        _state.update { it.copy(suggestionsSection = null, views = emptyList()) }
                         loadOfflineLibrarySections()
+                        _state.emit(_state.value.copy(isLoading = false))
                     } else {
-                        _state.update { it.copy(offlineLibrarySections = emptyList()) }
+                        loadSuggestions()
+                        // Resolve the main loading spinner as soon as the above-the-fold
+                        // content (resume / next-up / suggestions) is in. loadViews()
+                        // does N+1 API calls (one per library for latest media) and was
+                        // blocking first paint by 200-500ms on slow TV connections.
+                        _state.emit(_state.value.copy(isLoading = false))
+                        // Publish resume/next-up to Google TV's Watch Next row. No-op
+                        // on non-TV devices, so unconditional here is fine. Fire after
+                        // the sections are in _state so Watch Next mirrors what the
+                        // user just saw on the home screen.
+                        watchNextScheduler.syncNow(appContext)
+                        try {
+                            loadViews()
+                        } catch (e: Exception) {
+                            Timber.w(e, "loadViews failed after first paint")
+                        }
+
+                        if (!connectionMonitor.state.value.serverAccessible) {
+                            loadOfflineLibrarySections()
+                        } else {
+                            _state.update { it.copy(offlineLibrarySections = emptyList()) }
+                        }
                     }
+                } catch (e: Exception) {
+                    Timber.w(e, "loadData failed; attempting offline fallback")
+                    // Mark the server inaccessible if the failure looks network-shaped.
+                    // This ensures the status card surfaces a "Reconnect" affordance
+                    // even when the exception slipped past SmartJellyfinRepository's
+                    // own runWithFallback (e.g. unexpected exception types, partial
+                    // failures of the offline impl during a fallback).
+                    if (connectionMonitor.isConnectionFailure(e)) {
+                        connectionMonitor.markServerInaccessible()
+                    }
+                    // Always try to populate downloaded content. Without this, a
+                    // partial-failure online attempt leaves the home screen empty
+                    // even though we have local content the user could watch right
+                    // now. Wrapped in its own try/catch so a broken offline DB
+                    // doesn't mask the original error.
+                    runCatching { loadOfflineLibrarySections() }
+                        .onFailure { Timber.w(it, "offline fallback also failed") }
+                    _state.emit(_state.value.copy(error = e, isLoading = false))
                 }
-            } catch (e: Exception) {
-                Timber.w(e, "loadData failed; attempting offline fallback")
-                // Mark the server inaccessible if the failure looks network-shaped.
-                // This ensures the status card surfaces a "Reconnect" affordance
-                // even when the exception slipped past SmartJellyfinRepository's
-                // own runWithFallback (e.g. unexpected exception types, partial
-                // failures of the offline impl during a fallback).
-                if (connectionMonitor.isConnectionFailure(e)) {
-                    connectionMonitor.markServerInaccessible()
-                }
-                // Always try to populate downloaded content. Without this, a
-                // partial-failure online attempt leaves the home screen empty
-                // even though we have local content the user could watch right
-                // now. Wrapped in its own try/catch so a broken offline DB
-                // doesn't mask the original error.
+                Unit
+            }
+            if (completed == null) {
+                Timber.w("loadData watchdog tripped after %d ms; aborting load", LOAD_TIMEOUT_MS)
+                connectionMonitor.markServerInaccessible()
                 runCatching { loadOfflineLibrarySections() }
-                    .onFailure { Timber.w(it, "offline fallback also failed") }
-                _state.emit(_state.value.copy(error = e, isLoading = false))
+                    .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
+                _state.emit(
+                    _state.value.copy(
+                        error = java.util.concurrent.TimeoutException(
+                            "Server didn't respond. Pull to retry."
+                        ),
+                        isLoading = false,
+                    )
+                )
             }
         }
     }
@@ -269,7 +291,11 @@ constructor(
                     previousState.effectiveOfflineMode != connectionState.effectiveOfflineMode ||
                         (!previousState.serverAccessible && connectionState.serverAccessible)
                 previousState = connectionState
-                if (shouldReload) {
+                // Loop guard: if the probe is flapping while a previous load is
+                // still in flight, stacking another loadData() makes the home
+                // banner blink and races the offline fallback against itself.
+                // The outstanding load already covers the latest state.
+                if (shouldReload && !_state.value.isLoading) {
                     loadData()
                 }
             }
@@ -304,5 +330,13 @@ constructor(
             }
             else -> Unit
         }
+    }
+
+    private companion object {
+        // Generous upper bound for a full home load (resume + next-up +
+        // suggestions + N library "latest" calls). Sized well above any
+        // legitimate slow LAN load yet small enough that a wedged HTTP/2
+        // pool is unstuck in under two minutes without user intervention.
+        const val LOAD_TIMEOUT_MS = 90_000L
     }
 }

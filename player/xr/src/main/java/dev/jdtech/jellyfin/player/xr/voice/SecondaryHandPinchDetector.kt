@@ -3,8 +3,8 @@ package dev.jdtech.jellyfin.player.xr.voice
 import android.app.Activity
 import androidx.xr.arcore.Hand
 import androidx.xr.arcore.HandJointType
+import androidx.xr.arcore.TrackingState
 import androidx.xr.runtime.Session
-import androidx.xr.runtime.TrackingState
 import androidx.xr.runtime.math.Vector3
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -361,19 +361,19 @@ class SecondaryHandPinchDetector(
         fun joint(type: HandJointType): Vector3? = handState.handJoints[type]?.translation
 
         return HandMetrics(
-            wrist = joint(HandJointType.HAND_JOINT_TYPE_WRIST) ?: return null,
-            palm = joint(HandJointType.HAND_JOINT_TYPE_PALM) ?: return null,
-            thumbTip = joint(HandJointType.HAND_JOINT_TYPE_THUMB_TIP) ?: return null,
-            thumbProximal = joint(HandJointType.HAND_JOINT_TYPE_THUMB_PROXIMAL) ?: return null,
-            indexTip = joint(HandJointType.HAND_JOINT_TYPE_INDEX_TIP) ?: return null,
-            indexProximal = joint(HandJointType.HAND_JOINT_TYPE_INDEX_PROXIMAL) ?: return null,
-            indexMetacarpal = joint(HandJointType.HAND_JOINT_TYPE_INDEX_METACARPAL) ?: return null,
-            middleTip = joint(HandJointType.HAND_JOINT_TYPE_MIDDLE_TIP) ?: return null,
-            middleProximal = joint(HandJointType.HAND_JOINT_TYPE_MIDDLE_PROXIMAL) ?: return null,
-            ringTip = joint(HandJointType.HAND_JOINT_TYPE_RING_TIP) ?: return null,
-            ringProximal = joint(HandJointType.HAND_JOINT_TYPE_RING_PROXIMAL) ?: return null,
-            littleTip = joint(HandJointType.HAND_JOINT_TYPE_LITTLE_TIP) ?: return null,
-            littleProximal = joint(HandJointType.HAND_JOINT_TYPE_LITTLE_PROXIMAL) ?: return null,
+            wrist = joint(HandJointType.WRIST) ?: return null,
+            palm = joint(HandJointType.PALM) ?: return null,
+            thumbTip = joint(HandJointType.THUMB_TIP) ?: return null,
+            thumbProximal = joint(HandJointType.THUMB_PROXIMAL) ?: return null,
+            indexTip = joint(HandJointType.INDEX_TIP) ?: return null,
+            indexProximal = joint(HandJointType.INDEX_PROXIMAL) ?: return null,
+            indexMetacarpal = joint(HandJointType.INDEX_METACARPAL) ?: return null,
+            middleTip = joint(HandJointType.MIDDLE_TIP) ?: return null,
+            middleProximal = joint(HandJointType.MIDDLE_PROXIMAL) ?: return null,
+            ringTip = joint(HandJointType.RING_TIP) ?: return null,
+            ringProximal = joint(HandJointType.RING_PROXIMAL) ?: return null,
+            littleTip = joint(HandJointType.LITTLE_TIP) ?: return null,
+            littleProximal = joint(HandJointType.LITTLE_PROXIMAL) ?: return null,
         )
     }
 

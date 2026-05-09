@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +19,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +27,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +36,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -47,8 +56,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import dagger.hilt.android.EntryPointAccessors
@@ -87,28 +94,41 @@ internal val TV_SETTINGS_CATEGORIES = listOf(
  * Each row re-uses the same preference keys as Beam / main Settings so state
  * round-trips correctly through AppPreferences.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun TvSettingsPreferences(
     appPreferences: AppPreferences,
     modifier: Modifier = Modifier,
 ) {
     var selectedCategoryKey by rememberSaveable { mutableStateOf(TV_SETTINGS_CATEGORIES.first().key) }
+    val firstTileFocus = remember { FocusRequester() }
 
     Row(
-        modifier = modifier.fillMaxWidth().heightIn(min = 420.dp, max = 640.dp),
+        // Cap kept tight enough that the LazyColumn always has a viewport to
+        // scroll within; focusRestorer() drives DPAD focus traversal, the
+        // LazyColumn itself drives the bring-into-view scroll.
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 420.dp, max = 640.dp)
+            .focusGroup()
+            .focusRestorer { firstTileFocus },
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        // Left pane: category list
+        // Left pane: category list. focusRestorer() is the same pattern used
+        // by the TV shelves in TvNavigationRoot — it keeps DPAD_DOWN/UP
+        // traversing items inside the list and triggers the LazyColumn's
+        // bring-into-view scroll.
         LazyColumn(
-            modifier = Modifier.width(280.dp),
+            modifier = Modifier.width(280.dp).focusRestorer(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(TV_SETTINGS_CATEGORIES, key = { it.key }) { cat ->
+            itemsIndexed(TV_SETTINGS_CATEGORIES, key = { _, cat -> cat.key }) { index, cat ->
                 TvSettingsCategoryTile(
                     title = cat.title,
                     subtitle = cat.subtitle,
                     selected = selectedCategoryKey == cat.key,
                     onSelect = { selectedCategoryKey = cat.key },
+                    modifier = if (index == 0) Modifier.focusRequester(firstTileFocus) else Modifier,
                 )
             }
         }
@@ -138,7 +158,13 @@ internal fun TvSettingsPreferences(
 }
 
 @Composable
-private fun TvSettingsCategoryTile(title: String, subtitle: String, selected: Boolean, onSelect: () -> Unit) {
+private fun TvSettingsCategoryTile(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var focused by remember { mutableStateOf(false) }
     val borderColor = when {
         focused -> MaterialTheme.colorScheme.primary
@@ -150,17 +176,23 @@ private fun TvSettingsCategoryTile(title: String, subtitle: String, selected: Bo
         selected -> Color.White.copy(alpha = 0.08f)
         else -> Color.Transparent
     }
-    Card(
-        onClick = onSelect,
-        modifier = Modifier
+    // Foundation Box + clickable() — TV-material3 Card.onClick was not
+    // exposing the tile as focusable to the spatial focus search, so
+    // DPAD_DOWN from the focused first tile would skip every subsequent
+    // tile and land on the right-pane switches. The explicit clickable()
+    // chain integrates cleanly with the LazyColumn's focus traversal and
+    // bring-into-view behavior.
+    Box(
+        modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
-            .border(2.dp, borderColor, RoundedCornerShape(16.dp)),
-        colors = CardDefaults.colors(
-            containerColor = bg,
-            focusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
-        ),
-        shape = CardDefaults.shape(RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(2.dp, borderColor, RoundedCornerShape(16.dp))
+            .onFocusChanged { 
+                focused = it.isFocused 
+                if (it.isFocused) onSelect()
+            }
+            .clickable(onClick = onSelect),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
