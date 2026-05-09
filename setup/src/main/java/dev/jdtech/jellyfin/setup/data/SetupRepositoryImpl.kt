@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.ServerWithAddresses
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.models.User
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.setup.R as SetupR
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
@@ -31,6 +32,7 @@ class SetupRepositoryImpl(
     private val jellyfinApi: JellyfinApi,
     private val database: ServerDatabaseDao,
     private val appPreferences: AppPreferences,
+    private val activeSessionBus: ActiveSessionBus,
 ) : SetupRepository {
     override fun discoverServers(): Flow<ServerDiscoveryInfo> {
         return jellyfinApi.jellyfin.discovery.discoverLocalServers()
@@ -74,6 +76,7 @@ class SetupRepositoryImpl(
             api.update(baseUrl = serverAddress.address, accessToken = user?.accessToken)
             userId = user?.id
         }
+        activeSessionBus.notifyChanged()
     }
 
     override suspend fun addServer(address: String): Server {
@@ -182,6 +185,7 @@ class SetupRepositoryImpl(
         jellyfinApi.apply {
             api.update(baseUrl = recommendedServerInfo.address, accessToken = null)
         }
+        activeSessionBus.notifyChanged()
 
         return server
     }
@@ -260,6 +264,7 @@ class SetupRepositoryImpl(
             api.update(accessToken = authenticationResult.accessToken)
             userId = authenticationResult.user?.id
         }
+        activeSessionBus.notifyChanged()
     }
 
     override suspend fun getUsers(serverId: String): List<User> {
@@ -298,6 +303,7 @@ class SetupRepositoryImpl(
             api.update(accessToken = user.accessToken)
             this.userId = user.id
         }
+        activeSessionBus.notifyChanged()
     }
 
     override suspend fun setCurrentAddress(addressId: UUID) {
@@ -309,5 +315,6 @@ class SetupRepositoryImpl(
         server.currentServerAddressId = address.id
         database.update(server)
         jellyfinApi.apply { api.update(baseUrl = address.address) }
+        activeSessionBus.notifyChanged()
     }
 }

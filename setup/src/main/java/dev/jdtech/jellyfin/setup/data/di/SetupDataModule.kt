@@ -6,6 +6,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.setup.data.SetupRepositoryImpl
 import dev.jdtech.jellyfin.setup.domain.SetupRepository
@@ -20,11 +21,13 @@ object SetupDataModule {
         jellyfinApi: JellyfinApi,
         serverDatabase: ServerDatabaseDao,
         appPreferences: AppPreferences,
+        activeSessionBus: ActiveSessionBus,
     ): SetupRepository {
         return SetupRepositoryImpl(
             jellyfinApi = jellyfinApi,
             database = serverDatabase,
             appPreferences = appPreferences,
+            activeSessionBus = activeSessionBus,
         )
     }
 }

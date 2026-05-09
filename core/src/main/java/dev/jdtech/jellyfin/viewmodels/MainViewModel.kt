@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,7 @@ constructor(
     private val appPreferences: AppPreferences,
     private val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
+    private val activeSessionBus: ActiveSessionBus,
 ) :
     ViewModel() {
     private val _state = MutableStateFlow(MainState())
@@ -38,6 +40,7 @@ constructor(
     init {
         check()
         observeOfflineState()
+        observeSessionChanges()
     }
 
     private fun check() {
@@ -74,6 +77,12 @@ constructor(
                     it.copy(isOfflineMode = connectionState.effectiveOfflineMode)
                 }
             }
+        }
+    }
+
+    private fun observeSessionChanges() {
+        viewModelScope.launch {
+            activeSessionBus.events.collect { check() }
         }
     }
 

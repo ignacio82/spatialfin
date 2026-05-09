@@ -17,6 +17,7 @@ import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
 import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.toView
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
@@ -41,6 +42,7 @@ constructor(
     private val connectionMonitor: ServerConnectionMonitor,
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
     private val watchNextScheduler: WatchNextScheduler,
+    private val activeSessionBus: ActiveSessionBus,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
@@ -72,6 +74,7 @@ constructor(
         observeConnectionState()
         observeSyncStatus()
         observeRealtimeEvents()
+        observeSessionChanges()
     }
 
     fun loadData() {
@@ -319,6 +322,16 @@ constructor(
                         loadData()
                     }
                 }
+        }
+    }
+
+    private fun observeSessionChanges() {
+        viewModelScope.launch {
+            // Active user/server changed under us. Reload only if we've shown
+            // home at least once — otherwise the screen's own LaunchedEffect
+            // will do the first load with the new credentials. Reloading
+            // eagerly here would race onboarding (no userId yet → NPE).
+            activeSessionBus.events.collect { if (hasLoadedData) loadData() }
         }
     }
 
