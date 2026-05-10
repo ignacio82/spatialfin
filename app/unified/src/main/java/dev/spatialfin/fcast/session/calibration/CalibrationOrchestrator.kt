@@ -1,5 +1,10 @@
 package dev.spatialfin.fcast.session.calibration
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
@@ -48,6 +53,7 @@ import timber.log.Timber
  */
 @Singleton
 class CalibrationOrchestrator @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val castingController: FCastCastingController,
     private val rememberedReceiversStore: RememberedReceiversStore,
 ) {
@@ -73,6 +79,14 @@ class CalibrationOrchestrator @Inject constructor(
      * to the user as a "no microphone available" message.
      */
     suspend fun calibrate(receiver: FCastReceiver): Result = coroutineScope {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED) {
+            return@coroutineScope Result.Failure(
+                "Microphone permission is required to calibrate audio sync. Grant the " +
+                    "RECORD_AUDIO permission in System Settings and try again.",
+            )
+        }
+
         val wavBytes = WavWriter.toByteArray(
             ChirpGenerator.generatePcm(),
             ChirpGenerator.SAMPLE_RATE_HZ,
