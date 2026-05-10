@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,8 +31,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
-import dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet
 import kotlinx.coroutines.launch
 
 /**
@@ -93,7 +94,8 @@ fun FCastGlobalPickerHost(
         dismissButton = {},
         title = null,
         text = {
-            FCastReceiverPickerSheet(
+            FCastSessionPickerSheet(
+                sessionManager = sessionManager,
                 onReceiverPicked = { receiver ->
                     sessionManager.pickReceiver(receiver)
                     sessionManager.hidePicker()
@@ -118,8 +120,12 @@ fun FCastMiniController(
 ) {
     val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
     val status by sessionManager.status.collectAsState()
+    val remoteState by sessionManager.remoteState.collectAsState()
     val receiver = pickedReceiver ?: return
     val scope = rememberCoroutineScope()
+
+    val isPlaying = remoteState?.playbackState == PlaybackState.Playing
+    val controlsEnabled = status == FCastCastingController.Status.Casting
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -127,39 +133,120 @@ fun FCastMiniController(
         tonalElevation = 4.dp,
         shape = RoundedCornerShape(16.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
-            Icon(
-                painter = painterResource(CoreR.drawable.ic_cast),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(12.dp))
-            androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = when (status) {
-                        FCastCastingController.Status.Casting -> "Casting to ${receiver.name}"
-                        FCastCastingController.Status.Connecting -> "Connecting to ${receiver.name}…"
-                        FCastCastingController.Status.Failed -> "Cast failed — ${receiver.name}"
-                        FCastCastingController.Status.Idle -> "Ready to cast to ${receiver.name}"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = "${receiver.host}:${receiver.port}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = { scope.launch { sessionManager.stopCast() } }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    painter = painterResource(CoreR.drawable.ic_x),
-                    contentDescription = "Stop casting",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    painter = painterResource(CoreR.drawable.ic_cast),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(12.dp))
+                androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when (status) {
+                            FCastCastingController.Status.Casting -> "Casting to ${receiver.name}"
+                            FCastCastingController.Status.Connecting -> "Connecting to ${receiver.name}…"
+                            FCastCastingController.Status.Failed -> "Cast failed — ${receiver.name}"
+                            FCastCastingController.Status.Idle -> "Ready to cast to ${receiver.name}"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "${receiver.host}:${receiver.port}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { scope.launch { sessionManager.stopCast() } }) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_x),
+                        contentDescription = "Stop casting",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = { scope.launch { sessionManager.seekBy(-10.0) } },
+                    enabled = controlsEnabled,
+                ) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_skip_back),
+                        contentDescription = "Skip back 10 seconds",
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            if (isPlaying) sessionManager.pause() else sessionManager.resume()
+                        }
+                    },
+                    enabled = controlsEnabled,
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play,
+                        ),
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                    )
+                }
+                IconButton(
+                    onClick = { scope.launch { sessionManager.seekBy(10.0) } },
+                    enabled = controlsEnabled,
+                ) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_skip_forward),
+                        contentDescription = "Skip forward 10 seconds",
+                    )
+                }
+            }
+            // Volume row — slider gives the visual feedback the bare ±buttons lacked. The
+            // ±icons stay because they're easier to tap than a 4dp slider thumb on phones.
+            val currentVolume by sessionManager.currentVolume.collectAsState()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = { scope.launch { sessionManager.adjustVolume(-0.1) } },
+                    enabled = controlsEnabled,
+                ) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_volume_0),
+                        contentDescription = "Volume down",
+                    )
+                }
+                androidx.compose.material3.Slider(
+                    value = currentVolume.toFloat(),
+                    onValueChange = { v ->
+                        scope.launch { sessionManager.setVolume(v.toDouble()) }
+                    },
+                    valueRange = 0f..1f,
+                    enabled = controlsEnabled,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = { scope.launch { sessionManager.adjustVolume(0.1) } },
+                    enabled = controlsEnabled,
+                ) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_volume),
+                        contentDescription = "Volume up",
+                    )
+                }
+                Text(
+                    text = "${(currentVolume * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp),
                 )
             }
         }

@@ -36,7 +36,12 @@ class FCastDiscovery(private val context: Context) {
                 }
                 jmdns = JmDNS.create(bindAddress)
                 val services = jmdns.list(FCAST_MDNS_SERVICE_TYPE, timeoutMs)
+                // Filter out *this* device — every SpatialFin install is also a receiver, so
+                // the local mDNS responder shows up in our own scan. Picking yourself opens
+                // a sender → loopback → receiver path that can't actually play anything.
+                val localIps = localIpAddresses()
                 services.mapNotNull(::toReceiver)
+                    .filterNot { it.host in localIps }
                     .distinctBy { "${it.host}:${it.port}" }
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "FCast browse failed")
@@ -46,6 +51,21 @@ class FCastDiscovery(private val context: Context) {
                 try { multicastLock?.release() } catch (_: Exception) {}
             }
         }
+
+    private fun localIpAddresses(): Set<String> {
+        val out = mutableSetOf<String>()
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return out
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    addresses.nextElement().hostAddress?.let { out.add(it) }
+                }
+            }
+        } catch (_: Exception) {}
+        return out
+    }
 
     private fun toReceiver(info: ServiceInfo): FCastReceiver? {
         val host = info.resolveHostAddress() ?: return null

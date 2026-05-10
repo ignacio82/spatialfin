@@ -6,7 +6,9 @@ import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
+import dev.jdtech.jellyfin.fcast.sender.PickerEntry
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
+import dev.jdtech.jellyfin.fcast.sender.probeFCastReceiver
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -21,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -53,6 +56,7 @@ class FCastSessionManager @Inject constructor(
     private val controller: FCastCastingController,
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
+    private val rememberedReceiversStore: RememberedReceiversStore,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -85,6 +89,20 @@ class FCastSessionManager @Inject constructor(
     private var lastDiscoveryAtMs: Long = 0L
     private var inflightDiscovery: Job? = null
 
+    /**
+     * The picker reads this to render the unified list — remembered receivers up front (with
+     * Probing → Online/Offline state) plus anything the in-flight mDNS scan adds. Updated by
+     * [showPicker].
+     */
+    private val _pickerEntries = MutableStateFlow<List<PickerEntry>>(emptyList())
+    val pickerEntries: StateFlow<List<PickerEntry>> = _pickerEntries.asStateFlow()
+
+    /** True while an mDNS scan is in flight from [showPicker]. */
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private var pickerJob: Job? = null
+
     /** True iff there is a chosen receiver — connection or not. */
     fun hasCastIntent(): Boolean = _pickedReceiver.value != null
 
@@ -94,12 +112,116 @@ class FCastSessionManager @Inject constructor(
 
     fun showPicker() {
         _pickerVisible.value = true
-        // Pre-warm cache on open if it's stale; the picker will also kick its own scan.
-        scope.launch { refreshReceivers(maxAgeMs = DISCOVERY_FRESH_MS) }
+        pickerJob?.cancel()
+        pickerJob = scope.launch { driveDiscoveryAndProbing() }
     }
 
     fun hidePicker() {
         _pickerVisible.value = false
+        pickerJob?.cancel()
+        pickerJob = null
+    }
+
+    /**
+     * Forget a remembered receiver. UI exposes this via long-press / swipe. The picker drops
+     * the entry from its current view immediately and the store stops surfacing it next open.
+     */
+    fun forgetReceiver(host: String, port: Int) {
+        scope.launch {
+            rememberedReceiversStore.forget(host, port)
+            _pickerEntries.update { entries ->
+                entries.filterNot { it.receiver.host == host && it.receiver.port == port }
+            }
+        }
+    }
+
+    /**
+     * Show remembered receivers immediately, probe each in parallel, and run an mDNS scan in
+     * parallel. Each completion path updates [_pickerEntries] in place — so the user sees
+     * known names instantly and the status badges flip from Probing to Online/Offline as
+     * results arrive without forcing the user to wait for the full 1.5–4s mDNS round-trip.
+     */
+    private suspend fun driveDiscoveryAndProbing() {
+        val remembered = rememberedReceiversStore.load()
+        // Snapshot remembered as Probing so the user sees them immediately.
+        _pickerEntries.value = remembered.map { r ->
+            PickerEntry(
+                receiver = FCastReceiver(
+                    host = r.host,
+                    port = r.port,
+                    name = r.name,
+                    source = FCastReceiver.Source.Manual,
+                ),
+                state = PickerEntry.State.Probing,
+                lastSeenMs = r.lastSeenMs,
+            )
+        }
+        _isScanning.value = true
+
+        // Probe each remembered entry in its own coroutine so a slow / dead host doesn't block
+        // the others. Each updates its row when it completes.
+        val probeJobs = remembered.map { r ->
+            scope.launch {
+                val online = probeFCastReceiver(r.host, r.port)
+                _pickerEntries.update { entries ->
+                    entries.map { e ->
+                        if (e.receiver.host == r.host && e.receiver.port == r.port) {
+                            e.copy(
+                                state = if (online) PickerEntry.State.Online
+                                else PickerEntry.State.Offline,
+                                lastSeenMs = if (online) System.currentTimeMillis() else e.lastSeenMs,
+                            )
+                        } else e
+                    }
+                }
+                if (online) {
+                    rememberedReceiversStore.upsert(
+                        FCastReceiver(host = r.host, port = r.port, name = r.name),
+                    )
+                }
+            }
+        }
+
+        // mDNS scan in parallel. Successful results override probe outcomes (mDNS proves
+        // online with the up-to-date display name) and add never-before-seen receivers.
+        val scanJob = scope.launch {
+            val discovery = FCastDiscovery(appContext)
+            val found = runCatching { discovery.browse(DISCOVERY_QUICK_MS) }
+                .getOrDefault(emptyList())
+            val now = System.currentTimeMillis()
+            _cachedReceivers.value = found
+            lastDiscoveryAtMs = now
+            if (found.isEmpty()) return@launch
+
+            // Persist freshly-seen receivers.
+            found.forEach { rememberedReceiversStore.upsert(it, now) }
+
+            _pickerEntries.update { entries ->
+                val byKey = entries.associateBy { "${it.receiver.host}:${it.receiver.port}" }.toMutableMap()
+                found.forEach { rec ->
+                    val key = "${rec.host}:${rec.port}"
+                    byKey[key] = PickerEntry(
+                        receiver = rec,
+                        state = PickerEntry.State.Online,
+                        lastSeenMs = now,
+                    )
+                }
+                byKey.values.sortedWith(
+                    // Online first, then Probing, then Offline. Within a bucket, freshest first.
+                    compareBy<PickerEntry> {
+                        when (it.state) {
+                            PickerEntry.State.Online -> 0
+                            PickerEntry.State.Probing -> 1
+                            PickerEntry.State.Offline -> 2
+                        }
+                    }.thenByDescending { it.lastSeenMs ?: 0L },
+                )
+            }
+        }
+
+        scanJob.join()
+        probeJobs.forEach { it.join() }
+        _isScanning.value = false
     }
 
     /**
@@ -133,6 +255,9 @@ class FCastSessionManager @Inject constructor(
             appPreferences.lastUsedFCastReceiverHostPort,
             "${receiver.host}:${receiver.port}",
         )
+        // Manual host:port entries also get remembered so the next picker open shows them
+        // up front without re-typing.
+        scope.launch { rememberedReceiversStore.upsert(receiver) }
     }
 
     /** Pre-select hint for the picker — host:port string of the last user pick, if any. */
@@ -201,6 +326,37 @@ class FCastSessionManager @Inject constructor(
     suspend fun pause() = controller.pause()
     suspend fun resume() = controller.resume()
     suspend fun seek(seconds: Double) = controller.seek(seconds)
+
+    /**
+     * Seek by a relative offset, computed against the last known [remoteState] time. Skips on
+     * the receiver's clock — accurate to the most recent PlaybackUpdate we got. No-op if we
+     * don't have a known time yet (the receiver hasn't pushed its first update).
+     */
+    suspend fun seekBy(deltaSeconds: Double) {
+        val currentTime = remoteState.value?.time ?: return
+        controller.seek((currentTime + deltaSeconds).coerceAtLeast(0.0))
+    }
+
+    /**
+     * Local intent for what the FCast/ExoPlayer gain should be, 0.0–1.0. We keep a local
+     * StateFlow because the spec's VolumeUpdate echo isn't reliably emitted across all receiver
+     * implementations. The user nudges this with [adjustVolume]; the receiver's *system* volume
+     * (TV remote) is independent and unaffected.
+     */
+    private val _currentVolume = MutableStateFlow(1.0)
+    val currentVolume: StateFlow<Double> = _currentVolume.asStateFlow()
+
+    /** Set absolute FCast/ExoPlayer gain on the receiver. Clamped to 0.0–1.0. */
+    suspend fun setVolume(volume: Double) {
+        val clamped = volume.coerceIn(0.0, 1.0)
+        _currentVolume.value = clamped
+        controller.setVolume(clamped)
+    }
+
+    /** Bump volume by [delta] (e.g. ±0.1). */
+    suspend fun adjustVolume(delta: Double) = setVolume(_currentVolume.value + delta)
+
+    suspend fun setSpeed(speed: Double) = controller.setSpeed(speed)
 
     /** Tear down the connection AND clear the picked-receiver intent. Idempotent. */
     suspend fun stopCast() {

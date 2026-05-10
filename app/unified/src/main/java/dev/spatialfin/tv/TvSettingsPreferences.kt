@@ -85,6 +85,7 @@ internal val TV_SETTINGS_CATEGORIES = listOf(
     TvSettingsCategoryDef("seerr", "Jellyseerr", "Request integration"),
     TvSettingsCategoryDef("network", "Network", "Metadata keys & timeouts"),
     TvSettingsCategoryDef("cache", "Cache", "Image cache & size"),
+    TvSettingsCategoryDef("cast", "Cast", "Receiver name & enabled"),
     TvSettingsCategoryDef("diagnostics", "Diagnostics", "Logs & telemetry"),
 )
 
@@ -151,6 +152,7 @@ internal fun TvSettingsPreferences(
                 "seerr" -> TvSeerrPrefs(appPreferences)
                 "network" -> TvNetworkPrefs(appPreferences)
                 "cache" -> TvCachePrefs(appPreferences)
+                "cast" -> TvCastPrefs(appPreferences)
                 "diagnostics" -> TvDiagnosticsPrefs(appPreferences)
             }
         }
@@ -841,4 +843,48 @@ private fun TvCachePrefs(appPreferences: AppPreferences) {
             appPreferences.setValue(appPreferences.imageCacheSize, v)
         },
     )
+}
+
+@Composable
+private fun TvCastPrefs(appPreferences: AppPreferences) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    TvPrefSectionTitle("Cast")
+    var enabled by rememberSaveable {
+        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
+    }
+    var name by rememberSaveable {
+        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.resolveDisplayName(appPreferences))
+    }
+    var dirty by rememberSaveable { mutableStateOf(false) }
+
+    TvPrefSwitchRow(
+        title = "Receive casts on this TV",
+        checked = enabled,
+        onCheckedChange = {
+            enabled = it
+            appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
+            dirty = true
+        },
+    )
+    TvPrefTextField(
+        title = "Receiver name",
+        value = name,
+        label = "Shown to other devices on the network",
+        onValueChange = {
+            name = it
+            appPreferences.setValue(appPreferences.fcastReceiverDisplayName, it)
+            dirty = true
+        },
+    )
+    androidx.compose.material3.Button(
+        onClick = {
+            dev.spatialfin.fcast.FCastReceiverWiring.applyReceiverConfig(context, appPreferences)
+            dirty = false
+        },
+        enabled = dirty,
+    ) {
+        androidx.compose.material3.Text(
+            if (dirty) "Apply (re-advertise)" else "Up to date",
+        )
+    }
 }

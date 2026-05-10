@@ -186,6 +186,12 @@ internal val BEAM_SETTINGS_CATEGORIES = listOf(
         "companion connect device pair",
     ),
     BeamSettingsCategoryDef(
+        "cast",
+        "Cast",
+        "Receiver name & enabled state",
+        "cast fcast receiver chromecast name display advertise",
+    ),
+    BeamSettingsCategoryDef(
         "diagnostics",
         "Diagnostics",
         "Logs and telemetry",
@@ -990,6 +996,11 @@ fun BeamSettingsScreen(
                 }
             }
         }
+        if (shouldShow("cast")) {
+            item {
+                BeamCastSettingsSection(appPreferences = appPreferences)
+            }
+        }
         if (shouldShow("diagnostics")) {
             item {
                 BeamSettingsSection(title = "Diagnostics") {
@@ -1120,6 +1131,83 @@ private fun BeamVoicePickerRow(
 // "system") — no longer real TTS voice names, so we fall back to "System
 // default" if the stored value is one of these.
 private val legacyVoiceValues = setOf("male", "female", "system")
+
+@Composable
+private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
+    val context = LocalContext.current
+    var enabled by rememberSaveable {
+        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
+    }
+    // Initialise from the resolved name (which falls back to Build.MODEL when the pref is
+    // unset) so the field is never blank — first-edit overwrites the default cleanly.
+    var name by rememberSaveable {
+        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.resolveDisplayName(appPreferences))
+    }
+    var dirty by rememberSaveable { mutableStateOf(false) }
+
+    BeamSettingsSection(title = "Cast") {
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Receive casts on this device",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    "When on, this device shows up in other SpatialFin senders' cast pickers.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
+                    dirty = true
+                },
+            )
+        }
+
+        OutlinedTextField(
+            value = name,
+            onValueChange = {
+                name = it
+                appPreferences.setValue(appPreferences.fcastReceiverDisplayName, it)
+                dirty = true
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Receiver name") },
+            placeholder = { Text("e.g. Living Room TV") },
+            supportingText = { Text("This is what other devices see when they scan.") },
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Button(
+                onClick = {
+                    dev.spatialfin.fcast.FCastReceiverWiring
+                        .applyReceiverConfig(context, appPreferences)
+                    dirty = false
+                },
+                enabled = dirty,
+            ) { Text("Apply") }
+            if (dirty) {
+                Text(
+                    "Press Apply to re-advertise.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun BeamSettingsCategoryCard(

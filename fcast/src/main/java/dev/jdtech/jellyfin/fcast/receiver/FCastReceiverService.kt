@@ -52,7 +52,16 @@ class FCastReceiverService : Service() {
         val appVersion = intent?.getStringExtra(EXTRA_APP_VERSION)
 
         startForegroundCompat(displayName)
-        bootstrapJob?.cancel()
+        // Idempotent guard. After a crash, the OS replays its START_STICKY
+        // restart intent at the same time as UnifiedApplication.installOnAppStart
+        // fires its own startForegroundService — onStartCommand is called twice.
+        // Without this, the second bootstrap binds against an already-bound
+        // port and fails with EADDRINUSE; its stopSelf() then tears down the
+        // first (working) server too, leaving the receiver dead and the mDNS
+        // advertiser unregistered.
+        if (bootstrapJob?.isActive == true || server != null) {
+            return START_STICKY
+        }
         bootstrapJob = scope.launch { startServer(displayName, port, appVersion) }
         return START_STICKY
     }
@@ -77,6 +86,14 @@ class FCastReceiverService : Service() {
         }
         server = newServer
 
+        // Hand the inbound-session bridge a way to broadcast state from the Activity to every
+        // connected sender, so the sender's mini-controller play/pause icon and seek bar
+        // reflect what's actually happening on the receiver.
+        FCastInboundSession.bindBroadcaster(
+            playback = { update -> scope.launch { newServer.broadcastPlaybackUpdate(update) } },
+            volume = { update -> scope.launch { newServer.broadcastVolumeUpdate(update) } },
+        )
+
         val ad = FCastReceiverAdvertiser(applicationContext)
         ad.register(
             instanceName = displayName,
@@ -92,6 +109,7 @@ class FCastReceiverService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         bootstrapJob?.cancel()
+        FCastInboundSession.unbindBroadcaster()
         server?.stop()
         server = null
         scope.launch { advertiser?.unregister() }

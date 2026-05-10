@@ -4,6 +4,7 @@ import android.content.Context
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamIngressRouter
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
+import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
 import dev.jdtech.jellyfin.fcast.receiver.FCastIngressRouter
 import dev.jdtech.jellyfin.fcast.receiver.FCastReceiverService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -46,14 +47,73 @@ object FCastReceiverWiring {
         val router: FCastIngressRouter = ExternalStreamIngressRouter(player)
         FCastReceiverService.setRouterProvider { router }
 
-        if (prefs.getValue(prefs.fcastReceiverEnabled)) {
+        if (isReceiverEnabled(prefs, deviceClass)) {
             FCastReceiverService.start(
                 context = context.applicationContext,
-                displayName = prefs.getValue(prefs.fcastReceiverDisplayName)
-                    .ifBlank { "SpatialFin" },
+                displayName = resolveDisplayName(prefs),
                 appVersion = BuildConfig.VERSION_NAME,
             )
             Timber.i("FCast receiver service started")
+        }
+    }
+
+    /**
+     * The advertised receiver name. Used by every SpatialFin install on the LAN as their
+     * mDNS service instance name and the Initial-message displayName, so each device shows
+     * up distinguishable in another sender's picker.
+     *
+     * Resolution order:
+     *  1. User-written pref value (non-blank wins outright).
+     *  2. Device-derived default — `Build.MODEL`, falling back to `"SpatialFin"`.
+     *
+     * The pref's literal default is `"SpatialFin"`, so we treat that as "unset" too — it's
+     * only the literal default value, not a deliberate user choice. Once the user picks any
+     * other name (including `"SpatialFin"` typed back in deliberately), it sticks.
+     */
+    fun resolveDisplayName(prefs: AppPreferences): String {
+        val key = prefs.fcastReceiverDisplayName.backendName
+        if (prefs.sharedPreferences.contains(key)) {
+            val written = prefs.getValue(prefs.fcastReceiverDisplayName).trim()
+            if (written.isNotEmpty()) return written
+        }
+        val model = (android.os.Build.MODEL ?: "").trim()
+        return if (model.isNotEmpty()) model else "SpatialFin"
+    }
+
+    /**
+     * Default-on for every form factor (TV, Beam phone, XR). Every SpatialFin install can
+     * receive a cast — pick any of them in another sender's picker and play. An explicit
+     * user-written pref always wins.
+     */
+    fun isReceiverEnabled(prefs: AppPreferences): Boolean {
+        val key = prefs.fcastReceiverEnabled.backendName
+        return if (prefs.sharedPreferences.contains(key)) {
+            prefs.getValue(prefs.fcastReceiverEnabled)
+        } else {
+            true
+        }
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun isReceiverEnabled(prefs: AppPreferences, deviceClass: DeviceClass): Boolean =
+        isReceiverEnabled(prefs)
+
+    /**
+     * Stop and (if currently enabled) restart the receiver service so a fresh display name
+     * or enabled-toggle takes effect immediately. mDNS announcements only carry the
+     * instance name observed at registration time, so renaming requires a full
+     * unregister/re-register cycle — easiest via service restart.
+     *
+     * Call this from settings screens after writing the relevant prefs.
+     */
+    fun applyReceiverConfig(context: Context, prefs: AppPreferences) {
+        FCastReceiverService.stop(context.applicationContext)
+        if (isReceiverEnabled(prefs)) {
+            FCastReceiverService.start(
+                context = context.applicationContext,
+                displayName = resolveDisplayName(prefs),
+                appVersion = BuildConfig.VERSION_NAME,
+            )
         }
     }
 
@@ -101,10 +161,13 @@ private class IntentBasedExternalStreamPlayer(
         }
     }
 
-    override fun pause() = Unit
-    override fun resume() = Unit
-    override fun stop() = Unit
-    override fun seek(seconds: Double) = Unit
-    override fun setVolume(volume: Double) = Unit
-    override fun setSpeed(speed: Double) = Unit
+    // Delegate to the active FCastInboundPlayerActivity through the process-wide bridge.
+    // The Activity registered an [ExternalStreamPlayer] backed by its ExoPlayer in onCreate;
+    // these calls re-enter that on the main thread. Silent no-ops if no Activity is alive.
+    override fun pause() = FCastInboundSession.pause()
+    override fun resume() = FCastInboundSession.resume()
+    override fun stop() = FCastInboundSession.stop()
+    override fun seek(seconds: Double) = FCastInboundSession.seek(seconds)
+    override fun setVolume(volume: Double) = FCastInboundSession.setVolume(volume)
+    override fun setSpeed(speed: Double) = FCastInboundSession.setSpeed(speed)
 }

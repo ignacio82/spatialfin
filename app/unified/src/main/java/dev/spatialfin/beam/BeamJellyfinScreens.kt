@@ -528,6 +528,8 @@ fun BeamHomeScreen(
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.loadData()
@@ -564,7 +566,7 @@ fun BeamHomeScreen(
                             item = featured,
                             actions = {
                                 BeamPrimaryActionButton(label = if (featured.playbackPositionTicks > 0L) "Resume" else "Play") {
-                                    launchServerItem(context, featured)
+                                    launchServerItem(context, fcastSession, scope,featured)
                                 }
                                 BeamSecondaryActionButton(label = "Details") {
                                     openServerItem(featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
@@ -896,6 +898,8 @@ fun BeamShowScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
     var showOverflow by rememberSaveable(showId) { mutableStateOf(false) }
@@ -964,13 +968,15 @@ fun BeamShowScreen(
                         metadata = metadata,
                         onBack = onBack,
                     ) {
-                        FlowRow(
+                        // Single-row by design: extras go in the overflow menu rather than
+                        // wrapping to a second visual row. See BeamCastOverflowItems.
+                        Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             state.nextUp?.let { nextEpisode ->
                                 androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, nextEpisode) },
+                                    onClick = { launchServerItem(context, fcastSession, scope,nextEpisode) },
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
@@ -994,7 +1000,6 @@ fun BeamShowScreen(
                                     contentDescription = if (show.played) "Watched" else "Mark watched"
                                 )
                             }
-                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -1051,7 +1056,7 @@ fun BeamShowScreen(
                     item {
                         BeamServerItemCard(
                             item = nextEpisode,
-                            onPlay = { launchServerItem(context, nextEpisode) },
+                            onPlay = { launchServerItem(context, fcastSession, scope,nextEpisode) },
                             onOpen = { onOpenItem(nextEpisode.id) },
                         )
                     }
@@ -1117,6 +1122,8 @@ fun BeamSeasonScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
     var showOverflow by rememberSaveable(seasonId) { mutableStateOf(false) }
@@ -1176,13 +1183,15 @@ fun BeamSeasonScreen(
                         },
                         onBack = onBack,
                     ) {
-                        FlowRow(
+                        // Single-row by design: extras go in the overflow menu rather than
+                        // wrapping to a second visual row. See BeamCastOverflowItems.
+                        Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (season.canPlay) {
                                 androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, season) }
+                                    onClick = { launchServerItem(context, fcastSession, scope,season) }
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
@@ -1190,7 +1199,6 @@ fun BeamSeasonScreen(
                                     )
                                 }
                             }
-                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -1218,7 +1226,7 @@ fun BeamSeasonScreen(
                     items(state.episodes, key = { it.id }) { episode ->
                         BeamServerItemCard(
                             item = episode,
-                            onPlay = { launchServerItem(context, episode) },
+                            onPlay = { launchServerItem(context, fcastSession, scope,episode) },
                             onOpen = { onOpenItem(episode.id) },
                         )
                     }
@@ -1257,6 +1265,8 @@ fun BeamItemDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
     var showPlaybackOptions by rememberSaveable(itemId) { mutableStateOf(false) }
@@ -1350,13 +1360,15 @@ fun BeamItemDetailScreen(
                         metadata = metadata,
                         onBack = onBack,
                     ) {
-                        FlowRow(
+                        // Single-row by design: extras go in the overflow menu rather than
+                        // wrapping to a second visual row. See BeamCastOverflowItems.
+                        Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (itemData.canPlay) {
                                 androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, itemData) }
+                                    onClick = { launchServerItem(context, fcastSession, scope,itemData) }
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
@@ -1364,7 +1376,7 @@ fun BeamItemDetailScreen(
                                     )
                                 }
                                 androidx.compose.material3.FilledTonalIconButton(
-                                    onClick = { launchServerItem(context = context, item = itemData, startFromBeginning = true) }
+                                    onClick = { launchServerItem(context = context, fcastSession = fcastSession, scope = scope, item = itemData, startFromBeginning = true) }
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
@@ -1409,7 +1421,6 @@ fun BeamItemDetailScreen(
                                 )
                             }
 
-                            BeamCastIconButton()
                             BeamOverflowMenu(
                                 expanded = showOverflow,
                                 onExpandedChange = { showOverflow = it },
@@ -1604,6 +1615,8 @@ fun BeamItemDetailScreen(
                 onPlay = { sourceIndex, bitrate, fromBeginning ->
                     launchServerItem(
                         context = context,
+                        fcastSession = fcastSession,
+                        scope = scope,
                         item = item,
                         startFromBeginning = fromBeginning,
                         mediaSourceIndex = sourceIndex,
@@ -2105,6 +2118,8 @@ fun BeamSearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
     var submittedInitialSearch by rememberSaveable { mutableStateOf(false) }
     var pendingSeerrRequest by remember { mutableStateOf<SeerrSearchResult?>(null) }
 
@@ -2185,7 +2200,7 @@ fun BeamSearchScreen(
                 items(state.items, key = { it.id }) { item ->
                     BeamServerItemCard(
                         item = item,
-                        onPlay = { launchServerItem(context, item) },
+                        onPlay = { launchServerItem(context, fcastSession, scope,item) },
                         onOpen = { openServerItem(item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                     )
                 }
@@ -2312,6 +2327,8 @@ fun BeamDownloadsScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
     var pendingDeleteItem by remember { mutableStateOf<SpatialFinItem?>(null) }
 
     LaunchedEffect(Unit) {
@@ -2381,7 +2398,7 @@ fun BeamDownloadsScreen(
             items(continueWatchingItems, key = { it.id }) { item ->
                 BeamDownloadedItemCard(
                     item = item,
-                    onPlay = { launchServerItem(context, item) },
+                    onPlay = { launchServerItem(context, fcastSession, scope,item) },
                     onOpen = {
                         when (item) {
                             is SpatialFinShow -> onOpenShow(item.id)
@@ -2441,7 +2458,7 @@ fun BeamDownloadsScreen(
                     items(section.items, key = { it.id }) { item ->
                         BeamDownloadedItemCard(
                             item = item,
-                            onPlay = { launchServerItem(context, item) },
+                            onPlay = { launchServerItem(context, fcastSession, scope,item) },
                             onOpen = {
                                 when (item) {
                                     is SpatialFinShow -> onOpenShow(item.id)
@@ -3033,25 +3050,52 @@ private fun openServerItem(
 }
 
 /**
- * Cast affordance peer to the 3-dots overflow on Beam hero cards. Resolves the FCast session
- * manager from the composition local installed by [BeamNavigationRoot]; renders nothing on
- * surfaces that don't have one in scope (TV, previews). Place immediately to the left of
- * [BeamOverflowMenu] so the row reads as <play actions> | <cast> | <overflow>.
+ * Cast actions injected into [BeamOverflowMenu]. Reads the FCast session manager from the
+ * composition local installed by [BeamNavigationRoot] (null on surfaces without one — TV,
+ * previews — in which case nothing is rendered). Lives in the overflow rather than as a peer
+ * icon so the hero-card action row stays single-line on phones.
  */
 @Composable
-private fun BeamCastIconButton() {
+private fun BeamCastOverflowItems(onItemSelected: () -> Unit) {
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current ?: return
     val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
-    val tint = if (pickedReceiver != null) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        androidx.compose.material3.LocalContentColor.current
-    }
-    androidx.compose.material3.FilledTonalIconButton(onClick = { fcastSession.showPicker() }) {
-        androidx.compose.material3.Icon(
-            painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
-            contentDescription = "Cast",
-            tint = tint,
+    val scope = rememberCoroutineScope()
+    androidx.compose.material3.DropdownMenuItem(
+        text = {
+            Text(
+                if (pickedReceiver != null) "Cast (connected to ${pickedReceiver?.name})"
+                else "Cast to receiver…"
+            )
+        },
+        onClick = {
+            onItemSelected()
+            fcastSession.showPicker()
+        },
+        leadingIcon = {
+            androidx.compose.material3.Icon(
+                painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
+                contentDescription = null,
+                tint = if (pickedReceiver != null) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    androidx.compose.material3.LocalContentColor.current
+                },
+            )
+        },
+    )
+    if (pickedReceiver != null) {
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Stop casting") },
+            onClick = {
+                onItemSelected()
+                scope.launch { fcastSession.stopCast() }
+            },
+            leadingIcon = {
+                androidx.compose.material3.Icon(
+                    painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_x),
+                    contentDescription = null,
+                )
+            },
         )
     }
 }
@@ -3077,6 +3121,10 @@ private fun BeamOverflowMenu(
             onDismissRequest = { onExpandedChange(false) },
         ) {
             extraItems()
+            // Cast affordance lives inside the overflow rather than as a peer icon so hero-card
+            // action rows stay single-line on narrow phones. No-op (nothing rendered) on
+            // surfaces without an FCastSessionManager in scope (e.g. TV).
+            BeamCastOverflowItems(onItemSelected = { onExpandedChange(false) })
             if (onRefresh != null) {
                 androidx.compose.material3.DropdownMenuItem(
                     text = { Text("Refresh metadata") },
@@ -3219,6 +3267,8 @@ private fun formatChapterTime(ms: Long): String {
 
 private fun launchServerItem(
     context: Context,
+    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager?,
+    scope: kotlinx.coroutines.CoroutineScope,
     item: SpatialFinItem,
     startFromBeginning: Boolean = false,
     mediaSourceIndex: Int? = null,
@@ -3234,7 +3284,7 @@ private fun launchServerItem(
             else -> null
         } ?: return
 
-    context.startActivity(
+    val intentBuilder: () -> android.content.Intent = {
         BeamPlayerActivity.createIntent(
             context = context,
             itemId = item.id,
@@ -3243,7 +3293,21 @@ private fun launchServerItem(
             mediaSourceIndex = mediaSourceIndex,
             maxBitrate = maxBitrate,
         )
-    )
+    }
+    // Route through launchPlayback so a chosen FCast receiver wins over the
+    // local player. With no session manager (defensive null branch) or no
+    // intent-to-cast, launchPlayback falls through to startActivity.
+    if (fcastSession != null) {
+        dev.spatialfin.fcast.session.launchPlayback(
+            context = context,
+            sessionManager = fcastSession,
+            scope = scope,
+            item = item,
+            intentBuilder = intentBuilder,
+        )
+    } else {
+        context.startActivity(intentBuilder())
+    }
 }
 
 private fun buildServerItemSubtitle(item: SpatialFinItem): String =

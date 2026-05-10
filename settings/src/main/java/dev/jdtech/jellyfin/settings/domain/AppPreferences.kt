@@ -111,8 +111,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val companionToken = Preference("pref_companion_token", "")
     val lastCompanionSyncTime = Preference("pref_last_companion_sync_time", 0L)
 
-    // FCast — sender (cast OUT to FCast receivers) defaults on; receiver (accept media INTO
-    // SpatialFin) defaults off because it requires a foreground service + persistent notification.
+    // FCast — sender (cast OUT) and receiver (accept media INTO SpatialFin) both default on.
+    // FCastReceiverWiring treats an unset receiver pref as enabled on every form factor (TV,
+    // Beam phone, XR) so any SpatialFin install on the LAN shows up as a cast target without
+    // the user having to flip a setting. The pref's literal `false` default below is still the
+    // ground truth once the user explicitly writes the toggle — explicit value always wins.
     val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
     val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
     val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
