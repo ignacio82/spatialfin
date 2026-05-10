@@ -169,8 +169,14 @@ class SplitAvController @Inject constructor(
      * Per-session loop. Combines the master-binding state with each PlaybackUpdate beacon
      * coming back from the TV and runs drift correction. Self-cancels via [scope] cancellation
      * when the controller stops.
+     *
+     * Two side jobs run alongside: a Ping/Pong loop for RTT estimation (feeds
+     * [networkDelay] so the policy's `networkOneWayMs` term is non-zero), and a Pong observer
+     * that records each observation. Both stop when the session ends.
      */
     private suspend fun runSession() {
+        scope.launch { runPingLoop() }
+        scope.launch { runPongCollector() }
         SplitAvVideoBridge.activeMaster.collectLatest { master ->
             if (master == null) {
                 _state.value = State.AwaitingMaster
@@ -182,6 +188,26 @@ class SplitAvController @Inject constructor(
             castingController.remoteState
                 .filterNotNull()
                 .collectLatest { update -> handleBeacon(master, update) }
+        }
+    }
+
+    private suspend fun runPingLoop() {
+        // Send a Ping every PING_INTERVAL_MS so we get a steady stream of RTT samples.
+        // Cadence is low — once every ~2 s — because RTT on a stable LAN doesn't change
+        // fast and we don't want to flood the receiver's reader thread.
+        while (true) {
+            delay(PING_INTERVAL_MS)
+            try {
+                castingController.ping()
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "split-A/V ping failed; will retry next interval")
+            }
+        }
+    }
+
+    private suspend fun runPongCollector() {
+        castingController.pongs.collect { obs ->
+            networkDelay.recordRtt(obs.rttMs)
         }
     }
 
@@ -257,6 +283,10 @@ class SplitAvController @Inject constructor(
 
     private companion object {
         const val TAG = "SplitAvController"
+
+        /** Cadence for RTT-probe Pings while in a split session. Low enough not to spam, high
+         *  enough that NetworkDelayEstimator's smoothed RTT keeps up with link changes. */
+        const val PING_INTERVAL_MS: Long = 2_000L
 
         /** True while the controller is between Connecting and Stopped. */
         val ACTIVE_STATES: Set<State> = setOf(

@@ -8,8 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -24,7 +27,7 @@ import timber.log.Timber
  * Concurrency: every public mutator goes through [mutex] so that "stop and start a new cast" is
  * atomic and we never end up with two clients fighting over a target.
  */
-class FCastCastingController {
+open class FCastCastingController {
 
     enum class Status { Idle, Connecting, Casting, Failed }
 
@@ -43,6 +46,16 @@ class FCastCastingController {
 
     private val _remoteState = MutableStateFlow<PlaybackUpdateMessage?>(null)
     val remoteState: StateFlow<PlaybackUpdateMessage?> = _remoteState.asStateFlow()
+
+    /**
+     * Pong observations from the active client, re-emitted here so consumers can subscribe
+     * once and survive reconnects. Empty until at least one Ping has round-tripped on the
+     * current connection.
+     */
+    private val _pongs = MutableSharedFlow<FCastSenderClient.PongObservation>(
+        extraBufferCapacity = 8,
+    )
+    val pongs: SharedFlow<FCastSenderClient.PongObservation> = _pongs.asSharedFlow()
 
     /**
      * Begin (or replace) casting to [receiver] with [play] as the initial Play message.
@@ -66,6 +79,11 @@ class FCastCastingController {
             }
             client = newClient
             observerJob = supervisor.launch { observe(newClient) }
+            // Pong forwarding runs in parallel with playback observation. Cancelled when the
+            // observer job (and therefore the supervisor scope's child) terminates on stop.
+            supervisor.launch {
+                newClient.pongs.collect { _pongs.emit(it) }
+            }
             _status.value = Status.Casting
         }
     }
@@ -75,6 +93,7 @@ class FCastCastingController {
     suspend fun seek(seconds: Double) = withClient { it.seek(seconds) }
     suspend fun setVolume(volume: Double) = withClient { it.setVolume(volume) }
     suspend fun setSpeed(speed: Double) = withClient { it.setSpeed(speed) }
+    suspend fun ping() = withClient { it.ping() }
 
     /** Send Stop to the receiver and tear down the connection. Idempotent. */
     suspend fun stopCast() {

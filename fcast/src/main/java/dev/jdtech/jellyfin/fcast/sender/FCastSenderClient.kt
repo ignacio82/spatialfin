@@ -86,6 +86,29 @@ class FCastSenderClient(
     val errors: SharedFlow<String> = _errors.asSharedFlow()
 
     /**
+     * Observation emitted when a [FCastMessage.Pong] arrives in response to one of our
+     * [ping] calls. Pairs the wall-clock time of our original Ping send with the wall-clock
+     * time we received the Pong so consumers can compute round-trip time. Used by split-A/V
+     * sync to estimate network one-way delay.
+     */
+    data class PongObservation(
+        val pingSentWallMs: Long,
+        val pongReceivedWallMs: Long,
+    ) {
+        val rttMs: Long get() = pongReceivedWallMs - pingSentWallMs
+    }
+
+    private val _pongs = MutableSharedFlow<PongObservation>(extraBufferCapacity = 8)
+    val pongs: SharedFlow<PongObservation> = _pongs.asSharedFlow()
+
+    /**
+     * Wall-clock send time of the most recent outbound Ping awaiting Pong. Reset to null when
+     * the Pong arrives. Single slot — Ping cadence is low (~2 s in split mode) so we never
+     * have more than one outstanding.
+     */
+    @Volatile private var lastPingSentWallMs: Long? = null
+
+    /**
      * Open the socket, send Version + Initial. Suspends until the handshake is written; the
      * background reader is launched and starts feeding [playbackUpdates] / [volumeUpdates] etc.
      * Throws [IOException] on connect failure.
@@ -132,7 +155,16 @@ class FCastSenderClient(
     suspend fun setVolume(volume: Double) =
         sendInternal(FCastMessage.SetVolume(SetVolumeMessage(volume.coerceIn(0.0, 1.0))))
     suspend fun setSpeed(speed: Double) = sendInternal(FCastMessage.SetSpeed(SetSpeedMessage(speed)))
-    suspend fun ping() = sendInternal(FCastMessage.Ping)
+
+    /**
+     * Send a Ping. Captures the wall-clock time of the send so the corresponding Pong (if any)
+     * can be paired with it via [pongs] for RTT measurement. Capturing immediately before
+     * write is acceptable: the kernel buffer write is microseconds and not user-perceivable.
+     */
+    suspend fun ping() {
+        lastPingSentWallMs = System.currentTimeMillis()
+        sendInternal(FCastMessage.Ping)
+    }
 
     /**
      * Send any [FCastMessage]. Public for protocol features the typed surface doesn't cover yet
@@ -178,7 +210,19 @@ class FCastSenderClient(
                 _negotiatedVersion.value = minOf(FCAST_PROTOCOL_VERSION, peer)
             }
             FCastMessage.Ping -> sendInternal(FCastMessage.Pong)
-            // Pong, Initial, PlayUpdate, Event, etc. are observed but not yet acted on.
+            FCastMessage.Pong -> {
+                val sent = lastPingSentWallMs
+                if (sent != null) {
+                    _pongs.tryEmit(
+                        PongObservation(
+                            pingSentWallMs = sent,
+                            pongReceivedWallMs = System.currentTimeMillis(),
+                        ),
+                    )
+                    lastPingSentWallMs = null
+                }
+            }
+            // Initial, PlayUpdate, Event, etc. are observed but not yet acted on.
             else -> Unit
         }
     }

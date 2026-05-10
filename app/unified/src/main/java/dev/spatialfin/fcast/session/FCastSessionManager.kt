@@ -126,12 +126,47 @@ class FCastSessionManager @Inject constructor(
     private val _calibrationState = MutableStateFlow<CalibrationState>(CalibrationState.Idle)
     val calibrationState: StateFlow<CalibrationState> = _calibrationState.asStateFlow()
 
+    /**
+     * Per-receiver calibrated audio latency, keyed by `host:port`. Refreshed from
+     * [RememberedReceiversStore] when the picker scans, and after a successful (re)calibration.
+     * Used by the picker row to show "Calibrated: 73 ms" + Recalibrate.
+     */
+    private val _audioLatencies = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val audioLatencies: StateFlow<Map<String, Int>> = _audioLatencies.asStateFlow()
+
     fun setSplitAvMode(enabled: Boolean) {
         _splitAvMode.value = enabled
     }
 
     fun dismissCalibrationResult() {
         _calibrationState.value = CalibrationState.Idle
+    }
+
+    /**
+     * Manually run calibration for [receiver] and persist the result. Used by the picker's
+     * "Recalibrate" affordance after a setup change (new soundbar, different room). The
+     * calibration dialog ([SplitAvCalibrationDialog]) renders state transitions while this
+     * runs.
+     */
+    fun recalibrateReceiver(receiver: FCastReceiver) {
+        scope.launch {
+            _calibrationState.value = CalibrationState.Running(receiver.name)
+            when (val result = calibrationOrchestrator.calibrate(receiver)) {
+                is CalibrationOrchestrator.Result.Success -> {
+                    _audioLatencies.update { it + ("${receiver.host}:${receiver.port}" to result.audioLatencyMs) }
+                    _calibrationState.value = CalibrationState.Success(result.audioLatencyMs)
+                }
+                is CalibrationOrchestrator.Result.Failure -> {
+                    _calibrationState.value = CalibrationState.Failed(result.reason)
+                }
+            }
+        }
+    }
+
+    private fun refreshAudioLatenciesFrom(receivers: List<RememberedReceiver>) {
+        _audioLatencies.value = receivers.mapNotNull { r ->
+            r.audioLatencyMs?.let { "${r.host}:${r.port}" to it }
+        }.toMap()
     }
 
     /** True iff there is a chosen receiver — connection or not. */
@@ -174,6 +209,7 @@ class FCastSessionManager @Inject constructor(
      */
     private suspend fun driveDiscoveryAndProbing() {
         val remembered = rememberedReceiversStore.load()
+        refreshAudioLatenciesFrom(remembered)
         // Snapshot remembered as Probing so the user sees them immediately.
         _pickerEntries.value = remembered.map { r ->
             PickerEntry(
@@ -407,6 +443,9 @@ class FCastSessionManager @Inject constructor(
                         is CalibrationOrchestrator.Result.Success -> {
                             audioLatencyMs = result.audioLatencyMs
                             _calibrationState.value = CalibrationState.Success(result.audioLatencyMs)
+                            _audioLatencies.update {
+                                it + ("${receiver.host}:${receiver.port}" to result.audioLatencyMs)
+                            }
                         }
                         is CalibrationOrchestrator.Result.Failure -> {
                             Timber.tag(TAG).w("castSpatialItemSplitAv: calibration failed: %s", result.reason)

@@ -1,5 +1,9 @@
 package dev.spatialfin.fcast.session
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,8 +39,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
@@ -66,8 +72,38 @@ fun FCastSessionPickerSheet(
     val entries by sessionManager.pickerEntries.collectAsState()
     val isScanning by sessionManager.isScanning.collectAsState()
     val splitAvMode by sessionManager.splitAvMode.collectAsState()
+    val audioLatencies by sessionManager.audioLatencies.collectAsState()
     var manualHost by remember { mutableStateOf("") }
     var manualPort by remember { mutableStateOf(FCAST_DEFAULT_PORT.toString()) }
+    var splitAvPermissionDenied by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val recordAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            splitAvPermissionDenied = false
+            sessionManager.setSplitAvMode(true)
+        } else {
+            splitAvPermissionDenied = true
+        }
+    }
+    val onSplitAvToggle: (Boolean) -> Unit = { enabled ->
+        if (!enabled) {
+            sessionManager.setSplitAvMode(false)
+            splitAvPermissionDenied = false
+        } else {
+            val granted = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                splitAvPermissionDenied = false
+                sessionManager.setSplitAvMode(true)
+            } else {
+                recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -99,7 +135,8 @@ fun FCastSessionPickerSheet(
             if (showSplitAvOption) {
                 SplitAvToggleRow(
                     enabled = splitAvMode,
-                    onToggle = { sessionManager.setSplitAvMode(it) },
+                    onToggle = onSplitAvToggle,
+                    permissionDenied = splitAvPermissionDenied,
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -118,6 +155,11 @@ fun FCastSessionPickerSheet(
                             onForget = {
                                 sessionManager.forgetReceiver(entry.receiver.host, entry.receiver.port)
                             },
+                            audioLatencyMs = audioLatencies[
+                                "${entry.receiver.host}:${entry.receiver.port}"
+                            ],
+                            showCalibration = splitAvMode,
+                            onRecalibrate = { sessionManager.recalibrateReceiver(entry.receiver) },
                         )
                     }
                 }
@@ -179,6 +221,7 @@ fun FCastSessionPickerSheet(
 private fun SplitAvToggleRow(
     enabled: Boolean,
     onToggle: (Boolean) -> Unit,
+    permissionDenied: Boolean = false,
 ) {
     Surface(
         modifier = Modifier
@@ -204,6 +247,15 @@ private fun SplitAvToggleRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (permissionDenied) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Microphone permission is required to calibrate audio sync. " +
+                            "Grant it in System Settings to enable Split A/V.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
             Spacer(Modifier.width(12.dp))
             Switch(checked = enabled, onCheckedChange = onToggle)
@@ -216,6 +268,9 @@ private fun SessionReceiverRow(
     entry: PickerEntry,
     onClick: () -> Unit,
     onForget: () -> Unit,
+    audioLatencyMs: Int? = null,
+    showCalibration: Boolean = false,
+    onRecalibrate: () -> Unit = {},
 ) {
     val rowEnabled = entry.state != PickerEntry.State.Offline
     Surface(
@@ -225,36 +280,53 @@ private fun SessionReceiverRow(
         shape = RoundedCornerShape(16.dp),
         tonalElevation = 1.dp,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ReachabilityDot(state = entry.state)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.receiver.name,
-                    fontWeight = FontWeight.Medium,
-                    color = if (rowEnabled) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = buildString {
-                        append(entry.receiver.host).append(':').append(entry.receiver.port)
-                        append(" • ")
-                        append(
-                            when (entry.state) {
-                                PickerEntry.State.Probing -> "Checking…"
-                                PickerEntry.State.Online -> "Online"
-                                PickerEntry.State.Offline -> "Offline"
-                            },
-                        )
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ReachabilityDot(state = entry.state)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.receiver.name,
+                        fontWeight = FontWeight.Medium,
+                        color = if (rowEnabled) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = buildString {
+                            append(entry.receiver.host).append(':').append(entry.receiver.port)
+                            append(" • ")
+                            append(
+                                when (entry.state) {
+                                    PickerEntry.State.Probing -> "Checking…"
+                                    PickerEntry.State.Online -> "Online"
+                                    PickerEntry.State.Offline -> "Offline"
+                                },
+                            )
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = onForget) { Text("Forget") }
             }
-            TextButton(onClick = onForget) { Text("Forget") }
+            if (showCalibration) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = audioLatencyMs?.let { "Audio sync: $it ms calibrated" }
+                            ?: "Audio sync: not calibrated yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (audioLatencyMs != null) {
+                        TextButton(onClick = onRecalibrate) { Text("Recalibrate") }
+                    }
+                }
+            }
         }
     }
 }
