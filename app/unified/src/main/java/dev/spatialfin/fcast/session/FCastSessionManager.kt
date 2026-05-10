@@ -1,6 +1,7 @@
 package dev.spatialfin.fcast.session
 
 import android.content.Context
+import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
@@ -14,6 +15,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +59,8 @@ class FCastSessionManager @Inject constructor(
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
     private val rememberedReceiversStore: RememberedReceiversStore,
+    private val splitAvController: SplitAvController,
+    private val calibrationOrchestrator: CalibrationOrchestrator,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
@@ -102,6 +106,33 @@ class FCastSessionManager @Inject constructor(
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
     private var pickerJob: Job? = null
+
+    /**
+     * Whether the next playback should run in split-A/V mode (XR plays video, picked TV plays
+     * audio). Set by the picker when the user toggles "Split A/V"; cleared when the cast ends
+     * or the user dismisses split mode. Independent of [pickedReceiver] so both flags can be
+     * read together.
+     */
+    private val _splitAvMode = MutableStateFlow(false)
+    val splitAvMode: StateFlow<Boolean> = _splitAvMode.asStateFlow()
+
+    sealed interface CalibrationState {
+        data object Idle : CalibrationState
+        data class Running(val receiverName: String) : CalibrationState
+        data class Success(val latencyMs: Int) : CalibrationState
+        data class Failed(val reason: String) : CalibrationState
+    }
+
+    private val _calibrationState = MutableStateFlow<CalibrationState>(CalibrationState.Idle)
+    val calibrationState: StateFlow<CalibrationState> = _calibrationState.asStateFlow()
+
+    fun setSplitAvMode(enabled: Boolean) {
+        _splitAvMode.value = enabled
+    }
+
+    fun dismissCalibrationResult() {
+        _calibrationState.value = CalibrationState.Idle
+    }
 
     /** True iff there is a chosen receiver — connection or not. */
     fun hasCastIntent(): Boolean = _pickedReceiver.value != null
@@ -321,6 +352,101 @@ class FCastSessionManager @Inject constructor(
     ) {
         pickReceiver(receiver)
         controller.startCast(receiver, play)
+    }
+
+    /**
+     * Split-A/V version of [castSpatialItem]. Runs auto-calibration when the picked receiver
+     * has no cached audioLatencyMs, then starts the [SplitAvController] (which sends Play with
+     * `splitAv.role=AUDIO` to the TV) and launches the local video-master Activity supplied by
+     * [localPlayerIntentBuilder].
+     *
+     * The intent builder is the caller's responsibility because it depends on the form factor —
+     * `XrPlayerActivity.createIntent(...splitAvVideoRole = true)` for headset, the equivalent
+     * Beam intent for phone. Both must end up with the same `itemId` as this call so the URL
+     * resolved by the local player and the URL FCast-Play'd to the TV come from the same
+     * Jellyfin source.
+     *
+     * Returns true on success (split session started, both ends instructed), false otherwise.
+     */
+    suspend fun castSpatialItemSplitAv(
+        item: SpatialFinItem,
+        startPositionMs: Long? = null,
+        localPlayerIntentBuilder: () -> Intent?,
+    ): Boolean {
+        val receiver = _pickedReceiver.value ?: run {
+            Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
+            return false
+        }
+        val itemId = when (item) {
+            is SpatialFinMovie -> item.id
+            is SpatialFinEpisode -> item.id
+            else -> return false
+        }
+        val title = when (item) {
+            is SpatialFinMovie -> item.name
+            is SpatialFinEpisode -> item.name
+            else -> null
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val sources = repository.getMediaSources(itemId = itemId, includePath = false)
+                val source = sources.firstOrNull() ?: run {
+                    Timber.tag(TAG).w("castSpatialItemSplitAv: no media sources for %s", itemId)
+                    return@withContext false
+                }
+                val url = repository.getStreamUrl(itemId, source.id)
+                val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
+
+                // 1. Calibrate audio latency if we don't have a cached value for this receiver.
+                var audioLatencyMs = rememberedReceiversStore.load()
+                    .firstOrNull { it.host == receiver.host && it.port == receiver.port }
+                    ?.audioLatencyMs
+                if (audioLatencyMs == null) {
+                    _calibrationState.value = CalibrationState.Running(receiver.name)
+                    when (val result = calibrationOrchestrator.calibrate(receiver)) {
+                        is CalibrationOrchestrator.Result.Success -> {
+                            audioLatencyMs = result.audioLatencyMs
+                            _calibrationState.value = CalibrationState.Success(result.audioLatencyMs)
+                        }
+                        is CalibrationOrchestrator.Result.Failure -> {
+                            Timber.tag(TAG).w("castSpatialItemSplitAv: calibration failed: %s", result.reason)
+                            _calibrationState.value = CalibrationState.Failed(result.reason)
+                            return@withContext false
+                        }
+                    }
+                }
+
+                val play = PlayMessageBuilder.build(
+                    url = url,
+                    container = container,
+                    positionSeconds = (startPositionMs ?: 0L).coerceAtLeast(0L) / 1000.0,
+                    title = title,
+                )
+
+                // 2. Tell the TV to start audio-only playback. audioLatencyMs has been
+                // smart-cast to non-null by the calibration branch above.
+                splitAvController.start(receiver, play, audioLatencyMs)
+
+                // 3. Launch the local video-master Activity. Drift correction in the controller
+                //    will idle until that Activity binds itself via SplitAvVideoBridge.
+                withContext(Dispatchers.Main) {
+                    val intent = localPlayerIntentBuilder()
+                    if (intent != null) {
+                        runCatching { appContext.startActivity(intent) }
+                            .onFailure { Timber.tag(TAG).w(it, "split-A/V local launch failed") }
+                    } else {
+                        Timber.tag(TAG).w("split-A/V local intent builder returned null")
+                    }
+                }
+                true
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "castSpatialItemSplitAv failed for %s", itemId)
+                _calibrationState.value = CalibrationState.Failed(
+                    e.message ?: "Could not start split-A/V playback"
+                )
+                false
+            }
+        }
     }
 
     suspend fun pause() = controller.pause()

@@ -538,6 +538,11 @@ class UnifiedMainActivity : AppCompatActivity() {
                         sessionManager = fcastSession,
                         scope = voiceCoroutineScope,
                         item = item,
+                        splitAvIntentBuilder = {
+                            XrPlayerActivity.createIntentForItem(
+                                context, item, splitAvVideoRole = true,
+                            )
+                        },
                     ) { XrPlayerActivity.createIntentForItem(context, item) }
                     if (routed) return true
                     return navigateToItem(item)

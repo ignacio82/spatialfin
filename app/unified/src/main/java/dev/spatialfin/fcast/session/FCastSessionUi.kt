@@ -85,7 +85,12 @@ fun FCastCastIconButton(
 @Composable
 fun FCastGlobalPickerHost(
     sessionManager: FCastSessionManager,
+    showSplitAvOption: Boolean = true,
 ) {
+    // Calibration dialog is sibling to the picker — both subscribe to the session manager and
+    // the calibration dialog renders only when calibrationState != Idle.
+    SplitAvCalibrationDialog(sessionManager = sessionManager)
+
     val visible by sessionManager.pickerVisible.collectAsState()
     if (!visible) return
     androidx.compose.material3.AlertDialog(
@@ -101,6 +106,7 @@ fun FCastGlobalPickerHost(
                     sessionManager.hidePicker()
                 },
                 onDismiss = { sessionManager.hidePicker() },
+                showSplitAvOption = showSplitAvOption,
             )
         },
     )

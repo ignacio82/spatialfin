@@ -134,6 +134,7 @@ class XrPlayerActivity : AppCompatActivity() {
             context: android.content.Context,
             item: SpatialFinItem,
             startFromBeginning: Boolean = false,
+            splitAvVideoRole: Boolean = false,
         ): android.content.Intent? {
             val itemKind =
                 when (item) {
@@ -149,6 +150,7 @@ class XrPlayerActivity : AppCompatActivity() {
                 itemId = item.id,
                 itemKind = itemKind,
                 startFromBeginning = startFromBeginning,
+                splitAvVideoRole = splitAvVideoRole,
             )
         }
     }

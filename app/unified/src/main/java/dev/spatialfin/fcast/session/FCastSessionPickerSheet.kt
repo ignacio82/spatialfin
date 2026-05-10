@@ -22,6 +22,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,9 +56,16 @@ fun FCastSessionPickerSheet(
     onReceiverPicked: (FCastReceiver) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * When true, expose a "Split A/V" toggle that routes the picked receiver to a split
+     * session (this device plays video, picked TV plays audio). Caller should pass false on
+     * TV form factor — TV-as-video-master to itself doesn't make sense.
+     */
+    showSplitAvOption: Boolean = true,
 ) {
     val entries by sessionManager.pickerEntries.collectAsState()
     val isScanning by sessionManager.isScanning.collectAsState()
+    val splitAvMode by sessionManager.splitAvMode.collectAsState()
     var manualHost by remember { mutableStateOf("") }
     var manualPort by remember { mutableStateOf(FCAST_DEFAULT_PORT.toString()) }
 
@@ -87,6 +95,14 @@ fun FCastSessionPickerSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
+
+            if (showSplitAvOption) {
+                SplitAvToggleRow(
+                    enabled = splitAvMode,
+                    onToggle = { sessionManager.setSplitAvMode(it) },
+                )
+                Spacer(Modifier.height(12.dp))
+            }
 
             if (entries.isEmpty() && !isScanning) {
                 Text("No receivers found yet. Add one manually below.")
@@ -155,6 +171,42 @@ fun FCastSessionPickerSheet(
                     },
                 ) { Text("Cast") }
             }
+        }
+    }
+}
+
+@Composable
+private fun SplitAvToggleRow(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle(!enabled) },
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Split A/V",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Video stays on this device, audio plays on the picked receiver. " +
+                        "First use calibrates audio sync (~6s) in a quiet room.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = enabled, onCheckedChange = onToggle)
         }
     }
 }
