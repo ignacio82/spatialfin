@@ -35,6 +35,8 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
@@ -63,8 +65,22 @@ class XrPlayerActivity : AppCompatActivity() {
     private var libassRenderer: LibassRenderer? = null
     private var finishRequested = false
     private var homeSpaceRequestIssued = false
+    /**
+     * Bound when this Activity is launched as the video master in a split-A/V session
+     * (XR plays video, paired TV plays audio). Drift correction lives in `SplitAvController`
+     * over in `:app:unified`; this side just exposes the master surface and mutes audio.
+     */
+    private var splitAvAdapter: PlayerSplitAvAdapter? = null
 
     companion object {
+        /**
+         * Boolean Intent extra: when true, this Activity binds itself as the [SplitAvVideoBridge]
+         * master so a split-A/V session's drift controller can drive its player. The Activity
+         * still receives the Jellyfin `itemId` extra in the normal way; both ends resolve their
+         * stream URL from the same item id.
+         */
+        const val EXTRA_SPLIT_AV_VIDEO_ROLE: String = "splitAv.videoRole"
+
         fun createIntent(
             context: android.content.Context,
             itemId: UUID,
@@ -74,6 +90,7 @@ class XrPlayerActivity : AppCompatActivity() {
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
+            splitAvVideoRole: Boolean = false,
         ): android.content.Intent {
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("itemId", itemId.toString())
@@ -83,6 +100,7 @@ class XrPlayerActivity : AppCompatActivity() {
                 putExtra("openSyncPlayDialogOnStart", openSyncPlayDialogOnStart)
                 mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
                 maxBitrate?.let { putExtra("maxBitrate", it) }
+                if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
             }
         }
 
@@ -281,6 +299,23 @@ class XrPlayerActivity : AppCompatActivity() {
         Timber.d("XrPlayer: step 1 — calling replacePlayer (libassRenderer=%b)", libassRenderer != null)
         viewModel.replacePlayer(player)
 
+        // If launched as the video master for a split-A/V session, expose the player to the
+        // SplitAvController via the process-wide bridge. The controller calls back into this
+        // adapter with speed-nudge / hard-seek / pause-resume / mute commands while drift
+        // correction runs against the TV's audio clock.
+        val splitAvVideoMaster = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
+        if (splitAvVideoMaster) {
+            val adapter = PlayerSplitAvAdapter(
+                player = player,
+                onStopFromMaster = { requestFinish("split-av-stop") },
+                postToPlayer = { runOnUiThread(it) },
+            )
+            splitAvAdapter = adapter
+            adapter.setAudioMuted(true)
+            SplitAvVideoBridge.bind(adapter)
+            Timber.i("XrPlayer: bound as split-A/V video master")
+        }
+
         // Match the libass render resolution to the actual video size. Without this
         // we render 1080p ASS cues and upscale them into the panel, which shows as
         // fuzzy edges on 4K content.
@@ -448,6 +483,11 @@ class XrPlayerActivity : AppCompatActivity() {
             viewModel.player.playerError?.errorCodeName,
             finishRequested,
         )
+        splitAvAdapter?.let { adapter ->
+            SplitAvVideoBridge.unbind(adapter)
+            adapter.release()
+        }
+        splitAvAdapter = null
         super.onDestroy()
         xrSession = null
         libassRenderer?.destroy()
