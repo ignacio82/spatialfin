@@ -474,7 +474,7 @@ fun BeamNavigationRoot(
                         BeamCompanionScreen(
                             contentPadding = PaddingValues(0.dp),
                             onBack = { currentRoute = BeamRoute.Welcome },
-                            onSuccess = { currentRoute = BeamRoute.Home },
+                            onFinishApp = onFinishApp,
                         )
                     }
                     currentRoute == BeamRoute.AddServer -> {

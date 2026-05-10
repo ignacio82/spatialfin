@@ -576,14 +576,19 @@ private class TvCompanionPairingServer(
 @Composable
 fun TvCompanionScreen(
     onBack: () -> Unit,
-    onRefresh: () -> Unit = {},
+    onFinishApp: () -> Unit = {},
     viewModel: TvCompanionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(state) {
         if (state is TvCompanionState.Success) {
-            onRefresh()
+            // The home rails won't pick up the freshly-imported server until
+            // the JellyfinApi singleton, ConnectionMonitor, and HomeViewModel
+            // all start clean — i.e. a cold launch. Show the success card,
+            // then close the app so the user's next tap is that cold launch.
+            delay(2200)
+            onFinishApp()
         }
     }
 
@@ -654,12 +659,9 @@ fun TvCompanionScreen(
                         modifier = Modifier.fillMaxWidth().padding(28.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text("Companion import complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Fin Player TV now has the imported server, users, preferences, and saved companion sync connection.")
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = { onRefresh(); onBack() }) { Text("Done") }
-                            OutlinedButton(onClick = { onRefresh(); viewModel.startPairing() }) { Text("Pair Again") }
-                        }
+                        Text("Setup complete!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Server, users, and preferences are imported. SpatialFin will close in a moment — reopen it from your TV's apps list to see your library.")
+                        Button(onClick = onFinishApp) { Text("Close now") }
                     }
                 }
             }

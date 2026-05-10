@@ -239,7 +239,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                         TvNavigationRoot(
                             state = state,
                             appPreferences = appPreferences,
-                            onReconnect = viewModel::reconnect,
+                            onFinishApp = ::finishAndKillProcess,
                             initialSearchQuery = initialSearchQueryExtra,
                         )
                     }
@@ -256,7 +256,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 voiceTelemetryStore = voiceTelemetryStore,
                                 fcastSession = fcastSession,
                                 onReconnect = viewModel::reconnect,
-                                onFinishApp = { finishAndRemoveTask() },
+                                onFinishApp = ::finishAndKillProcess,
                             )
                         }
                     }
@@ -348,6 +348,16 @@ class UnifiedMainActivity : AppCompatActivity() {
         // itself down on the same ON_DESTROY signal — Session.destroy()
         // is private, so clearing the ref is the most we can do from here.
         xrSessionState.value = null
+    }
+
+    // Closes the Activity AND kills the process so that the next launch is a
+    // true cold start. Used after companion-app pairing imports a new server,
+    // because JellyfinApi/ConnectionMonitor/HomeViewModel singletons can't be
+    // surgically refreshed against the freshly-imported server in-place — the
+    // user has to relaunch from a clean slate to see their library.
+    private fun finishAndKillProcess() {
+        finishAndRemoveTask()
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun applyPhoneOrientation() {

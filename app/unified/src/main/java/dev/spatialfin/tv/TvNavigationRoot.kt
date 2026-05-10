@@ -113,6 +113,7 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Carousel
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -167,7 +168,7 @@ val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 fun TvNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
-    onReconnect: () -> Unit = {},
+    onFinishApp: () -> Unit = {},
     initialSearchQuery: String? = null,
 ) {
     val homeViewModel: HomeViewModel = hiltViewModel()
@@ -293,7 +294,7 @@ fun TvNavigationRoot(
                         TvRoute.Person -> selectedPersonId?.let(UUID::fromString)?.let { pid -> dev.jdtech.jellyfin.presentation.film.PersonScreen(pid, { popBack() }, { navigate(TvRoute.Home) }, ::openItem) } ?: popBack()
                         TvRoute.Settings -> TvSettingsScreen(state, appPreferences, homeState.server?.name, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { navigate(TvRoute.Users) })
                         TvRoute.Users -> TvUsersScreen({ popBack() }, { navigate(TvRoute.Home) })
-                        TvRoute.Companion -> TvCompanionScreen({ popBack() }, { homeViewModel.loadData() })
+                        TvRoute.Companion -> TvCompanionScreen(onBack = { popBack() }, onFinishApp = onFinishApp)
                     }
                 }
             }
@@ -897,12 +898,19 @@ private fun TvEpisodeHighlightCard(episode: SpatialFinEpisode, onClick: () -> Un
 @Composable
 private fun TvUserCard(name: String, role: String, avatarUri: android.net.Uri?, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
-    Column(Modifier.width(180.dp).onFocusChanged { isFocused = it.isFocused }.clickable(onClick = onClick).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(128.dp).clip(RoundedCornerShape(999.dp)).background(Color(0xFF1A2433)).border(if (isFocused) 2.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp))) {
-            if (avatarUri != null) AsyncImage(avatarUri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else Text(name.take(1).uppercase(), Modifier.align(Alignment.Center), style = MaterialTheme.typography.headlineMedium, color = Color.White)
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.width(180.dp).onFocusChanged { isFocused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.White.copy(alpha = 0.1f)),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(24.dp))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(128.dp).clip(RoundedCornerShape(999.dp)).background(Color(0xFF1A2433)).border(if (isFocused) 2.dp else 0.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp))) {
+                if (avatarUri != null) AsyncImage(avatarUri, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Text(name.take(1).uppercase(), Modifier.align(Alignment.Center), style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            }
+            Text(name, fontWeight = FontWeight.SemiBold); Text(role, style = MaterialTheme.typography.labelSmall)
         }
-        Text(name, fontWeight = FontWeight.SemiBold); Text(role, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -911,7 +919,7 @@ private fun TvMetadataPill(text: String) { MetadataPill { Text(text, style = Mat
 
 @Composable
 private fun TvPageHeaderCard(title: String, body: String) {
-    Card(onClick = {}, colors = CardDefaults.colors(containerColor = Color.White.copy(0.04f)), shape = CardDefaults.shape(RoundedCornerShape(30.dp))) {
+    Surface(modifier = Modifier.fillMaxWidth(), colors = SurfaceDefaults.colors(containerColor = Color.White.copy(0.04f)), shape = RoundedCornerShape(30.dp)) {
         Column(Modifier.fillMaxWidth().padding(28.dp)) { Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

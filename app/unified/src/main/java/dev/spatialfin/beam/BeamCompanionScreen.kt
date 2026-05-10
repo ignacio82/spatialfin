@@ -360,10 +360,21 @@ constructor(
 fun BeamCompanionScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
-    onSuccess: () -> Unit,
+    onFinishApp: () -> Unit,
     viewModel: BeamCompanionViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(state) {
+        if (state is BeamCompanionState.Success) {
+            // Companion-imported servers don't propagate cleanly to the
+            // running JellyfinApi / ConnectionMonitor / HomeViewModel — the
+            // user has to relaunch to see their library. Show the message,
+            // then close the app for them.
+            kotlinx.coroutines.delay(2200)
+            onFinishApp()
+        }
+    }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         item {
@@ -449,18 +460,13 @@ fun BeamCompanionScreen(
                             modifier = Modifier.padding(20.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text("Companion import complete.", style = MaterialTheme.typography.titleLarge)
+                            Text("Setup complete!", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Your Beam app now has the imported server, user, and sync configuration.",
+                                "Server, user, and preferences are imported. SpatialFin will close in a moment — reopen it to see your library.",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Button(onClick = onSuccess) {
-                                    Text("Continue")
-                                }
-                                OutlinedButton(onClick = viewModel::startScanning) {
-                                    Text("Re-scan")
-                                }
+                            Button(onClick = onFinishApp) {
+                                Text("Close now")
                             }
                         }
                     }
