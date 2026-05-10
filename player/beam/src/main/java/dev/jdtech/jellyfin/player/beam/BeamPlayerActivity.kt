@@ -106,6 +106,8 @@ import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
+import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -151,6 +153,14 @@ class BeamPlayerActivity : AppCompatActivity() {
         const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
         const val EXTRA_START_POSITION_MS = "startPositionMs"
 
+        /**
+         * Boolean Intent extra: when true, this Activity binds itself as the
+         * [dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge] master so a split-A/V
+         * session's drift controller can drive the local player. Mirror of the matching extra
+         * on `XrPlayerActivity` — see that class for the wider design.
+         */
+        const val EXTRA_SPLIT_AV_VIDEO_ROLE = "splitAv.videoRole"
+
         fun createIntent(
             context: Context,
             itemId: UUID,
@@ -160,6 +170,7 @@ class BeamPlayerActivity : AppCompatActivity() {
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
+            splitAvVideoRole: Boolean = false,
         ): Intent =
             Intent(context, BeamPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -169,6 +180,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 maxBitrate?.let { putExtra(EXTRA_MAX_BITRATE, it) }
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
                 startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
+                if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
             }
 
         fun createIntentForLocalMedia(
@@ -197,6 +209,7 @@ class BeamPlayerActivity : AppCompatActivity() {
             startFromBeginning: Boolean = false,
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
+            splitAvVideoRole: Boolean = false,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
@@ -207,6 +220,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
+                        splitAvVideoRole = splitAvVideoRole,
                     )
                 is SpatialFinEpisode ->
                     createIntent(
@@ -216,6 +230,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         startPositionMs = startPositionMs,
+                        splitAvVideoRole = splitAvVideoRole,
                     )
                 else -> null
             }
@@ -486,6 +501,11 @@ class BeamPlayerActivity : AppCompatActivity() {
             viewModel.player.currentPosition,
             viewModel.player.playerError?.errorCodeName,
         )
+        splitAvAdapter?.let { adapter ->
+            SplitAvVideoBridge.unbind(adapter)
+            adapter.release()
+        }
+        splitAvAdapter = null
         libassRenderer?.destroy()
         libassRenderer = null
     }
@@ -590,7 +610,22 @@ class BeamPlayerActivity : AppCompatActivity() {
             viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc),
         )
         viewModel.replacePlayer(player)
+
+        if (intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)) {
+            val adapter = PlayerSplitAvAdapter(
+                player = player,
+                onStopFromMaster = { finish() },
+                postToPlayer = { runOnUiThread(it) },
+            )
+            splitAvAdapter = adapter
+            adapter.setAudioMuted(true)
+            SplitAvVideoBridge.bind(adapter)
+            Timber.i("BeamPlayer: bound as split-A/V video master")
+        }
     }
+
+    /** Bound only when this Activity is the video master in a split-A/V session. */
+    private var splitAvAdapter: PlayerSplitAvAdapter? = null
 
     private fun createIntentForPlayerItem(context: Context, item: PlayerItem): Intent =
         when (item.contentSource) {

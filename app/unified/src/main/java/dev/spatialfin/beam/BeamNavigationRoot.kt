@@ -222,6 +222,11 @@ fun BeamNavigationRoot(
                     sessionManager = fcastSession,
                     scope = coroutineScope,
                     item = item,
+                    splitAvIntentBuilder = {
+                        BeamPlayerActivity.createIntentForSpatialItem(
+                            context, item, splitAvVideoRole = true,
+                        )
+                    },
                 ) { BeamPlayerActivity.createIntentForSpatialItem(context, item) }
                 if (routed) return true
                 // Non-playable (Show/Season/BoxSet) or playback couldn't start — jump to detail.
