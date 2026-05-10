@@ -150,6 +150,7 @@ private class IntentBasedExternalStreamPlayer(
                 container = request.container,
                 startMs = (request.startPositionSeconds * 1000.0).toLong(),
                 title = request.title,
+                splitAv = request.splitAv,
             )
             context.startActivity(intent)
             return ExternalStreamPlayer.PlayResult.Accepted

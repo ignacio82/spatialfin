@@ -9,4 +9,48 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:keepScreenOn="true" />
+
+    <!--
+      Visible only in split-A/V audio-only mode (this device plays audio while a paired
+      video master drives the picture). PlayerView's video surface stays black anyway —
+      this overlay is there so the user understands what they're looking at.
+    -->
+    <LinearLayout
+        android:id="@+id/fcast_inbound_audio_only_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/fcast_inbound_audio_only_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Audio-only · Split A/V"
+            android:textColor="#FFFFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/fcast_inbound_audio_only_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:textColor="#CCFFFFFF"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/fcast_inbound_audio_only_hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center"
+            android:text="Video is rendered on the paired headset."
+            android:textColor="#99FFFFFF"
+            android:textSize="14sp" />
+    </LinearLayout>
 </FrameLayout>

@@ -3,17 +3,24 @@ package dev.spatialfin.fcast
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
+import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
+import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
 import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
@@ -45,6 +52,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
     private var player: ExoPlayer? = null
     private var playbackTickerJob: Job? = null
+    private var splitAvRole: SplitAvRole? = null
+    private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushPlaybackSnapshot()
         override fun onPlaybackStateChanged(playbackState: Int) = pushPlaybackSnapshot()
@@ -101,14 +110,42 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val container = intent.getStringExtra(EXTRA_CONTAINER)
         val startMs = intent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L)
         val title = intent.getStringExtra(EXTRA_TITLE)
+        splitAvRole = intent.getStringExtra(EXTRA_SPLIT_AV_ROLE)
+            ?.let { runCatching { SplitAvRole.valueOf(it) }.getOrNull() }
+        val splitAvCadenceHz = intent.getIntExtra(EXTRA_SPLIT_AV_CADENCE_HZ, -1)
+            .takeIf { it > 0 }
+        playbackTickerIntervalMs = if (splitAvRole != null) {
+            // Default to the schema's recommended cadence; honor sender's hint when set.
+            val hz = splitAvCadenceHz ?: SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ
+            (1_000L / hz.coerceAtLeast(1)).coerceAtLeast(MIN_TICKER_INTERVAL_MS)
+        } else {
+            NORMAL_TICKER_INTERVAL_MS
+        }
 
         setContentView(R.layout.activity_fcast_inbound_player)
         val playerView = findViewById<PlayerView>(R.id.fcast_inbound_player_view)
+        val audioOnlyOverlay = findViewById<LinearLayout>(R.id.fcast_inbound_audio_only_overlay)
+        val audioOnlyTitle = findViewById<TextView>(R.id.fcast_inbound_audio_only_title)
 
         val exo = ExoPlayer.Builder(this).build()
         player = exo
         playerView.player = exo
         exo.addListener(playerListener)
+
+        if (splitAvRole == SplitAvRole.AUDIO) {
+            // Disable video tracks so no decoder spins up — saves CPU/GPU on the TV and prevents
+            // the (otherwise harmless but wasted) video render path. Audio is what we're here for.
+            exo.trackSelectionParameters = TrackSelectionParameters.Builder()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                .build()
+            audioOnlyOverlay.visibility = View.VISIBLE
+            audioOnlyTitle.text = title.orEmpty()
+            playerView.useController = false
+            Timber.i(
+                "FCast inbound: split-A/V audio role, ticker=%dms",
+                playbackTickerIntervalMs,
+            )
+        }
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
@@ -138,9 +175,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             // 1s cadence is enough to keep the sender's seek bar coherent without spamming
             // the wire. Sender-side seekBy() reads `remoteState.time` so this also keeps
             // ±10s skips accurate without forcing the sender to round-trip a request first.
+            // In split-A/V audio mode the cadence is ~10x higher because the sender's drift
+            // correction loop drives video timing off these beacons.
             while (isActive) {
                 pushPlaybackSnapshot()
-                delay(1_000)
+                delay(playbackTickerIntervalMs)
             }
         }
     }
@@ -194,6 +233,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         const val EXTRA_CONTAINER: String = "fcast.in.container"
         const val EXTRA_START_MS: String = "fcast.in.start_ms"
         const val EXTRA_TITLE: String = "fcast.in.title"
+        const val EXTRA_SPLIT_AV_ROLE: String = "fcast.in.split_av_role"
+        const val EXTRA_SPLIT_AV_CADENCE_HZ: String = "fcast.in.split_av_cadence_hz"
+
+        private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
+        private const val MIN_TICKER_INTERVAL_MS: Long = 50L
 
         fun createIntent(
             context: Context,
@@ -201,6 +245,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             container: String?,
             startMs: Long = 0L,
             title: String? = null,
+            splitAv: SplitAvMetadata? = null,
         ): Intent = Intent(context, FCastInboundPlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -208,6 +253,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             container?.let { putExtra(EXTRA_CONTAINER, it) }
             putExtra(EXTRA_START_MS, startMs)
             title?.let { putExtra(EXTRA_TITLE, it) }
+            splitAv?.let {
+                putExtra(EXTRA_SPLIT_AV_ROLE, it.role.name)
+                it.syncCadenceHz?.let { hz -> putExtra(EXTRA_SPLIT_AV_CADENCE_HZ, hz) }
+            }
         }
     }
 }

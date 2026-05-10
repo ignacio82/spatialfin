@@ -1,6 +1,8 @@
 package dev.jdtech.jellyfin.fcast.receiver
 
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
+import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
+import dev.jdtech.jellyfin.fcast.protocol.splitAv
 
 /**
  * Phase 3 contract: a normalized "play this arbitrary URL" request derived from an inbound
@@ -21,6 +23,12 @@ data class ExternalStreamRequest(
     val headers: Map<String, String> = emptyMap(),
     val title: String? = null,
     val thumbnailUrl: String? = null,
+    /**
+     * Set when the sender wants this peer to participate in a split-A/V session — typically
+     * with [SplitAvMetadata.role] = `AUDIO`, meaning this device should play audio and let a
+     * paired video master drive sync via PlaybackUpdate beacons. Null for normal full-A/V casts.
+     */
+    val splitAv: SplitAvMetadata? = null,
 ) {
     companion object {
         /**
@@ -40,6 +48,7 @@ data class ExternalStreamRequest(
                 headers = msg.headers.orEmpty(),
                 title = msg.metadata?.title,
                 thumbnailUrl = msg.metadata?.thumbnailUrl,
+                splitAv = msg.splitAv(),
             )
         }
     }
