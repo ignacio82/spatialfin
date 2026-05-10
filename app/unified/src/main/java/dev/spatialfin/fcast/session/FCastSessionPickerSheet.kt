@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -106,31 +108,41 @@ fun FCastSessionPickerSheet(
     }
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        // Fixed cinema-scale width on XR: a SpatialDialog renders centered in the user's
+        // vision and constraining width here keeps text readable at the 1.75 m spawn distance.
+        // heightIn is mandatory because SpatialDialog otherwise propagates Constraints.Infinity
+        // down into the LazyColumn below, which crashes on measurement.
+        // (See GEMINI.md "Spatial Dialogs & UI" — `LazyColumn inside SpatialDialog crashes
+        // with 'infinite height' unless the dialog has Modifier.heightIn(max = …)`.)
+        modifier = modifier
+            .widthIn(min = 720.dp, max = 960.dp)
+            .heightIn(max = 720.dp),
+        shape = RoundedCornerShape(32.dp),
     ) {
-        Column(modifier = Modifier.padding(24.dp)) {
+        Column(modifier = Modifier.padding(40.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Cast to FCast receiver",
-                        style = MaterialTheme.typography.titleLarge,
+                        text = "Cast to a receiver",
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "Tap a remembered device — we'll check it's online while you choose. Streams use plain TCP — only cast on a trusted Wi-Fi.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "Pick a device on your network. Streams use plain TCP, so " +
+                            "only cast on a trusted Wi-Fi.",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (isScanning) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
 
             if (showSplitAvOption) {
                 SplitAvToggleRow(
@@ -138,15 +150,18 @@ fun FCastSessionPickerSheet(
                     onToggle = onSplitAvToggle,
                     permissionDenied = splitAvPermissionDenied,
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(20.dp))
             }
 
             if (entries.isEmpty() && !isScanning) {
-                Text("No receivers found yet. Add one manually below.")
+                Text(
+                    text = "No receivers found yet. Add one manually below.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(entries, key = { "${it.receiver.host}:${it.receiver.port}" }) { entry ->
                         SessionReceiverRow(
@@ -165,16 +180,16 @@ fun FCastSessionPickerSheet(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
             HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
 
             Text(
                 text = "Add manually",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Medium,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = manualHost,
@@ -192,13 +207,15 @@ fun FCastSessionPickerSheet(
                     modifier = Modifier.weight(1f),
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                }
+                Spacer(Modifier.width(12.dp))
                 Button(
                     enabled = manualHost.isNotBlank() && (manualPort.toIntOrNull() ?: 0) in 1..65535,
                     onClick = {
@@ -211,7 +228,7 @@ fun FCastSessionPickerSheet(
                             ),
                         )
                     },
-                ) { Text("Cast") }
+                ) { Text("Cast", style = MaterialTheme.typography.titleMedium) }
             }
         }
     }
@@ -227,37 +244,37 @@ private fun SplitAvToggleRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle(!enabled) },
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         tonalElevation = 1.dp,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Split A/V",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Video stays on this device, audio plays on the picked receiver. " +
-                        "First use calibrates audio sync (~6s) in a quiet room.",
-                    style = MaterialTheme.typography.bodySmall,
+                        "First use calibrates audio sync (~6 s) in a quiet room.",
+                    style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (permissionDenied) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = "Microphone permission is required to calibrate audio sync. " +
                             "Grant it in System Settings to enable Split A/V.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(16.dp))
             Switch(checked = enabled, onCheckedChange = onToggle)
         }
     }
@@ -277,20 +294,22 @@ private fun SessionReceiverRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (rowEnabled) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         tonalElevation = 1.dp,
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ReachabilityDot(state = entry.state)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = entry.receiver.name,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
                         color = if (rowEnabled) MaterialTheme.colorScheme.onSurface
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         text = buildString {
                             append(entry.receiver.host).append(':').append(entry.receiver.port)
@@ -303,14 +322,16 @@ private fun SessionReceiverRow(
                                 },
                             )
                         },
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = onForget) { Text("Forget") }
+                TextButton(onClick = onForget) {
+                    Text("Forget", style = MaterialTheme.typography.titleMedium)
+                }
             }
             if (showCalibration) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -318,12 +339,14 @@ private fun SessionReceiverRow(
                     Text(
                         text = audioLatencyMs?.let { "Audio sync: $it ms calibrated" }
                             ?: "Audio sync: not calibrated yet",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
                     if (audioLatencyMs != null) {
-                        TextButton(onClick = onRecalibrate) { Text("Recalibrate") }
+                        TextButton(onClick = onRecalibrate) {
+                            Text("Recalibrate", style = MaterialTheme.typography.titleMedium)
+                        }
                     }
                 }
             }

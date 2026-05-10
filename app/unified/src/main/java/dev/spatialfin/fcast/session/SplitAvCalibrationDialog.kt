@@ -8,9 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -23,21 +22,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.xr.compose.spatial.SpatialDialog
 
 /**
  * Modal dialog that surfaces the [FCastSessionManager.calibrationState] flow as user-visible
- * feedback. The calibration itself runs inside [FCastSessionManager.castSpatialItemSplitAv];
- * this composable just renders state transitions:
+ * feedback. Uses [SpatialDialog] so the panel renders centered in the user's vision on XR
+ * (parent panel pushes back); on Beam / TV it falls back to a regular dialog.
  *
- *  - Idle: nothing shown.
- *  - Running: an indeterminate progress dialog. No cancel button — calibration is short
- *    (~6 s) and cancelling it cleanly is more code than it's worth.
- *  - Success: a brief confirmation with the measured latency. Tapping OK dismisses.
- *  - Failed: an error dialog with the reason. Retry is a re-tap of the play button — we don't
- *    auto-retry because the failure is usually environmental (noisy room, missing receiver).
+ * Three non-Idle states:
+ *  - Running: indeterminate progress + "be quiet" instructions. No cancel — calibration is
+ *    short (~6 s) and cancelling cleanly is more code than it's worth.
+ *  - Success: brief confirmation with measured latency. Tap OK to dismiss.
+ *  - Failed: error reason + Dismiss. Retry is a re-tap of Play.
  *
- * Mount this once per Compose root that participates in casting (NavigationRoot for XR,
- * BeamNavigationRoot for Beam). The TV root doesn't need it since split mode is hidden there.
+ * Mount once per Compose root that participates in casting (NavigationRoot for XR,
+ * BeamNavigationRoot for Beam). FCastGlobalPickerHost mounts it as a sibling so XR and Beam
+ * roots get it for free; TV doesn't mount the picker host so split mode is hidden there.
  */
 @Composable
 fun SplitAvCalibrationDialog(
@@ -59,76 +59,118 @@ fun SplitAvCalibrationDialog(
 }
 
 @Composable
-private fun RunningContent(receiverName: String) {
-    AlertDialog(
-        onDismissRequest = {},  // not cancellable
-        confirmButton = {},
-        title = {
-            Text("Calibrating audio sync…", fontWeight = FontWeight.SemiBold)
-        },
-        text = {
-            Column {
-                Text("Playing a calibration tone through $receiverName and listening for it.")
-                Spacer(Modifier.height(12.dp))
+private fun CalibrationDialogShell(
+    onDismiss: () -> Unit,
+    cancellable: Boolean,
+    title: String,
+    body: @Composable () -> Unit,
+    confirm: (@Composable () -> Unit)? = null,
+) {
+    SpatialDialog(onDismissRequest = if (cancellable) onDismiss else { -> }) {
+        Surface(
+            shape = RoundedCornerShape(32.dp),
+            tonalElevation = 6.dp,
+            modifier = Modifier.widthIn(min = 640.dp, max = 880.dp),
+        ) {
+            Column(modifier = Modifier.padding(40.dp)) {
                 Text(
-                    "Be in a quiet room and don't speak. ~6 seconds.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                Spacer(Modifier.height(20.dp))
+                body()
+                if (confirm != null) {
+                    Spacer(Modifier.height(28.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        confirm()
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RunningContent(receiverName: String) {
+    CalibrationDialogShell(
+        onDismiss = {},
+        cancellable = false,
+        title = "Calibrating audio sync…",
+        body = {
+            Text(
+                text = "Playing a calibration tone through $receiverName and listening for it.",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Be in a quiet room and don't speak. ~6 seconds.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(28.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(56.dp))
+            }
         },
-        shape = RoundedCornerShape(20.dp),
     )
 }
 
 @Composable
 private fun SuccessContent(latencyMs: Int, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("OK") }
+    CalibrationDialogShell(
+        onDismiss = onDismiss,
+        cancellable = true,
+        title = "Audio sync calibrated",
+        body = {
+            Text(
+                text = "Measured audio latency: $latencyMs ms.",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Starting playback…",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         },
-        title = {
-            Text("Audio sync calibrated", fontWeight = FontWeight.SemiBold)
+        confirm = {
+            TextButton(onClick = onDismiss) {
+                Text("OK", style = MaterialTheme.typography.titleMedium)
+            }
         },
-        text = {
-            Text("Measured audio latency: $latencyMs ms. Starting playback…")
-        },
-        shape = RoundedCornerShape(20.dp),
     )
 }
 
 @Composable
 private fun FailedContent(reason: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Dismiss") }
+    CalibrationDialogShell(
+        onDismiss = onDismiss,
+        cancellable = true,
+        title = "Calibration failed",
+        body = {
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Try again from a quieter room, with the receiver's volume audible " +
+                    "but not loud enough to clip.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         },
-        title = {
-            Text("Calibration failed", fontWeight = FontWeight.SemiBold)
-        },
-        text = {
-            Surface(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(0.dp)) {
-                    Text(reason)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Try again from a quieter room, with the receiver's volume audible " +
-                            "but not loud enough to clip.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        confirm = {
+            TextButton(onClick = onDismiss) {
+                Text("Dismiss", style = MaterialTheme.typography.titleMedium)
             }
         },
-        shape = RoundedCornerShape(20.dp),
     )
 }

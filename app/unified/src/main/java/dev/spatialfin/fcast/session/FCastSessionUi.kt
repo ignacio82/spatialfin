@@ -92,24 +92,27 @@ fun FCastGlobalPickerHost(
     SplitAvCalibrationDialog(sessionManager = sessionManager)
 
     val visible by sessionManager.pickerVisible.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(visible) {
+        timber.log.Timber.tag("FCastSession").i("picker host visible=%b", visible)
+    }
     if (!visible) return
-    androidx.compose.material3.AlertDialog(
+    // SpatialDialog renders centered in the user's vision on XR (with parent-panel pushback)
+    // and falls back to a standard Material3 dialog on phone / TV. Plain AlertDialog inside an
+    // XR Subspace placed the picker behind the playback panel — switching to SpatialDialog is
+    // what makes the picker actually visible from the XR home/hero entry points.
+    androidx.xr.compose.spatial.SpatialDialog(
         onDismissRequest = { sessionManager.hidePicker() },
-        confirmButton = {},
-        dismissButton = {},
-        title = null,
-        text = {
-            FCastSessionPickerSheet(
-                sessionManager = sessionManager,
-                onReceiverPicked = { receiver ->
-                    sessionManager.pickReceiver(receiver)
-                    sessionManager.hidePicker()
-                },
-                onDismiss = { sessionManager.hidePicker() },
-                showSplitAvOption = showSplitAvOption,
-            )
-        },
-    )
+    ) {
+        FCastSessionPickerSheet(
+            sessionManager = sessionManager,
+            onReceiverPicked = { receiver ->
+                sessionManager.pickReceiver(receiver)
+                sessionManager.hidePicker()
+            },
+            onDismiss = { sessionManager.hidePicker() },
+            showSplitAvOption = showSplitAvOption,
+        )
+    }
 }
 
 /**

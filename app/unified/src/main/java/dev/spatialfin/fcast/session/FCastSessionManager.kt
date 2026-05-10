@@ -177,6 +177,7 @@ class FCastSessionManager @Inject constructor(
         status.value == FCastCastingController.Status.Connecting
 
     fun showPicker() {
+        Timber.tag(TAG).i("showPicker: opening cast picker (was visible=%b)", _pickerVisible.value)
         _pickerVisible.value = true
         pickerJob?.cancel()
         pickerJob = scope.launch { driveDiscoveryAndProbing() }

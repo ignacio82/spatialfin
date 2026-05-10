@@ -1831,6 +1831,9 @@ fun SpatialPlayerScreen(
                                 },
                                 onBackClick = { requestExit("controls-back") },
                                 resetAutoHide = { resetAutoHide() },
+                                onFCastClick = { activeDialog = "fcast"; resetAutoHide() },
+                                fcastActive = fcastCastingState ==
+                                    dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
                             )
                         }
 

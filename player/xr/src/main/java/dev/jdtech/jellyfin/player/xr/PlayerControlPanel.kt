@@ -52,6 +52,8 @@ internal fun ControlPanelUI(
     onChaptersClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
+    onFCastClick: () -> Unit = {},
+    fcastActive: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(48.dp),
@@ -106,6 +108,17 @@ internal fun ControlPanelUI(
                     }
                 }
                 if (!isLocked) {
+                    IconButton(
+                        onClick = { onFCastClick(); resetAutoHide() },
+                        modifier = Modifier.size(100.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_cast),
+                            contentDescription = "Cast",
+                            tint = if (fcastActive) Color(0xFF4FC3F7) else Color.White,
+                            modifier = Modifier.size(64.dp),
+                        )
+                    }
                     IconButton(
                         onClick = { onMoveCloser(); resetAutoHide() },
                         modifier = Modifier.size(100.dp),
