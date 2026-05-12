@@ -1965,6 +1965,31 @@ fun SpatialPlayerScreen(
                     if (activeDialog == "fcast") {
                         SpatialDialog(onDismissRequest = { activeDialog = null }) {
                             Surface(shape = RoundedCornerShape(32.dp)) {
+                                androidx.compose.foundation.layout.Column {
+                                    if (splitAvVideoRole) {
+                                        // Sender-side fold: ask the receiver to stop and let
+                                        // the cascade in SplitAvController.endByReceiver
+                                        // unmute the master so audio comes back to the XR.
+                                        androidx.compose.material3.Button(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    runCatching { fcastCastingController.stopCast() }
+                                                }
+                                                activeDialog = null
+                                            },
+                                            modifier = androidx.compose.ui.Modifier
+                                                .fillMaxWidth()
+                                                .padding(
+                                                    start = 40.dp,
+                                                    end = 40.dp,
+                                                    top = 40.dp,
+                                                ),
+                                        ) {
+                                            androidx.compose.material3.Text(
+                                                text = "Stop split-A/V — play audio on this headset",
+                                            )
+                                        }
+                                    }
                                 dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet(
                                     onReceiverPicked = { receiver ->
                                         val item = player.currentMediaItem
@@ -1997,6 +2022,7 @@ fun SpatialPlayerScreen(
                                     },
                                     onDismiss = { activeDialog = null },
                                 )
+                                }
                             }
                         }
                     }

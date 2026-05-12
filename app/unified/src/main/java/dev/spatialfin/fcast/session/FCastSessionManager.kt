@@ -625,6 +625,19 @@ class FCastSessionManager @Inject constructor(
         _pickedReceiver.value = null
     }
 
+    /**
+     * Fold split-A/V audio back to the headset without stopping playback. Tells the picked
+     * receiver to stop its audio overlay and unmutes the local master so the XR keeps
+     * playing the movie with sound. Picked receiver and split-mode preference are preserved
+     * — re-entering split-A/V is just another play tap away.
+     */
+    suspend fun endSplitAv() {
+        splitAvController.endFromMaster()
+    }
+
+    /** True while a split-A/V session is active (between start and end). */
+    val splitAvActive: StateFlow<SplitAvController.State> = splitAvController.state
+
     private companion object {
         const val TAG = "FCastSession"
         const val DISCOVERY_QUICK_MS = 1_500L

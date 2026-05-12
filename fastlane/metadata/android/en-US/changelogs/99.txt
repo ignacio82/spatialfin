@@ -1,0 +1,1 @@
+Stop split-A/V from the XR side: a "Stop split-A/V — play audio on this headset" button now appears at the top of the in-player cast picker whenever a split session is active. Audio folds back to the headset without skipping a frame.

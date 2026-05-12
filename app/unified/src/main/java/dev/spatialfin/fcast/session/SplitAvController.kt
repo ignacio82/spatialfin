@@ -194,6 +194,21 @@ class SplitAvController @Inject constructor(
     }
 
     /**
+     * Master-initiated session end. Symmetric counterpart of [endByReceiver]: the XR user
+     * asked to fold audio back to the headset (via the in-player cast picker's
+     * "Stop split-A/V" action). Tells the receiver to stop its audio overlay, then ends the
+     * session locally without stopping the master player.
+     */
+    suspend fun endFromMaster() {
+        try {
+            castingController.stopCast()
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "endFromMaster: stopCast to receiver failed (continuing)")
+        }
+        endByReceiver()
+    }
+
+    /**
      * Receiver-initiated session end. The Pixel's audio overlay's Stop button (or any other
      * end-of-stream signal from the receiver) lands here. Unmutes the local master so the
      * user keeps hearing the movie on the XR, but does *not* stop the master player — the
