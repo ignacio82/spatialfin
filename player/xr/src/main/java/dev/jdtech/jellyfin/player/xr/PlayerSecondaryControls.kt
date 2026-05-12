@@ -47,13 +47,11 @@ internal fun SecondaryControlsOrbiter(
     onQualityClick: () -> Unit,
     onSyncPlayClick: () -> Unit,
     onCastCrewClick: () -> Unit,
-    onFCastClick: () -> Unit,
     onVoiceClick: () -> Unit,
     voiceControlEnabled: Boolean,
     voiceAvailable: Boolean,
     voiceState: VoiceState,
     syncPlayActive: Boolean,
-    fcastActive: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(40.dp),
@@ -110,14 +108,6 @@ internal fun SecondaryControlsOrbiter(
                     painterResource(CoreR.drawable.ic_user),
                     contentDescription = "Cast & crew",
                     tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-            IconButton(onClick = onFCastClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_cast),
-                    contentDescription = "Cast to FCast receiver",
-                    tint = if (fcastActive) Color(0xFF4FC3F7) else Color.White,
                     modifier = Modifier.size(64.dp),
                 )
             }

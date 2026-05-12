@@ -135,6 +135,27 @@
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:launchMode="singleTask"
             android:theme="@style/Theme.SpatialFin.FCastInboundPlayer" />
+
+        <!--
+          Split-A/V cross-process bridge. Lives in the main process so the
+          dev.spatialfin.fcast.session.SplitAvController (also main) can drive the local
+          video-master player even when that player runs in :xrplayer. android:exported=false
+          since only our own :xrplayer client binds to it.
+        -->
+        <service
+            android:name="dev.spatialfin.fcast.session.SplitAvBridgeService"
+            android:exported="false" />
+
+        <!-- Debug-only launcher Activity for split-A/V iteration via `adb shell am start`.
+             The class no-ops on release builds (BuildConfig.DEBUG gate) but the manifest entry
+             stays universal — Android does not let a release-only entry coexist with a debug-
+             only class without a flavored source set. exported=true so external am start
+             can reach it; the body refuses to act on release builds. -->
+        <activity
+            android:name="dev.spatialfin.fcast.debug.SplitAvDebugLaunchActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 
 </manifest>

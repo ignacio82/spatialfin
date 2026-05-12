@@ -231,6 +231,11 @@ fun SpatialPlayerScreen(
     telemetryStore: VoiceTelemetryStore,
     fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController,
     onBackClick: () -> Unit,
+    /**
+     * True when this Activity was launched as the video master of a split-A/V session. The
+     * voice-ducking effect must respect mute in that mode — see [PlayerVoiceCoordinator].
+     */
+    splitAvVideoRole: Boolean = false,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -284,6 +289,7 @@ fun SpatialPlayerScreen(
         voiceService = voiceService,
         tts = tts,
         followUpListenWindowMs = followUpListenWindowMs,
+        splitAvVideoRole = splitAvVideoRole,
     )
     var exitRequested by remember { mutableStateOf(false) }
     val voiceGestureHand =
@@ -472,6 +478,7 @@ fun SpatialPlayerScreen(
         )
         viewModel.updatePlaybackProgress()
         libass.reset()
+        Timber.tag("SplitAvPauseTrace").w("pause source=requestExit")
         runCatching { player.pause() }
         // Let the activity finish drive the single XR surface teardown path. Clearing the
         // video surface here races with SurfaceEntity disposal on some devices.
@@ -491,7 +498,7 @@ fun SpatialPlayerScreen(
             coroutineScope.launch {
                 when (action) {
                     "play" -> player.play()
-                    "pause" -> player.pause()
+                    "pause" -> { Timber.tag("SplitAvPauseTrace").w("pause source=mcp"); player.pause() }
                     "skip_forward" -> player.seekForward()
                     "skip_backward" -> player.seekBack()
                     "next_episode" -> viewModel.skipToNextItem()
@@ -1785,7 +1792,6 @@ fun SpatialPlayerScreen(
                                     resetAutoHide()
                                 },
                                 onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
-                                onFCastClick = { activeDialog = "fcast"; resetAutoHide() },
                                 onVoiceClick = {
                                     requestVoiceCommand()
                                     resetAutoHide()
@@ -1794,7 +1800,6 @@ fun SpatialPlayerScreen(
                                 voiceAvailable = voiceService.isAvailable(),
                                 voiceState = voiceState,
                                 syncPlayActive = syncPlayState.activeGroup != null,
-                                fcastActive = fcastCastingState == dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
                             )
                         }
                     }

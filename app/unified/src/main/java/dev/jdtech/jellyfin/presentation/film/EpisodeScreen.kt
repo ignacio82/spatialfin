@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -78,6 +79,8 @@ fun EpisodeScreen(
 ) {
     val context = LocalContext.current
     val isOfflineMode = LocalOfflineMode.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
@@ -138,22 +141,53 @@ fun EpisodeScreen(
                     } else {
                         dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
                     }
-                    val intent = Intent(context, targetActivity)
-                    intent.putExtra("itemId", episodeId.toString())
-                    intent.putExtra("itemKind", BaseItemKind.EPISODE.serialName)
-                    intent.putExtra("startFromBeginning", action.startFromBeginning)
-                    action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
-                    action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                    if (useImmersivePlayer) {
-                        val stereoModeStr = when (stereoMode) {
-                            StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
-                            StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
-                            StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
-                            else -> "mono"
-                        }
-                        intent.putExtra("stereoMode", action.force3dMode ?: stereoModeStr)
+                    val stereoModeStr = when (stereoMode) {
+                        StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                        StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                        StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                        else -> "mono"
                     }
-                    context.startActivity(intent)
+                    val resolvedStereoMode = action.force3dMode ?: stereoModeStr
+                    val buildLocalIntent: () -> Intent = {
+                        val intent = Intent(context, targetActivity)
+                        intent.putExtra("itemId", episodeId.toString())
+                        intent.putExtra("itemKind", BaseItemKind.EPISODE.serialName)
+                        intent.putExtra("startFromBeginning", action.startFromBeginning)
+                        action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
+                        action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
+                        if (useImmersivePlayer) intent.putExtra("stereoMode", resolvedStereoMode)
+                        intent
+                    }
+                    // Route through launchPlayback so a picked FCast receiver (with optional
+                    // Split-A/V toggle) intercepts the Play tap. Split-A/V intent always targets
+                    // XrPlayerActivity — MultitaskPlayerActivity doesn't implement
+                    // SplitAvVideoMaster.
+                    if (fcastSession != null && episode != null) {
+                        val resumeMs = if (action.startFromBeginning) 0L
+                            else episode.playbackPositionTicks / 10_000L
+                        dev.spatialfin.fcast.session.launchPlayback(
+                            context = context,
+                            sessionManager = fcastSession,
+                            scope = scope,
+                            item = episode,
+                            startPositionMs = resumeMs.takeIf { it > 0 },
+                            splitAvIntentBuilder = {
+                                XrPlayerActivity.createIntent(
+                                    context = context,
+                                    itemId = episode.id,
+                                    itemKind = BaseItemKind.EPISODE.serialName,
+                                    startFromBeginning = action.startFromBeginning,
+                                    stereoMode = resolvedStereoMode,
+                                    mediaSourceIndex = action.mediaSourceIndex,
+                                    maxBitrate = action.maxBitrate,
+                                    splitAvVideoRole = true,
+                                )
+                            },
+                            intentBuilder = buildLocalIntent,
+                        )
+                    } else {
+                        context.startActivity(buildLocalIntent())
+                    }
                 }
                 is EpisodeAction.OnBackClick -> navigateBack()
                 is EpisodeAction.OnHomeClick -> navigateHome()

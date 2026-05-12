@@ -41,23 +41,16 @@ fun launchPlayback(
     if (sessionManager.hasCastIntent()) {
         scope.launch {
             if (sessionManager.splitAvMode.value) {
-                val ok = sessionManager.castSpatialItemSplitAv(
+                // Split-A/V explicitly requested. Do NOT fall back to local on failure — the
+                // calibration error dialog stays visible and the user can dismiss + re-tap Play
+                // to retry. Silently launching the local player here would hide the error and
+                // play the same media without split sync, which is the opposite of what the
+                // user asked for.
+                sessionManager.castSpatialItemSplitAv(
                     item = item,
                     startPositionMs = startPositionMs,
                     localPlayerIntentBuilder = splitAvIntentBuilder,
                 )
-                if (!ok) {
-                    Timber.tag("PlaybackLauncher").w("Split-A/V routing failed; falling back to local player")
-                    withContext(Dispatchers.Main) {
-                        val intent = intentBuilder()
-                        if (intent != null) {
-                            runCatching { context.startActivity(intent) }
-                                .onFailure { onLocalLaunchFailed() }
-                        } else {
-                            onLocalLaunchFailed()
-                        }
-                    }
-                }
                 return@launch
             }
             val ok = sessionManager.castSpatialItem(item, startPositionMs)
@@ -67,7 +60,7 @@ fun launchPlayback(
                     val intent = intentBuilder()
                     if (intent != null) {
                         runCatching { context.startActivity(intent) }
-                            .onFailure { onLocalLaunchFailed() }
+                                .onFailure { onLocalLaunchFailed() }
                     } else {
                         onLocalLaunchFailed()
                     }

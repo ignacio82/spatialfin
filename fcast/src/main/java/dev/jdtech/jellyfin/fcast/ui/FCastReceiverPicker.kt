@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,8 +66,14 @@ fun FCastReceiverPickerSheet(
         isScanning = false
     }
 
+    // SpatialDialog hands its content Constraints.Infinity for max height — the inner
+    // LazyColumn would crash with "Vertically scrollable component was measured with an
+    // infinity maximum height constraints". Bound both axes here so the sheet is safe to
+    // host inside any container (XR SpatialDialog, Material3 AlertDialog, etc).
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .widthIn(min = 720.dp, max = 960.dp)
+            .heightIn(max = 720.dp),
         shape = RoundedCornerShape(24.dp),
     ) {
         Column(modifier = Modifier.padding(24.dp)) {

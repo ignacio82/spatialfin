@@ -32,15 +32,33 @@ class PlayerSplitAvAdapter(
 
     private var savedVolume: Float = 1f
 
+    /**
+     * True while the local master is participating in a split-A/V session as the video
+     * master. The controller signals end-of-session via [setAudioMuted]`(false)` (the only
+     * place that's called from), which flips this back to false.
+     *
+     * Surfaces that mute the player for non-split-A/V reasons (voice ducking, etc.) read
+     * this state to decide whether to *keep* the player muted. Without this signal, voice
+     * ducking would re-mute the player every time the voice listener cycles, even after the
+     * user ended split-A/V from the receiver side.
+     */
+    private val _splitAvActive = MutableStateFlow(true)
+    val splitAvActive: StateFlow<Boolean> = _splitAvActive.asStateFlow()
+
     private val listener = object : Player.Listener {
-        override fun onIsPlayingChanged(playing: Boolean) {
-            _isPlaying.value = playing
+        // We track user intent (playWhenReady) rather than `isPlaying`. `isPlaying` flips
+        // false on every transient buffering moment (chunk fetch, seek refill) which would
+        // cause the split-A/V pause-mirror to spam pause/resume to the receiver every couple
+        // of seconds. `playWhenReady` only changes when the *user* (or a programmatic
+        // pause/play) toggles intent, which is what the cascade actually wants.
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            _isPlaying.value = playWhenReady
         }
     }
 
     init {
         player.addListener(listener)
-        _isPlaying.value = player.isPlaying
+        _isPlaying.value = player.playWhenReady
     }
 
     /** Detach the listener. Call from the Activity's `onDestroy` after `unbind`. */
@@ -59,6 +77,7 @@ class PlayerSplitAvAdapter(
     }
 
     override fun pauseFromMaster() = postToPlayer {
+        timber.log.Timber.tag("SplitAvPauseTrace").w("pauseFromMaster IPC → player.pause()")
         player.pause()
     }
 
@@ -77,6 +96,9 @@ class PlayerSplitAvAdapter(
             player.volume = 0f
         } else {
             player.volume = savedVolume
+            // Unmute is only ever called when split-A/V ends — signal it so the voice
+            // ducker stops forcing volume back to 0 on every voice state cycle.
+            _splitAvActive.value = false
         }
     }
 }

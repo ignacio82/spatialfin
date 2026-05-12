@@ -1,0 +1,2 @@
+Split-A/V on Galaxy XR: watch on the headset while audio plays on a paired phone, Google TV Streamer, or any SpatialFin-running device. Calibrated lip-sync, automatic drift correction, instant fallback to headset audio when you stop the split.
+Smaller fixes to FCast cast: persisted Wi-Fi performance lock, calibration recalibrate button, in-player cast picker dialog layout, resume-position handoff.

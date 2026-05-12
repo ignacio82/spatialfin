@@ -54,6 +54,7 @@
                     <span>Network Shares (SMB/NFS)</span>
                     <span>Offline Engine</span>
                     <span>FCast Sender + Receiver</span>
+                    <span>Split-A/V on Galaxy XR</span>
                 </div>
             </div>
 
@@ -254,6 +255,7 @@
                                         <li><strong>Server Connectivity:</strong> Deep integration with Jellyfin for libraries and collections.</li>
                                         <li><strong>Seerr Integration:</strong> Connect Jellyseerr or Overseerr to search and request media.</li>
                                         <li><strong>FCast Sender + Receiver:</strong> SpatialFin speaks the full <a href="https://fcast.org" style="color: var(--primary); text-decoration: none;">FCast</a> v3 protocol. As a <em>sender</em>, the XR player orbiter and the Beam phone player both expose a Cast button — pick a receiver via mDNS auto-discovery or manual entry to push the current Jellyfin stream to any FCast-capable TV or PC. As a <em>receiver</em>, an opt-in foreground service accepts inbound media (YouTube via Grayjay, public HLS/DASH URLs) directly into the headset with optional autopromote into XR Full Space.</li>
+                                        <li><strong>Split-A/V on Galaxy XR:</strong> Watch a movie on the headset while the audio plays through a phone, Google TV Streamer, or any SpatialFin-running device on the same Wi-Fi. The XR holds the video master clock; the picked receiver renders audio with a one-time calibration chirp that measures speaker latency, and the sender's controller keeps both ends in lip-sync via a 10 Hz beacon plus a three-tier drift policy (hold under 20 ms / speed nudge in the middle band / hard-seek over 500 ms). Tap Stop on the receiver and the headset unmutes automatically so the movie keeps playing locally — no interruption.</li>
                                     </ul>
                                 </div>
                             </div>

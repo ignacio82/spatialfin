@@ -32,6 +32,7 @@ import dev.spatialfin.DiagnosticsExport
 import dev.spatialfin.LogFileTree
 import dev.spatialfin.beam.BeamCompanionLogUploader
 import dev.spatialfin.fcast.FCastReceiverWiring
+import dev.spatialfin.fcast.debug.SplitAvDebugBridge
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import okio.Path.Companion.toOkioPath
@@ -44,6 +45,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
     @Inject lateinit var llmDownloadManager: Lazy<LlmDownloadManager>
     @Inject lateinit var watchNextScheduler: WatchNextScheduler
+    @Inject lateinit var splitAvDebugBridge: SplitAvDebugBridge
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -98,6 +100,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             prefs = appPreferences,
             deviceClass = deviceClass,
         )
+
+        // Debug-only adb-broadcast backdoor for split-A/V iteration. No-op in release.
+        splitAvDebugBridge.installIfDebug(this)
     }
 
     private fun applyNightMode() {

@@ -161,8 +161,8 @@ private fun FailedContent(reason: String, onDismiss: () -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Try again from a quieter room, with the receiver's volume audible " +
-                    "but not loud enough to clip.",
+                text = "Tap Play again on the same item to retry — quieter room and louder " +
+                    "receiver volume help the headset mic pick up all five chirps.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

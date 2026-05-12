@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -39,11 +40,51 @@ class FCastReceiverService : Service() {
     private var advertiser: FCastReceiverAdvertiser? = null
     private var bootstrapJob: Job? = null
 
+    /**
+     * High-performance Wi-Fi lock held while the receiver service is alive.
+     *
+     * Without this, Android (especially Pixel devices on doze-aggressive firmware) drops the
+     * Wi-Fi radio to a low-power state when the screen turns off. The foreground-service
+     * notification alone is not enough — the sender's TCP connection sees ~30 s of latency
+     * then RST/timeout, and split-A/V audio silently dies even though the receiver service
+     * itself is still running. The `WIFI_MODE_FULL_HIGH_PERF` lock keeps the radio active so
+     * sender pings round-trip without the Wi-Fi modem napping.
+     *
+     * Released in [onDestroy]. The CHANGE_WIFI_MULTICAST_STATE permission is already declared
+     * in the unified manifest (mDNS requires it); no extra permission is needed for WifiLock.
+     */
+    private var wifiLock: WifiManager.WifiLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        acquireWifiLock()
+    }
+
+    private fun acquireWifiLock() {
+        if (wifiLock != null) return
+        val wifi = applicationContext.getSystemService(WifiManager::class.java) ?: run {
+            Timber.tag(TAG).w("WifiManager unavailable — skipping WifiLock")
+            return
+        }
+        val lock = wifi.createWifiLock(
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            "SpatialFinFCastReceiver",
+        ).apply { setReferenceCounted(false) }
+        lock.acquire()
+        wifiLock = lock
+        Timber.tag(TAG).i("WifiLock acquired (WIFI_MODE_FULL_HIGH_PERF)")
+    }
+
+    private fun releaseWifiLock() {
+        val lock = wifiLock ?: return
+        if (lock.isHeld) {
+            runCatching { lock.release() }
+                .onFailure { Timber.tag(TAG).w(it, "WifiLock release failed") }
+        }
+        wifiLock = null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -112,6 +153,7 @@ class FCastReceiverService : Service() {
         FCastInboundSession.unbindBroadcaster()
         server?.stop()
         server = null
+        releaseWifiLock()
         scope.launch { advertiser?.unregister() }
             .invokeOnCompletion { scope.cancel() }
     }

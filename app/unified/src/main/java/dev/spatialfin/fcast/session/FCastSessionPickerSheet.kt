@@ -174,7 +174,13 @@ fun FCastSessionPickerSheet(
                                 "${entry.receiver.host}:${entry.receiver.port}"
                             ],
                             showCalibration = splitAvMode,
-                            onRecalibrate = { sessionManager.recalibrateReceiver(entry.receiver) },
+                            onRecalibrate = {
+                                // Hitting Recalibrate strongly implies the user wants THIS
+                                // receiver as their cast target — also pick it so a subsequent
+                                // Play tap goes to the right device instead of a stale pick.
+                                sessionManager.pickReceiver(entry.receiver)
+                                sessionManager.recalibrateReceiver(entry.receiver)
+                            },
                         )
                     }
                 }

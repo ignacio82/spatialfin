@@ -13,6 +13,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,14 +38,18 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcClient
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.util.UUID
 import javax.inject.Inject
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 
@@ -71,6 +77,8 @@ class XrPlayerActivity : AppCompatActivity() {
      * over in `:app:unified`; this side just exposes the master surface and mutes audio.
      */
     private var splitAvAdapter: PlayerSplitAvAdapter? = null
+    private var splitAvIpcClient: SplitAvBridgeIpcClient? = null
+    private var splitAvStateTickerJob: kotlinx.coroutines.Job? = null
 
     companion object {
         /**
@@ -302,9 +310,12 @@ class XrPlayerActivity : AppCompatActivity() {
         viewModel.replacePlayer(player)
 
         // If launched as the video master for a split-A/V session, expose the player to the
-        // SplitAvController via the process-wide bridge. The controller calls back into this
-        // adapter with speed-nudge / hard-seek / pause-resume / mute commands while drift
-        // correction runs against the TV's audio clock.
+        // SplitAvController via the cross-process bridge. XrPlayerActivity runs in
+        // `:xrplayer` while the controller lives in main; SplitAvVideoBridge alone is a
+        // per-process singleton, so binding here would be invisible. Instead, we bind to
+        // SplitAvBridgeService (main-process) via Messenger and push player state to it; the
+        // service exposes a ProxyVideoMaster to the main-process bridge so the controller
+        // sees a master and drives it via inbound Messenger commands.
         val splitAvVideoMaster = intent.getBooleanExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, false)
         if (splitAvVideoMaster) {
             val adapter = PlayerSplitAvAdapter(
@@ -314,8 +325,23 @@ class XrPlayerActivity : AppCompatActivity() {
             )
             splitAvAdapter = adapter
             adapter.setAudioMuted(true)
-            SplitAvVideoBridge.bind(adapter)
-            Timber.i("XrPlayer: bound as split-A/V video master")
+            val ipc = SplitAvBridgeIpcClient(applicationContext, adapter)
+            splitAvIpcClient = ipc
+            ipc.connect()
+            // Periodic state push so the proxy's currentPositionMs() and isPlaying are fresh
+            // for drift correction and the controller's pause-mirror coroutine. 50 ms cadence
+            // keeps position drift below half a frame at 24 fps and is well below the policy's
+            // HOLD_THRESHOLD_MS of 20 ms once paired with networkOneWayMs.
+            splitAvStateTickerJob = lifecycleScope.launch {
+                while (isActive) {
+                    ipc.pushState(
+                        positionMs = player.currentPosition.coerceAtLeast(0L),
+                        playing = player.isPlaying,
+                    )
+                    delay(50L)
+                }
+            }
+            Timber.i("XrPlayer: bound as split-A/V video master (cross-process IPC)")
         }
 
         // Match the libass render resolution to the actual video size. Without this
@@ -368,6 +394,16 @@ class XrPlayerActivity : AppCompatActivity() {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val session = xrSession
                 if (session != null) {
+                    // Reactive split-A/V flag — drops to false when the adapter receives
+                    // setAudioMuted(false) (i.e. the controller called endByReceiver after
+                    // the receiver finished). This lets PlayerVoiceCoordinator's volume
+                    // ducker stop forcing volume=0 once the user has folded audio back
+                    // onto the headset.
+                    val splitAvActive = splitAvAdapter
+                        ?.splitAvActive
+                        ?.collectAsState()
+                        ?.value
+                        ?: splitAvVideoMaster
                     SpatialPlayerScreen(
                         viewModel = viewModel,
                         session = session,
@@ -390,7 +426,8 @@ class XrPlayerActivity : AppCompatActivity() {
                         },
                         telemetryStore = voiceTelemetryStore,
                         fcastController = fcastController,
-                        onBackClick = { requestFinish("xr-player-back") }
+                        onBackClick = { requestFinish("xr-player-back") },
+                        splitAvVideoRole = splitAvActive,
                     )
                 } else {
                     // Fallback UI or close if session failed
@@ -485,6 +522,14 @@ class XrPlayerActivity : AppCompatActivity() {
             viewModel.player.playerError?.errorCodeName,
             finishRequested,
         )
+        // Tear down split-A/V plumbing. The state ticker first so we stop publishing while
+        // disconnect() is racing the service. SplitAvVideoBridge.unbind is a no-op here
+        // (we never bound directly in this process — IPC client did it indirectly), but
+        // keep the call for the local-bridge fallback paths.
+        splitAvStateTickerJob?.cancel()
+        splitAvStateTickerJob = null
+        splitAvIpcClient?.disconnect()
+        splitAvIpcClient = null
         splitAvAdapter?.let { adapter ->
             SplitAvVideoBridge.unbind(adapter)
             adapter.release()

@@ -52,5 +52,16 @@
             android:text="Video is rendered on the paired headset."
             android:textColor="#99FFFFFF"
             android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/fcast_inbound_audio_only_stop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="36dp"
+            android:minWidth="200dp"
+            android:minHeight="56dp"
+            android:text="Stop"
+            android:textSize="18sp"
+            android:contentDescription="Stop split-A/V playback" />
     </LinearLayout>
 </FrameLayout>

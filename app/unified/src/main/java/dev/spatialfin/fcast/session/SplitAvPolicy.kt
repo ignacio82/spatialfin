@@ -36,8 +36,15 @@ object SplitAvPolicy {
     /** Below this absolute drift the user can't tell, so no correction. */
     const val HOLD_THRESHOLD_MS: Int = 20
 
-    /** Below this absolute drift we nudge speed; above it we hard-seek instead. */
-    const val HARD_SEEK_THRESHOLD_MS: Int = 200
+    /**
+     * Below this absolute drift we nudge speed; above it we hard-seek instead. 500 ms is
+     * deliberately wider than perceptible A/V offset (~80–120 ms) because hard-seeks cost a
+     * brief buffer cycle on the XR master and are far more disruptive than a residual offset
+     * the speed-nudge will close within a couple of seconds. Wi-Fi RTT jitter alone can
+     * spike apparent drift by 100–200 ms momentarily, and we don't want every transient
+     * spike to trigger a seek.
+     */
+    const val HARD_SEEK_THRESHOLD_MS: Int = 500
 
     /** Speed multiplier used when nudging (XR is behind / ahead). */
     const val SPEEDUP_FACTOR: Float = 1.01f
@@ -174,6 +181,7 @@ class NetworkDelayEstimator(
 ) {
     private var smoothedRttMs: Double? = null
     private var sampleCount: Int = 0
+    private var consecutiveOutliers: Int = 0
 
     /** Returns true if the sample was accepted (not rejected as an outlier). */
     fun recordRtt(rttMs: Long): Boolean {
@@ -184,7 +192,17 @@ class NetworkDelayEstimator(
             sampleCount = 1
             return true
         }
-        if (rttMs > current * outlierFactor && sampleCount > 1) return false
+        if (rttMs > current * outlierFactor && sampleCount > 1) {
+            consecutiveOutliers++
+            if (consecutiveOutliers > DEFAULT_MAX_CONSECUTIVE_OUTLIERS) {
+                // The network latency jump appears permanent; accept the new reality
+                smoothedRttMs = rttMs.toDouble()
+                consecutiveOutliers = 0
+                return true
+            }
+            return false
+        }
+        consecutiveOutliers = 0
         smoothedRttMs = alpha * rttMs + (1 - alpha) * current
         sampleCount++
         return true
@@ -197,10 +215,12 @@ class NetworkDelayEstimator(
     fun reset() {
         smoothedRttMs = null
         sampleCount = 0
+        consecutiveOutliers = 0
     }
 
     companion object {
         const val DEFAULT_ALPHA: Double = 0.25
         const val DEFAULT_OUTLIER_FACTOR: Double = 4.0
+        const val DEFAULT_MAX_CONSECUTIVE_OUTLIERS: Int = 3
     }
 }

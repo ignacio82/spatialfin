@@ -115,8 +115,12 @@ class SplitAvPolicyTest {
 
     @Test
     fun `boundary at hard seek threshold falls into hard seek`() {
-        val state = beacon(xrPositionMs = 30_200L)
-        assertTrue(SplitAvPolicy.decide(state) is DriftAction.HardSeek)
+        // Exactly HARD_SEEK_THRESHOLD_MS (500) ms drift should hard-seek; just under
+        // (499) should still nudge.
+        val justUnder = beacon(xrPositionMs = 30_000L + SplitAvPolicy.HARD_SEEK_THRESHOLD_MS - 1)
+        assertTrue(SplitAvPolicy.decide(justUnder) is DriftAction.NudgeSpeed)
+        val atOrAbove = beacon(xrPositionMs = 30_000L + SplitAvPolicy.HARD_SEEK_THRESHOLD_MS.toLong())
+        assertTrue(SplitAvPolicy.decide(atOrAbove) is DriftAction.HardSeek)
     }
 }
 

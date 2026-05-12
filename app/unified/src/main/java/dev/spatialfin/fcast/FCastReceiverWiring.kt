@@ -1,6 +1,9 @@
 package dev.spatialfin.fcast
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
+import android.os.Bundle
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamIngressRouter
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
@@ -48,13 +51,54 @@ object FCastReceiverWiring {
         FCastReceiverService.setRouterProvider { router }
 
         if (isReceiverEnabled(prefs, deviceClass)) {
-            FCastReceiverService.start(
-                context = context.applicationContext,
-                displayName = resolveDisplayName(prefs),
-                appVersion = BuildConfig.VERSION_NAME,
-            )
-            Timber.i("FCast receiver service started")
+            val started = tryStartReceiver(context.applicationContext, prefs)
+            if (!started) {
+                // Application.onCreate can run while the process is in CEM/cached state
+                // (post-install package-replaced restart, background broadcast wake-up).
+                // Android 12+ rejects startForegroundService() in that state with
+                // ForegroundServiceStartNotAllowedException. Retry once a user-visible
+                // Activity resumes — by then the process is TOP and the call is allowed.
+                installForegroundRetry(context.applicationContext, prefs)
+            }
         }
+    }
+
+    /**
+     * Best-effort foreground-service start. Returns true on success, false if the OS denied the
+     * start (background-FGS restriction) or any other launch error occurred. Never throws.
+     */
+    private fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean = try {
+        FCastReceiverService.start(
+            context = context,
+            displayName = resolveDisplayName(prefs),
+            appVersion = BuildConfig.VERSION_NAME,
+        )
+        Timber.i("FCast receiver service started")
+        true
+    } catch (e: Exception) {
+        // ForegroundServiceStartNotAllowedException (API 31+) lives in android.app and is the
+        // common case; catch broadly so any OEM-specific FGS gate also degrades gracefully.
+        Timber.w(e, "FCast receiver start deferred (will retry on next Activity resume)")
+        false
+    }
+
+    private fun installForegroundRetry(context: Context, prefs: AppPreferences) {
+        val app = context.applicationContext as? Application ?: return
+        app.registerActivityLifecycleCallbacks(
+            object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityResumed(activity: Activity) {
+                    if (tryStartReceiver(app, prefs)) {
+                        app.unregisterActivityLifecycleCallbacks(this)
+                    }
+                }
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+                override fun onActivityStarted(activity: Activity) = Unit
+                override fun onActivityPaused(activity: Activity) = Unit
+                override fun onActivityStopped(activity: Activity) = Unit
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+                override fun onActivityDestroyed(activity: Activity) = Unit
+            },
+        )
     }
 
     /**
@@ -109,11 +153,7 @@ object FCastReceiverWiring {
     fun applyReceiverConfig(context: Context, prefs: AppPreferences) {
         FCastReceiverService.stop(context.applicationContext)
         if (isReceiverEnabled(prefs)) {
-            FCastReceiverService.start(
-                context = context.applicationContext,
-                displayName = resolveDisplayName(prefs),
-                appVersion = BuildConfig.VERSION_NAME,
-            )
+            tryStartReceiver(context.applicationContext, prefs)
         }
     }
 

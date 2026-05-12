@@ -194,7 +194,12 @@ internal fun ControlPanelUI(
 
                 FilledIconButton(
                     onClick = {
-                        if (isPlaying) player.pause() else player.play()
+                        if (isPlaying) {
+                            timber.log.Timber.tag("SplitAvPauseTrace").w("pause source=PlayerControlPanel button")
+                            player.pause()
+                        } else {
+                            player.play()
+                        }
                         resetAutoHide()
                     },
                     modifier = Modifier.size(160.dp),

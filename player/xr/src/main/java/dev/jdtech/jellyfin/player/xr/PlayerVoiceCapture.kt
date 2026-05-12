@@ -127,6 +127,7 @@ internal fun startVoiceCapture(
                     if (shouldPauseForGemma) {
                         wasPlaying = player.isPlaying
                         if (wasPlaying) {
+                            timber.log.Timber.tag("SplitAvPauseTrace").w("pause source=voice Gemma GPU duck")
                             player.pause()
                         }
                     }

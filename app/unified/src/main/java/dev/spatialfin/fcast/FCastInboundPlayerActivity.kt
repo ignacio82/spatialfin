@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -101,51 +102,83 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val url = intent.getStringExtra(EXTRA_URL)
+        setContentView(R.layout.activity_fcast_inbound_player)
+        val exo = ExoPlayer.Builder(this).build()
+        player = exo
+        findViewById<PlayerView>(R.id.fcast_inbound_player_view).player = exo
+        exo.addListener(playerListener)
+
+        if (!applyIntent(intent)) finish()
+    }
+
+    /**
+     * Re-route a subsequent inbound Play frame into the same Activity instance. Because the
+     * Activity is `launchMode="singleTask"` + `FLAG_ACTIVITY_CLEAR_TOP`, the second Play (the
+     * real media URL that follows the calibration WAV) gets delivered here rather than
+     * re-running [onCreate]. Without this override the Activity would keep playing the old
+     * (calibration / previous-cast) URL and the user would hear nothing for the real media.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntent(intent)
+    }
+
+    /**
+     * Read playback parameters from [newIntent] and (re)configure the ExoPlayer + audio-only
+     * overlay accordingly. Returns false if the intent is missing the required URL — caller is
+     * responsible for finishing in that case (only relevant from [onCreate]; an in-session
+     * malformed intent just leaves the previous media playing).
+     */
+    private fun applyIntent(newIntent: Intent): Boolean {
+        val url = newIntent.getStringExtra(EXTRA_URL)
         if (url.isNullOrBlank()) {
-            Timber.w("FCastInboundPlayerActivity launched without %s", EXTRA_URL)
-            finish()
-            return
+            Timber.w("FCastInboundPlayerActivity intent without %s", EXTRA_URL)
+            return false
         }
-        val container = intent.getStringExtra(EXTRA_CONTAINER)
-        val startMs = intent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L)
-        val title = intent.getStringExtra(EXTRA_TITLE)
-        splitAvRole = intent.getStringExtra(EXTRA_SPLIT_AV_ROLE)
+        val container = newIntent.getStringExtra(EXTRA_CONTAINER)
+        val startMs = newIntent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L)
+        val title = newIntent.getStringExtra(EXTRA_TITLE)
+        val newSplitAvRole = newIntent.getStringExtra(EXTRA_SPLIT_AV_ROLE)
             ?.let { runCatching { SplitAvRole.valueOf(it) }.getOrNull() }
-        val splitAvCadenceHz = intent.getIntExtra(EXTRA_SPLIT_AV_CADENCE_HZ, -1)
+        val splitAvCadenceHz = newIntent.getIntExtra(EXTRA_SPLIT_AV_CADENCE_HZ, -1)
             .takeIf { it > 0 }
-        playbackTickerIntervalMs = if (splitAvRole != null) {
-            // Default to the schema's recommended cadence; honor sender's hint when set.
+        splitAvRole = newSplitAvRole
+        playbackTickerIntervalMs = if (newSplitAvRole != null) {
             val hz = splitAvCadenceHz ?: SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ
             (1_000L / hz.coerceAtLeast(1)).coerceAtLeast(MIN_TICKER_INTERVAL_MS)
         } else {
             NORMAL_TICKER_INTERVAL_MS
         }
 
-        setContentView(R.layout.activity_fcast_inbound_player)
         val playerView = findViewById<PlayerView>(R.id.fcast_inbound_player_view)
         val audioOnlyOverlay = findViewById<LinearLayout>(R.id.fcast_inbound_audio_only_overlay)
         val audioOnlyTitle = findViewById<TextView>(R.id.fcast_inbound_audio_only_title)
+        val audioOnlyStop = findViewById<Button>(R.id.fcast_inbound_audio_only_stop)
+        val exo = player ?: return false
 
-        val exo = ExoPlayer.Builder(this).build()
-        player = exo
-        playerView.player = exo
-        exo.addListener(playerListener)
-
-        if (splitAvRole == SplitAvRole.AUDIO) {
-            // Disable video tracks so no decoder spins up — saves CPU/GPU on the TV and prevents
-            // the (otherwise harmless but wasted) video render path. Audio is what we're here for.
+        if (newSplitAvRole == SplitAvRole.AUDIO) {
             exo.trackSelectionParameters = TrackSelectionParameters.Builder()
                 .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
                 .build()
             audioOnlyOverlay.visibility = View.VISIBLE
             audioOnlyTitle.text = title.orEmpty()
             playerView.useController = false
-            Timber.i(
-                "FCast inbound: split-A/V audio role, ticker=%dms",
-                playbackTickerIntervalMs,
-            )
+            audioOnlyStop.setOnClickListener {
+                player?.stop()
+                finish()
+            }
+        } else {
+            // Non-split path: clear any previous overlay state (e.g. when an earlier session
+            // disabled video tracks for a calibration WAV).
+            exo.trackSelectionParameters = TrackSelectionParameters.Builder().build()
+            audioOnlyOverlay.visibility = View.GONE
+            playerView.useController = true
         }
+        Timber.i(
+            "FCast inbound: url=%s role=%s ticker=%dms",
+            url, newSplitAvRole?.name ?: "fullAv", playbackTickerIntervalMs,
+        )
 
         val mediaItem = MediaItem.Builder()
             .setUri(url)
@@ -161,12 +194,27 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             }
             .build()
 
+        // Re-tune ExoPlayer to the new media. setMediaItem replaces the queue so the old
+        // (calibration) URL stops playing immediately.
         exo.setMediaItem(mediaItem, startMs)
         exo.prepare()
-        exo.play()
+        // Split-A/V startup coordination: when we're the audio receiver, *load* the stream
+        // but stay paused. The XR sender is still loading its own (video) master and is
+        // multiple seconds behind us at this point. If we start playing now, the sender's
+        // drift policy will see a huge negative drift the instant its master finishes
+        // loading and either degrade or hard-seek the master forward into a buffer cycle.
+        // The sender's pause-mirror sends Resume on the FCast wire as soon as its master
+        // becomes playWhenReady=true — that's our cue to actually start audio. Until then
+        // we stay at startMs with playWhenReady=false.
+        if (newSplitAvRole == SplitAvRole.AUDIO) {
+            exo.playWhenReady = false
+        } else {
+            exo.play()
+        }
 
         FCastInboundSession.bindControl(control)
         startPlaybackTicker()
+        return true
     }
 
     private fun startPlaybackTicker() {
@@ -186,12 +234,19 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
     private fun pushPlaybackSnapshot() {
         val p = player ?: return
+        // Report user *intent* (playWhenReady), not transient runtime state (isPlaying). A
+        // brief buffering moment (chunk fetch, decoder warm-up after a seek) flips isPlaying
+        // false but does not change the user's intent to play. In a split-A/V session the
+        // sender's drift controller cascades any "Paused" beacon back through
+        // pauseFromMaster() to the XR master — which then pauses the master, which the
+        // mirror cascades back to us as a real pause, deadlocking the session every time the
+        // Pixel hits a buffer chunk. Pause only when the user (or a programmatic mirror
+        // resulting from one) has actually toggled playWhenReady=false.
         val state = when {
             !p.playWhenReady -> PlaybackState.Paused
-            p.isPlaying -> PlaybackState.Playing
             p.playbackState == Player.STATE_ENDED || p.playbackState == Player.STATE_IDLE ->
                 PlaybackState.Idle
-            else -> PlaybackState.Paused
+            else -> PlaybackState.Playing
         }
         val duration = p.duration.takeIf { it > 0L }?.let { it / 1000.0 }
         FCastInboundSession.pushPlaybackUpdate(

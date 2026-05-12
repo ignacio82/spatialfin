@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
+import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -135,6 +136,7 @@ class FCastSessionManager @Inject constructor(
     val audioLatencies: StateFlow<Map<String, Int>> = _audioLatencies.asStateFlow()
 
     fun setSplitAvMode(enabled: Boolean) {
+        Timber.tag(TAG).i("setSplitAvMode: enabled=%b (was %b)", enabled, _splitAvMode.value)
         _splitAvMode.value = enabled
     }
 
@@ -149,6 +151,7 @@ class FCastSessionManager @Inject constructor(
      * runs.
      */
     fun recalibrateReceiver(receiver: FCastReceiver) {
+        Timber.tag(TAG).i("recalibrateReceiver: receiver=%s:%d", receiver.host, receiver.port)
         scope.launch {
             _calibrationState.value = CalibrationState.Running(receiver.name)
             when (val result = calibrationOrchestrator.calibrate(receiver)) {
@@ -318,6 +321,10 @@ class FCastSessionManager @Inject constructor(
      * [castSpatialItem] / [castFromActivePlayer] call.
      */
     fun pickReceiver(receiver: FCastReceiver) {
+        Timber.tag(TAG).i(
+            "pickReceiver: receiver=%s:%d name=%s",
+            receiver.host, receiver.port, receiver.name,
+        )
         _pickedReceiver.value = receiver
         appPreferences.setValue(
             appPreferences.lastUsedFCastReceiverHostPort,
@@ -362,12 +369,18 @@ class FCastSessionManager @Inject constructor(
                     Timber.tag(TAG).w("castSpatialItem: no media sources for %s", itemId)
                     return@withContext false
                 }
+                val audioCodec = source.mediaStreams
+                    .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
+                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
                 val url = repository.getStreamUrl(itemId, source.id)
+                    .withCastCompatibleCodecs(audioCodec)
+                    .withStartTimeTicks(startMs)
+                    .withJellyfinAuth()
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
                 val play = PlayMessageBuilder.build(
                     url = url,
                     container = container,
-                    positionSeconds = (startPositionMs ?: 0L).coerceAtLeast(0L) / 1000.0,
+                    positionSeconds = startMs / 1000.0,
                     title = title,
                 )
                 controller.startCast(receiver, play)
@@ -377,6 +390,65 @@ class FCastSessionManager @Inject constructor(
                 false
             }
         }
+    }
+
+    /**
+     * The Jellyfin SDK's [JellyfinRepository.getStreamUrl] returns a `/Videos/{id}/stream` URL
+     * with no embedded authentication — the SDK normally adds an `X-Emby-Token` header on each
+     * request. FCast receivers play the URL via plain ExoPlayer / HTTP without those headers,
+     * so a stock `getStreamUrl` returns 401 Unauthorized at fetch time and the receiver
+     * silently fails to play. Append the access token as `api_key=` (Jellyfin recognises it
+     * as an alternative to the header) so the URL is self-authenticating end-to-end.
+     */
+    private fun String.withJellyfinAuth(): String {
+        val token = repository.getAccessToken().takeIf { !it.isNullOrBlank() } ?: return this
+        if (contains("api_key=", ignoreCase = true) ||
+            contains("ApiKey=", ignoreCase = true)) return this
+        val sep = if (contains('?')) '&' else '?'
+        return "$this${sep}api_key=$token"
+    }
+
+    /**
+     * Decide whether the FCast receiver can direct-play [sourceAudioCodec] and rewrite the
+     * stream URL accordingly. Direct play preserves quality and minimises CPU/network load on
+     * the Jellyfin server; transcoding is only used when we know the codec is not universally
+     * supported by Android MediaCodec.
+     *
+     * Direct-play codecs (Android baseline): aac, mp3, opus, vorbis, flac, ac3, wav, pcm_*.
+     * Transcoded to AAC:
+     *  - `eac3` / `eac3-joc` — Dolby Digital Plus / Atmos. Android's `c2.dolby.eac3.decoder.eac3`
+     *    fails with `MediaCodec$CodecException: Error 0xe` on certain Pixel/Tensor configs even
+     *    though the codec is nominally supported. AAC fallback is the only reliable path.
+     *  - `dts`, `dts-hd`, `truehd` — patent-encumbered, no Android Open Source decoder, fails
+     *    on every consumer phone.
+     *  - Anything else we haven't whitelisted (conservative default for unknown codecs is to
+     *    transcode rather than serve a file the receiver can't decode).
+     */
+    private fun String.withCastCompatibleCodecs(sourceAudioCodec: String?): String {
+        if (!contains("static=true", ignoreCase = true)) return this
+        if (contains("audioCodec=", ignoreCase = true)) return this
+        val codec = sourceAudioCodec?.lowercase()?.trim().orEmpty()
+        val directPlay = codec in setOf(
+            "aac", "mp3", "opus", "vorbis", "flac", "ac3", "wav",
+            "pcm", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_mulaw", "pcm_alaw",
+        )
+        if (directPlay) return this
+        return replace("static=true", "static=false") + "&audioCodec=aac"
+    }
+
+    /**
+     * Append `startTimeTicks=` to a Jellyfin stream URL so the server starts the byte stream
+     * at the resume position rather than from byte 0. The receiver-side `EXTRA_START_MS` only
+     * issues a client-side `ExoPlayer.setMediaItem(..., startMs)` seek, which on a transcoded
+     * stream either fails (segment not yet produced) or forces the receiver to buffer N
+     * minutes of unwanted audio. Pushing the offset into the URL makes Jellyfin produce the
+     * stream from the right point. Jellyfin tick is 100 ns, so `positionMs * 10_000`.
+     */
+    private fun String.withStartTimeTicks(positionMs: Long): String {
+        if (positionMs <= 0L) return this
+        if (contains("startTimeTicks=", ignoreCase = true)) return this
+        val sep = if (contains('?')) '&' else '?'
+        return "$this${sep}startTimeTicks=${positionMs * 10_000L}"
     }
 
     /**
@@ -414,6 +486,10 @@ class FCastSessionManager @Inject constructor(
             Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
             return false
         }
+        Timber.tag(TAG).i(
+            "castSpatialItemSplitAv: ENTRY receiver=%s:%d splitAvMode=%b",
+            receiver.host, receiver.port, _splitAvMode.value,
+        )
         val itemId = when (item) {
             is SpatialFinMovie -> item.id
             is SpatialFinEpisode -> item.id
@@ -431,7 +507,17 @@ class FCastSessionManager @Inject constructor(
                     Timber.tag(TAG).w("castSpatialItemSplitAv: no media sources for %s", itemId)
                     return@withContext false
                 }
+                val audioCodec = source.mediaStreams
+                    .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
+                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
                 val url = repository.getStreamUrl(itemId, source.id)
+                    .withCastCompatibleCodecs(audioCodec)
+                    .withStartTimeTicks(startMs)
+                    .withJellyfinAuth()
+                Timber.tag(TAG).i(
+                    "castSpatialItemSplitAv: source audio codec=%s direct-play=%b startMs=%d",
+                    audioCodec, "audioCodec=" !in url, startMs,
+                )
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 
                 // 1. Calibrate audio latency if we don't have a cached value for this receiver.
@@ -459,18 +545,27 @@ class FCastSessionManager @Inject constructor(
                 val play = PlayMessageBuilder.build(
                     url = url,
                     container = container,
-                    positionSeconds = (startPositionMs ?: 0L).coerceAtLeast(0L) / 1000.0,
+                    // The URL already starts the byte stream at startMs (via startTimeTicks),
+                    // so the receiver should play from position 0 in *its* stream, not seek
+                    // ahead. Sending 0 here avoids double-skipping.
+                    positionSeconds = 0.0,
                     title = title,
                 )
 
                 // 2. Tell the TV to start audio-only playback. audioLatencyMs has been
-                // smart-cast to non-null by the calibration branch above.
-                splitAvController.start(receiver, play, audioLatencyMs)
+                // smart-cast to non-null by the calibration branch above. mediaStartOffsetMs
+                // is the absolute resume position so the controller can reconcile the TV's
+                // (now-relative) beacon time with XR's absolute master position.
+                splitAvController.start(receiver, play, audioLatencyMs, startMs)
 
                 // 3. Launch the local video-master Activity. Drift correction in the controller
                 //    will idle until that Activity binds itself via SplitAvVideoBridge.
+                //    appContext is the Application context, so FLAG_ACTIVITY_NEW_TASK is required
+                //    — otherwise startActivity throws AndroidRuntimeException.
                 withContext(Dispatchers.Main) {
-                    val intent = localPlayerIntentBuilder()
+                    val intent = localPlayerIntentBuilder()?.apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
                     if (intent != null) {
                         runCatching { appContext.startActivity(intent) }
                             .onFailure { Timber.tag(TAG).w(it, "split-A/V local launch failed") }

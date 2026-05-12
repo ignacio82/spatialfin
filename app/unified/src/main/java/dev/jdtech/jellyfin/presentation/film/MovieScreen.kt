@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -80,6 +81,8 @@ fun MovieScreen(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val isOfflineMode = LocalOfflineMode.current
+    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val scope = rememberCoroutineScope()
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
@@ -141,22 +144,57 @@ fun MovieScreen(
                     } else {
                         dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
                     }
-                    val intent = Intent(context, targetActivity)
-                    intent.putExtra("itemId", (movie?.id ?: movieId).toString())
-                    intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
-                    intent.putExtra("startFromBeginning", action.startFromBeginning)
-                    action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
-                    action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                    if (useImmersivePlayer) {
-                        val stereoModeStr = when (stereoMode) {
-                            StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
-                            StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
-                            StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
-                            else -> "mono"
-                        }
-                        intent.putExtra("stereoMode", stereoModeStr)
+                    val stereoModeStr = when (stereoMode) {
+                        StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                        StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                        StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                        else -> "mono"
                     }
-                    context.startActivity(intent)
+                    val buildLocalIntent: () -> Intent = {
+                        val intent = Intent(context, targetActivity)
+                        intent.putExtra("itemId", (movie?.id ?: movieId).toString())
+                        intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
+                        intent.putExtra("startFromBeginning", action.startFromBeginning)
+                        action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
+                        action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
+                        if (useImmersivePlayer) intent.putExtra("stereoMode", stereoModeStr)
+                        intent
+                    }
+                    // Route through launchPlayback so a picked FCast receiver (with optional
+                    // Split-A/V toggle) intercepts the Play tap. Split-A/V intent always targets
+                    // XrPlayerActivity — MultitaskPlayerActivity doesn't implement
+                    // SplitAvVideoMaster.
+                    if (fcastSession != null && movie != null) {
+                        // Resume position in ms (Jellyfin stores 100ns ticks). When the user
+                        // explicitly tapped "Start from beginning" or the position is unknown,
+                        // start at 0. Otherwise the FCast receiver must start at the same
+                        // place the local player is resuming from, or the split-A/V drift
+                        // policy will spend its budget trying to align them.
+                        val resumeMs = if (action.startFromBeginning) 0L
+                            else movie.playbackPositionTicks / 10_000L
+                        dev.spatialfin.fcast.session.launchPlayback(
+                            context = context,
+                            sessionManager = fcastSession,
+                            scope = scope,
+                            item = movie,
+                            startPositionMs = resumeMs.takeIf { it > 0 },
+                            splitAvIntentBuilder = {
+                                XrPlayerActivity.createIntent(
+                                    context = context,
+                                    itemId = movie.id,
+                                    itemKind = BaseItemKind.MOVIE.serialName,
+                                    startFromBeginning = action.startFromBeginning,
+                                    stereoMode = stereoModeStr,
+                                    mediaSourceIndex = action.mediaSourceIndex,
+                                    maxBitrate = action.maxBitrate,
+                                    splitAvVideoRole = true,
+                                )
+                            },
+                            intentBuilder = buildLocalIntent,
+                        )
+                    } else {
+                        context.startActivity(buildLocalIntent())
+                    }
                 }
                 is MovieAction.PlayTrailer -> {
                     try {

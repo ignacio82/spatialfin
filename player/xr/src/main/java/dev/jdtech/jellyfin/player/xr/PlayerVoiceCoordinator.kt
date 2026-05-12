@@ -119,6 +119,7 @@ internal class PlayerVoiceCoordinator {
             Timber.i("VOICE: player follow-up scheduled pending spoken reply")
         }
         if (resumePlaybackAfterAssistantSpeech) {
+            Timber.tag("SplitAvPauseTrace").w("pause source=voice TTS speakAssistantReply")
             player.pause()
         }
         tts.speak(text, languageHint, assistantVoiceName, queueMode)
@@ -212,13 +213,27 @@ internal fun rememberPlayerVoiceCoordinator(
     voiceService: SpatialVoiceService,
     tts: SpatialVoiceSynthesizer,
     followUpListenWindowMs: Long,
+    /**
+     * True when this player is the video master of a split-A/V session — audio is rendered by
+     * a paired FCast receiver, not locally. The voice-ducking effect must never restore the
+     * player's volume to 1.0 in that case (the SplitAvAdapter holds it at 0.0).
+     */
+    splitAvVideoRole: Boolean = false,
 ): PlayerVoiceCoordinator {
     val state = remember { PlayerVoiceCoordinator() }
     val voiceState by voiceService.state.collectAsState()
     val isTtsSpeaking by tts.isSpeaking.collectAsState()
 
     // Audio ducking when listening / TTS is speaking.
-    LaunchedEffect(voiceState, isTtsSpeaking) {
+    LaunchedEffect(voiceState, isTtsSpeaking, splitAvVideoRole) {
+        if (splitAvVideoRole) {
+            // Split-A/V: audio lives on the paired receiver. Keep the local player muted
+            // regardless of voice state — the SplitAvAdapter's setAudioMuted(true) would
+            // otherwise be clobbered every time the voice state cycles.
+            player.volume = 0f
+            if (voiceState == VoiceState.LISTENING) state.voiceGestureHint = null
+            return@LaunchedEffect
+        }
         if (voiceState == VoiceState.LISTENING) {
             player.volume = 0.2f
             state.voiceGestureHint = null
