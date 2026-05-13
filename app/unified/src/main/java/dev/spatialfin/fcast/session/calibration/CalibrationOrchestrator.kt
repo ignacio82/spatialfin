@@ -9,10 +9,12 @@ import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
 import dev.jdtech.jellyfin.fcast.protocol.withSplitAv
+import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
 import dev.spatialfin.fcast.session.RememberedReceiversStore
+import dev.spatialfin.fcast.session.SplitAvPolicy
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +81,19 @@ class CalibrationOrchestrator @Inject constructor(
      * to the user as a "no microphone available" message.
      */
     suspend fun calibrate(receiver: FCastReceiver): Result = coroutineScope {
+        // Defense in depth: the calibration pipeline is FCast-only by design (see SplitAvPolicy).
+        // PR 1 only ever calls this with FCast receivers; PR 4+ will route picker selections
+        // through the protocol-aware session manager. Reject anything else loudly so a future
+        // refactor that accidentally routes a Cast/AirPlay receiver here fails closed.
+        if (!SplitAvPolicy.isAvailable(receiver.toCastReceiver())) {
+            Timber.tag(TAG).w(
+                "calibrate: rejecting receiver %s:%d — SplitAv capability missing",
+                receiver.host, receiver.port,
+            )
+            return@coroutineScope Result.Failure(
+                "Audio sync calibration is only available for FCast receivers.",
+            )
+        }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED) {
             return@coroutineScope Result.Failure(

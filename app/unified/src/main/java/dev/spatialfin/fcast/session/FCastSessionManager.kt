@@ -3,6 +3,7 @@ package dev.spatialfin.fcast.session
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
@@ -484,6 +485,17 @@ class FCastSessionManager @Inject constructor(
     ): Boolean {
         val receiver = _pickedReceiver.value ?: run {
             Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
+            return false
+        }
+        // Refuse the SplitAv code path for receivers that don't advertise the capability. Today
+        // every picked receiver is FCast (the picker is FCast-only), so this never fires; the
+        // guard is here so PR 2 / PR 3 (which add Google Cast and AirPlay to the picker) inherit
+        // the right behavior without re-deriving it from scratch.
+        if (!SplitAvPolicy.isAvailable(receiver.toCastReceiver())) {
+            Timber.tag(TAG).w(
+                "castSpatialItemSplitAv: receiver %s:%d lacks SplitAv capability — caller should fall back to castSpatialItem()",
+                receiver.host, receiver.port,
+            )
             return false
         }
         Timber.tag(TAG).i(
