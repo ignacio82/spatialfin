@@ -2,6 +2,7 @@ package dev.spatialfin.fcast.session
 
 import android.content.Context
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
+import dev.spatialfin.test.SpatialFinTestApplication
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -17,12 +18,18 @@ import org.robolectric.annotation.Config
  * SharedPreferences so we need a real Context — Robolectric supplies one. Each test
  * uses a fresh in-memory SharedPreferences via Robolectric's default Application.
  *
+ * `application = SpatialFinTestApplication::class` is critical: without it Robolectric
+ * instantiates the real `UnifiedApplication` (manifest-declared, `@HiltAndroidApp`-annotated),
+ * which eagerly resolves Hilt's graph, which calls the Jellyfin SDK's `androidDevice(context)`
+ * helper, which force-unwraps `Settings.Secure.ANDROID_ID`. That field is null in Robolectric
+ * by default — NPE. See [SpatialFinTestApplication]'s KDoc for the full explanation.
+ *
  * What's important here: the schema additions (audioLatencyMs / audioLatencyCalibratedAtMs)
  * are additive and backwards-compatible. Older releases wrote blobs without those fields —
  * those must still decode cleanly after an upgrade. The first test pins that contract.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], application = SpatialFinTestApplication::class)
 class RememberedReceiversStoreTest {
 
     private val context: Context get() = RuntimeEnvironment.getApplication()
