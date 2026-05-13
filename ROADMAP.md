@@ -258,3 +258,12 @@ feature) · **P2** (paper cut) · **P3** (polish).
   (`project_npu_blocker.md`).
 - Migrate `XrPlayerActivity` off the process-kill workaround when upstream
   Filament bug closes.
+- Custom Google Cast receiver app shipping libass via WebAssembly. PR 3
+  ships against Google's Default Media Receiver (appId `CC1AD845`), which
+  supports WebVTT / TTML but not ASS — styled anime subs hit the
+  burn-in-transcode path from PR 2 instead of rendering on the Chromecast.
+  Lifting that would require registering a Cast app id with Google, hosting
+  receiver HTML/JS publicly, and maintaining a CAF receiver that runs
+  libass.wasm against the inbound media URL. Substantial infra; only worth
+  doing if real user demand for high-fidelity Chromecast anime subs
+  materialises. Per the cast-implementation brief §17.
