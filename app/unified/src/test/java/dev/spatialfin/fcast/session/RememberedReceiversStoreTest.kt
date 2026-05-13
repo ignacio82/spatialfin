@@ -122,4 +122,51 @@ class RememberedReceiversStoreTest {
         store.forget("10.0.0.1", 46899)
         assertEquals(emptyList<RememberedReceiver>(), store.load())
     }
+
+    // --- PR 6: 90-day stale pruning ---
+
+    @Test fun `pruneStale drops uncalibrated entries older than 90 days`() = runTest {
+        val store = newStore()
+        val now = 100_000_000_000L
+        // 100 days old, uncalibrated. Should be dropped.
+        store.upsert(receiver("10.0.0.1"), lastSeenMs = now - 100L * 24 * 60 * 60 * 1000)
+        // 30 days old, uncalibrated. Should be kept.
+        store.upsert(receiver("10.0.0.2"), lastSeenMs = now - 30L * 24 * 60 * 60 * 1000)
+
+        val pruned = store.pruneStale(now = now)
+        assertEquals(1, pruned)
+        val remaining = store.load()
+        assertEquals(1, remaining.size)
+        assertEquals("10.0.0.2", remaining[0].host)
+    }
+
+    @Test fun `pruneStale keeps calibrated entries regardless of age`() = runTest {
+        val store = newStore()
+        val now = 100_000_000_000L
+        // Calibrated but ancient — kept because the user invested in measuring it.
+        store.upsert(receiver("10.0.0.5"), lastSeenMs = now - 365L * 24 * 60 * 60 * 1000)
+        store.setAudioLatency("10.0.0.5", 46899, 73)
+        // Uncalibrated and ancient — dropped.
+        store.upsert(receiver("10.0.0.6"), lastSeenMs = now - 365L * 24 * 60 * 60 * 1000)
+
+        val pruned = store.pruneStale(now = now)
+        assertEquals(1, pruned)
+        val remaining = store.load()
+        assertEquals(1, remaining.size)
+        assertEquals("10.0.0.5", remaining[0].host)
+        assertEquals(73, remaining[0].audioLatencyMs)
+    }
+
+    @Test fun `pruneStale on empty store is a no-op`() = runTest {
+        val store = newStore()
+        assertEquals(0, store.pruneStale())
+    }
+
+    @Test fun `pruneStale on store with only fresh entries is a no-op`() = runTest {
+        val store = newStore()
+        store.upsert(receiver("10.0.0.7"))
+        val pruned = store.pruneStale()
+        assertEquals(0, pruned)
+        assertEquals(1, store.load().size)
+    }
 }

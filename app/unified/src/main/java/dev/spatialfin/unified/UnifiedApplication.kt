@@ -33,6 +33,10 @@ import dev.spatialfin.LogFileTree
 import dev.spatialfin.beam.BeamCompanionLogUploader
 import dev.spatialfin.fcast.FCastReceiverWiring
 import dev.spatialfin.fcast.debug.SplitAvDebugBridge
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import okio.Path.Companion.toOkioPath
@@ -46,6 +50,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var llmDownloadManager: Lazy<LlmDownloadManager>
     @Inject lateinit var watchNextScheduler: WatchNextScheduler
     @Inject lateinit var splitAvDebugBridge: SplitAvDebugBridge
+    @Inject lateinit var rememberedReceiversStore: dev.spatialfin.fcast.session.RememberedReceiversStore
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -103,6 +108,14 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
         // Debug-only adb-broadcast backdoor for split-A/V iteration. No-op in release.
         splitAvDebugBridge.installIfDebug(this)
+
+        // PR 6: drop remembered receivers we haven't seen in 90 days. Calibrated entries are
+        // kept regardless (the user clearly invested in measuring them). Off the main thread
+        // because the store reads/writes SharedPreferences + JSON.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { rememberedReceiversStore.pruneStale() }
+                .onFailure { Timber.tag("UnifiedApp").w(it, "remembered receiver prune failed") }
+        }
     }
 
     private fun applyNightMode() {

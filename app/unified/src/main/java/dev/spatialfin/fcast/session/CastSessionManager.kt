@@ -205,6 +205,13 @@ class CastSessionManager @Inject constructor(
     fun shouldShowTranscodingIndicator(): Boolean =
         appPreferences.getValue(appPreferences.castShowTranscodingIndicator)
 
+    /** Per-protocol visibility flags read by the picker UI. PR 6. */
+    fun shouldShowProtocol(protocol: CastProtocol): Boolean = when (protocol) {
+        CastProtocol.FCast -> appPreferences.getValue(appPreferences.castShowFCast)
+        CastProtocol.GoogleCast -> appPreferences.getValue(appPreferences.castShowGoogleCast)
+        CastProtocol.AirPlay -> appPreferences.getValue(appPreferences.castShowAirPlay)
+    }
+
     /**
      * Per-host:port post-handshake capability cache. Populated by [observePeerCapabilities]
      * the first time a real cast completes its FCast Initial handshake with that receiver, and

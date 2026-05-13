@@ -140,6 +140,14 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // fidelity. Lets power users silence the warning after the first time.
     val castShowSubtitleFidelityWarning = Preference("pref_cast_show_subtitle_fidelity_warning", true)
 
+    // Per-protocol visibility toggles (PR 6). Default to all-on. Users who never use a given
+    // protocol (e.g. a household with only Apple TVs, or one that has no Chromecast at all)
+    // can hide its picker section to reduce visual noise. Doesn't affect discovery — we still
+    // browse mDNS so the toggle reflects current state if the user flips it back.
+    val castShowFCast = Preference("pref_cast_show_fcast", true)
+    val castShowGoogleCast = Preference("pref_cast_show_googlecast", true)
+    val castShowAirPlay = Preference("pref_cast_show_airplay", true)
+
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)

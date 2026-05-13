@@ -86,6 +86,17 @@ fun FCastSessionPickerSheet(
     val googleCastReceivers by sessionManager.googleCastReceivers.collectAsState()
     val airPlayReceivers by sessionManager.airPlayReceivers.collectAsState()
     val isScanning by sessionManager.isScanning.collectAsState()
+    // PR 6: per-protocol visibility toggles. Read once per sheet open — not collected as a
+    // flow because the prefs sheet would be modal anyway.
+    val showFCast = remember(sessionManager) {
+        sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.FCast)
+    }
+    val showGoogleCast = remember(sessionManager) {
+        sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.GoogleCast)
+    }
+    val showAirPlay = remember(sessionManager) {
+        sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.AirPlay)
+    }
     val splitAvMode by sessionManager.splitAvMode.collectAsState()
     val audioLatencies by sessionManager.audioLatencies.collectAsState()
     var manualHost by remember { mutableStateOf("") }
@@ -176,40 +187,42 @@ fun FCastSessionPickerSheet(
                 Spacer(Modifier.height(20.dp))
             }
 
-            if (entries.isEmpty() && !isScanning) {
-                Text(
-                    text = "No receivers found yet. Add one manually below.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(entries, key = { "${it.receiver.host}:${it.receiver.port}" }) { entry ->
-                        SessionReceiverRow(
-                            entry = entry,
-                            onClick = { onReceiverPicked(entry.receiver) },
-                            onForget = {
-                                sessionManager.forgetReceiver(entry.receiver.host, entry.receiver.port)
-                            },
-                            audioLatencyMs = audioLatencies[
-                                "${entry.receiver.host}:${entry.receiver.port}"
-                            ],
-                            showCalibration = splitAvMode,
-                            onRecalibrate = {
-                                // Hitting Recalibrate strongly implies the user wants THIS
-                                // receiver as their cast target — also pick it so a subsequent
-                                // Play tap goes to the right device instead of a stale pick.
-                                sessionManager.pickReceiver(entry.receiver)
-                                sessionManager.recalibrateReceiver(entry.receiver)
-                            },
-                        )
+            if (showFCast) {
+                if (entries.isEmpty() && !isScanning) {
+                    Text(
+                        text = "No receivers found yet. Add one manually below.",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(entries, key = { "${it.receiver.host}:${it.receiver.port}" }) { entry ->
+                            SessionReceiverRow(
+                                entry = entry,
+                                onClick = { onReceiverPicked(entry.receiver) },
+                                onForget = {
+                                    sessionManager.forgetReceiver(entry.receiver.host, entry.receiver.port)
+                                },
+                                audioLatencyMs = audioLatencies[
+                                    "${entry.receiver.host}:${entry.receiver.port}"
+                                ],
+                                showCalibration = splitAvMode,
+                                onRecalibrate = {
+                                    // Hitting Recalibrate strongly implies the user wants THIS
+                                    // receiver as their cast target — also pick it so a subsequent
+                                    // Play tap goes to the right device instead of a stale pick.
+                                    sessionManager.pickReceiver(entry.receiver)
+                                    sessionManager.recalibrateReceiver(entry.receiver)
+                                },
+                            )
+                        }
                     }
                 }
             }
 
-            if (googleCastReceivers.isNotEmpty()) {
+            if (showGoogleCast && googleCastReceivers.isNotEmpty()) {
                 Spacer(Modifier.height(24.dp))
                 Text(
                     text = "Chromecast",
@@ -240,7 +253,7 @@ fun FCastSessionPickerSheet(
                 }
             }
 
-            if (airPlayReceivers.isNotEmpty()) {
+            if (showAirPlay && airPlayReceivers.isNotEmpty()) {
                 Spacer(Modifier.height(24.dp))
                 Text(
                     text = "AirPlay",
@@ -277,55 +290,70 @@ fun FCastSessionPickerSheet(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(24.dp))
+            // "Add manually" creates an FCast receiver, so hide it whenever FCast is toggled
+            // off — otherwise a user who explicitly hid FCast still sees the entry input.
+            if (showFCast) {
+                Spacer(Modifier.height(24.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(24.dp))
 
-            Text(
-                text = "Add manually",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = manualHost,
-                    onValueChange = { manualHost = it },
-                    label = { Text("Host or IP") },
-                    singleLine = true,
-                    modifier = Modifier.weight(2f),
+                Text(
+                    text = "Add manually",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Medium,
                 )
-                Spacer(Modifier.width(8.dp))
-                OutlinedTextField(
-                    value = manualPort,
-                    onValueChange = { manualPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("Port") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = manualHost,
+                        onValueChange = { manualHost = it },
+                        label = { Text("Host or IP") },
+                        singleLine = true,
+                        modifier = Modifier.weight(2f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = manualPort,
+                        onValueChange = { manualPort = it.filter(Char::isDigit).take(5) },
+                        label = { Text("Port") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
-                Spacer(Modifier.width(12.dp))
-                Button(
-                    enabled = manualHost.isNotBlank() && (manualPort.toIntOrNull() ?: 0) in 1..65535,
-                    onClick = {
-                        onReceiverPicked(
-                            FCastReceiver(
-                                host = manualHost.trim(),
-                                port = manualPort.toIntOrNull() ?: FCAST_DEFAULT_PORT,
-                                name = manualHost.trim(),
-                                source = FCastReceiver.Source.Manual,
-                            ),
-                        )
-                    },
-                ) { Text("Cast", style = MaterialTheme.typography.titleMedium) }
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Button(
+                        enabled = manualHost.isNotBlank() && (manualPort.toIntOrNull() ?: 0) in 1..65535,
+                        onClick = {
+                            onReceiverPicked(
+                                FCastReceiver(
+                                    host = manualHost.trim(),
+                                    port = manualPort.toIntOrNull() ?: FCAST_DEFAULT_PORT,
+                                    name = manualHost.trim(),
+                                    source = FCastReceiver.Source.Manual,
+                                ),
+                            )
+                        },
+                    ) { Text("Cast", style = MaterialTheme.typography.titleMedium) }
+                }
+            } else {
+                // FCast hidden: still need a Cancel affordance so users can close the sheet.
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Close", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
             }
         }
     }
