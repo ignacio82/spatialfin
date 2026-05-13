@@ -3,12 +3,19 @@ package dev.spatialfin.fcast.session
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.cast.CastAdapterFactory
 import dev.jdtech.jellyfin.cast.CastCapability
+import dev.jdtech.jellyfin.cast.CastMedia
+import dev.jdtech.jellyfin.cast.CastProtocol
+import dev.jdtech.jellyfin.cast.CastReceiver
+import dev.jdtech.jellyfin.cast.ProtocolAdapter
 import dev.jdtech.jellyfin.cast.SubtitleFidelity
+import dev.jdtech.jellyfin.cast.discovery.MultiProtocolDiscovery
 import dev.jdtech.jellyfin.cast.subtitle.AssStyleDetector
 import dev.jdtech.jellyfin.cast.subtitle.SubtitlePolicy
 import dev.jdtech.jellyfin.cast.subtitle.SubtitleWarningTracker
 import dev.jdtech.jellyfin.cast.toCastReceiver
+import dev.jdtech.jellyfin.cast.toFCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
@@ -83,13 +90,22 @@ class CastSessionManager @Inject constructor(
     val remoteState = controller.remoteState
 
     /**
-     * The user-chosen receiver — set as soon as the picker emits a receiver. May be set even
-     * when [status] is Idle (the user picked, but no playback has started yet). This is the
-     * primary "is the app intent-to-cast?" signal — UI uses it to tint the cast icon and decide
-     * whether to show the mini-controller.
+     * The user-chosen FCast receiver — set when the picker emits an FCast device. Read by the
+     * existing FCast-only paths (`SplitAvController.start`, the inline cast button on the Beam
+     * player, etc.) that haven't been migrated to the protocol-agnostic API yet. Stays null
+     * when the user picks a Chromecast — those go through [pickedTarget] only.
      */
     private val _pickedReceiver = MutableStateFlow<FCastReceiver?>(null)
     val pickedReceiver: StateFlow<FCastReceiver?> = _pickedReceiver.asStateFlow()
+
+    /**
+     * Protocol-agnostic version of the picked target. Set for *any* receiver the user picks —
+     * FCast or Google Cast — and the primary "is the app intent-to-cast?" signal for the UI.
+     * The mini-controller and cast icon tint read this so they react to a Chromecast pick
+     * exactly the way they react to an FCast pick.
+     */
+    private val _pickedTarget = MutableStateFlow<CastReceiver?>(null)
+    val pickedTarget: StateFlow<CastReceiver?> = _pickedTarget.asStateFlow()
 
     /** Picker dialog visibility — single source of truth so any surface can open it. */
     private val _pickerVisible = MutableStateFlow(false)
@@ -193,6 +209,24 @@ class CastSessionManager @Inject constructor(
      * device at the same host:port).
      */
     private val peerCapabilityCache = mutableMapOf<String, Set<CastCapability>>()
+
+    /**
+     * Active non-FCast adapter slot. Lazily created when [castSpatialItem] is invoked on a
+     * picked Google Cast / AirPlay receiver, torn down by [releaseActiveCastAdapter] on pick
+     * switch or [stopCast]. FCast still runs through [controller] for now — the FCast adapter
+     * is a wrapper around the same controller, so wiring two paths to one controller would
+     * fight over its connection.
+     */
+    private var activeCastAdapter: ProtocolAdapter? = null
+    private val castAdapterMutex = Mutex()
+
+    /**
+     * Most-recent latest cached Google Cast results. Surfaced to the picker UI so users can
+     * pick Chromecasts. Populated by [driveDiscoveryAndProbing]; cleared along with the FCast
+     * cache when discovery starts a fresh sweep.
+     */
+    private val _googleCastReceivers = MutableStateFlow<List<CastReceiver>>(emptyList())
+    val googleCastReceivers: StateFlow<List<CastReceiver>> = _googleCastReceivers.asStateFlow()
     private var peerCapabilityObserverStarted = false
 
     private fun ensurePeerCapabilityObserver() {
@@ -333,8 +367,8 @@ class CastSessionManager @Inject constructor(
         }.toMap()
     }
 
-    /** True iff there is a chosen receiver — connection or not. */
-    fun hasCastIntent(): Boolean = _pickedReceiver.value != null
+    /** True iff there is a chosen receiver of any protocol — connection or not. */
+    fun hasCastIntent(): Boolean = _pickedTarget.value != null
 
     /** True iff a TCP connection is currently established and streaming. */
     fun isCasting(): Boolean = status.value == FCastCastingController.Status.Casting ||
@@ -416,21 +450,29 @@ class CastSessionManager @Inject constructor(
 
         // mDNS scan in parallel. Successful results override probe outcomes (mDNS proves
         // online with the up-to-date display name) and add never-before-seen receivers.
+        // Multi-protocol: we now scan FCast + Google Cast in parallel inside a single
+        // MultiProtocolDiscovery call; FCast results feed the existing picker entries and
+        // Google Cast results land in the parallel _googleCastReceivers flow.
         val scanJob = scope.launch {
-            val discovery = FCastDiscovery(appContext)
-            val found = runCatching { discovery.browse(DISCOVERY_QUICK_MS) }
-                .getOrDefault(emptyList())
+            val multi = MultiProtocolDiscovery(appContext)
+            val result = runCatching { multi.browse(DISCOVERY_QUICK_MS) }
+                .getOrDefault(MultiProtocolDiscovery.Result(emptyList(), emptyList()))
             val now = System.currentTimeMillis()
-            _cachedReceivers.value = found
+            // Translate the protocol-agnostic FCast receivers back to the wire type the
+            // existing picker code expects.
+            val fcastFound = result.fcast.map { it.toFCastReceiver() }
+            _cachedReceivers.value = fcastFound
+            _googleCastReceivers.value = result.googleCast
             lastDiscoveryAtMs = now
-            if (found.isEmpty()) return@launch
+            if (fcastFound.isEmpty() && result.googleCast.isEmpty()) return@launch
 
-            // Persist freshly-seen receivers.
-            found.forEach { rememberedReceiversStore.upsert(it, now) }
+            // Persist freshly-seen FCast receivers (Cast receivers aren't persisted yet — PR 5
+            // brings the unified remembered store).
+            fcastFound.forEach { rememberedReceiversStore.upsert(it, now) }
 
             _pickerEntries.update { entries ->
                 val byKey = entries.associateBy { "${it.receiver.host}:${it.receiver.port}" }.toMutableMap()
-                found.forEach { rec ->
+                fcastFound.forEach { rec ->
                     val key = "${rec.host}:${rec.port}"
                     byKey[key] = PickerEntry(
                         receiver = rec,
@@ -487,6 +529,7 @@ class CastSessionManager @Inject constructor(
             receiver.host, receiver.port, receiver.name,
         )
         _pickedReceiver.value = receiver
+        _pickedTarget.value = receiver.toCastReceiver()
         appPreferences.setValue(
             appPreferences.lastUsedFCastReceiverHostPort,
             "${receiver.host}:${receiver.port}",
@@ -494,6 +537,32 @@ class CastSessionManager @Inject constructor(
         // Manual host:port entries also get remembered so the next picker open shows them
         // up front without re-typing.
         scope.launch { rememberedReceiversStore.upsert(receiver) }
+    }
+
+    /**
+     * Mark a Google Cast (or future AirPlay) receiver as the chosen target. Same "is the app
+     * intent-to-cast?" semantics as [pickReceiver] but routes through the protocol-agnostic
+     * adapter pipeline instead of the FCast-specific [controller]. The FCast slot is cleared
+     * so the existing FCast call sites don't accidentally try to send to a Chromecast.
+     *
+     * Does not open the TLS connection here — that happens on the next [castSpatialItem],
+     * matching FCast's intent-vs-connection separation.
+     */
+    fun pickCastReceiver(receiver: CastReceiver) {
+        Timber.tag(TAG).i(
+            "pickCastReceiver: receiver=%s name=%s protocol=%s",
+            receiver.id, receiver.name, receiver.protocol,
+        )
+        // If the user is switching from FCast → Cast (or Cast → Cast), tear down any active
+        // FCast cast first. Otherwise we'd leave the FCast TV playing alongside the new pick.
+        if (_pickedReceiver.value != null && receiver.protocol != CastProtocol.FCast) {
+            _pickedReceiver.value = null
+            scope.launch { runCatching { controller.stopCast() } }
+        }
+        // Switching between Cast receivers tears down the previous adapter so we don't end up
+        // with two live Cast sockets fighting over the wire.
+        scope.launch { releaseActiveCastAdapter() }
+        _pickedTarget.value = receiver
     }
 
     /** Pre-select hint for the picker — host:port string of the last user pick, if any. */
@@ -509,6 +578,23 @@ class CastSessionManager @Inject constructor(
      * we pass `maxBitrate = null` and pick the first media source.
      */
     suspend fun castSpatialItem(
+        item: SpatialFinItem,
+        startPositionMs: Long? = null,
+    ): Boolean {
+        val target = _pickedTarget.value ?: return false
+        // Route by protocol. FCast keeps its existing path (controller + Play wire message);
+        // Google Cast goes through the ProtocolAdapter API. Subtitle policy applies to both.
+        return when (target.protocol) {
+            CastProtocol.FCast -> castFCastItem(item, startPositionMs)
+            CastProtocol.GoogleCast -> castViaAdapter(target, item, startPositionMs)
+            CastProtocol.AirPlay -> {
+                Timber.tag(TAG).w("AirPlay sender ships in PR 4 — refusing cast")
+                false
+            }
+        }
+    }
+
+    private suspend fun castFCastItem(
         item: SpatialFinItem,
         startPositionMs: Long? = null,
     ): Boolean {
@@ -622,6 +708,133 @@ class CastSessionManager @Inject constructor(
         if (params.isEmpty()) return withoutStatic
         val sep = if (withoutStatic.contains('?')) '&' else '?'
         return "$withoutStatic${sep}${params.joinToString("&")}"
+    }
+
+    /**
+     * Cast a Jellyfin item to a non-FCast receiver via the protocol-agnostic [ProtocolAdapter]
+     * API. Same subtitle-policy logic as the FCast path, except Cast receivers never carry
+     * [CastCapability.NativeAss] so styled ASS always either burns in (best-fidelity) or
+     * degrades (faster-start) — never streams natively.
+     */
+    private suspend fun castViaAdapter(
+        target: CastReceiver,
+        item: SpatialFinItem,
+        startPositionMs: Long?,
+    ): Boolean {
+        val itemId = when (item) {
+            is SpatialFinMovie -> item.id
+            is SpatialFinEpisode -> item.id
+            else -> return false
+        }
+        val title = when (item) {
+            is SpatialFinMovie -> item.name
+            is SpatialFinEpisode -> item.name
+            else -> null
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val sources = repository.getMediaSources(itemId = itemId, includePath = false)
+                val source = sources.firstOrNull() ?: run {
+                    Timber.tag(TAG).w("castSpatialItem (adapter): no media sources for %s", itemId)
+                    return@withContext false
+                }
+                val audioCodec = source.mediaStreams
+                    .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
+                val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
+                val adapter = activeCastAdapterFor(target)
+                // Subtitle policy uses the receiver's *declared* capabilities — Cast receivers
+                // never carry NativeAss, so styled ASS lands on BurnIn or Degraded depending
+                // on the user's preference.
+                val subtitleStreams = source.mediaStreams
+                    .filter { it.type == MediaStreamType.SUBTITLE }
+                val policyTracks = subtitleStreams.mapNotNull { toPolicyTrack(it) }
+                val decision = SubtitlePolicy.decide(
+                    tracks = policyTracks,
+                    receiverCapabilities = adapter.currentCapabilities.value,
+                    userPreference = subtitleUserPreference(),
+                )
+                applySubtitleFidelityAndWarnFor(decision, target)
+
+                val url = repository.getStreamUrl(itemId, source.id)
+                    .withCastCompatibleCodecs(audioCodec)
+                    .withSubtitleBurnIn(decision)
+                    .withStartTimeTicks(startMs)
+                    .withJellyfinAuth()
+                val media = CastMedia(
+                    url = url,
+                    contentType = guessMediaContentType(url),
+                    title = title,
+                    startPositionMs = startMs,
+                )
+                adapter.load(media).onFailure {
+                    Timber.tag(TAG).w(it, "castViaAdapter: load() failed for %s", target.id)
+                    return@withContext false
+                }
+                true
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "castViaAdapter failed for %s", itemId)
+                false
+            }
+        }
+    }
+
+    /**
+     * Return the active [ProtocolAdapter] for [target], creating + connecting one if needed.
+     * Held under [castAdapterMutex] so concurrent play taps don't race two adapters for the
+     * same TLS endpoint.
+     */
+    private suspend fun activeCastAdapterFor(target: CastReceiver): ProtocolAdapter =
+        castAdapterMutex.withLock {
+            activeCastAdapter?.takeIf { it.receiver.id == target.id }?.let { return@withLock it }
+            // Receiver changed — tear the old adapter down before opening a new socket.
+            activeCastAdapter?.disconnect()
+            val adapter = CastAdapterFactory.create(target)
+            adapter.connect().getOrThrow()
+            activeCastAdapter = adapter
+            adapter
+        }
+
+    /** Drop any active non-FCast adapter. Safe to call when no adapter is active. */
+    private suspend fun releaseActiveCastAdapter() {
+        castAdapterMutex.withLock {
+            activeCastAdapter?.disconnect()
+            activeCastAdapter = null
+        }
+    }
+
+    /**
+     * Same as [applySubtitleFidelityAndWarn] but keyed on a protocol-agnostic [CastReceiver]
+     * (the FCast variant takes [FCastReceiver]). Kept as a sibling rather than overloading so
+     * the FCast call sites keep their typed receiver and the warning tracker dedups on the
+     * canonical `host:port` key in both paths.
+     */
+    private fun applySubtitleFidelityAndWarnFor(
+        decision: SubtitlePolicy.Decision,
+        receiver: CastReceiver,
+    ) {
+        val fidelity = SubtitlePolicy.fidelityFor(decision)
+        _subtitleFidelity.value = fidelity
+        if (decision is SubtitlePolicy.Decision.Degraded &&
+            appPreferences.getValue(appPreferences.castShowSubtitleFidelityWarning)) {
+            if (subtitleWarningTracker.shouldWarn(receiver.host, receiver.port)) {
+                _pendingSubtitleDegradationWarning.value = receiver.name
+            }
+        }
+        Timber.tag(TAG).i(
+            "subtitle policy (adapter): decision=%s receiver=%s fidelity=%s",
+            decision::class.simpleName, receiver.id, fidelity,
+        )
+    }
+
+    /** Best-effort container guess from the URL extension. Cast receivers tolerate the
+     * vendor MIME types we send for FCast (video/mp4 / application/x-mpegURL etc). */
+    private fun guessMediaContentType(url: String): String = when {
+        url.contains(".m3u8", ignoreCase = true) -> "application/x-mpegURL"
+        url.contains(".mpd", ignoreCase = true) -> "application/dash+xml"
+        url.contains(".mkv", ignoreCase = true) -> "video/x-matroska"
+        url.contains(".webm", ignoreCase = true) -> "video/webm"
+        url.contains(".ts", ignoreCase = true) -> "video/mp2t"
+        else -> "video/mp4"
     }
 
     /**
@@ -865,7 +1078,9 @@ class CastSessionManager @Inject constructor(
     /** Tear down the connection AND clear the picked-receiver intent. Idempotent. */
     suspend fun stopCast() {
         controller.stopCast()
+        releaseActiveCastAdapter()
         _pickedReceiver.value = null
+        _pickedTarget.value = null
         _subtitleFidelity.value = SubtitleFidelity.None
     }
 

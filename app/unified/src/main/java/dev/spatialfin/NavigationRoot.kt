@@ -354,9 +354,11 @@ fun NavigationRoot(
                 if (xrSpaceMode != null) {
                     if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
                     if (fcastSession != null) {
-                        val pickedReceiver by fcastSession.pickedReceiver.collectAsState()
+                        // `pickedTarget` covers all protocols (FCast + Cast + future AirPlay)
+                        // so the XR nav-rail "selected" state lights up for any picked device.
+                        val pickedTarget by fcastSession.pickedTarget.collectAsState()
                         NavigationRailItem(
-                            selected = pickedReceiver != null,
+                            selected = pickedTarget != null,
                             onClick = { fcastSession.showPicker() },
                             icon = {
                                 Icon(
