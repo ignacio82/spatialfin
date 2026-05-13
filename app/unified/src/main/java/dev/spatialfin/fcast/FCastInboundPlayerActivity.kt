@@ -227,8 +227,49 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      * builder degrades silently to ExoPlayer's default text renderer — ASS will look plain but
      * the cast still plays.
      */
+    /**
+     * Log what the system audio sink reports as supported encodings — including HDMI / SPDIF
+     * passthrough formats advertised by an attached AVR/soundbar. Lets us diagnose "no audio
+     * on multichannel" by seeing whether passthrough is enabled at the system level.
+     *
+     * Output looks like:
+     * ```
+     * AudioCapabilities: maxChannelCount=8 supports=[PCM_16BIT, AC3, E_AC3, E_AC3_JOC, TRUEHD, DTS, DTS_HD]
+     * ```
+     * If `AC3` / `E_AC3` are absent on a setup that has a Dolby-capable soundbar, the system
+     * audio setting is forcing PCM (Google TV → Display & Sound → Advanced sound settings →
+     * Surround sound: change from "PCM" to "Auto" or "Pass-through").
+     */
+    @OptIn(UnstableApi::class)
+    private fun logAudioCapabilities() {
+        val caps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this)
+        val encodings = listOf(
+            android.media.AudioFormat.ENCODING_PCM_16BIT to "PCM_16BIT",
+            android.media.AudioFormat.ENCODING_PCM_FLOAT to "PCM_FLOAT",
+            android.media.AudioFormat.ENCODING_AC3 to "AC3",
+            android.media.AudioFormat.ENCODING_E_AC3 to "E_AC3",
+            android.media.AudioFormat.ENCODING_E_AC3_JOC to "E_AC3_JOC_ATMOS",
+            android.media.AudioFormat.ENCODING_DOLBY_TRUEHD to "TRUEHD",
+            android.media.AudioFormat.ENCODING_DTS to "DTS",
+            android.media.AudioFormat.ENCODING_DTS_HD to "DTS_HD",
+            android.media.AudioFormat.ENCODING_DTS_UHD_P2 to "DTS_UHD",
+            android.media.AudioFormat.ENCODING_OPUS to "OPUS",
+        )
+        val supported = encodings
+            .filter { (encoding, _) -> caps.supportsEncoding(encoding) }
+            .joinToString { it.second }
+        Timber.tag(TAG).i(
+            "AudioCapabilities: maxChannelCount=%d supports=[%s]",
+            caps.maxChannelCount, supported,
+        )
+    }
+
     @OptIn(UnstableApi::class)
     private fun buildPlayerWithLibass(): ExoPlayer {
+        // Print what passthrough/decode the system advertises — invaluable for diagnosing
+        // "no audio on this title but works for that one" reports. Logged once per Activity
+        // launch since capabilities don't change without a device reconfig.
+        logAudioCapabilities()
         // 1920×1080 render canvas; resized to the on-screen panel below once we know the
         // actual layout size. The XR libass renderer caches one bitmap of this size; a too-low
         // initial value would force a re-alloc on first frame.
@@ -376,7 +417,25 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val audioOnlyOverlay = findViewById<LinearLayout>(R.id.fcast_inbound_audio_only_overlay)
         val audioOnlyTitle = findViewById<TextView>(R.id.fcast_inbound_audio_only_title)
         val audioOnlyStop = findViewById<Button>(R.id.fcast_inbound_audio_only_stop)
+        val audioOnlyAudioInfo = findViewById<TextView>(R.id.fcast_inbound_audio_only_audio_info)
         val exo = player ?: return false
+
+        // SpatialFin audio-info extension: render the sender-reported source codec and
+        // transcoded flag below the title so the user knows whether the receiver is
+        // direct-playing the original audio or playing a JF-rewritten AAC fallback.
+        val sourceAudioCodec = newIntent.getStringExtra(EXTRA_SOURCE_AUDIO_CODEC)
+        val audioTranscoded = if (newIntent.hasExtra(EXTRA_AUDIO_TRANSCODED)) {
+            newIntent.getBooleanExtra(EXTRA_AUDIO_TRANSCODED, false)
+        } else {
+            null
+        }
+        val audioInfoLine = formatSourceAudioInfo(sourceAudioCodec, audioTranscoded)
+        if (audioInfoLine != null) {
+            audioOnlyAudioInfo.text = audioInfoLine
+            audioOnlyAudioInfo.visibility = View.VISIBLE
+        } else {
+            audioOnlyAudioInfo.visibility = View.GONE
+        }
 
         if (newSplitAvRole == SplitAvRole.AUDIO) {
             exo.trackSelectionParameters = TrackSelectionParameters.Builder()
@@ -470,6 +529,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             else -> PlaybackState.Playing
         }
         val duration = p.duration.takeIf { it > 0L }?.let { it / 1000.0 }
+        // Probe the currently-selected ExoPlayer audio track and ship it as a SpatialFin
+        // beacon extension. Non-SpatialFin senders ignore the field (kotlinx.serialization
+        // `ignoreUnknownKeys = true`); the sender-side StateFlow on CastSessionManager holds
+        // the last-seen value so the mini-controller can render "Dolby Atmos · 7.1" without
+        // re-probing on every beacon. Null until a track is selected; ExoPlayer typically
+        // resolves track info within ~200 ms of `prepare()`.
         FCastInboundSession.pushPlaybackUpdate(
             PlaybackUpdateMessage(
                 generationTime = System.currentTimeMillis(),
@@ -477,8 +542,45 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 time = p.currentPosition / 1000.0,
                 duration = duration,
                 speed = p.playbackParameters.speed.toDouble(),
+                audioFormat = AudioFormatProbe.probe(p),
             )
         )
+    }
+
+    /**
+     * Build the receiver-side audio-info line from sender-reported metadata. Returns null when
+     * neither codec nor transcoded flag is known — caller hides the view in that case so
+     * non-SpatialFin senders don't see an empty row. Examples:
+     *   - codec=eac3, transcoded=false → "Source · E-AC-3 · Direct play"
+     *   - codec=truehd, transcoded=true → "Source · TrueHD → AAC · Transcoded"
+     *   - codec=null, transcoded=true → "Audio · Transcoded to AAC"
+     */
+    private fun formatSourceAudioInfo(codec: String?, transcoded: Boolean?): String? {
+        if (codec == null && transcoded == null) return null
+        val pretty = codec?.let { prettyAudioCodec(it) }
+        return when {
+            pretty != null && transcoded == true -> "Source · $pretty → AAC · Transcoded"
+            pretty != null && transcoded == false -> "Source · $pretty · Direct play"
+            pretty != null -> "Source · $pretty"
+            transcoded == true -> "Audio · Transcoded to AAC"
+            transcoded == false -> "Audio · Direct play"
+            else -> null
+        }
+    }
+
+    private fun prettyAudioCodec(codec: String): String = when (codec.lowercase()) {
+        "eac3", "ec3" -> "E-AC-3"
+        "ac3" -> "AC-3"
+        "truehd" -> "TrueHD"
+        "dts" -> "DTS"
+        "dts-hd", "dtshd" -> "DTS-HD"
+        "aac" -> "AAC"
+        "flac" -> "FLAC"
+        "mp3" -> "MP3"
+        "opus" -> "Opus"
+        "vorbis" -> "Vorbis"
+        "pcm", "pcm_s16le", "pcm_s24le" -> "PCM"
+        else -> codec.uppercase()
     }
 
     override fun onStop() {
@@ -515,6 +617,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         const val EXTRA_TITLE: String = "fcast.in.title"
         const val EXTRA_SPLIT_AV_ROLE: String = "fcast.in.split_av_role"
         const val EXTRA_SPLIT_AV_CADENCE_HZ: String = "fcast.in.split_av_cadence_hz"
+        const val EXTRA_SOURCE_AUDIO_CODEC: String = "fcast.in.source_audio_codec"
+        const val EXTRA_AUDIO_TRANSCODED: String = "fcast.in.audio_transcoded"
 
         private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
         private const val MIN_TICKER_INTERVAL_MS: Long = 50L
@@ -536,6 +640,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             startMs: Long = 0L,
             title: String? = null,
             splitAv: SplitAvMetadata? = null,
+            sourceAudioCodec: String? = null,
+            audioTranscoded: Boolean? = null,
         ): Intent = Intent(context, FCastInboundPlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -547,6 +653,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 putExtra(EXTRA_SPLIT_AV_ROLE, it.role.name)
                 it.syncCadenceHz?.let { hz -> putExtra(EXTRA_SPLIT_AV_CADENCE_HZ, hz) }
             }
+            sourceAudioCodec?.let { putExtra(EXTRA_SOURCE_AUDIO_CODEC, it) }
+            audioTranscoded?.let { putExtra(EXTRA_AUDIO_TRANSCODED, it) }
         }
     }
 }

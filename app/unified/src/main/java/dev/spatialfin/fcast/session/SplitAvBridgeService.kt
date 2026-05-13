@@ -75,6 +75,15 @@ class SplitAvBridgeService : Service() {
                 )
                 true
             }
+            SplitAvBridgeIpcMessage.MSG_USER_SEEK -> {
+                // Fast-forward / rewind / scrub on the XR video master, plumbed across the
+                // :xrplayer ↔ :main boundary so the controller's mirrorMasterSeeks collector
+                // forwards the seek to the audio receiver. Without this XR scrubs would
+                // desync audio (audio keeps playing where it was while video jumps).
+                val data = msg.data ?: return@Handler true
+                proxy.applyUserSeek(data.getLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS))
+                true
+            }
             else -> false
         }
     }

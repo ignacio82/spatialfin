@@ -148,6 +148,19 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val castShowGoogleCast = Preference("pref_cast_show_googlecast", true)
     val castShowAirPlay = Preference("pref_cast_show_airplay", true)
 
+    // Cast audio handling. Values map to AudioFallbackMode:
+    //   "auto"           — direct-play Dolby/DTS for receivers with passthrough; auto-fallback
+    //                      to AAC transcode for any receiver that reports "not supported"
+    //                      (cached per host:port for the rest of the session). Default — best
+    //                      possible audio without the user having to think.
+    //   "passthrough"    — always direct-play (best fidelity, fails silently on non-Dolby
+    //                      receivers; useful when the user has confirmed their soundbar setup
+    //                      works and never wants AAC).
+    //   "transcode_aac"  — always transcode to AAC stereo (universal compatibility, lower
+    //                      fidelity; for Bluetooth speakers / headphones / receivers without
+    //                      Dolby passthrough).
+    val castAudioFallback = Preference("pref_cast_audio_fallback", "auto")
+
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)

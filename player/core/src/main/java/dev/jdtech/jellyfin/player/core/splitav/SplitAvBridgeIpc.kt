@@ -79,6 +79,16 @@ object SplitAvBridgeIpcMessage {
     /** Service → client. No payload. */
     const val MSG_STOP_FROM_MASTER: Int = 15
 
+    /**
+     * Client → service. Push when the user scrubs / fast-forwards / rewinds on the local
+     * master. Payload: [KEY_POSITION_MS] = new master position. The service forwards into
+     * [ProxyVideoMaster.applyUserSeek] so the controller's [mirrorMasterSeeks] cascades the
+     * seek to the audio receiver. Distinct from [MSG_STATE_UPDATE] because state-updates
+     * fire continuously at the beacon cadence while user-seeks are rare edge events that need
+     * to land in the controller's `userSeeks` SharedFlow rather than the position cache.
+     */
+    const val MSG_USER_SEEK: Int = 16
+
     const val KEY_POSITION_MS: String = "positionMs"
     const val KEY_PLAYING: String = "playing"
     const val KEY_MUTED: String = "muted"
@@ -101,6 +111,18 @@ class ProxyVideoMaster(
     private val _isPlaying = MutableStateFlow(false)
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    /**
+     * User-initiated seek events plumbed cross-process from `:xrplayer`. The real
+     * [PlayerSplitAvAdapter] in `:xrplayer` emits on its own [userSeeks] when the user
+     * scrubs; the bridge service forwards each emission as a `MSG_USER_SEEK` message that
+     * `applyUserSeek` re-emits here. Empty until the bridge plumbs the IPC end-to-end (see
+     * the corresponding `MSG_USER_SEEK` handler in `SplitAvBridgeService`).
+     */
+    private val _userSeeks = kotlinx.coroutines.flow.MutableSharedFlow<Long>(
+        replay = 0, extraBufferCapacity = 8,
+    )
+    override val userSeeks: kotlinx.coroutines.flow.SharedFlow<Long> = _userSeeks
+
     @Volatile
     private var lastPositionMs: Long = 0L
 
@@ -122,6 +144,16 @@ class ProxyVideoMaster(
     fun applyStateUpdate(positionMs: Long, playing: Boolean) {
         lastPositionMs = positionMs
         _isPlaying.value = playing
+    }
+
+    /**
+     * Push a user-seek event from the `:xrplayer` client across the process boundary into the
+     * controller's [SplitAvController.mirrorMasterSeeks] collector. Invoked by the bridge
+     * service when it receives a `MSG_USER_SEEK` message.
+     */
+    fun applyUserSeek(positionMs: Long) {
+        lastPositionMs = positionMs
+        _userSeeks.tryEmit(positionMs)
     }
 
     override fun currentPositionMs(): Long = lastPositionMs
@@ -251,6 +283,25 @@ class SplitAvBridgeIpcClient(
         msg.data = Bundle().apply {
             putLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS, positionMs)
             putBoolean(SplitAvBridgeIpcMessage.KEY_PLAYING, playing)
+        }
+        try {
+            sm.send(msg)
+        } catch (e: RemoteException) {
+            // Service died — onServiceDisconnected will re-null it.
+        }
+    }
+
+    /**
+     * Push a user-initiated seek event (fast-forward / rewind / scrub) across the IPC
+     * boundary so the main-process controller can cascade it to the audio receiver. The
+     * client should collect [PlayerSplitAvAdapter.userSeeks] and call this for each emission.
+     * No-op when the service isn't connected.
+     */
+    fun pushUserSeek(positionMs: Long) {
+        val sm = serviceMessenger ?: return
+        val msg = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_USER_SEEK)
+        msg.data = Bundle().apply {
+            putLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS, positionMs)
         }
         try {
             sm.send(msg)

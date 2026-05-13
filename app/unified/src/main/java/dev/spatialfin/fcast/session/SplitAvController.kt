@@ -293,12 +293,14 @@ class SplitAvController @Inject constructor(
             // this the receiver keeps playing while the local video is frozen and the gap
             // grows unbounded.
             val pauseMirror = scope.launch { mirrorMasterPlayState(master) }
+            val seekMirror = scope.launch { mirrorMasterSeeks(master) }
             try {
                 castingController.remoteState
                     .filterNotNull()
                     .collectLatest { update -> handleBeacon(master, update) }
             } finally {
                 pauseMirror.cancel()
+                seekMirror.cancel()
             }
         }
     }
@@ -327,8 +329,27 @@ class SplitAvController @Inject constructor(
      * user's resume position.
      */
     private suspend fun mirrorMasterPlayState(master: SplitAvVideoMaster) {
-        var lastSent: Boolean? = master.isPlaying.value
-        Timber.tag(TAG).i("mirrorMasterPlayState: starting (initial=%b, not cascaded)", lastSent)
+        // We **don't** seed lastSent from `master.isPlaying.value` and skip the initial value
+        // anymore. Earlier the seed-and-skip pattern prevented an "I just sent Play, now I'm
+        // re-pausing" double-fire when the master started paused — fine when the master always
+        // booted at playWhenReady=false. But XrPlayerActivity (and BeamPlayerActivity) auto-play
+        // the moment the player is built, so by the time SplitAvVideoBridge binds and this
+        // collector runs, master.isPlaying.value is *already true*. Seeding lastSent = true and
+        // bailing on the first equal emission silently swallowed the first-play seek+resume, so
+        // the receiver loaded the URL with playWhenReady=false and never got the Resume frame.
+        // Result on the user's report: video played, audio never started.
+        //
+        // The fix: start lastSent = null and always cascade the first emission. The downside of
+        // the original race (receiver gets re-paused immediately after Play) is gone because the
+        // receiver explicitly loads with playWhenReady=false (FCastInboundPlayerActivity sets it
+        // in the SplitAvRole.AUDIO branch). A redundant Pause to an already-paused receiver is a
+        // no-op; the controller's pause-mirror only matters once the receiver has started
+        // playing, which can only happen after our explicit Resume below.
+        var lastSent: Boolean? = null
+        Timber.tag(TAG).i(
+            "mirrorMasterPlayState: starting (initial master.isPlaying=%b)",
+            master.isPlaying.value,
+        )
         var aligned = false
         master.isPlaying.collect { playing ->
             if (playing == lastSent) return@collect
@@ -357,6 +378,40 @@ class SplitAvController @Inject constructor(
             } catch (e: Exception) {
                 Timber.tag(TAG).w(e, "mirror play state to receiver failed (playing=%b)", playing)
             }
+        }
+    }
+
+    /**
+     * Cascade user-initiated seeks (fast-forward, rewind, scrub-bar drag, ±10 s buttons) on
+     * the master to the audio receiver so the audio track follows the video. Without this the
+     * receiver keeps playing where it was while the master jumped, and the drift policy can't
+     * catch up because the gap is intentional rather than accidental.
+     *
+     * Programmatic seeks issued by [SplitAvVideoMaster.seekTo] (drift-correction hard seeks)
+     * are *not* forwarded — see [PlayerSplitAvAdapter]'s `suppressNextUserSeekEmit` gate. If
+     * we cascaded those, the drift correction would feed back on itself: master jumps to align
+     * with receiver, cascade forwards the jump back to the receiver, receiver jumps again,
+     * etc.
+     *
+     * Also bumps [masterFirstPlayingWallMs] forward by the warmup grace so the drift policy
+     * doesn't hard-seek the master back to its old position during the post-seek buffering
+     * window — receiver typically takes 1-2 s to refill after a seek, during which beacons
+     * still report the *old* stream position.
+     */
+    private suspend fun mirrorMasterSeeks(master: SplitAvVideoMaster) {
+        master.userSeeks.collect { masterPosMs ->
+            val receiverStreamPosMs = (masterPosMs - mediaStartOffsetMs).coerceAtLeast(0L)
+            Timber.tag(TAG).i(
+                "user seek: master=%dms mediaStartOffset=%dms → receiver stream pos %dms",
+                masterPosMs, mediaStartOffsetMs, receiverStreamPosMs,
+            )
+            runCatching { castingController.seek(receiverStreamPosMs / 1000.0) }
+                .onFailure { Timber.tag(TAG).w(it, "user-seek cascade to receiver failed") }
+            // Reset the warmup window so drift correction doesn't punish the receiver's
+            // post-seek buffer-fill (which can take a second or two on a slow LAN). Without
+            // this the policy sees the gap and hard-seeks the master back to where the
+            // receiver was, undoing the user's scrub.
+            masterFirstPlayingWallMs = System.currentTimeMillis()
         }
     }
 
@@ -490,7 +545,13 @@ class SplitAvController @Inject constructor(
                 // hasn't loaded yet) doesn't propagate into the master.
                 val transitioned = prevTvIsPlaying == true
                 if (hasObservedTvPlaying && transitioned) {
-                    Timber.tag(TAG).i("TV→Paused transition — cascading pause to master")
+                    Timber.tag("SplitAvPauseTrace").w(
+                        "TV→Paused transition — cascading pause to master. " +
+                            "tvIsPlaying=%b prevTvIsPlaying=%b hasObservedTvPlaying=%b " +
+                            "masterPos=%dms beaconStreamPos=%dms",
+                        tvIsPlaying, prevTvIsPlaying, hasObservedTvPlaying,
+                        state.xrPositionMs, state.beaconStreamPositionMs,
+                    )
                     master.pauseFromMaster()
                 }
             }
@@ -557,7 +618,17 @@ class SplitAvController @Inject constructor(
          * controller fires HardSeek storms at startup, exhausts the seek-rate cap, and
          * degrades the session before steady-state is even reached.
          */
-        const val WARMUP_GRACE_MS: Long = 3_000L
+        // Suppresses drift correction for this long after the master's first playWhenReady=true.
+        // At session bootstrap the receiver is several seconds *behind* the master rather than
+        // ahead: the controller's first-play seek (mirrorMasterPlayState → castingController.seek)
+        // jumps the receiver from the freshly-loaded byte 0 to the master's absolute position,
+        // and on direct-play paths (where Jellyfin serves the raw container) that seek triggers
+        // an HTTP byte-range fetch and a buffer refill before audio actually starts. On a slow
+        // home Wi-Fi or a busy AVR that can easily run 5–6 s. Firing the drift policy inside
+        // that window sees a multi-second gap, hard-seeks the master backward, and yanks the
+        // user out of their resume position. 8 s leaves comfortable headroom while still being
+        // short enough that genuine drift gets caught before the user notices lipsync skew.
+        const val WARMUP_GRACE_MS: Long = 8_000L
 
         /** True while the controller is between Connecting and Stopped. */
         val ACTIVE_STATES: Set<State> = setOf(

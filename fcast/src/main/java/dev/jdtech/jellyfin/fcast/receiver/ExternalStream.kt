@@ -3,6 +3,10 @@ package dev.jdtech.jellyfin.fcast.receiver
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.splitAv
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Phase 3 contract: a normalized "play this arbitrary URL" request derived from an inbound
@@ -29,6 +33,17 @@ data class ExternalStreamRequest(
      * paired video master drive sync via PlaybackUpdate beacons. Null for normal full-A/V casts.
      */
     val splitAv: SplitAvMetadata? = null,
+    /**
+     * SpatialFin extension: the source file's audio codec (Jellyfin `MediaStream.codec`).
+     * Echoed by the receiver in the audio-info overlay so the user sees the original codec
+     * even when the URL is being transcoded. Null on non-SpatialFin senders.
+     */
+    val sourceAudioCodec: String? = null,
+    /**
+     * SpatialFin extension: true when the URL is a `static=false` Jellyfin transcode (typically
+     * to AAC). Lets the receiver render "transcoded to AAC" vs "direct play" below the title.
+     */
+    val audioTranscoded: Boolean? = null,
 ) {
     companion object {
         /**
@@ -39,6 +54,12 @@ data class ExternalStreamRequest(
          */
         fun fromPlayMessage(msg: PlayMessage): ExternalStreamRequest? {
             val url = msg.url ?: return null
+            val audioCustom = (msg.metadata?.custom as? JsonObject)
+                ?.get("audio") as? JsonObject
+            val sourceAudioCodec = audioCustom?.get("sourceCodec")
+                ?.jsonPrimitive?.contentOrNull
+            val audioTranscoded = audioCustom?.get("transcoded")
+                ?.jsonPrimitive?.booleanOrNull
             return ExternalStreamRequest(
                 url = url,
                 container = msg.container,
@@ -49,6 +70,8 @@ data class ExternalStreamRequest(
                 title = msg.metadata?.title,
                 thumbnailUrl = msg.metadata?.thumbnailUrl,
                 splitAv = msg.splitAv(),
+                sourceAudioCodec = sourceAudioCodec,
+                audioTranscoded = audioTranscoded,
             )
         }
     }

@@ -21,13 +21,54 @@ object FCastInboundSession {
     @Volatile private var playbackBroadcaster: ((PlaybackUpdateMessage) -> Unit)? = null
     @Volatile private var volumeBroadcaster: ((VolumeUpdateMessage) -> Unit)? = null
 
+    /**
+     * Latest control messages that arrived **before** an [ExternalStreamPlayer] was bound.
+     * Senders can pipeline `Play` → `Seek` → `Resume` immediately after picking a receiver
+     * (the split-A/V controller's first-play alignment, and the calibration orchestrator's
+     * immediate Resume both do this), but the Play frame arrives at the Service, fires an
+     * Intent to launch the receiver Activity, and any follow-up Seek/Resume can land **before**
+     * that Activity finishes `onCreate` and calls [bindControl]. Without queueing, those
+     * frames were silent no-ops and the receiver stayed at position 0 / playWhenReady=false
+     * forever.
+     *
+     * Latest-wins semantics:
+     *  - The most recent play-intent (Resume/Pause) replaces any previous one.
+     *  - Only the most recent Seek target is kept — a sender that scrubs to 5:00 then 10:00
+     *    expects to land at 10:00, not pass through 5:00.
+     *
+     * Cleared on [unbindControl] so a stale intent doesn't leak into a future Activity.
+     */
+    @Volatile private var pendingPlayIntent: PendingPlayIntent? = null
+    @Volatile private var pendingSeekSeconds: Double? = null
+
+    private enum class PendingPlayIntent { Resume, Pause }
+
     fun bindControl(c: ExternalStreamPlayer) {
         control = c
+        // Snapshot then clear so a redundant onCreate (rare but possible — singleTask + new
+        // intent re-binds) can't double-apply the same pending intent.
+        val seek = pendingSeekSeconds
+        val intent = pendingPlayIntent
+        pendingSeekSeconds = null
+        pendingPlayIntent = null
+        // Seek before play-intent: senders send them in that order, and applying a Seek
+        // *after* a Resume forces an extra buffer-flush mid-playback.
+        if (seek != null) c.seek(seek)
+        when (intent) {
+            PendingPlayIntent.Resume -> c.resume()
+            PendingPlayIntent.Pause -> c.pause()
+            null -> Unit
+        }
     }
 
     /** Identity-checked unbind so a stale Activity destroy doesn't drop a newer Activity's control. */
     fun unbindControl(c: ExternalStreamPlayer) {
-        if (control === c) control = null
+        if (control === c) {
+            control = null
+            // Clear any stale pending intents — they belonged to the now-departed Activity.
+            pendingPlayIntent = null
+            pendingSeekSeconds = null
+        }
     }
 
     fun bindBroadcaster(
@@ -45,19 +86,28 @@ object FCastInboundSession {
 
     // Called by IntentBasedExternalStreamPlayer when an FCast frame lands on the router.
     fun pause() {
-        control?.pause()
+        val c = control
+        if (c != null) c.pause() else pendingPlayIntent = PendingPlayIntent.Pause
     }
 
     fun resume() {
-        control?.resume()
+        val c = control
+        if (c != null) c.resume() else pendingPlayIntent = PendingPlayIntent.Resume
     }
 
     fun stop() {
+        // Stop arriving pre-bind means the sender wants the whole session torn down. The
+        // Activity is on its way up but will see no further control frames; the simplest
+        // correct behavior is to clear any pending intent and let the Activity self-finish
+        // when its session-stop watchdog fires. We don't try to dispatch a stop to a not-yet-
+        // bound control because it'd race the Activity's own initialization.
+        pendingPlayIntent = null
         control?.stop()
     }
 
     fun seek(seconds: Double) {
-        control?.seek(seconds)
+        val c = control
+        if (c != null) c.seek(seconds) else pendingSeekSeconds = seconds
     }
 
     fun setVolume(volume: Double) {

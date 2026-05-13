@@ -254,6 +254,31 @@ class CastSessionManager @Inject constructor(
     val activeVolume: StateFlow<Float> = _activeVolume.asStateFlow()
 
     /**
+     * Audio-format the receiver reports it's actually decoding right now (Dolby Atmos / EAC3 /
+     * AAC / PCM / etc.). SpatialFin extension on the FCast beacon — null for non-SpatialFin
+     * receivers and for the brief window after Play before ExoPlayer's tracks resolve. The
+     * mini-controller renders this as a one-line "Audio · <label>" under the receiver name.
+     */
+    private val _activeAudioFormat =
+        MutableStateFlow<dev.jdtech.jellyfin.fcast.protocol.AudioFormatInfo?>(null)
+    val activeAudioFormat: StateFlow<dev.jdtech.jellyfin.fcast.protocol.AudioFormatInfo?> =
+        _activeAudioFormat.asStateFlow()
+
+    /**
+     * Process-scoped set of `host:port` receivers that have reported "not supported" for an
+     * audio codec we tried to direct-play. The URL builder reads this to auto-fallback to
+     * AAC transcode on the *next* cast to that receiver — so the user gets best-quality
+     * passthrough on a Dolby-capable setup AND working audio on a non-passthrough setup
+     * without having to flip any settings.
+     *
+     * Memory-only by design: receiver capabilities can change (cable swap, soundbar firmware
+     * update, HDMI audio mode toggled in OS settings) so we re-learn on every process start.
+     */
+    private val unsupportedAudioReceivers = java.util.Collections.synchronizedSet(
+        mutableSetOf<String>(),
+    )
+
+    /**
      * Most-recent latest cached Google Cast results. Surfaced to the picker UI so users can
      * pick Chromecasts. Populated by [driveDiscoveryAndProbing]; cleared along with the FCast
      * cache when discovery starts a fresh sweep.
@@ -678,17 +703,22 @@ class CastSessionManager @Inject constructor(
                 )
                 applySubtitleFidelityAndWarn(decision, receiver)
 
+                val audioDecision = audioCodecDecision(receiver)
                 val url = repository.getStreamUrl(itemId, source.id)
-                    .withCastCompatibleCodecs(audioCodec)
+                    .withCastCompatibleCodecs(audioCodec, audioDecision)
                     .withSubtitleBurnIn(decision)
                     .withStartTimeTicks(startMs)
                     .withJellyfinAuth()
+                val transcoded = url.contains("audioCodec=", ignoreCase = true) ||
+                    url.contains("static=false", ignoreCase = true)
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
                 val play = PlayMessageBuilder.build(
                     url = url,
                     container = container,
                     positionSeconds = startMs / 1000.0,
                     title = title,
+                    sourceAudioCodec = audioCodec,
+                    audioTranscoded = transcoded,
                 )
                 controller.startCast(receiver, play)
                 true
@@ -799,8 +829,9 @@ class CastSessionManager @Inject constructor(
                 )
                 applySubtitleFidelityAndWarnFor(decision, target)
 
+                val audioDecision = audioCodecDecision(target.host, target.port)
                 val url = repository.getStreamUrl(itemId, source.id)
-                    .withCastCompatibleCodecs(audioCodec)
+                    .withCastCompatibleCodecs(audioCodec, audioDecision)
                     .withSubtitleBurnIn(decision)
                     .withStartTimeTicks(startMs)
                     .withJellyfinAuth()
@@ -898,6 +929,30 @@ class CastSessionManager @Inject constructor(
                 }
                 update.time?.let { _activePositionMs.value = (it * 1000.0).toLong() }
                 update.duration?.let { _activeDurationMs.value = (it * 1000.0).toLong() }
+                // SpatialFin → SpatialFin: the receiver populates audioFormat on every beacon
+                // once ExoPlayer's tracks resolve. Latch the latest non-null value — beacons
+                // may transiently omit it during track-change windows, and the mini-controller
+                // should keep showing the previously-known codec while that resolves.
+                update.audioFormat?.let { format ->
+                    _activeAudioFormat.value = format
+                    // Auto-fallback: if the receiver's currently-decoded label says "not
+                    // supported", remember it. The URL builder reads this on the *next* cast
+                    // to that receiver and forces an AAC transcode. The current cast keeps
+                    // playing (silently); a future PR could trigger an in-flight re-cast for
+                    // a better UX, but the current scope is "make sure the second tap works."
+                    if (format.label?.contains("not supported", ignoreCase = true) == true) {
+                        controller.activeReceiver.value?.let { rcv ->
+                            val key = "${rcv.host}:${rcv.port}"
+                            if (unsupportedAudioReceivers.add(key)) {
+                                Timber.tag(TAG).w(
+                                    "auto-fallback armed for %s — next cast forces AAC transcode " +
+                                        "(receiver reported: %s)",
+                                    key, format.label,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -969,13 +1024,83 @@ class CastSessionManager @Inject constructor(
      *  - Anything else we haven't whitelisted (conservative default for unknown codecs is to
      *    transcode rather than serve a file the receiver can't decode).
      */
-    private fun String.withCastCompatibleCodecs(sourceAudioCodec: String?): String {
+    /**
+     * Per-receiver context used by [withCastCompatibleCodecs] to decide direct-play vs AAC
+     * transcode. The user preference is the global override; the receiver host:port lets us
+     * check the auto-fallback cache (filled when a previous beacon reported the codec as
+     * unsupported on that receiver).
+     */
+    private data class AudioCodecDecision(
+        val mode: AudioFallbackMode,
+        val receiverKey: String,
+    )
+
+    private enum class AudioFallbackMode { Auto, Passthrough, TranscodeAac }
+
+    private fun audioCodecDecision(receiver: FCastReceiver): AudioCodecDecision =
+        audioCodecDecision(receiver.host, receiver.port)
+
+    private fun audioCodecDecision(host: String, port: Int): AudioCodecDecision {
+        val mode = when (appPreferences.getValue(appPreferences.castAudioFallback)) {
+            "passthrough" -> AudioFallbackMode.Passthrough
+            "transcode_aac" -> AudioFallbackMode.TranscodeAac
+            else -> AudioFallbackMode.Auto
+        }
+        return AudioCodecDecision(mode, "$host:$port")
+    }
+
+    private fun String.withCastCompatibleCodecs(
+        sourceAudioCodec: String?,
+        decision: AudioCodecDecision,
+    ): String {
         if (!contains("static=true", ignoreCase = true)) return this
         if (contains("audioCodec=", ignoreCase = true)) return this
+        // Hard overrides first — settings preference takes precedence over codec heuristics.
+        // The "transcode_aac" branch always rewrites; the "passthrough" branch always
+        // direct-plays even for codecs we'd normally rewrite (PCM 7.1 etc.) so users with
+        // explicit Dolby setups get full fidelity. "auto" falls through to the codec table
+        // and the per-receiver auto-fallback cache.
+        when (decision.mode) {
+            AudioFallbackMode.TranscodeAac ->
+                return replace("static=true", "static=false") + "&audioCodec=aac"
+            AudioFallbackMode.Passthrough -> return this
+            AudioFallbackMode.Auto -> Unit // fall through to codec table + cache check
+        }
+        // Auto-fallback cache: if a previous cast to this receiver hit an unsupported codec,
+        // force AAC for every subsequent cast in this process. The cache is process-scoped so
+        // capability changes (cable swap, OS audio setting flip) re-learn on next launch.
+        if (decision.receiverKey in unsupportedAudioReceivers) {
+            return replace("static=true", "static=false") + "&audioCodec=aac"
+        }
         val codec = sourceAudioCodec?.lowercase()?.trim().orEmpty()
+        // Direct-play codecs: ones the receiver can either software-decode OR pass through
+        // to an HDMI-connected AVR/soundbar.
+        //
+        // Includes the full Dolby family: AC-3, E-AC-3, E-AC-3 with Atmos (eac3-joc), and
+        // TrueHD (TrueHD Atmos shares the same MIME on Media3). Plus DTS. These all
+        // passthrough cleanly on the receivers SpatialFin users actually have — Google TV
+        // Streamer / Apple TV / typical AVR setups — because the receiver's ExoPlayer hands
+        // the encoded bitstream to `DefaultAudioSink`, which routes via HDMI to the soundbar
+        // when `AudioCapabilities.supportsEncoding(...)` returns true for the format.
+        //
+        // The previous list rewrote E-AC-3 / TrueHD / DTS to `audioCodec=aac` (server-side
+        // transcode), which both downgraded Atmos to stereo AAC *and* broke the resulting
+        // MKV live-transcode stream entirely on some receivers (Streamer reported
+        // `groups=0` for the duration). Direct-play here means: the file's original audio
+        // bitstream goes straight from Jellyfin to the soundbar.
+        //
+        // **Compatibility note**: receivers that lack passthrough for these codecs (Pixel
+        // speakers, headset audio, Google TV in PCM-only audio mode) will play silent. The
+        // `AudioFormatProbe` on the receiver reports `<codec> · not supported` to the
+        // sender's mini-controller in that case, so the user has a diagnosis. A future
+        // pref will toggle "force AAC transcode" for users without a Dolby chain — for now
+        // the default optimizes for the typical user (soundbar / AVR) per the explicit
+        // request ("I have a soundbar and want the best possible audio").
         val directPlay = codec in setOf(
-            "aac", "mp3", "opus", "vorbis", "flac", "ac3", "wav",
+            "aac", "mp3", "opus", "vorbis", "flac", "wav",
             "pcm", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_mulaw", "pcm_alaw",
+            "ac3", "eac3", "eac3-joc", "ec3", "truehd", "mlp",
+            "dts", "dts-hd", "dts-hd-ma", "dts-express", "dca",
         )
         if (directPlay) return this
         return replace("static=true", "static=false") + "&audioCodec=aac"
@@ -1066,13 +1191,37 @@ class CastSessionManager @Inject constructor(
                 val audioCodec = source.mediaStreams
                     .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
-                val url = repository.getStreamUrl(itemId, source.id)
-                    .withCastCompatibleCodecs(audioCodec)
-                    .withStartTimeTicks(startMs)
+                val audioDecision = audioCodecDecision(receiver)
+                val baseUrl = repository.getStreamUrl(itemId, source.id)
+                    .withCastCompatibleCodecs(audioCodec, audioDecision)
+                // Direct-play vs transcode determines whether `startTimeTicks=` does anything.
+                // `withCastCompatibleCodecs` flips static=true → static=false ONLY when the
+                // audio codec can't direct-play (dts/truehd/eac3/etc.) — that's the trigger
+                // we detect to know if the resulting URL is a transcoded HLS stream.
+                //
+                // Behavior of startTimeTicks on each path:
+                //   - Transcoded (static=false): Jellyfin re-encodes the stream starting at
+                //     the requested position. Receiver byte 0 = absolute media-time `startMs`.
+                //   - Direct-play (static=true): JF serves the raw container with HTTP byte-
+                //     range support. `startTimeTicks` is IGNORED — the file is served from
+                //     byte 0 regardless. Receiver byte 0 = absolute media-time 0.
+                //
+                // Pre-fix bug: we appended `startTimeTicks=` to direct-play URLs too, and
+                // told SplitAvController `mediaStartOffsetMs = startMs`. JF served the file
+                // from byte 0, so receiver played from 0 absolute, while the controller's
+                // first-play seek computed `master.currentPositionMs() - startMs = 0` and
+                // seeked the receiver to 0 → audio at 0:00 while XR video resumed at e.g. 2:00.
+                val transcoded = "audioCodec=" in baseUrl || "static=false" in baseUrl
+                val url = baseUrl
+                    .let { if (transcoded) it.withStartTimeTicks(startMs) else it }
                     .withJellyfinAuth()
+                // The controller's `mediaStartOffsetMs` is the absolute media-time at which
+                // the receiver's stream-time 0 lives. For transcoded streams that's `startMs`;
+                // for direct-play streams the file timeline IS absolute, so 0.
+                val mediaStartOffsetMs = if (transcoded) startMs else 0L
                 Timber.tag(TAG).i(
-                    "castSpatialItemSplitAv: source audio codec=%s direct-play=%b startMs=%d",
-                    audioCodec, "audioCodec=" !in url, startMs,
+                    "castSpatialItemSplitAv: source audio codec=%s transcoded=%b startMs=%d mediaStartOffsetMs=%d",
+                    audioCodec, transcoded, startMs, mediaStartOffsetMs,
                 )
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 
@@ -1106,13 +1255,17 @@ class CastSessionManager @Inject constructor(
                     // ahead. Sending 0 here avoids double-skipping.
                     positionSeconds = 0.0,
                     title = title,
+                    sourceAudioCodec = audioCodec,
+                    audioTranscoded = transcoded,
                 )
 
                 // 2. Tell the TV to start audio-only playback. audioLatencyMs has been
                 // smart-cast to non-null by the calibration branch above. mediaStartOffsetMs
-                // is the absolute resume position so the controller can reconcile the TV's
-                // (now-relative) beacon time with XR's absolute master position.
-                splitAvController.start(receiver, play, audioLatencyMs, startMs)
+                // is the absolute media-time at which the receiver's stream-time 0 begins —
+                // computed above based on direct-play vs transcoded path. The controller uses
+                // it both to seek-align the receiver on first master-play and to translate
+                // beacon stream-times back to absolute for the drift policy.
+                splitAvController.start(receiver, play, audioLatencyMs, mediaStartOffsetMs)
 
                 // 3. Launch the local video-master Activity. Drift correction in the controller
                 //    will idle until that Activity binds itself via SplitAvVideoBridge.
@@ -1220,6 +1373,7 @@ class CastSessionManager @Inject constructor(
         _pickedReceiver.value = null
         _pickedTarget.value = null
         _subtitleFidelity.value = SubtitleFidelity.None
+        _activeAudioFormat.value = null
     }
 
     /**

@@ -618,9 +618,20 @@ class BeamPlayerActivity : AppCompatActivity() {
                 postToPlayer = { runOnUiThread(it) },
             )
             splitAvAdapter = adapter
+            // setAudioMuted(true) silences the *output* but the audio track is still selected,
+            // so the audio renderer still tries to initialize a decoder. For sources with
+            // Atmos / TrueHD / DTS-HD that the Pixel doesn't have an in-process decoder for,
+            // that init fails with ERROR_CODE_DECODING_FAILED at posMs=0 and the whole player
+            // errors out. Disabling the audio track type entirely keeps the audio renderer
+            // out of the initialization path so the master can play HEVC/H.264 content
+            // regardless of what audio codec the file carries. The audio plays on the cast
+            // receiver, not here.
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
+                .build()
             adapter.setAudioMuted(true)
             SplitAvVideoBridge.bind(adapter)
-            Timber.i("BeamPlayer: bound as split-A/V video master")
+            Timber.i("BeamPlayer: bound as split-A/V video master (audio track disabled)")
         }
     }
 

@@ -60,6 +60,22 @@
             android:textColor="#CCFFFFFF"
             android:textSize="16sp" />
 
+        <!--
+          SpatialFin extension: source audio codec + transcoded flag, e.g.
+          "Source · E-AC-3 · Direct play" or "Source · TrueHD → AAC · Transcoded".
+          Populated from PlayMessage.metadata.custom.audio when present; GONE otherwise so
+          non-SpatialFin senders don't get a stray empty line.
+        -->
+        <TextView
+            android:id="@+id/fcast_inbound_audio_only_audio_info"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:textColor="#99B7C8FF"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/fcast_inbound_audio_only_hint"
             android:layout_width="wrap_content"

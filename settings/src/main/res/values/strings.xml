@@ -224,6 +224,21 @@
     <string name="cast_show_airplay">Show AirPlay receivers</string>
     <string name="cast_show_airplay_summary">Apple TVs and AirPlay-capable AV receivers.</string>
 
+    <!-- Cast audio fallback (PR follow-up). User-facing copy avoids "transcode" / "passthrough"
+         jargon in the labels; the descriptions explain the trade-off. -->
+    <string name="cast_audio_fallback">Cast audio</string>
+    <string name="cast_audio_fallback_summary">How SpatialFin picks the audio format sent to your receiver.</string>
+    <string-array name="cast_audio_fallback_options">
+        <item>Best quality (auto-fallback)</item>
+        <item>Always direct play (skip transcode)</item>
+        <item>Always transcode (universal compatibility)</item>
+    </string-array>
+    <string-array name="cast_audio_fallback_values">
+        <item>auto</item>
+        <item>passthrough</item>
+        <item>transcode_aac</item>
+    </string-array>
+
     <string name="player_max_bitrate">Playback Quality</string>
     <string name="player_max_bitrate_summary">Resolution cap sent to the server. Auto means no limit.</string>
     <string name="player_force_direct_play">Always attempt direct play</string>
