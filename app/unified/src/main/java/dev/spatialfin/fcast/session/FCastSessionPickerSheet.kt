@@ -132,6 +132,7 @@ fun FCastSessionPickerSheet(
             .heightIn(max = 720.dp),
         shape = RoundedCornerShape(32.dp),
     ) {
+        var helpVisible by remember { mutableStateOf(false) }
         Column(modifier = Modifier.padding(40.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -154,6 +155,15 @@ fun FCastSessionPickerSheet(
                 if (isScanning) {
                     CircularProgressIndicator(modifier = Modifier.size(28.dp))
                 }
+                TextButton(onClick = { helpVisible = true }) {
+                    Text(
+                        "Help",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+            if (helpVisible) {
+                CastProtocolHelpRow(onDismiss = { helpVisible = false })
             }
             Spacer(Modifier.height(24.dp))
 
@@ -449,6 +459,54 @@ private fun SessionReceiverRow(
  * Disabled rows render at half opacity with no click handler — used for AirPlay 2 devices we
  * detected but can't drive yet (pairing handshake ships in PR 6).
  */
+/**
+ * Help block that briefly explains each protocol in plain English. Inline (rather than a
+ * dialog) so users don't have to context-switch on XR — the panel pushback would obscure the
+ * picker itself. Closed via its own X.
+ */
+@Composable
+private fun CastProtocolHelpRow(onDismiss: () -> Unit) {
+    Spacer(Modifier.height(20.dp))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 2.dp,
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "About the protocols",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "FCast — an open casting protocol. SpatialFin → SpatialFin gives the best " +
+                    "result (full ASS subtitle styling and Split A/V).",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Chromecast — Google's protocol. Works on Chromecasts, Google TVs, Nest Hubs. " +
+                    "Styled subtitles burn into the video on the server automatically.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "AirPlay — Apple's protocol. Works on Apple TVs (≤ tvOS 9) and many AV " +
+                    "receivers. HomePods and newer Apple TVs need pairing, which isn't supported yet.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
 @Composable
 private fun CastReceiverRow(
     receiver: dev.jdtech.jellyfin.cast.CastReceiver,
