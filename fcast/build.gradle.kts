@@ -37,6 +37,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jmdns)
+    implementation(libs.okhttp)
     implementation(libs.timber)
 
     testImplementation(libs.junit4)

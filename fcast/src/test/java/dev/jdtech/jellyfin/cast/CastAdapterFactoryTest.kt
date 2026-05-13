@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.cast
 
 import dev.jdtech.jellyfin.cast.adapter.FCastAdapter
+import dev.jdtech.jellyfin.cast.adapter.airplay.AirPlayAdapter
 import dev.jdtech.jellyfin.cast.adapter.googlecast.GoogleCastAdapter
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -12,7 +13,11 @@ class CastAdapterFactoryTest {
         id = "$protocol:test",
         name = "Test",
         host = "10.0.0.1",
-        port = if (protocol == CastProtocol.GoogleCast) 8009 else 46899,
+        port = when (protocol) {
+            CastProtocol.GoogleCast -> 8009
+            CastProtocol.AirPlay -> 7000
+            else -> 46899
+        },
         protocol = protocol,
         capabilities = if (protocol == CastProtocol.FCast) FCAST_DEFAULT_CAPABILITIES else emptySet(),
     )
@@ -30,10 +35,9 @@ class CastAdapterFactoryTest {
     }
 
     @Test
-    fun `factory rejects AirPlay receiver until PR 4`() {
-        assertThrows(NotImplementedError::class.java) {
-            CastAdapterFactory.create(receiver(CastProtocol.AirPlay))
-        }
+    fun `factory returns AirPlayAdapter for AirPlay receiver`() {
+        val adapter = CastAdapterFactory.create(receiver(CastProtocol.AirPlay))
+        assertTrue(adapter is AirPlayAdapter)
     }
 
     @Test
@@ -48,5 +52,11 @@ class CastAdapterFactoryTest {
     fun `GoogleCastAdapter constructor rejects non-GoogleCast receiver`() {
         val fcast = receiver(CastProtocol.FCast)
         assertThrows(IllegalArgumentException::class.java) { GoogleCastAdapter(fcast) }
+    }
+
+    @Test
+    fun `AirPlayAdapter constructor rejects non-AirPlay receiver`() {
+        val fcast = receiver(CastProtocol.FCast)
+        assertThrows(IllegalArgumentException::class.java) { AirPlayAdapter(fcast) }
     }
 }
