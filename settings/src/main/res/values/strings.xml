@@ -196,6 +196,26 @@
         <item>never</item>
     </string-array>
 
+    <!-- Cast → subtitle handling (PR 2 Half B). User-facing copy intentionally avoids
+         "burn-in" / "transcode" / "libass" — those are implementation details. -->
+    <string name="cast_subtitle_handling">Subtitle handling when casting</string>
+    <string name="cast_subtitle_handling_summary">How styled subtitles (anime, signs, karaoke) reach receivers that can\'t render them natively.</string>
+    <string-array name="cast_subtitle_handling_options">
+        <item>Best fidelity (transcode when needed)</item>
+        <item>Faster start (always stream natively)</item>
+        <item>Off (no subtitles when casting)</item>
+    </string-array>
+    <string-array name="cast_subtitle_handling_values">
+        <item>best_fidelity</item>
+        <item>faster_start</item>
+        <item>off</item>
+    </string-array>
+
+    <string name="cast_show_transcoding_indicator">Show transcoding indicator</string>
+    <string name="cast_show_transcoding_indicator_summary">A small chip in the cast controller shows when the server is rendering subtitles into the video.</string>
+    <string name="cast_show_subtitle_fidelity_warning">Show subtitle-fidelity warnings</string>
+    <string name="cast_show_subtitle_fidelity_warning_summary">A one-time message warns when a styled subtitle track will be simplified on a receiver that can\'t render it.</string>
+
     <string name="player_max_bitrate">Playback Quality</string>
     <string name="player_max_bitrate_summary">Resolution cap sent to the server. Auto means no limit.</string>
     <string name="player_force_direct_play">Always attempt direct play</string>

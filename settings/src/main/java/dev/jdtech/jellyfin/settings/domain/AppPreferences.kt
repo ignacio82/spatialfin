@@ -127,6 +127,19 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // cold start (would surprise users by routing playback to a TV in a different room).
     val lastUsedFCastReceiverHostPort = Preference<String?>("pref_fcast_last_receiver", null)
 
+    // Sender-side subtitle handling when casting. The values map to
+    // SubtitlePolicy.UserPreference: "best_fidelity" (burn in ASS for receivers that lack
+    // libass, default), "faster_start" (never burn in — degraded styling on non-SpatialFin
+    // receivers), "off" (no subtitles when casting).
+    val castSubtitleHandling = Preference("pref_cast_subtitle_handling", "best_fidelity")
+    // Show the small "Transcoding for subtitle compatibility" chip while the server is
+    // re-encoding for burn-in. Some users prefer to hide it once they've understood why their
+    // anime episode took a moment longer to start.
+    val castShowTranscodingIndicator = Preference("pref_cast_show_transcoding_indicator", true)
+    // Show the one-time toast when an active session can't render styled subs with full
+    // fidelity. Lets power users silence the warning after the first time.
+    val castShowSubtitleFidelityWarning = Preference("pref_cast_show_subtitle_fidelity_warning", true)
+
     // XR Subtitles
     val xrSubtitleSize = Preference("pref_xr_subtitle_size", 72)
     val xrPlayerPanelX = Preference("pref_xr_player_panel_x", 0f)

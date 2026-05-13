@@ -11,6 +11,23 @@
         android:keepScreenOn="true" />
 
     <!--
+      Libass subtitle overlay. Stacked above the PlayerView so the rendered ASS bitmap covers
+      the same projected video frame. Hit-tests disabled — PlayerView keeps its own click
+      handling for the (default-hidden) controller. Visibility is driven from
+      FCastInboundPlayerActivity's render loop: GONE whenever libass has no active cue or
+      we're in split-A/V audio mode (no video to render subs over).
+    -->
+    <ImageView
+        android:id="@+id/fcast_inbound_subtitle_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="Subtitles"
+        android:scaleType="fitXY"
+        android:clickable="false"
+        android:focusable="false"
+        android:visibility="gone" />
+
+    <!--
       Visible only in split-A/V audio-only mode (this device plays audio while a paired
       video master drives the picture). PlayerView's video surface stays black anyway —
       this overlay is there so the user understands what they're looking at.

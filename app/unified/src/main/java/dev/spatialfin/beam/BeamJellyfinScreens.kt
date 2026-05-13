@@ -3123,7 +3123,7 @@ private fun BeamOverflowMenu(
             extraItems()
             // Cast affordance lives inside the overflow rather than as a peer icon so hero-card
             // action rows stay single-line on narrow phones. No-op (nothing rendered) on
-            // surfaces without an FCastSessionManager in scope (e.g. TV).
+            // surfaces without an CastSessionManager in scope (e.g. TV).
             BeamCastOverflowItems(onItemSelected = { onExpandedChange(false) })
             if (onRefresh != null) {
                 androidx.compose.material3.DropdownMenuItem(
@@ -3267,7 +3267,7 @@ private fun formatChapterTime(ms: Long): String {
 
 private fun launchServerItem(
     context: Context,
-    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager?,
+    fcastSession: dev.spatialfin.fcast.session.CastSessionManager?,
     scope: kotlinx.coroutines.CoroutineScope,
     item: SpatialFinItem,
     startFromBeginning: Boolean = false,

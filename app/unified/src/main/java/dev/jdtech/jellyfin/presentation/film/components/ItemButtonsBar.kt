@@ -172,7 +172,7 @@ fun ItemButtonsBar(
                 // Cast affordance sits immediately left of the 3-dots overflow on
                 // playable items, matching Google Cast UX where the cast button is
                 // an always-visible peer of the playback controls. Only render
-                // when there's an FCastSessionManager in scope (XR/Beam, not TV).
+                // when there's an CastSessionManager in scope (XR/Beam, not TV).
                 val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
                 if (fcastSession != null && item.canPlay) {
                     val pickedReceiver by fcastSession.pickedReceiver.collectAsState()

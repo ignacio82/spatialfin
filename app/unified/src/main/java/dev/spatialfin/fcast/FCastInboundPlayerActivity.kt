@@ -2,11 +2,15 @@ package dev.spatialfin.fcast
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Looper
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -16,7 +20,12 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.ui.PlayerView
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
@@ -26,6 +35,8 @@ import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
+import dev.jdtech.jellyfin.player.xr.LibassRenderer
+import dev.jdtech.jellyfin.player.xr.LibassTextRenderer
 import dev.spatialfin.R
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -53,6 +64,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
     private var player: ExoPlayer? = null
     private var playbackTickerJob: Job? = null
+    private var subtitleRenderJob: Job? = null
+    private var libassRenderer: LibassRenderer? = null
     private var splitAvRole: SplitAvRole? = null
     private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
     private val playerListener = object : Player.Listener {
@@ -62,7 +75,17 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             oldPosition: Player.PositionInfo,
             newPosition: Player.PositionInfo,
             reason: Int,
-        ) = pushPlaybackSnapshot()
+        ) {
+            // Drop the libass per-event cache on every seek — otherwise the post-seek frame
+            // is composited on top of stale glyph buffers from before the seek, producing a
+            // "ghost subtitle" for one frame. Mirrors the same fix the main player uses
+            // (LibassTextRenderer.onPositionReset → libassRenderer.clearCache).
+            if (reason == Player.DISCONTINUITY_REASON_SEEK ||
+                reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
+                libassRenderer?.clearCache()
+            }
+            pushPlaybackSnapshot()
+        }
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) =
             pushPlaybackSnapshot()
         override fun onVolumeChanged(volume: Float) {
@@ -88,6 +111,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             finish()
         }.let { Unit }
         override fun seek(seconds: Double) = runOnUiThread {
+            // Clear libass first so the post-seek frame renders against an empty event cache.
+            // The Player.Listener's onPositionDiscontinuity also clears it, but doing this
+            // here on the inbound-FCast path keeps the bitmap clean even if the player coalesces
+            // the seek before the listener fires.
+            libassRenderer?.clearCache()
             player?.seekTo((seconds * 1000.0).toLong().coerceAtLeast(0L))
         }.let { Unit }
         override fun setVolume(volume: Double) = runOnUiThread {
@@ -103,12 +131,128 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContentView(R.layout.activity_fcast_inbound_player)
-        val exo = ExoPlayer.Builder(this).build()
+        val exo = buildPlayerWithLibass()
         player = exo
         findViewById<PlayerView>(R.id.fcast_inbound_player_view).player = exo
         exo.addListener(playerListener)
+        startSubtitleRenderLoop()
 
         if (!applyIntent(intent)) finish()
+    }
+
+    /**
+     * Build an ExoPlayer that routes ASS/SSA/SRT/VTT text tracks through [LibassTextRenderer]
+     * → [LibassRenderer]. Mirrors the wiring [dev.jdtech.jellyfin.player.beam.BeamPlayerActivity]
+     * uses for its 2D player — the FCast inbound activity is the SpatialFin → SpatialFin cast
+     * receiver's player, so when a SpatialFin sender pushes a Jellyfin item with embedded ASS
+     * subs the receiver renders them with full libass fidelity instead of plain dialogue.
+     *
+     * Defensive fallback: if the native `libass_jni.so` couldn't be loaded for any reason, the
+     * builder degrades silently to ExoPlayer's default text renderer — ASS will look plain but
+     * the cast still plays.
+     */
+    @OptIn(UnstableApi::class)
+    private fun buildPlayerWithLibass(): ExoPlayer {
+        // 1920×1080 render canvas; resized to the on-screen panel below once we know the
+        // actual layout size. The XR libass renderer caches one bitmap of this size; a too-low
+        // initial value would force a re-alloc on first frame.
+        val renderer = runCatching {
+            if (LibassRenderer.isAvailable()) {
+                LibassRenderer(1920, 1080).apply { init() }
+            } else {
+                Timber.tag(TAG).w("libass unavailable — text tracks will use the default renderer")
+                null
+            }
+        }.onFailure { Timber.tag(TAG).e(it, "Failed to init libass for FCast inbound") }
+            .getOrNull()
+        libassRenderer = renderer
+
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildTextRenderers(
+                context: Context,
+                output: TextOutput,
+                outputLooper: Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<Renderer>,
+            ) {
+                val active = renderer
+                if (active != null) {
+                    // libass claims text tracks exclusively. We deliberately skip
+                    // super.buildTextRenderers so ExoPlayer's stock TextRenderer doesn't grab
+                    // SRT/VTT ahead of libass — libass renders them through its synthetic ASS
+                    // header so the user gets consistent styling across all text formats.
+                    out.add(
+                        LibassTextRenderer(
+                            libassRenderer = active,
+                            onTrackInitialized = {},
+                            // Embedded MKV font extraction lives in PR 6; for now anime with
+                            // custom font attachments falls back to libass system-font matching.
+                            // The one-time toast below tells the user that's what happened.
+                            fontLoader = null,
+                            usagePref = "auto",
+                        )
+                    )
+                    Timber.tag(TAG).i("FCast inbound: LibassTextRenderer registered")
+                } else {
+                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                }
+            }
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setEnableDecoderFallback(true)
+
+        // CRUCIAL: subtitle transcoding off so raw ASS bytes survive to LibassTextRenderer.
+        // With Media3's default `experimentalParseSubtitlesDuringExtraction(true)`, the
+        // extractor converts ASS into `application/x-media3-cues` and libass never sees the
+        // original payload — anime subs render as plain white Arial.
+        val mediaSourceFactory = DefaultMediaSourceFactory(this)
+            .experimentalParseSubtitlesDuringExtraction(false)
+
+        return ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+    }
+
+    /**
+     * Single ~60 Hz loop that pumps the libass renderer and updates the on-screen overlay
+     * bitmap. Skipped when there is no libass renderer or when we're in split-A/V audio mode
+     * (no video to overlay onto, and the audio receiver renders no subs by design).
+     */
+    private fun startSubtitleRenderLoop() {
+        subtitleRenderJob?.cancel()
+        subtitleRenderJob = lifecycleScope.launch {
+            val overlay = findViewById<ImageView>(R.id.fcast_inbound_subtitle_overlay) ?: return@launch
+            val r = libassRenderer ?: return@launch
+            var hasShownFontToast = false
+            while (isActive) {
+                val p = player
+                if (p == null || splitAvRole == SplitAvRole.AUDIO) {
+                    if (overlay.visibility != View.GONE) overlay.visibility = View.GONE
+                    delay(120L)
+                    continue
+                }
+                val result = r.renderFrame(p.currentPosition)
+                if (result.hasContent && result.bitmap != null) {
+                    val bitmap: Bitmap = result.bitmap!!
+                    overlay.setImageBitmap(bitmap)
+                    if (overlay.visibility != View.VISIBLE) overlay.visibility = View.VISIBLE
+                    if (!hasShownFontToast && p.currentMediaItem != null) {
+                        // Once per cast: warn if the container *might* have embedded fonts we
+                        // can't extract yet. Cheap heuristic — only shown if libass actually
+                        // started rendering content (so users with no styled subs never see
+                        // the message). Removed in PR 6 when font extraction lands.
+                        hasShownFontToast = true
+                        Toast.makeText(
+                            this@FCastInboundPlayerActivity,
+                            R.string.fcast_inbound_subtitle_fonts_unsupported,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                } else {
+                    if (overlay.visibility != View.GONE) overlay.visibility = View.GONE
+                }
+                delay(16L) // ~60 fps for karaoke / \move / \fad smoothness
+            }
+        }
     }
 
     /**
@@ -269,6 +413,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         super.onDestroy()
         playbackTickerJob?.cancel()
         playbackTickerJob = null
+        subtitleRenderJob?.cancel()
+        subtitleRenderJob = null
         FCastInboundSession.unbindControl(control)
         // Tell the sender the stream is over so its mini-controller drops back to Idle.
         FCastInboundSession.pushPlaybackUpdate(
@@ -281,6 +427,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         player?.removeListener(playerListener)
         player?.release()
         player = null
+        libassRenderer?.destroy()
+        libassRenderer = null
     }
 
     companion object {
@@ -293,6 +441,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
         private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
         private const val MIN_TICKER_INTERVAL_MS: Long = 50L
+        private const val TAG: String = "FCastInbound"
 
         fun createIntent(
             context: Context,

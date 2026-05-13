@@ -395,6 +395,27 @@ class SettingsViewModel @Inject constructor(
                                                     options = R.array.libass_subtitle_usage_options,
                                                     optionValues = R.array.libass_subtitle_usage_values,
                                                 ),
+                                                // Cast → subtitle handling (PR 2 Half B). Grouped with the
+                                                // local-playback subtitle prefs because users think of
+                                                // subtitles as one knob; "casting" is a sub-context, not a
+                                                // separate destination they'd hunt for in a different screen.
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.cast_subtitle_handling,
+                                                    descriptionStringRes = R.string.cast_subtitle_handling_summary,
+                                                    backendPreference = appPreferences.castSubtitleHandling,
+                                                    options = R.array.cast_subtitle_handling_options,
+                                                    optionValues = R.array.cast_subtitle_handling_values,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_show_transcoding_indicator,
+                                                    descriptionStringRes = R.string.cast_show_transcoding_indicator_summary,
+                                                    backendPreference = appPreferences.castShowTranscodingIndicator,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_show_subtitle_fidelity_warning,
+                                                    descriptionStringRes = R.string.cast_show_subtitle_fidelity_warning_summary,
+                                                    backendPreference = appPreferences.castShowSubtitleFidelityWarning,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.settings_subtitles_system_captioning,
                                                     descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,

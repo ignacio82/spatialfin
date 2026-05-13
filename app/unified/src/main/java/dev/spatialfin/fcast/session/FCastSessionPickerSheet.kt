@@ -50,17 +50,17 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
 
 /**
- * Session-aware cast picker. Reads the unified entries list from [FCastSessionManager], so
+ * Session-aware cast picker. Reads the unified entries list from [CastSessionManager], so
  * remembered receivers render immediately on open with their probing → online/offline state
  * flipping in place as TCP probes and the mDNS scan complete. Saves the user from a 1.5–4s
  * blank wait every time they tap the cast icon.
  *
  * Falls back to the simple [dev.jdtech.jellyfin.fcast.ui.FCastReceiverPickerSheet] for callers
- * outside the FCastSessionManager scope (the XR player still uses that one directly).
+ * outside the CastSessionManager scope (the XR player still uses that one directly).
  */
 @Composable
 fun FCastSessionPickerSheet(
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
     onReceiverPicked: (FCastReceiver) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
