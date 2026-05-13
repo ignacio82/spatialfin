@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +84,7 @@ fun FCastSessionPickerSheet(
 ) {
     val entries by sessionManager.pickerEntries.collectAsState()
     val googleCastReceivers by sessionManager.googleCastReceivers.collectAsState()
+    val airPlayReceivers by sessionManager.airPlayReceivers.collectAsState()
     val isScanning by sessionManager.isScanning.collectAsState()
     val splitAvMode by sessionManager.splitAvMode.collectAsState()
     val audioLatencies by sessionManager.audioLatencies.collectAsState()
@@ -219,7 +221,47 @@ fun FCastSessionPickerSheet(
                     items(googleCastReceivers, key = { it.id }) { castReceiver ->
                         CastReceiverRow(
                             receiver = castReceiver,
+                            badge = "Chromecast",
+                            enabled = true,
+                            unsupportedHint = null,
                             onClick = { onCastReceiverPicked(castReceiver) },
+                        )
+                    }
+                }
+            }
+
+            if (airPlayReceivers.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = "AirPlay",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Streams to Apple TVs and AV receivers over AirPlay v1. " +
+                        "AirPlay 2 devices (HomePods, recent Apple TVs) need pairing — " +
+                        "those rows are shown but disabled for now.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(airPlayReceivers, key = { it.id }) { airReceiver ->
+                        val isPairingRequired = airReceiver.appName?.contains(
+                            "pairing required", ignoreCase = true,
+                        ) == true
+                        CastReceiverRow(
+                            receiver = airReceiver,
+                            badge = if (isPairingRequired) "AirPlay 2" else "AirPlay",
+                            enabled = !isPairingRequired,
+                            unsupportedHint = if (isPairingRequired) {
+                                "Pairing not supported yet"
+                            } else null,
+                            onClick = { onCastReceiverPicked(airReceiver) },
                         )
                     }
                 }
@@ -400,21 +442,30 @@ private fun SessionReceiverRow(
 }
 
 /**
- * Minimal Cast receiver row. PR 5's redesign replaces this with the unified row used for every
- * protocol; for PR 3 this is just enough UI for users to actually pick a Chromecast without
- * doing the full picker rework.
+ * Minimal Cast / AirPlay receiver row. PR 5's redesign replaces this with the unified row used
+ * for every protocol; for PR 3/4 this is just enough UI for users to actually pick a Chromecast
+ * or AirPlay receiver without doing the full picker rework.
+ *
+ * Disabled rows render at half opacity with no click handler — used for AirPlay 2 devices we
+ * detected but can't drive yet (pairing handshake ships in PR 6).
  */
 @Composable
 private fun CastReceiverRow(
     receiver: dev.jdtech.jellyfin.cast.CastReceiver,
+    badge: String,
+    enabled: Boolean,
+    unsupportedHint: String?,
     onClick: () -> Unit,
 ) {
+    val rowAlpha = if (enabled) 1f else 0.5f
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().alpha(rowAlpha),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 2.dp,
-        onClick = onClick,
+        // Surface.onClick disables the ripple when null; use that so disabled rows actively
+        // can't be picked rather than relying on the caller honoring the hint.
+        onClick = if (enabled) onClick else { -> },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
@@ -424,7 +475,7 @@ private fun CastReceiverRow(
                 modifier = Modifier
                     .size(12.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF34C759)),
+                    .background(if (enabled) Color(0xFF34C759) else Color(0xFF8E8E93)),
             )
             Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -433,7 +484,8 @@ private fun CastReceiverRow(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
                 )
-                val subtitle = receiver.modelName ?: "${receiver.host}:${receiver.port}"
+                val subtitle = unsupportedHint ?: receiver.modelName
+                    ?: "${receiver.host}:${receiver.port}"
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
@@ -446,7 +498,7 @@ private fun CastReceiverRow(
                 color = MaterialTheme.colorScheme.secondaryContainer,
             ) {
                 Text(
-                    text = "Chromecast",
+                    text = badge,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),

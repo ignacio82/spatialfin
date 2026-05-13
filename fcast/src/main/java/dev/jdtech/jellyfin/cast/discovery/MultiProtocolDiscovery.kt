@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.cast.discovery
 
 import android.content.Context
 import dev.jdtech.jellyfin.cast.CastReceiver
+import dev.jdtech.jellyfin.cast.adapter.airplay.AirPlayDiscovery
 import dev.jdtech.jellyfin.cast.adapter.googlecast.GoogleCastDiscovery
 import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
@@ -30,9 +31,10 @@ class MultiProtocolDiscovery(private val context: Context) {
     data class Result(
         val fcast: List<CastReceiver>,
         val googleCast: List<CastReceiver>,
+        val airPlay: List<CastReceiver> = emptyList(),
     ) {
-        /** All discovered receivers, ordered FCast-first then GoogleCast. */
-        val unified: List<CastReceiver> get() = fcast + googleCast
+        /** All discovered receivers, ordered FCast → GoogleCast → AirPlay. */
+        val unified: List<CastReceiver> get() = fcast + googleCast + airPlay
     }
 
     /**
@@ -53,8 +55,17 @@ class MultiProtocolDiscovery(private val context: Context) {
                     .onFailure { Timber.tag(TAG).w(it, "Google Cast browse failed") }
                     .getOrDefault(emptyList())
             }
-            val (fcastResults, gcResults) = listOf(fcastJob, googleCastJob).awaitAll()
-            Result(fcast = fcastResults, googleCast = gcResults)
+            val airPlayJob = async {
+                runCatching { AirPlayDiscovery(context).browse(timeoutMs) }
+                    .onFailure { Timber.tag(TAG).w(it, "AirPlay browse failed") }
+                    .getOrDefault(emptyList())
+            }
+            val results = listOf(fcastJob, googleCastJob, airPlayJob).awaitAll()
+            Result(
+                fcast = results[0],
+                googleCast = results[1],
+                airPlay = results[2],
+            )
         }
     }
 

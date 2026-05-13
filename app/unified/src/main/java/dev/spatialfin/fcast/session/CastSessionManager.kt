@@ -227,6 +227,14 @@ class CastSessionManager @Inject constructor(
      */
     private val _googleCastReceivers = MutableStateFlow<List<CastReceiver>>(emptyList())
     val googleCastReceivers: StateFlow<List<CastReceiver>> = _googleCastReceivers.asStateFlow()
+
+    /**
+     * Most-recent cached AirPlay results. Includes AirPlay-1 video receivers (playable) and
+     * AirPlay-2-only audio devices (surfaced for visibility but disabled in the picker until
+     * the SRP-6a pairing handshake ships in PR 6).
+     */
+    private val _airPlayReceivers = MutableStateFlow<List<CastReceiver>>(emptyList())
+    val airPlayReceivers: StateFlow<List<CastReceiver>> = _airPlayReceivers.asStateFlow()
     private var peerCapabilityObserverStarted = false
 
     private fun ensurePeerCapabilityObserver() {
@@ -463,8 +471,10 @@ class CastSessionManager @Inject constructor(
             val fcastFound = result.fcast.map { it.toFCastReceiver() }
             _cachedReceivers.value = fcastFound
             _googleCastReceivers.value = result.googleCast
+            _airPlayReceivers.value = result.airPlay
             lastDiscoveryAtMs = now
-            if (fcastFound.isEmpty() && result.googleCast.isEmpty()) return@launch
+            if (fcastFound.isEmpty() && result.googleCast.isEmpty() &&
+                result.airPlay.isEmpty()) return@launch
 
             // Persist freshly-seen FCast receivers (Cast receivers aren't persisted yet — PR 5
             // brings the unified remembered store).
@@ -586,11 +596,12 @@ class CastSessionManager @Inject constructor(
         // Google Cast goes through the ProtocolAdapter API. Subtitle policy applies to both.
         return when (target.protocol) {
             CastProtocol.FCast -> castFCastItem(item, startPositionMs)
-            CastProtocol.GoogleCast -> castViaAdapter(target, item, startPositionMs)
-            CastProtocol.AirPlay -> {
-                Timber.tag(TAG).w("AirPlay sender ships in PR 4 — refusing cast")
-                false
-            }
+            // Cast and AirPlay share the protocol-agnostic adapter pipeline. The subtitle
+            // policy inside castViaAdapter does the right thing for each — neither receiver
+            // carries NativeAss, so styled ASS routes to BurnIn or Degraded uniformly.
+            CastProtocol.GoogleCast,
+            CastProtocol.AirPlay,
+            -> castViaAdapter(target, item, startPositionMs)
         }
     }
 
