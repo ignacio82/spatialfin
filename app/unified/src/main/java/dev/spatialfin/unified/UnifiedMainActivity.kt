@@ -39,6 +39,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -157,6 +160,18 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Beam Pro (PHONE in [DeviceClass]) drives a pico projector — the user
+        // doesn't want the status bar's clock/network chips projected over the
+        // movie. Switch to sticky immersive so the bars stay hidden but a swipe
+        // from the edge can still surface them transiently. Re-applied in
+        // [onWindowFocusChanged] because Android will re-show the bars whenever
+        // the Activity loses then regains focus (notification shade, dialog,
+        // app-switcher peek, etc.) and we'd otherwise drop back to edge-to-edge
+        // with visible bars.
+        if (capabilities.isPhone) {
+            applyImmersiveSystemBars()
+        }
 
         // TV is always landscape. XR adapts to the window freely. Phone
         // (including Beam Pro handheld) only locks landscape when an external
@@ -368,6 +383,30 @@ class UnifiedMainActivity : AppCompatActivity() {
             ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         } else {
             ActivityInfo.SCREEN_ORIENTATION_USER
+        }
+    }
+
+    /**
+     * Hide the status + navigation bars on phone (Beam Pro). [BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE]
+     * leaves the swipe-from-edge gesture intact so the user can still pull the shade or expose the
+     * back gesture when they want to — the bars just don't sit on top of the projected image by
+     * default. Idempotent so callers can re-invoke whenever focus returns.
+     */
+    private fun applyImmersiveSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // The platform restores the bars whenever the Activity loses focus (notification
+        // shade, dialog, picture-in-picture peek), so re-assert sticky immersive each time
+        // focus is regained. No-op on TV / XR.
+        if (hasFocus && capabilities.isPhone) {
+            applyImmersiveSystemBars()
         }
     }
 

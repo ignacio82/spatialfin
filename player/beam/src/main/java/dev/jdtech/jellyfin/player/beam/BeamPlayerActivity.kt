@@ -18,6 +18,9 @@ import androidx.activity.compose.setContent
 import org.jellyfin.sdk.model.api.RemoteSubtitleInfo
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -311,6 +314,7 @@ class BeamPlayerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applyImmersiveSystemBars()
 
         val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
         val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
@@ -466,6 +470,26 @@ class BeamPlayerActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.player.playWhenReady = viewModel.playWhenReady
+    }
+
+    /**
+     * Hide the status + navigation bars while the player is on screen so the projected
+     * frame on Beam Pro doesn't have system chrome overlaid on it. Swipe from edge still
+     * reveals the bars transiently per [BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE].
+     */
+    private fun applyImmersiveSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Re-assert immersive on every focus regain — the platform shows the bars again
+        // whenever an overlay (dialog, notification shade, app switcher peek) takes focus.
+        if (hasFocus) applyImmersiveSystemBars()
     }
 
     override fun onPause() {

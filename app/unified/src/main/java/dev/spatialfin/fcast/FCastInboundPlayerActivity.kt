@@ -11,6 +11,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -145,6 +148,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Inbound player is always full-bleed video — hide system bars on every form factor
+        // so the projected/cast image isn't framed by clocks, network chips, or nav buttons.
+        applyImmersiveSystemBars()
+
         setContentView(R.layout.activity_fcast_inbound_player)
         val exo = buildPlayerWithLibass()
         player = exo
@@ -153,6 +160,20 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         startSubtitleRenderLoop()
 
         if (!applyIntent(intent)) finish()
+    }
+
+    /** See `UnifiedMainActivity.applyImmersiveSystemBars` — same sticky-immersive recipe. */
+    private fun applyImmersiveSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) applyImmersiveSystemBars()
     }
 
     /**
