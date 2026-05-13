@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.cast.adapter
 
+import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.cast.CastConnectionState
 import dev.jdtech.jellyfin.cast.CastDeps
 import dev.jdtech.jellyfin.cast.CastMedia
@@ -20,9 +21,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * [ProtocolAdapter] implementation for FCast. Thin wrapper over [FCastSenderClient] that maps the
@@ -54,6 +59,10 @@ class FCastAdapter(
     )
     override val events: SharedFlow<CastSessionEvent> = _events.asSharedFlow()
 
+    private val _currentCapabilities = MutableStateFlow(receiver.capabilities)
+    override val currentCapabilities: StateFlow<Set<CastCapability>> =
+        _currentCapabilities.asStateFlow()
+
     private var observerJob: Job? = null
     private var lastReportedMediaState: CastMediaState? = null
     private var lastReportedDurationMs: Long? = null
@@ -75,6 +84,26 @@ class FCastAdapter(
                 launch {
                     client.errors.collect { reason ->
                         _events.emit(CastSessionEvent.Error(reason))
+                    }
+                }
+                launch {
+                    // Widen the capability set the first time the peer sends its Initial
+                    // frame. SpatialFin receivers carry libass + embedded-font handling; the
+                    // sender-side subtitle policy observes this flow to decide whether to
+                    // request a burn-in transcode for ASS tracks.
+                    client.initialReceiver.collect { initial ->
+                        val appName = initial.appName?.trim().orEmpty()
+                        val isSpatialFinPeer =
+                            appName.startsWith("SpatialFin", ignoreCase = true)
+                        Timber.tag(TAG).i(
+                            "FCast peer handshake: appName=%s appVersion=%s spatialFinPeer=%b",
+                            appName, initial.appVersion.orEmpty(), isSpatialFinPeer,
+                        )
+                        if (isSpatialFinPeer) {
+                            _currentCapabilities.value = receiver.capabilities +
+                                CastCapability.NativeAss +
+                                CastCapability.EmbeddedFonts
+                        }
                     }
                 }
             }
@@ -157,7 +186,7 @@ class FCastAdapter(
     }
 
     /**
-     * Escape hatch for the existing [dev.spatialfin.fcast.session.FCastSessionManager] code path,
+     * Escape hatch for the existing [dev.spatialfin.fcast.session.CastSessionManager] code path,
      * which still drives the wire client directly during PR 1 (the manager rename is deferred so
      * we don't have to migrate every caller in this PR). Returns the wrapped client so the
      * session manager can keep using its split-A/V + calibration code without reflection.
@@ -166,4 +195,8 @@ class FCastAdapter(
      * once the session manager is migrated in PR 2.
      */
     internal fun underlyingClient(): FCastSenderClient = client
+
+    private companion object {
+        const val TAG = "FCastAdapter"
+    }
 }

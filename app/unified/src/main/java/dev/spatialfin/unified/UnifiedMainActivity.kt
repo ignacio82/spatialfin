@@ -137,7 +137,7 @@ class UnifiedMainActivity : AppCompatActivity() {
     lateinit var appLockManager: AppLockManager
 
     @Inject
-    lateinit var fcastSession: dev.spatialfin.fcast.session.FCastSessionManager
+    lateinit var fcastSession: dev.spatialfin.fcast.session.CastSessionManager
 
     private val llmModelManager: LlmModelManager by lazy(LazyThreadSafetyMode.NONE) {
         modelManager.get()

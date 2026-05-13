@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.fcast.sender
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_PROTOCOL_VERSION
 import dev.jdtech.jellyfin.fcast.protocol.FCastFrame
 import dev.jdtech.jellyfin.fcast.protocol.FCastMessage
+import dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage
 import dev.jdtech.jellyfin.fcast.protocol.InitialSenderMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
@@ -84,6 +85,18 @@ class FCastSenderClient(
 
     private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val errors: SharedFlow<String> = _errors.asSharedFlow()
+
+    /**
+     * Emitted once when the receiver replies with its [FCastMessage.Initial] frame. Adapters
+     * (`FCastAdapter`) observe this to learn the peer's `appName` / `appVersion` so they can
+     * widen the post-handshake capability set — e.g. granting [NativeAss] / [EmbeddedFonts]
+     * only when the peer is another SpatialFin install. `replay = 1` so a late subscriber that
+     * connects after the handshake still sees the value.
+     */
+    private val _initialReceiver = MutableSharedFlow<InitialReceiverMessage>(
+        replay = 1, extraBufferCapacity = 1,
+    )
+    val initialReceiver: SharedFlow<InitialReceiverMessage> = _initialReceiver.asSharedFlow()
 
     /**
      * Observation emitted when a [FCastMessage.Pong] arrives in response to one of our
@@ -222,7 +235,8 @@ class FCastSenderClient(
                     lastPingSentWallMs = null
                 }
             }
-            // Initial, PlayUpdate, Event, etc. are observed but not yet acted on.
+            is FCastMessage.Initial -> _initialReceiver.tryEmit(msg.payload)
+            // PlayUpdate, Event, etc. are observed but not yet acted on.
             else -> Unit
         }
     }

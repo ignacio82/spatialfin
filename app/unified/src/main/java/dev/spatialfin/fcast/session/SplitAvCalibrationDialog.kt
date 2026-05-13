@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.xr.compose.spatial.SpatialDialog
 
 /**
- * Modal dialog that surfaces the [FCastSessionManager.calibrationState] flow as user-visible
+ * Modal dialog that surfaces the [CastSessionManager.calibrationState] flow as user-visible
  * feedback. Uses [SpatialDialog] so the panel renders centered in the user's vision on XR
  * (parent panel pushes back); on Beam / TV it falls back to a regular dialog.
  *
@@ -41,17 +41,17 @@ import androidx.xr.compose.spatial.SpatialDialog
  */
 @Composable
 fun SplitAvCalibrationDialog(
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
 ) {
     val state by sessionManager.calibrationState.collectAsState()
     when (val s = state) {
-        is FCastSessionManager.CalibrationState.Idle -> Unit
-        is FCastSessionManager.CalibrationState.Running -> RunningContent(s.receiverName)
-        is FCastSessionManager.CalibrationState.Success -> SuccessContent(
+        is CastSessionManager.CalibrationState.Idle -> Unit
+        is CastSessionManager.CalibrationState.Running -> RunningContent(s.receiverName)
+        is CastSessionManager.CalibrationState.Success -> SuccessContent(
             latencyMs = s.latencyMs,
             onDismiss = { sessionManager.dismissCalibrationResult() },
         )
-        is FCastSessionManager.CalibrationState.Failed -> FailedContent(
+        is CastSessionManager.CalibrationState.Failed -> FailedContent(
             reason = s.reason,
             onDismiss = { sessionManager.dismissCalibrationResult() },
         )

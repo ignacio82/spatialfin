@@ -13,16 +13,16 @@ import timber.log.Timber
  * Single decision point for "user tapped Play on a media item": route to FCast if a receiver is
  * picked, otherwise fall through to the local player Activity. Call sites used to do
  * `context.startActivity(BeamPlayerActivity.createIntentForSpatialItem(...))` directly; they now
- * call [launchPlayback] with the same item plus the [FCastSessionManager], and the session
+ * call [launchPlayback] with the same item plus the [CastSessionManager], and the session
  * manager handles the remote-vs-local fork.
  *
  * Intentionally takes a `intentBuilder` lambda rather than the intent itself so we don't build
  * the local-player intent when we're going to route remotely (avoids resolving extras that the
  * cast path doesn't need).
  *
- * Split-A/V mode is a third routing path. When [FCastSessionManager.splitAvMode] is on AND
+ * Split-A/V mode is a third routing path. When [CastSessionManager.splitAvMode] is on AND
  * [splitAvIntentBuilder] returns a non-null Intent, the launcher routes to
- * [FCastSessionManager.castSpatialItemSplitAv] which runs auto-calibration if needed and then
+ * [CastSessionManager.castSpatialItemSplitAv] which runs auto-calibration if needed and then
  * sends Play (with `splitAv.role=AUDIO`) to the picked receiver while launching the local
  * video-master Activity built by [splitAvIntentBuilder]. If split mode is requested but the
  * caller didn't supply a split intent builder, the launcher logs and falls through to a normal
@@ -30,7 +30,7 @@ import timber.log.Timber
  */
 fun launchPlayback(
     context: Context,
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
     scope: CoroutineScope,
     item: SpatialFinItem,
     startPositionMs: Long? = null,

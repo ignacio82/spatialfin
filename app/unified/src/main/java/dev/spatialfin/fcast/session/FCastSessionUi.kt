@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,29 +31,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.jdtech.jellyfin.cast.SubtitleFidelity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import kotlinx.coroutines.launch
 
 /**
- * Composition-local pointer to the process-singleton [FCastSessionManager]. The form-factor root
+ * Composition-local pointer to the process-singleton [CastSessionManager]. The form-factor root
  * (NavigationRoot for XR, BeamNavigationRoot for Beam) installs it once via
  * `CompositionLocalProvider(LocalFCastSession provides fcastSession)` so that hero / detail
  * components below can drop a cast affordance next to their existing 3-dots overflow without
  * threading the manager through every screen signature. Null on form factors that don't cast (TV).
  */
-val LocalFCastSession = compositionLocalOf<FCastSessionManager?> { null }
+val LocalFCastSession = compositionLocalOf<CastSessionManager?> { null }
 
 /**
  * Persistent cast affordance for any toolbar / nav surface. Renders the FCast globe icon, tints
- * it when [FCastSessionManager.hasCastIntent] is true (Google Cast UX: the icon stays "on" once
+ * it when [CastSessionManager.hasCastIntent] is true (Google Cast UX: the icon stays "on" once
  * the user has picked a receiver, even before a stream is active), and opens the global picker
  * on click. Mount the picker host once per form-factor root via [FCastGlobalPickerHost].
  */
 @Composable
 fun FCastCastIconButton(
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
     modifier: Modifier = Modifier,
 ) {
     val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
@@ -75,21 +77,36 @@ fun FCastCastIconButton(
 
 /**
  * Global picker host — renders the FCast picker sheet inside an [AlertDialog]-style wrapper when
- * [FCastSessionManager.pickerVisible] is true. Mount once per form-factor root (Beam Scaffold,
+ * [CastSessionManager.pickerVisible] is true. Mount once per form-factor root (Beam Scaffold,
  * XR NavigationRoot Box, XR FullSpace Subspace). The picker delegates the chosen receiver back
- * to the session manager via [FCastSessionManager.pickReceiver].
+ * to the session manager via [CastSessionManager.pickReceiver].
  *
  * Wrap this in a SpatialDialog from XR surfaces (parent panel pushback). For 2D surfaces (Beam,
  * TV), it self-renders as a plain dialog.
  */
 @Composable
 fun FCastGlobalPickerHost(
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
     showSplitAvOption: Boolean = true,
 ) {
     // Calibration dialog is sibling to the picker — both subscribe to the session manager and
     // the calibration dialog renders only when calibrationState != Idle.
     SplitAvCalibrationDialog(sessionManager = sessionManager)
+
+    // Surface the once-per-session "styled subtitles will be simplified" toast. Mounted at the
+    // form-factor root so it fires regardless of which screen kicked off the cast — the
+    // session manager queues the receiver name and the UI consumes it after rendering.
+    val warningReceiver by sessionManager.pendingSubtitleDegradationWarning.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(warningReceiver) {
+        val name = warningReceiver ?: return@LaunchedEffect
+        android.widget.Toast.makeText(
+            context,
+            context.getString(dev.spatialfin.R.string.cast_subtitle_fidelity_degraded, name),
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+        sessionManager.consumeSubtitleDegradationWarning()
+    }
 
     val visible by sessionManager.pickerVisible.collectAsState()
     androidx.compose.runtime.LaunchedEffect(visible) {
@@ -124,7 +141,7 @@ fun FCastGlobalPickerHost(
  */
 @Composable
 fun FCastMiniController(
-    sessionManager: FCastSessionManager,
+    sessionManager: CastSessionManager,
     modifier: Modifier = Modifier,
 ) {
     val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
@@ -178,6 +195,7 @@ fun FCastMiniController(
                     )
                 }
             }
+            SubtitleFidelityChip(sessionManager)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -259,5 +277,33 @@ fun FCastMiniController(
                 )
             }
         }
+    }
+}
+
+/**
+ * Small inline chip rendered above the playback controls whenever the active cast session has
+ * triggered a server-side subtitle burn-in transcode. Visibility is gated on the
+ * [castShowTranscodingIndicator] preference so users who don't want the noise can hide it.
+ *
+ * PR 5's full now-playing-bar redesign will replace this with a polished pill; for PR 2 we keep
+ * it minimal so the burn-in path is at least *visible* end-to-end.
+ */
+@Composable
+private fun SubtitleFidelityChip(sessionManager: CastSessionManager) {
+    val fidelity by sessionManager.subtitleFidelity.collectAsState()
+    val showIndicator = remember(sessionManager) { sessionManager.shouldShowTranscodingIndicator() }
+    if (fidelity != SubtitleFidelity.Transcoding || !showIndicator) return
+    Surface(
+        modifier = Modifier.padding(top = 4.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Text(
+            text = androidx.compose.ui.res.stringResource(dev.spatialfin.R.string.cast_subtitle_transcoding),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
     }
 }

@@ -7,7 +7,7 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.spatialfin.BuildConfig
-import dev.spatialfin.fcast.session.FCastSessionManager
+import dev.spatialfin.fcast.session.CastSessionManager
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +38,7 @@ import timber.log.Timber
 @AndroidEntryPoint
 class SplitAvDebugLaunchActivity : ComponentActivity() {
 
-    @Inject lateinit var sessionManager: FCastSessionManager
+    @Inject lateinit var sessionManager: CastSessionManager
     @Inject lateinit var repository: JellyfinRepository
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,7 +64,7 @@ class SplitAvDebugLaunchActivity : ComponentActivity() {
             val maybeReceiver = parseReceiverOrNull(intent)
 
             // Launch XrPlayerActivity from *this* Activity so the XR shell grants Full Space
-            // Mode authority — the underlying FCastSessionManager.castSpatialItemSplitAv
+            // Mode authority — the underlying CastSessionManager.castSpatialItemSplitAv
             // launches via applicationContext.startActivity, which the FSM gate rejects ("no
             // source activity"). We do the FSM launch ourselves and tell the session manager
             // to skip its own launch (returns null from the builder).

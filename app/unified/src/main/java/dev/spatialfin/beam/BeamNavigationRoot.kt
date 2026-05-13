@@ -150,7 +150,7 @@ fun BeamNavigationRoot(
     repository: JellyfinRepository,
     llmModelManager: LlmModelManager,
     voiceTelemetryStore: VoiceTelemetryStore,
-    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager,
+    fcastSession: dev.spatialfin.fcast.session.CastSessionManager,
     onReconnect: () -> Unit = {},
     onFinishApp: () -> Unit = {},
 ) {

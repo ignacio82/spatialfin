@@ -213,7 +213,7 @@ fun NavigationRoot(
     /** Active Jellyfin server base URL; combined with `currentUser` to build the avatar URL. */
     currentServerAddress: String? = null,
     /** Process-singleton FCast session manager. Null on form factors that don't cast (TV). */
-    fcastSession: dev.spatialfin.fcast.session.FCastSessionManager? = null,
+    fcastSession: dev.spatialfin.fcast.session.CastSessionManager? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 

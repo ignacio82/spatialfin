@@ -3,6 +3,11 @@ package dev.spatialfin.fcast.session
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.cast.CastCapability
+import dev.jdtech.jellyfin.cast.SubtitleFidelity
+import dev.jdtech.jellyfin.cast.subtitle.AssStyleDetector
+import dev.jdtech.jellyfin.cast.subtitle.SubtitlePolicy
+import dev.jdtech.jellyfin.cast.subtitle.SubtitleWarningTracker
 import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
@@ -11,6 +16,7 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
 import dev.jdtech.jellyfin.fcast.sender.probeFCastReceiver
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -55,7 +61,7 @@ import timber.log.Timber
  * surfaces must call [stopCast] (idempotent), never [shutdown].
  */
 @Singleton
-class FCastSessionManager @Inject constructor(
+class CastSessionManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val controller: FCastCastingController,
     private val repository: JellyfinRepository,
@@ -135,6 +141,160 @@ class FCastSessionManager @Inject constructor(
      */
     private val _audioLatencies = MutableStateFlow<Map<String, Int>>(emptyMap())
     val audioLatencies: StateFlow<Map<String, Int>> = _audioLatencies.asStateFlow()
+
+    /**
+     * Subtitle fidelity for the active cast. Emits at session start (when [castSpatialItem]
+     * applies the subtitle policy) and any time the policy reruns. UI surfaces the
+     * "Transcoding for subtitle compatibility" chip whenever this is [SubtitleFidelity.Transcoding]
+     * and the user hasn't hidden the indicator in settings.
+     *
+     * Defaults to [SubtitleFidelity.None] when no cast is active so observers can read it
+     * unconditionally without a null check.
+     */
+    private val _subtitleFidelity = MutableStateFlow(SubtitleFidelity.None)
+    val subtitleFidelity: StateFlow<SubtitleFidelity> = _subtitleFidelity.asStateFlow()
+
+    /**
+     * Tracks which receivers have already been warned about subtitle-fidelity degradation in
+     * the current process. Pure Kotlin helper so the dedup rule is independently testable —
+     * see `SubtitleWarningTrackerTest`. Reset on process death by design (mDNS may have placed
+     * a different physical device at the same host:port).
+     */
+    private val subtitleWarningTracker = SubtitleWarningTracker()
+
+    /**
+     * Per-session subtitle warning the UI surfaces as a one-time toast. Set to a non-null
+     * receiver display name when a styled ASS track was about to be cast to a receiver that
+     * lacks libass and the user picked "Faster start" in settings. UI consumes via
+     * [consumeSubtitleDegradationWarning] so the value clears on read.
+     */
+    private val _pendingSubtitleDegradationWarning = MutableStateFlow<String?>(null)
+    val pendingSubtitleDegradationWarning: StateFlow<String?> =
+        _pendingSubtitleDegradationWarning.asStateFlow()
+
+    /** UI calls this after rendering the warning toast so it doesn't fire again this session. */
+    fun consumeSubtitleDegradationWarning() {
+        _pendingSubtitleDegradationWarning.value = null
+    }
+
+    /**
+     * Whether the "Transcoding for subtitle compatibility" chip should be shown when
+     * [subtitleFidelity] is [SubtitleFidelity.Transcoding]. Wraps the [AppPreferences] lookup so
+     * Compose callers don't need to import the preferences module.
+     */
+    fun shouldShowTranscodingIndicator(): Boolean =
+        appPreferences.getValue(appPreferences.castShowTranscodingIndicator)
+
+    /**
+     * Per-host:port post-handshake capability cache. Populated by [observePeerCapabilities]
+     * the first time a real cast completes its FCast Initial handshake with that receiver, and
+     * read by [castSpatialItem] on subsequent casts to decide whether to burn in styled ASS
+     * subtitles. Process-scoped: forgets on app restart (mDNS may have placed a different
+     * device at the same host:port).
+     */
+    private val peerCapabilityCache = mutableMapOf<String, Set<CastCapability>>()
+    private var peerCapabilityObserverStarted = false
+
+    private fun ensurePeerCapabilityObserver() {
+        if (peerCapabilityObserverStarted) return
+        peerCapabilityObserverStarted = true
+        scope.launch {
+            controller.peerInitial.collect { initial ->
+                val receiver = controller.activeReceiver.value ?: return@collect
+                val key = "${receiver.host}:${receiver.port}"
+                val appName = initial.appName?.trim().orEmpty()
+                val isSpatialFinPeer = appName.startsWith("SpatialFin", ignoreCase = true)
+                peerCapabilityCache[key] = buildSet {
+                    if (isSpatialFinPeer) {
+                        add(CastCapability.NativeAss)
+                        add(CastCapability.EmbeddedFonts)
+                    }
+                }
+                Timber.tag(TAG).i(
+                    "peer initial: %s appName=%s spatialFinPeer=%b",
+                    key, appName, isSpatialFinPeer,
+                )
+            }
+        }
+    }
+
+    /**
+     * What we believe the receiver at [host]:[port] supports. Reads the post-handshake cache if
+     * we've cast to this host before; otherwise assumes the SpatialFin path (NativeAss +
+     * EmbeddedFonts). The optimistic default is the common case — every FCast receiver currently
+     * shipping in the wild that talks to SpatialFin *is* SpatialFin. If the assumption is wrong
+     * (third-party FCast receiver), the *first* cast renders styled subs as plain dialogue and
+     * the cache then corrects course for subsequent casts.
+     */
+    private fun capabilitiesFor(host: String, port: Int): Set<CastCapability> {
+        val key = "$host:$port"
+        return peerCapabilityCache[key]
+            ?: setOf(CastCapability.NativeAss, CastCapability.EmbeddedFonts)
+    }
+
+    /** Read the user's `castSubtitleHandling` setting and map it to [SubtitlePolicy.UserPreference]. */
+    private fun subtitleUserPreference(): SubtitlePolicy.UserPreference =
+        when (appPreferences.getValue(appPreferences.castSubtitleHandling)) {
+            "faster_start" -> SubtitlePolicy.UserPreference.FasterStart
+            "off" -> SubtitlePolicy.UserPreference.Off
+            else -> SubtitlePolicy.UserPreference.BestFidelity
+        }
+
+    /**
+     * Convert a Jellyfin subtitle [SpatialFinMediaStream] into the policy's track shape. For
+     * external (sideloaded) ASS tracks the JF endpoint URL gives us the .ass file contents — we
+     * fetch the first ~8 KB and run [AssStyleDetector] on it. Embedded ASS tracks have no public
+     * fetch URL, so we treat them as "potentially styled" and let the policy decide
+     * conservatively. Network failure on the fetch also falls back to the conservative path.
+     */
+    private suspend fun toPolicyTrack(stream: SpatialFinMediaStream): SubtitlePolicy.SubtitleTrack? {
+        val index = stream.index ?: return null
+        val codec = stream.codec.lowercase().trim()
+        val isAss = codec == "ass" || codec == "ssa"
+        val externalPath = stream.path
+        val isStyled: Boolean? = if (isAss && stream.isExternal && !externalPath.isNullOrBlank()) {
+            // External ASS: fetch a slice and run the detector. 8 KB is enough to see ~50
+            // dialogue lines on a typical fansub release. Failure → conservative null.
+            runCatching { fetchTextSample(externalPath.withJellyfinAuth(), 8 * 1024) }
+                .map(AssStyleDetector::isStyled)
+                .getOrNull()
+        } else {
+            null
+        }
+        return SubtitlePolicy.SubtitleTrack(
+            streamIndex = index,
+            codec = codec,
+            language = stream.language.takeIf { it.isNotBlank() },
+            isExternal = stream.isExternal,
+            isStyled = isStyled,
+        )
+    }
+
+    /**
+     * Fetch up to [maxBytes] of UTF-8 text from [urlString]. Used by [toPolicyTrack] to sample
+     * a sideloaded .ass file so [AssStyleDetector] can classify it. Times out at 5s — if the
+     * server is too slow the policy falls back to the conservative "potentially styled" path
+     * instead of holding up the cast indefinitely.
+     */
+    private suspend fun fetchTextSample(urlString: String, maxBytes: Int): String =
+        withContext(Dispatchers.IO) {
+            val connection = java.net.URL(urlString).openConnection().apply {
+                connectTimeout = 5_000
+                readTimeout = 5_000
+                addRequestProperty("Range", "bytes=0-${maxBytes - 1}")
+                addRequestProperty("Accept", "text/plain, text/x-ssa, application/x-subrip")
+            }
+            connection.getInputStream().use { input ->
+                val buffer = ByteArray(maxBytes)
+                var read = 0
+                while (read < maxBytes) {
+                    val n = input.read(buffer, read, maxBytes - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                String(buffer, 0, read, Charsets.UTF_8)
+            }
+        }
 
     fun setSplitAvMode(enabled: Boolean) {
         Timber.tag(TAG).i("setSplitAvMode: enabled=%b (was %b)", enabled, _splitAvMode.value)
@@ -363,6 +523,7 @@ class FCastSessionManager @Inject constructor(
             is SpatialFinEpisode -> item.name
             else -> null
         }
+        ensurePeerCapabilityObserver()
         return withContext(Dispatchers.IO) {
             try {
                 val sources = repository.getMediaSources(itemId = itemId, includePath = false)
@@ -373,8 +534,23 @@ class FCastSessionManager @Inject constructor(
                 val audioCodec = source.mediaStreams
                     .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
+
+                // Apply the subtitle policy before building the URL. The policy reads the
+                // post-handshake capability cache for this host:port (optimistic SpatialFin
+                // default on first cast); on a subsequent cast we get the real answer.
+                val subtitleStreams = source.mediaStreams
+                    .filter { it.type == MediaStreamType.SUBTITLE }
+                val policyTracks = subtitleStreams.mapNotNull { toPolicyTrack(it) }
+                val decision = SubtitlePolicy.decide(
+                    tracks = policyTracks,
+                    receiverCapabilities = capabilitiesFor(receiver.host, receiver.port),
+                    userPreference = subtitleUserPreference(),
+                )
+                applySubtitleFidelityAndWarn(decision, receiver)
+
                 val url = repository.getStreamUrl(itemId, source.id)
                     .withCastCompatibleCodecs(audioCodec)
+                    .withSubtitleBurnIn(decision)
                     .withStartTimeTicks(startMs)
                     .withJellyfinAuth()
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
@@ -391,6 +567,61 @@ class FCastSessionManager @Inject constructor(
                 false
             }
         }
+    }
+
+    /**
+     * Apply [decision] to the in-session UI state — emit [SubtitleFidelity] for the chip, and
+     * queue the one-time warning toast if the user picked "Faster start" and the receiver
+     * can't render styled ASS. Reset on each new cast so subsequent receivers re-warn.
+     */
+    private fun applySubtitleFidelityAndWarn(
+        decision: SubtitlePolicy.Decision,
+        receiver: FCastReceiver,
+    ) {
+        val fidelity = SubtitlePolicy.fidelityFor(decision)
+        _subtitleFidelity.value = fidelity
+        if (decision is SubtitlePolicy.Decision.Degraded &&
+            appPreferences.getValue(appPreferences.castShowSubtitleFidelityWarning)) {
+            if (subtitleWarningTracker.shouldWarn(receiver.host, receiver.port)) {
+                _pendingSubtitleDegradationWarning.value = receiver.name
+            }
+        }
+        Timber.tag(TAG).i(
+            "subtitle policy: decision=%s receiver=%s:%d fidelity=%s",
+            decision::class.simpleName, receiver.host, receiver.port, fidelity,
+        )
+    }
+
+    /**
+     * Rewrite the stream URL to request a Jellyfin server-side burn-in transcode of the chosen
+     * subtitle stream when the policy demands it. Forces `static=false` (so JF spins up the HLS
+     * transcoder rather than serving the raw container) and appends `SubtitleStreamIndex=` +
+     * `SubtitleMethod=Encode`. For non-burn decisions the URL is passed through unchanged.
+     *
+     * `SubtitleMethod=Encode` is the Jellyfin server option that bakes the subtitle track into
+     * the video pixels — full libass-accurate rendering on the server with no client-side
+     * support needed. The trade-off is server CPU and a small startup delay; the
+     * SubtitleFidelity.Transcoding chip in the UI tells the user why.
+     */
+    private fun String.withSubtitleBurnIn(decision: SubtitlePolicy.Decision): String {
+        if (decision !is SubtitlePolicy.Decision.BurnIn) return this
+        val streamIndex = decision.track.streamIndex
+        val withoutStatic = if (contains("static=true", ignoreCase = true)) {
+            replace("static=true", "static=false")
+        } else {
+            this
+        }
+        val params = buildList {
+            if (!withoutStatic.contains("SubtitleStreamIndex=", ignoreCase = true)) {
+                add("SubtitleStreamIndex=$streamIndex")
+            }
+            if (!withoutStatic.contains("SubtitleMethod=", ignoreCase = true)) {
+                add("SubtitleMethod=Encode")
+            }
+        }
+        if (params.isEmpty()) return withoutStatic
+        val sep = if (withoutStatic.contains('?')) '&' else '?'
+        return "$withoutStatic${sep}${params.joinToString("&")}"
     }
 
     /**
@@ -635,6 +866,7 @@ class FCastSessionManager @Inject constructor(
     suspend fun stopCast() {
         controller.stopCast()
         _pickedReceiver.value = null
+        _subtitleFidelity.value = SubtitleFidelity.None
     }
 
     /**

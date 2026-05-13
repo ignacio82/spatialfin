@@ -32,4 +32,25 @@ sealed interface CastSessionEvent {
 
     /** Recoverable or terminal failure; pair with the connection state to disambiguate. */
     data class Error(val reason: String) : CastSessionEvent
+
+    /**
+     * Emitted at session start (and on subtitle-track switch) so the UI can render the
+     * "transcoding for subtitle compatibility" chip or the once-per-session degraded-fidelity
+     * toast. Drives the user-visible side of the sender-side subtitle policy in PR 2.
+     */
+    data class SubtitleFidelityChanged(val fidelity: SubtitleFidelity) : CastSessionEvent
+}
+
+/**
+ * What the receiver is rendering for the active subtitle track.
+ *
+ * - [Native]: receiver decodes ASS/SSA with full styling (libass). SpatialFin → SpatialFin.
+ * - [Transcoding]: server is burning the subtitle stream into the video pixels (still in
+ *   flight; chip is shown until the receiver reports playback state Playing).
+ * - [Degraded]: receiver will render the track but without full styling (positioning,
+ *   karaoke, signs are lost). User chose "Faster start" or the track has no override tags.
+ * - [None]: no subtitle track is selected.
+ */
+enum class SubtitleFidelity {
+    Native, Transcoding, Degraded, None,
 }

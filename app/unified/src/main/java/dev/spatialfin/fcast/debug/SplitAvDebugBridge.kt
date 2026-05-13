@@ -8,7 +8,7 @@ import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.spatialfin.BuildConfig
-import dev.spatialfin.fcast.session.FCastSessionManager
+import dev.spatialfin.fcast.session.CastSessionManager
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,7 +40,7 @@ import timber.log.Timber
  */
 @Singleton
 class SplitAvDebugBridge @Inject constructor(
-    private val sessionManager: FCastSessionManager,
+    private val sessionManager: CastSessionManager,
     private val repository: JellyfinRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)

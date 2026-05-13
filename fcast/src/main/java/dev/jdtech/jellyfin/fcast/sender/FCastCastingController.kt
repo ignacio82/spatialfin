@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.fcast.sender
 
+import dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
@@ -58,6 +59,16 @@ open class FCastCastingController {
     val pongs: SharedFlow<FCastSenderClient.PongObservation> = _pongs.asSharedFlow()
 
     /**
+     * Peer's [InitialReceiverMessage] forwarded from the active client. Replays so a late
+     * subscriber (e.g. the subtitle-policy cache update in `CastSessionManager`) doesn't miss
+     * the handshake that already happened before it subscribed. Cleared on each new [startCast].
+     */
+    private val _peerInitial = MutableSharedFlow<InitialReceiverMessage>(
+        replay = 1, extraBufferCapacity = 1,
+    )
+    val peerInitial: SharedFlow<InitialReceiverMessage> = _peerInitial.asSharedFlow()
+
+    /**
      * Begin (or replace) casting to [receiver] with [play] as the initial Play message.
      * Closes any existing connection first. On failure the controller transitions to [Status.Failed]
      * and the exception is rethrown so the caller can surface it.
@@ -83,6 +94,12 @@ open class FCastCastingController {
             // observer job (and therefore the supervisor scope's child) terminates on stop.
             supervisor.launch {
                 newClient.pongs.collect { _pongs.emit(it) }
+            }
+            // Forward the peer's Initial frame so the session manager can refresh its cached
+            // capability set for this host:port (drives the sender-side subtitle policy on the
+            // *next* cast — see SubtitlePolicy / CastSessionManager.castSpatialItem).
+            supervisor.launch {
+                newClient.initialReceiver.collect { _peerInitial.emit(it) }
             }
             _status.value = Status.Casting
         }

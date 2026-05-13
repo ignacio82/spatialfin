@@ -28,4 +28,11 @@
     <string name="app_lock_pin_setup_subtitle">Choose a numeric PIN between %1$d and %2$d digits.</string>
     <string name="app_lock_pin_setup_cancel">Cancel</string>
     <string name="app_lock_pin_mismatch">PINs did not match. Try again.</string>
+
+    <!-- FCast inbound (receiver) subtitle notices -->
+    <string name="fcast_inbound_subtitle_fonts_unsupported">Custom fonts aren\'t supported yet when casting — using fallback fonts.</string>
+
+    <!-- Sender-side subtitle fidelity -->
+    <string name="cast_subtitle_transcoding">Transcoding for subtitle compatibility</string>
+    <string name="cast_subtitle_fidelity_degraded">This title uses styled subtitles. %1$s will simplify them.</string>
 </resources>

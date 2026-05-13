@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.cast
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The single sender-facing contract every casting protocol implements. The session manager owns
@@ -21,6 +22,16 @@ import kotlinx.coroutines.flow.SharedFlow
 interface ProtocolAdapter {
 
     val receiver: CastReceiver
+
+    /**
+     * Post-handshake capability set. Starts as [CastReceiver.capabilities] (what discovery
+     * could infer) and is widened once the adapter has talked to the peer — e.g. the FCast
+     * adapter adds [CastCapability.NativeAss] / [CastCapability.EmbeddedFonts] when the
+     * `InitialReceiverMessage` carries a SpatialFin `appName`. Callers that need to gate
+     * behavior on what the receiver can actually render (subtitle policy, SplitAv toggle)
+     * must observe this flow rather than reading [CastReceiver.capabilities] directly.
+     */
+    val currentCapabilities: StateFlow<Set<CastCapability>>
 
     val events: SharedFlow<CastSessionEvent>
 
