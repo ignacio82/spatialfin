@@ -5,6 +5,7 @@ import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
 import dev.jdtech.jellyfin.fcast.protocol.withSplitAv
+import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
@@ -133,6 +134,18 @@ class SplitAvController @Inject constructor(
         audioLatencyMs: Int = 0,
         mediaStartOffsetMs: Long = 0L,
     ) = mutex.withLock {
+        // Defense in depth: SplitAv is meaningless without an FCast receiver (no commanded
+        // start, no calibration side-channel, no sub-frame clock telemetry). The session
+        // manager already filters this, but a stray caller into the controller should fail
+        // loud rather than spin up a half-broken split session.
+        val castReceiver = receiver.toCastReceiver()
+        if (!SplitAvPolicy.isAvailable(castReceiver)) {
+            Timber.tag(TAG).w(
+                "start: rejecting receiver %s:%d — SplitAv capability missing",
+                receiver.host, receiver.port,
+            )
+            throw SplitAvUnsupportedException(castReceiver)
+        }
         stopInternal()
         _state.value = State.Connecting
 
@@ -155,6 +168,7 @@ class SplitAvController @Inject constructor(
         masterFirstPlayingWallMs = null
         lastBeaconTvIsPlaying = null
         sessionReceiver = receiver
+        SplitAvSessionRegistry.setActive(castReceiver)
         seekLimiter.reset()
         networkDelay.reset()
         _lastDriftMs.value = null
@@ -231,6 +245,7 @@ class SplitAvController @Inject constructor(
         _state.value = State.Idle
         _lastDriftMs.value = null
         sessionReceiver = null
+        SplitAvSessionRegistry.setActive(null)
         Timber.tag(TAG).i("Split-A/V ended by receiver — master unmuted, drift loop stopped")
     }
 
@@ -250,6 +265,7 @@ class SplitAvController @Inject constructor(
         _state.value = State.Idle
         _lastDriftMs.value = null
         sessionReceiver = null
+        SplitAvSessionRegistry.setActive(null)
     }
 
     /**

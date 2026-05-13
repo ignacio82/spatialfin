@@ -8,6 +8,7 @@ import android.os.Looper
 import android.os.Messenger
 import dev.jdtech.jellyfin.player.core.splitav.ProxyVideoMaster
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
+import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import timber.log.Timber
 
@@ -39,6 +40,20 @@ class SplitAvBridgeService : Service() {
                 val client = msg.replyTo
                 if (client == null) {
                     Timber.tag(TAG).w("REGISTER without replyTo — ignoring")
+                    return@Handler true
+                }
+                // Defense in depth: the proxy should only attach when a SplitAv-capable session
+                // is active. The session manager already filters non-FCast receivers before
+                // calling SplitAvController.start, but if a stray bind reaches us with no active
+                // session (or a non-SplitAv-capable one), refuse rather than half-bind the
+                // master. This is unreachable in production today; the check exists so a future
+                // protocol that wires into this Service can't silently break split mode.
+                val activeReceiver = SplitAvSessionRegistry.activeReceiver.value
+                if (activeReceiver == null || CastCapability.SplitAv !in activeReceiver.capabilities) {
+                    Timber.tag(TAG).w(
+                        "REGISTER rejected — no SplitAv-capable session (active=%s)",
+                        activeReceiver?.protocol?.displayName ?: "none",
+                    )
                     return@Handler true
                 }
                 proxy.attachClient(client)

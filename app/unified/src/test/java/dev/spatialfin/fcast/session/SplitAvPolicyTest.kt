@@ -1,5 +1,8 @@
 package dev.spatialfin.fcast.session
 
+import dev.jdtech.jellyfin.cast.CastCapability
+import dev.jdtech.jellyfin.cast.CastProtocol
+import dev.jdtech.jellyfin.cast.CastReceiver
 import dev.spatialfin.fcast.session.SplitAvPolicy.BeaconState
 import dev.spatialfin.fcast.session.SplitAvPolicy.DriftAction
 import org.junit.Assert.assertEquals
@@ -212,5 +215,44 @@ class NetworkDelayEstimatorTest {
         est.recordRtt(40)
         est.reset()
         assertNull(est.rttMs())
+    }
+
+    private fun receiver(
+        protocol: CastProtocol,
+        capabilities: Set<CastCapability>,
+    ) = CastReceiver(
+        id = "$protocol:test",
+        name = "test",
+        host = "10.0.0.1",
+        port = 46899,
+        protocol = protocol,
+        capabilities = capabilities,
+    )
+
+    @Test
+    fun `isAvailable true for FCast receiver carrying SplitAv capability`() {
+        val r = receiver(CastProtocol.FCast, setOf(CastCapability.Video, CastCapability.SplitAv))
+        assertTrue(SplitAvPolicy.isAvailable(r))
+    }
+
+    @Test
+    fun `isAvailable false for FCast receiver without SplitAv capability`() {
+        val r = receiver(CastProtocol.FCast, setOf(CastCapability.Video))
+        assertFalse(SplitAvPolicy.isAvailable(r))
+    }
+
+    @Test
+    fun `isAvailable false for Google Cast receiver without SplitAv capability`() {
+        // GoogleCastAdapter must never populate SplitAv; this asserts the policy refuses the
+        // common case. The "GoogleCastAdapter never sets SplitAv" half of the contract is
+        // verified at the adapter layer (see FCastAdapterCapabilityTest).
+        val r = receiver(CastProtocol.GoogleCast, setOf(CastCapability.Video, CastCapability.Volume))
+        assertFalse(SplitAvPolicy.isAvailable(r))
+    }
+
+    @Test
+    fun `isAvailable false for AirPlay receiver without SplitAv capability`() {
+        val r = receiver(CastProtocol.AirPlay, setOf(CastCapability.Video, CastCapability.Volume))
+        assertFalse(SplitAvPolicy.isAvailable(r))
     }
 }

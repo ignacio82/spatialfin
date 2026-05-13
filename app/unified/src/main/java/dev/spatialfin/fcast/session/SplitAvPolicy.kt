@@ -1,5 +1,7 @@
 package dev.spatialfin.fcast.session
 
+import dev.jdtech.jellyfin.cast.CastCapability
+import dev.jdtech.jellyfin.cast.CastReceiver
 import kotlin.math.absoluteValue
 
 /**
@@ -32,6 +34,25 @@ import kotlin.math.absoluteValue
  * The orchestrator is responsible for capping the *rate* of HardSeeks (see [HardSeekRateLimiter]).
  */
 object SplitAvPolicy {
+
+    /**
+     * Whether SpatialFin's split-A/V mode (XR video + receiver audio with lipsync calibration)
+     * is available on [receiver]. Only FCast receivers ever return true — Google Cast and
+     * AirPlay protocols don't expose the primitives the split-mode design depends on:
+     *
+     *  - No commanded sub-frame start instant for independent A/V streams.
+     *  - No side-channel for the calibration chirp / `SplitAvMetadata` payload.
+     *  - No precise clock telemetry (Cast `MEDIA_STATUS` is ~1 Hz, AirPlay `playback-info` the
+     *    same, and Cast groups add 50–200 ms of uncontrolled buffering on top).
+     *
+     * Adapters are responsible for advertising the [CastCapability.SplitAv] flag; only
+     * [dev.jdtech.jellyfin.cast.adapter.FCastAdapter] is allowed to set it. Every SplitAv
+     * entry point (session manager, calibration orchestrator, bridge service, UI toggles) checks
+     * this — defense in depth so a non-FCast receiver can never reach the calibration / drift
+     * pipeline.
+     */
+    fun isAvailable(receiver: CastReceiver): Boolean =
+        CastCapability.SplitAv in receiver.capabilities
 
     /** Below this absolute drift the user can't tell, so no correction. */
     const val HOLD_THRESHOLD_MS: Int = 20
