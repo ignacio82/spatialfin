@@ -1,6 +1,8 @@
 package dev.spatialfin.fcast.session
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -31,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.jdtech.jellyfin.cast.SubtitleFidelity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
@@ -57,24 +60,78 @@ fun FCastCastIconButton(
     sessionManager: CastSessionManager,
     modifier: Modifier = Modifier,
 ) {
-    // Tint reflects "is anything picked" across all protocols — Cast / FCast / future AirPlay.
+    // Tint reflects "is anything picked" across all protocols — Cast / FCast / AirPlay.
+    // Long-press disconnects immediately (skips picker) per §12 of the spec.
     val pickedTarget by sessionManager.pickedTarget.collectAsState()
+    val scope = rememberCoroutineScope()
     val tint = if (pickedTarget != null) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    IconButton(
-        onClick = { sessionManager.showPicker() },
-        modifier = modifier,
+    // Long-press = direct disconnect; short tap = open picker. Built via combinedClickable
+    // because IconButton itself doesn't expose onLongClick.
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .size(48.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .combinedClickableShim(
+                onClick = { sessionManager.showPicker() },
+                onLongClick = if (pickedTarget != null) {
+                    { scope.launch { sessionManager.stopCast() } }
+                } else null,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
         Icon(
             painter = painterResource(CoreR.drawable.ic_cast),
-            contentDescription = "Cast to FCast receiver",
+            contentDescription = if (pickedTarget == null) {
+                "Cast to receiver"
+            } else {
+                "Casting to ${pickedTarget?.name}. Long-press to disconnect."
+            },
             tint = tint,
         )
+        // Tiny protocol badge in the corner so power users see which protocol is active.
+        pickedTarget?.protocol?.let { protocol ->
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(14.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = protocol.protocolMonogram(),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
     }
 }
+
+/** Single-letter monogram per protocol — used in the cast-button corner badge. */
+private fun dev.jdtech.jellyfin.cast.CastProtocol.protocolMonogram(): String = when (this) {
+    dev.jdtech.jellyfin.cast.CastProtocol.FCast -> "F"
+    dev.jdtech.jellyfin.cast.CastProtocol.GoogleCast -> "C"
+    dev.jdtech.jellyfin.cast.CastProtocol.AirPlay -> "A"
+}
+
+/**
+ * Tiny shim around [androidx.compose.foundation.combinedClickable]. Wrapped so the call site
+ * can pass a null [onLongClick] without re-importing the experimental annotation everywhere.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.combinedClickableShim(
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+): Modifier = this.combinedClickable(
+    onClick = onClick,
+    onLongClick = onLongClick,
+)
 
 /**
  * Global picker host — renders the FCast picker sheet inside an [AlertDialog]-style wrapper when
@@ -148,17 +205,24 @@ fun FCastMiniController(
     val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
     val pickedTarget by sessionManager.pickedTarget.collectAsState()
     val status by sessionManager.status.collectAsState()
-    val remoteState by sessionManager.remoteState.collectAsState()
-    // Mini-controller is visible whenever *anything* is picked — FCast or Cast. The
-    // per-protocol controls below gracefully degrade when the picked receiver isn't FCast
-    // (PR 5's redesign unifies them).
+    // PR 5: unified state flow. activeMediaState reflects whichever protocol is currently
+    // driving the cast — FCast pulls from `remoteState`, Cast/AirPlay pull from the
+    // ProtocolAdapter event stream via bridgeAdapterEvents.
+    val activeMediaState by sessionManager.activeMediaState.collectAsState()
     val anyTarget = pickedTarget ?: return
     val receiver = pickedReceiver
     val isFCastSession = receiver != null
     val scope = rememberCoroutineScope()
 
-    val isPlaying = remoteState?.playbackState == PlaybackState.Playing
-    val controlsEnabled = isFCastSession && status == FCastCastingController.Status.Casting
+    val isPlaying = activeMediaState == dev.jdtech.jellyfin.cast.CastMediaState.Playing
+    val controlsEnabled = if (isFCastSession) {
+        status == FCastCastingController.Status.Casting
+    } else {
+        // For Cast/AirPlay we don't have FCast's connection-state, but pickedTarget being
+        // non-null implies an adapter was created on the last play tap. Once the adapter
+        // reports a non-Idle state, controls are live.
+        activeMediaState != dev.jdtech.jellyfin.cast.CastMediaState.Idle
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),

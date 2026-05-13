@@ -80,6 +80,10 @@ class CastSessionManager @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
 
+    init {
+        startFCastStateBridge()
+    }
+
     /** Status passthrough — Idle / Connecting / Casting / Failed. */
     val status: StateFlow<FCastCastingController.Status> = controller.status
 
@@ -219,6 +223,28 @@ class CastSessionManager @Inject constructor(
      */
     private var activeCastAdapter: ProtocolAdapter? = null
     private val castAdapterMutex = Mutex()
+    private var castAdapterEventJob: Job? = null
+
+    /**
+     * Protocol-agnostic playback state for the active session. Reads from FCast's
+     * [remoteState] when an FCast session is active, and from the [ProtocolAdapter] event
+     * stream when a Cast/AirPlay session is active. The mini-controller observes these so its
+     * play/pause/scrub/volume work uniformly regardless of which protocol is driving the cast.
+     */
+    private val _activeMediaState = MutableStateFlow(
+        dev.jdtech.jellyfin.cast.CastMediaState.Idle,
+    )
+    val activeMediaState: StateFlow<dev.jdtech.jellyfin.cast.CastMediaState> =
+        _activeMediaState.asStateFlow()
+
+    private val _activePositionMs = MutableStateFlow(0L)
+    val activePositionMs: StateFlow<Long> = _activePositionMs.asStateFlow()
+
+    private val _activeDurationMs = MutableStateFlow<Long?>(null)
+    val activeDurationMs: StateFlow<Long?> = _activeDurationMs.asStateFlow()
+
+    private val _activeVolume = MutableStateFlow(1f)
+    val activeVolume: StateFlow<Float> = _activeVolume.asStateFlow()
 
     /**
      * Most-recent latest cached Google Cast results. Surfaced to the picker UI so users can
@@ -799,17 +825,73 @@ class CastSessionManager @Inject constructor(
             activeCastAdapter?.takeIf { it.receiver.id == target.id }?.let { return@withLock it }
             // Receiver changed — tear the old adapter down before opening a new socket.
             activeCastAdapter?.disconnect()
+            castAdapterEventJob?.cancel()
             val adapter = CastAdapterFactory.create(target)
             adapter.connect().getOrThrow()
             activeCastAdapter = adapter
+            castAdapterEventJob = scope.launch { bridgeAdapterEvents(adapter) }
             adapter
         }
 
     /** Drop any active non-FCast adapter. Safe to call when no adapter is active. */
     private suspend fun releaseActiveCastAdapter() {
         castAdapterMutex.withLock {
+            castAdapterEventJob?.cancel()
+            castAdapterEventJob = null
             activeCastAdapter?.disconnect()
             activeCastAdapter = null
+            _activeMediaState.value = dev.jdtech.jellyfin.cast.CastMediaState.Idle
+            _activePositionMs.value = 0L
+            _activeDurationMs.value = null
+        }
+    }
+
+    /**
+     * Push protocol-agnostic events from [adapter] into the unified `active*` flows. Used by
+     * the mini-controller to render play/pause/seek/volume uniformly across FCast / Cast /
+     * AirPlay. Cancelled by [releaseActiveCastAdapter] when the adapter is replaced.
+     */
+    private suspend fun bridgeAdapterEvents(adapter: ProtocolAdapter) {
+        adapter.events.collect { event ->
+            when (event) {
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.MediaStateChanged ->
+                    _activeMediaState.value = event.state
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.PositionChanged ->
+                    _activePositionMs.value = event.positionMs
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.DurationChanged ->
+                    _activeDurationMs.value = event.durationMs
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.VolumeChanged ->
+                    _activeVolume.value = event.volume
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.Ended -> {
+                    _activeMediaState.value = dev.jdtech.jellyfin.cast.CastMediaState.Ended
+                }
+                else -> Unit // Connection state + Error already wired elsewhere
+            }
+        }
+    }
+
+    /**
+     * Mirror the FCast [remoteState] into the protocol-agnostic active* flows whenever an
+     * FCast session is active. Started once on construction; observes for the lifetime of
+     * the manager. Cast/AirPlay sessions go through [bridgeAdapterEvents] instead.
+     */
+    private fun startFCastStateBridge() {
+        scope.launch {
+            controller.remoteState.collect { update ->
+                if (_pickedTarget.value?.protocol != CastProtocol.FCast) return@collect
+                if (update == null) return@collect
+                _activeMediaState.value = when (update.playbackState) {
+                    dev.jdtech.jellyfin.fcast.protocol.PlaybackState.Playing ->
+                        dev.jdtech.jellyfin.cast.CastMediaState.Playing
+                    dev.jdtech.jellyfin.fcast.protocol.PlaybackState.Paused ->
+                        dev.jdtech.jellyfin.cast.CastMediaState.Paused
+                    dev.jdtech.jellyfin.fcast.protocol.PlaybackState.Idle,
+                    null,
+                    -> dev.jdtech.jellyfin.cast.CastMediaState.Idle
+                }
+                update.time?.let { _activePositionMs.value = (it * 1000.0).toLong() }
+                update.duration?.let { _activeDurationMs.value = (it * 1000.0).toLong() }
+            }
         }
     }
 
@@ -1051,40 +1133,78 @@ class CastSessionManager @Inject constructor(
         }
     }
 
-    suspend fun pause() = controller.pause()
-    suspend fun resume() = controller.resume()
-    suspend fun seek(seconds: Double) = controller.seek(seconds)
+    suspend fun pause() {
+        when (_pickedTarget.value?.protocol) {
+            CastProtocol.FCast -> controller.pause()
+            CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.pause()
+            null -> Unit
+        }
+    }
 
-    /**
-     * Seek by a relative offset, computed against the last known [remoteState] time. Skips on
-     * the receiver's clock — accurate to the most recent PlaybackUpdate we got. No-op if we
-     * don't have a known time yet (the receiver hasn't pushed its first update).
-     */
-    suspend fun seekBy(deltaSeconds: Double) {
-        val currentTime = remoteState.value?.time ?: return
-        controller.seek((currentTime + deltaSeconds).coerceAtLeast(0.0))
+    suspend fun resume() {
+        when (_pickedTarget.value?.protocol) {
+            CastProtocol.FCast -> controller.resume()
+            CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.play()
+            null -> Unit
+        }
+    }
+
+    suspend fun seek(seconds: Double) {
+        when (_pickedTarget.value?.protocol) {
+            CastProtocol.FCast -> controller.seek(seconds)
+            CastProtocol.GoogleCast, CastProtocol.AirPlay ->
+                activeCastAdapter?.seek((seconds * 1000.0).toLong())
+            null -> Unit
+        }
     }
 
     /**
-     * Local intent for what the FCast/ExoPlayer gain should be, 0.0–1.0. We keep a local
-     * StateFlow because the spec's VolumeUpdate echo isn't reliably emitted across all receiver
-     * implementations. The user nudges this with [adjustVolume]; the receiver's *system* volume
-     * (TV remote) is independent and unaffected.
+     * Seek by a relative offset, computed against the last known position. Accurate to the
+     * most recent state update we got from whichever protocol is active. No-op if we don't
+     * have a known position yet (the receiver hasn't pushed its first update).
+     */
+    suspend fun seekBy(deltaSeconds: Double) {
+        val currentMs = _activePositionMs.value
+        val targetSeconds = (currentMs / 1000.0 + deltaSeconds).coerceAtLeast(0.0)
+        seek(targetSeconds)
+    }
+
+    /**
+     * Local intent for what the receiver's gain should be, 0.0–1.0. Kept as a StateFlow because
+     * the FCast `VolumeUpdate` echo isn't reliably emitted across receiver implementations and
+     * the AirPlay/Cast event streams update [activeVolume] asynchronously. UI binds to this for
+     * the slider thumb; we also mirror updates into [activeVolume] for the unified observers.
      */
     private val _currentVolume = MutableStateFlow(1.0)
     val currentVolume: StateFlow<Double> = _currentVolume.asStateFlow()
 
-    /** Set absolute FCast/ExoPlayer gain on the receiver. Clamped to 0.0–1.0. */
+    /** Set absolute receiver gain. Clamped to 0.0–1.0. */
     suspend fun setVolume(volume: Double) {
         val clamped = volume.coerceIn(0.0, 1.0)
         _currentVolume.value = clamped
-        controller.setVolume(clamped)
+        _activeVolume.value = clamped.toFloat()
+        when (_pickedTarget.value?.protocol) {
+            CastProtocol.FCast -> controller.setVolume(clamped)
+            CastProtocol.GoogleCast, CastProtocol.AirPlay ->
+                activeCastAdapter?.setVolume(clamped.toFloat())
+            null -> Unit
+        }
     }
 
     /** Bump volume by [delta] (e.g. ±0.1). */
     suspend fun adjustVolume(delta: Double) = setVolume(_currentVolume.value + delta)
 
-    suspend fun setSpeed(speed: Double) = controller.setSpeed(speed)
+    suspend fun setSpeed(speed: Double) {
+        when (_pickedTarget.value?.protocol) {
+            CastProtocol.FCast -> controller.setSpeed(speed)
+            CastProtocol.GoogleCast, CastProtocol.AirPlay -> {
+                // Both Cast and AirPlay v1 return failure for setSpeed; we surface the result
+                // silently rather than throwing.
+                activeCastAdapter?.setSpeed(speed.toFloat())
+            }
+            null -> Unit
+        }
+    }
 
     /** Tear down the connection AND clear the picked-receiver intent. Idempotent. */
     suspend fun stopCast() {
