@@ -14,12 +14,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -132,51 +132,69 @@ fun FCastSessionPickerSheet(
     }
 
     Surface(
-        // Fixed cinema-scale width on XR: a SpatialDialog renders centered in the user's
-        // vision and constraining width here keeps text readable at the 1.75 m spawn distance.
-        // heightIn is mandatory because SpatialDialog otherwise propagates Constraints.Infinity
-        // down into the LazyColumn below, which crashes on measurement.
-        // (See GEMINI.md "Spatial Dialogs & UI" — `LazyColumn inside SpatialDialog crashes
-        // with 'infinite height' unless the dialog has Modifier.heightIn(max = …)`.)
+        // Width: phone fills the dialog naturally; XR caps at 720dp so text stays readable
+        // at the 1.75 m spawn distance. heightIn(max = 720.dp) is *still* required on XR
+        // because SpatialDialog otherwise propagates Constraints.Infinity down through the
+        // outer verticalScroll, which crashes the measure pass. (Same GEMINI.md rule that
+        // governed the previous LazyColumn — outer-scroll containers have the same need.)
         modifier = modifier
-            .widthIn(min = 720.dp, max = 960.dp)
+            .fillMaxWidth()
+            .widthIn(max = 720.dp)
             .heightIn(max = 720.dp),
-        shape = RoundedCornerShape(32.dp),
+        shape = RoundedCornerShape(28.dp),
     ) {
         var helpVisible by remember { mutableStateOf(false) }
-        Column(modifier = Modifier.padding(40.dp)) {
+        val scrollState = rememberScrollState()
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+                .verticalScroll(scrollState),
+        ) {
+            // Header — title + scanning spinner. Help button moves to its own row at narrow
+            // widths so it doesn't squish the title/description; this is fine on XR too
+            // because the cinema-scale cap is wider than the longest line anyway.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Cast to a receiver",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Pick a device on your network. Streams use plain TCP, so " +
-                            "only cast on a trusted Wi-Fi.",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    text = "Cast to a receiver",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
                 if (isScanning) {
-                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                }
-                TextButton(onClick = { helpVisible = true }) {
-                    Text(
-                        "Help",
-                        style = MaterialTheme.typography.titleMedium,
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.5.dp,
                     )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Pick a device on your network. Streams use plain TCP, so " +
+                        "only cast on a trusted Wi-Fi.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { helpVisible = true },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 12.dp, vertical = 4.dp,
+                    ),
+                ) {
+                    Text("Help", style = MaterialTheme.typography.labelLarge)
                 }
             }
             if (helpVisible) {
                 CastProtocolHelpRow(onDismiss = { helpVisible = false })
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
             if (showSplitAvOption) {
                 SplitAvToggleRow(
@@ -191,14 +209,15 @@ fun FCastSessionPickerSheet(
                 if (entries.isEmpty() && !isScanning) {
                     Text(
                         text = "No receivers found yet. Add one manually below.",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(entries, key = { "${it.receiver.host}:${it.receiver.port}" }) { entry ->
+                    // Plain Column (not LazyColumn) so the outer verticalScroll is the sole
+                    // scroller. Capped at 16 by RememberedReceiversStore so the linear render
+                    // cost is negligible.
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        entries.forEach { entry ->
                             SessionReceiverRow(
                                 entry = entry,
                                 onClick = { onReceiverPicked(entry.receiver) },
@@ -223,25 +242,14 @@ fun FCastSessionPickerSheet(
             }
 
             if (showGoogleCast && googleCastReceivers.isNotEmpty()) {
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    text = "Chromecast",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
+                Spacer(Modifier.height(20.dp))
+                SectionHeader(
+                    title = "Chromecast",
+                    subtitle = "Styled subtitles burn in server-side.",
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Streams through Google's Default Media Receiver. " +
-                        "Styled ASS subtitles burn in server-side automatically.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(googleCastReceivers, key = { it.id }) { castReceiver ->
+                Spacer(Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    googleCastReceivers.forEach { castReceiver ->
                         CastReceiverRow(
                             receiver = castReceiver,
                             badge = "Chromecast",
@@ -254,26 +262,15 @@ fun FCastSessionPickerSheet(
             }
 
             if (showAirPlay && airPlayReceivers.isNotEmpty()) {
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    text = "AirPlay",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
+                Spacer(Modifier.height(20.dp))
+                SectionHeader(
+                    title = "AirPlay",
+                    subtitle = "Apple TVs and AV receivers. " +
+                        "AirPlay 2 devices need pairing (shown disabled).",
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Streams to Apple TVs and AV receivers over AirPlay v1. " +
-                        "AirPlay 2 devices (HomePods, recent Apple TVs) need pairing — " +
-                        "those rows are shown but disabled for now.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(airPlayReceivers, key = { it.id }) { airReceiver ->
+                Spacer(Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    airPlayReceivers.forEach { airReceiver ->
                         val isPairingRequired = airReceiver.appName?.contains(
                             "pairing required", ignoreCase = true,
                         ) == true
@@ -293,16 +290,12 @@ fun FCastSessionPickerSheet(
             // "Add manually" creates an FCast receiver, so hide it whenever FCast is toggled
             // off — otherwise a user who explicitly hid FCast still sees the entry input.
             if (showFCast) {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
                 HorizontalDivider()
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(16.dp))
 
-                Text(
-                    text = "Add manually",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.height(12.dp))
+                SectionHeader(title = "Add manually", subtitle = null)
+                Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = manualHost,
@@ -369,39 +362,59 @@ private fun SplitAvToggleRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle(!enabled) },
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         tonalElevation = 1.dp,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Split A/V",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "Video stays on this device, audio plays on the picked receiver. " +
-                        "First use calibrates audio sync (~6 s) in a quiet room.",
-                    style = MaterialTheme.typography.bodyLarge,
+                    text = "Video here, audio on the receiver. First use calibrates sync.",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (permissionDenied) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Microphone permission is required to calibrate audio sync. " +
-                            "Grant it in System Settings to enable Split A/V.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "Microphone permission required for sync calibration.",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
             Switch(checked = enabled, onCheckedChange = onToggle)
         }
+    }
+}
+
+/**
+ * Compact section header used by every protocol section in the picker. The title sits flush-
+ * left with no top padding (sections control their own spacing via `Spacer.height(20.dp)`
+ * before the header). Subtitle is optional — sections that don't need a one-liner skip it.
+ */
+@Composable
+private fun SectionHeader(title: String, subtitle: String?) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+    )
+    if (subtitle != null) {
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -419,17 +432,17 @@ private fun SessionReceiverRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (rowEnabled) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         tonalElevation = 1.dp,
     ) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ReachabilityDot(state = entry.state)
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = entry.receiver.name,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = if (rowEnabled) MaterialTheme.colorScheme.onSurface
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -548,22 +561,22 @@ private fun CastReceiverRow(
         modifier = Modifier.fillMaxWidth().alpha(rowAlpha),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 2.dp,
+        tonalElevation = 1.dp,
         // Surface.onClick disables the ripple when null; use that so disabled rows actively
         // can't be picked rather than relying on the caller honoring the hint.
         onClick = if (enabled) onClick else { -> },
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(12.dp)
+                    .size(10.dp)
                     .clip(CircleShape)
                     .background(if (enabled) Color(0xFF34C759) else Color(0xFF8E8E93)),
             )
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = receiver.name,
