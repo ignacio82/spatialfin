@@ -3294,6 +3294,25 @@ private fun launchServerItem(
             maxBitrate = maxBitrate,
         )
     }
+    // Split-A/V on Beam: Pixel plays video locally with audio muted while the picked
+    // receiver plays audio only. Builds the same Beam intent as the non-split path but with
+    // `splitAvVideoRole=true` — BeamPlayerActivity reads that extra and constructs a
+    // PlayerSplitAvAdapter, which binds the SplitAvVideoBridge that the cast controller
+    // needs to drive its first-play seek + drift correction.
+    //
+    // Before this wire-up, the Beam call site passed no splitAvIntentBuilder; launchPlayback
+    // defaulted it to `{ null }`, so castSpatialItemSplitAv's `localPlayerIntentBuilder()`
+    // returned null, no Activity was launched, and SplitAvVideoBridge never received a
+    // master. The receiver's audio stream sat at playWhenReady=false (waiting for a master
+    // signal that never came) and the user saw "no video on phone, no audio on TV."
+    val splitAvIntentBuilder: () -> android.content.Intent? = {
+        BeamPlayerActivity.createIntentForSpatialItem(
+            context = context,
+            item = item,
+            startFromBeginning = startFromBeginning,
+            splitAvVideoRole = true,
+        )
+    }
     // Route through launchPlayback so a chosen FCast receiver wins over the
     // local player. With no session manager (defensive null branch) or no
     // intent-to-cast, launchPlayback falls through to startActivity.
@@ -3304,6 +3323,7 @@ private fun launchServerItem(
             scope = scope,
             item = item,
             intentBuilder = intentBuilder,
+            splitAvIntentBuilder = splitAvIntentBuilder,
         )
     } else {
         context.startActivity(intentBuilder())

@@ -436,6 +436,13 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.cast_show_airplay_summary,
                                                     backendPreference = appPreferences.castShowAirPlay,
                                                 ),
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.cast_audio_fallback,
+                                                    descriptionStringRes = R.string.cast_audio_fallback_summary,
+                                                    backendPreference = appPreferences.castAudioFallback,
+                                                    options = R.array.cast_audio_fallback_options,
+                                                    optionValues = R.array.cast_audio_fallback_values,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.settings_subtitles_system_captioning,
                                                     descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,

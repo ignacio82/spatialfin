@@ -324,6 +324,15 @@ class XrPlayerActivity : AppCompatActivity() {
                 postToPlayer = { runOnUiThread(it) },
             )
             splitAvAdapter = adapter
+            // Disable the audio track type so the audio renderer never tries to init a
+            // decoder for codecs the device can't handle (Atmos EAC3-JOC / TrueHD / DTS-HD).
+            // Without this, source files with those codecs fail the whole player with
+            // ERROR_CODE_DECODING_FAILED at posMs=0 — even though we mute the output, the
+            // renderer still has to initialize. Audio plays on the cast receiver, not here.
+            // Mirrors the same defensive disable in BeamPlayerActivity.
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true)
+                .build()
             adapter.setAudioMuted(true)
             val ipc = SplitAvBridgeIpcClient(applicationContext, adapter)
             splitAvIpcClient = ipc
@@ -340,6 +349,15 @@ class XrPlayerActivity : AppCompatActivity() {
                     )
                     delay(50L)
                 }
+            }
+            // Forward user-initiated seeks (FF / RW / scrub-bar drag / ±10 s buttons) across
+            // the IPC boundary so the controller's mirrorMasterSeeks collector cascades them
+            // to the audio receiver. Without this, scrubbing on the XR's immersive player
+            // would desync audio (audio stays where it was; video jumps). The adapter's
+            // userSeeks flow is already gated against the controller's own drift-correction
+            // seekTo() calls, so no feedback loop with drift policy is possible.
+            lifecycleScope.launch {
+                adapter.userSeeks.collect { positionMs -> ipc.pushUserSeek(positionMs) }
             }
             Timber.i("XrPlayer: bound as split-A/V video master (cross-process IPC)")
         }

@@ -42,9 +42,35 @@ data class PlaybackUpdateMessage(
     val duration: Double? = null,
     val speed: Double? = null,
     val itemIndex: Int? = null,
+    /**
+     * SpatialFin extension (not in the FCast v3 spec). Receiver populates with the audio
+     * format ExoPlayer is actually decoding. Non-SpatialFin senders/receivers ignore via
+     * `ignoreUnknownKeys = true`. Null = receiver hasn't probed yet or non-SpatialFin peer.
+     */
+    val audioFormat: AudioFormatInfo? = null,
 ) {
     val playbackState: PlaybackState? get() = PlaybackState.fromCode(state)
 }
+
+/**
+ * SpatialFin-only beacon extension describing what ExoPlayer's actually decoding right now.
+ * Atmos detection: `mimeType == "audio/eac3-joc"` is the Joint Object Coding MIME that signals
+ * Dolby Atmos in an E-AC-3 bitstream. TrueHD Atmos has no dedicated MIME — sender infers from
+ * source metadata as a fallback when it sees `audio/true-hd` here.
+ */
+@Serializable
+data class AudioFormatInfo(
+    /** Media3 `Format.sampleMimeType` (e.g. `audio/eac3-joc`, `audio/aac`, `audio/true-hd`). */
+    val mimeType: String? = null,
+    /** Decoded channel count (1=mono, 2=stereo, 6=5.1, 8=7.1). */
+    val channelCount: Int? = null,
+    /** Decoded sample rate in Hz (typical: 44_100, 48_000, 96_000). */
+    val sampleRateHz: Int? = null,
+    /** Average bitrate in kbps if known; null when the source doesn't expose it. */
+    val bitrateKbps: Int? = null,
+    /** Receiver-side pretty-printed label (e.g. `Dolby Atmos · 7.1`); fallback for the UI. */
+    val label: String? = null,
+)
 
 enum class PlaybackState(val code: Int) {
     Idle(0),

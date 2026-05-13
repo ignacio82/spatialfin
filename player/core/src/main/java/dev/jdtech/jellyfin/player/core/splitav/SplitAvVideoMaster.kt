@@ -1,7 +1,10 @@
 package dev.jdtech.jellyfin.player.core.splitav
 
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
@@ -25,6 +28,18 @@ interface SplitAvVideoMaster {
 
     /** True while the player is actively rendering frames at >0× speed. */
     val isPlaying: StateFlow<Boolean>
+
+    /**
+     * Emits the new master position (ms) whenever the **user** seeks — fast-forward, rewind,
+     * scrub-bar drag, "skip 10 s" buttons. The controller listens to this and cascades the seek
+     * to the receiver so the audio track follows the video.
+     *
+     * Implementations MUST NOT emit on programmatic seeks issued *by* the controller via
+     * [seekTo] (those are drift-correction hard seeks; cascading them back to the receiver
+     * would cause a feedback loop). The discontinuity-reason filter on
+     * `Player.Listener.onPositionDiscontinuity` is the right place to gate.
+     */
+    val userSeeks: SharedFlow<Long>
 
     /**
      * Apply a temporary playback-speed multiplier to nudge alignment. The controller schedules

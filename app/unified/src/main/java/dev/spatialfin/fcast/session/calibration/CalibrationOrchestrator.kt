@@ -143,6 +143,18 @@ class CalibrationOrchestrator @Inject constructor(
                 return@coroutineScope Result.Failure("Could not connect to receiver: ${e.message}")
             }
 
+            // Explicit Resume — the receiver loads SplitAvRole.AUDIO with `playWhenReady=false`
+            // and waits for the master to signal ready (that's the normal split-A/V flow). For
+            // calibration there *is* no master, so without this Resume the receiver just sits
+            // on the loaded WAV forever, no chirps fire, and the user can't calibrate. See
+            // FCastInboundPlayerActivity.applyIntent — the role check sets playWhenReady=false
+            // intentionally; the calibration path is the one place that needs to override it.
+            try {
+                castingController.resume()
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "calibration resume failed — chirps may not play")
+            }
+
             // Run capture concurrently with playback. Slight head start to AudioRecord so it's
             // already buffering by the time TV starts playing the lead silence.
             val captureDeferred = async(Dispatchers.IO) {

@@ -1,0 +1,1 @@
+Cast picker redesign — scrollable single-column layout with help button on its own row, fits cleanly on phone, TV, and XR cinema scale. Updated cast icon glyph.

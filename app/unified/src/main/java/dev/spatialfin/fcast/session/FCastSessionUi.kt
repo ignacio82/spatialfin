@@ -264,6 +264,19 @@ fun FCastMiniController(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // SpatialFin → SpatialFin: receiver pushes the actually-decoded audio
+                    // format on every beacon. Null until ExoPlayer resolves tracks (typically
+                    // ~200ms post-Play); we hide the row entirely until then so the layout
+                    // doesn't shift.
+                    val audioFormat by sessionManager.activeAudioFormat.collectAsState()
+                    val audioLabel = audioFormat?.label
+                    if (!audioLabel.isNullOrBlank()) {
+                        Text(
+                            text = "Audio · $audioLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 IconButton(onClick = { scope.launch { sessionManager.stopCast() } }) {
                     Icon(
