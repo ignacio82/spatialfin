@@ -416,6 +416,26 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.cast_show_subtitle_fidelity_warning_summary,
                                                     backendPreference = appPreferences.castShowSubtitleFidelityWarning,
                                                 ),
+                                                // Per-protocol visibility toggles (PR 6). Sit
+                                                // below the subtitle group because that's the
+                                                // adjacent topic — they all live under "Cast"
+                                                // conceptually but we don't have a dedicated
+                                                // Cast settings page yet.
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_show_fcast,
+                                                    descriptionStringRes = R.string.cast_show_fcast_summary,
+                                                    backendPreference = appPreferences.castShowFCast,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_show_googlecast,
+                                                    descriptionStringRes = R.string.cast_show_googlecast_summary,
+                                                    backendPreference = appPreferences.castShowGoogleCast,
+                                                ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_show_airplay,
+                                                    descriptionStringRes = R.string.cast_show_airplay_summary,
+                                                    backendPreference = appPreferences.castShowAirPlay,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.settings_subtitles_system_captioning,
                                                     descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,

@@ -85,6 +85,32 @@ class RememberedReceiversStore @Inject constructor(
     }
 
     /**
+     * Drop entries last seen more than [maxAgeMs] ago. Called on app start so a stale list
+     * of "Hotel TV from 2 years ago" doesn't pile up forever. Returns the number of entries
+     * pruned for log/test purposes.
+     *
+     * Calibrated receivers are NOT pruned regardless of age — `audioLatencyMs` is hard-earned
+     * (it requires a microphone calibration session) and the user clearly considered the
+     * receiver worth keeping. Forget those explicitly via [forget] if you want them gone.
+     */
+    suspend fun pruneStale(
+        now: Long = System.currentTimeMillis(),
+        maxAgeMs: Long = STALE_AGE_MS,
+    ): Int = mutex.withLock {
+        val existing = load()
+        val (keep, drop) = existing.partition { entry ->
+            entry.audioLatencyMs != null || (now - entry.lastSeenMs) <= maxAgeMs
+        }
+        if (drop.isEmpty()) return@withLock 0
+        Timber.tag(TAG).i(
+            "pruneStale: dropping %d entries older than %d days",
+            drop.size, maxAgeMs / (24L * 60 * 60 * 1000),
+        )
+        saveLocked(keep)
+        drop.size
+    }
+
+    /**
      * Persist a calibrated audio-path latency for this receiver. Used by split-A/V mode so
      * the XR side can delay its video to line up with what the user actually hears coming
      * out of the AVR/soundbar tail.
@@ -134,6 +160,9 @@ class RememberedReceiversStore @Inject constructor(
         const val PREFS_FILE = "fcast_remembered_receivers"
         const val KEY_RECEIVERS = "receivers"
         const val MAX_REMEMBERED = 16
+
+        /** 90 days. Empirically: TVs we don't see for a quarter-year are typically not coming back. */
+        const val STALE_AGE_MS = 90L * 24 * 60 * 60 * 1000
     }
 }
 

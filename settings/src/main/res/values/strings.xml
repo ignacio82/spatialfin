@@ -216,6 +216,14 @@
     <string name="cast_show_subtitle_fidelity_warning">Show subtitle-fidelity warnings</string>
     <string name="cast_show_subtitle_fidelity_warning_summary">A one-time message warns when a styled subtitle track will be simplified on a receiver that can\'t render it.</string>
 
+    <!-- Per-protocol visibility (PR 6) -->
+    <string name="cast_show_fcast">Show FCast receivers</string>
+    <string name="cast_show_fcast_summary">Other SpatialFin installs and FCast-compatible apps.</string>
+    <string name="cast_show_googlecast">Show Chromecast receivers</string>
+    <string name="cast_show_googlecast_summary">Chromecasts, Google TVs, and Nest Hubs on your network.</string>
+    <string name="cast_show_airplay">Show AirPlay receivers</string>
+    <string name="cast_show_airplay_summary">Apple TVs and AirPlay-capable AV receivers.</string>
+
     <string name="player_max_bitrate">Playback Quality</string>
     <string name="player_max_bitrate_summary">Resolution cap sent to the server. Auto means no limit.</string>
     <string name="player_force_direct_play">Always attempt direct play</string>

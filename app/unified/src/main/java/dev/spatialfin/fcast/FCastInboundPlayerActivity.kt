@@ -10,9 +10,15 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.repository.JellyfinRepository
+import java.util.UUID
+import javax.inject.Inject
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -60,12 +66,21 @@ import timber.log.Timber
  * and pushes [PlaybackUpdateMessage] back through the same bridge so the sender's
  * mini-controller reflects real state.
  */
+@AndroidEntryPoint
 class FCastInboundPlayerActivity : ComponentActivity() {
+
+    /**
+     * Hilt-injected so we can fetch embedded MKV font attachments when the cast URL points at
+     * a Jellyfin item. Activity stays lightweight when the URL isn't Jellyfin (third-party
+     * sender, raw HTTP stream, etc.) — the deferred just completes with an empty list.
+     */
+    @Inject lateinit var repository: JellyfinRepository
 
     private var player: ExoPlayer? = null
     private var playbackTickerJob: Job? = null
     private var subtitleRenderJob: Job? = null
     private var libassRenderer: LibassRenderer? = null
+    private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var splitAvRole: SplitAvRole? = null
     private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
     private val playerListener = object : Player.Listener {
@@ -141,6 +156,67 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     }
 
     /**
+     * Fire-and-forget Jellyfin font fetch for the cast URL. Completes the [libassFontsDeferred]
+     * with the resolved (name, bytes) pairs, or an empty list when the URL isn't a Jellyfin
+     * stream / the receiver can't resolve the item. Called from [applyIntent] every time a new
+     * Play arrives so each cast in a single session gets its own font set.
+     */
+    private fun preloadLibassFontsAsync(url: String) {
+        val deferred = libassFontsDeferred ?: CompletableDeferred<List<Pair<String, ByteArray>>>().also {
+            libassFontsDeferred = it
+        }
+        val itemId = extractJellyfinItemId(url)
+        if (itemId == null) {
+            deferred.complete(emptyList())
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val fonts = runCatching {
+                val sources = repository.getMediaSources(itemId = itemId, includePath = false)
+                val candidates = sources.flatMap { source ->
+                    source.mediaAttachments.map { source to it }
+                }.filter { (_, att) -> isFontAttachment(att.fileName, att.mimeType, att.codec) }
+                Timber.tag(TAG).i(
+                    "preloadLibassFontsAsync: candidate fonts=%d for itemId=%s",
+                    candidates.size, itemId,
+                )
+                candidates.mapNotNull { (source, attachment) ->
+                    val fileName = attachment.fileName.ifBlank { "attachment-${source.id}-${attachment.index}" }
+                    repository.getMediaAttachment(itemId, source.id, attachment.index)
+                        ?.let { fileName to it }
+                }
+            }.onFailure {
+                Timber.tag(TAG).w(it, "preloadLibassFontsAsync failed for %s", itemId)
+            }.getOrDefault(emptyList())
+            deferred.complete(fonts)
+        }
+    }
+
+    /**
+     * Extract the Jellyfin item UUID from a `/Videos/<uuid>/stream` style URL. Returns null
+     * for non-Jellyfin or malformed URLs — we then skip the font fetch entirely.
+     */
+    private fun extractJellyfinItemId(url: String): UUID? {
+        val match = JELLYFIN_VIDEO_PATH_REGEX.find(url) ?: return null
+        return runCatching { UUID.fromString(match.groupValues[1]) }.getOrNull()
+    }
+
+    private fun isFontAttachment(fileName: String, mimeType: String, codec: String): Boolean {
+        val nameL = fileName.lowercase()
+        val mimeL = mimeType.lowercase()
+        val codecL = codec.lowercase()
+        return mimeL.contains("font") ||
+            mimeL.contains("truetype") ||
+            mimeL.contains("opentype") ||
+            nameL.endsWith(".ttf") ||
+            nameL.endsWith(".otf") ||
+            nameL.endsWith(".ttc") ||
+            nameL.endsWith(".otc") ||
+            codecL.contains("ttf") ||
+            codecL.contains("otf")
+    }
+
+    /**
      * Build an ExoPlayer that routes ASS/SSA/SRT/VTT text tracks through [LibassTextRenderer]
      * → [LibassRenderer]. Mirrors the wiring [dev.jdtech.jellyfin.player.beam.BeamPlayerActivity]
      * uses for its 2D player — the FCast inbound activity is the SpatialFin → SpatialFin cast
@@ -181,14 +257,22 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                     // super.buildTextRenderers so ExoPlayer's stock TextRenderer doesn't grab
                     // SRT/VTT ahead of libass — libass renders them through its synthetic ASS
                     // header so the user gets consistent styling across all text formats.
+                    // PR 6: forward the deferred embedded-font fetch into the renderer. The
+                    // libass thread will block on this at track init — typically already
+                    // resolved by the time we get there because preloadLibassFontsAsync runs
+                    // in onCreate/onNewIntent.
+                    val fontLoader: () -> List<Pair<String, ByteArray>> = {
+                        runCatching {
+                            runBlocking {
+                                libassFontsDeferred?.await().orEmpty()
+                            }
+                        }.getOrDefault(emptyList())
+                    }
                     out.add(
                         LibassTextRenderer(
                             libassRenderer = active,
                             onTrackInitialized = {},
-                            // Embedded MKV font extraction lives in PR 6; for now anime with
-                            // custom font attachments falls back to libass system-font matching.
-                            // The one-time toast below tells the user that's what happened.
-                            fontLoader = null,
+                            fontLoader = fontLoader,
                             usagePref = "auto",
                         )
                     )
@@ -222,7 +306,6 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         subtitleRenderJob = lifecycleScope.launch {
             val overlay = findViewById<ImageView>(R.id.fcast_inbound_subtitle_overlay) ?: return@launch
             val r = libassRenderer ?: return@launch
-            var hasShownFontToast = false
             while (isActive) {
                 val p = player
                 if (p == null || splitAvRole == SplitAvRole.AUDIO) {
@@ -235,18 +318,6 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                     val bitmap: Bitmap = result.bitmap!!
                     overlay.setImageBitmap(bitmap)
                     if (overlay.visibility != View.VISIBLE) overlay.visibility = View.VISIBLE
-                    if (!hasShownFontToast && p.currentMediaItem != null) {
-                        // Once per cast: warn if the container *might* have embedded fonts we
-                        // can't extract yet. Cheap heuristic — only shown if libass actually
-                        // started rendering content (so users with no styled subs never see
-                        // the message). Removed in PR 6 when font extraction lands.
-                        hasShownFontToast = true
-                        Toast.makeText(
-                            this@FCastInboundPlayerActivity,
-                            R.string.fcast_inbound_subtitle_fonts_unsupported,
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
                 } else {
                     if (overlay.visibility != View.GONE) overlay.visibility = View.GONE
                 }
@@ -280,6 +351,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             Timber.w("FCastInboundPlayerActivity intent without %s", EXTRA_URL)
             return false
         }
+        // Kick off the embedded-font fetch ASAP — the LibassTextRenderer's font loader closure
+        // blocks on the resulting deferred at track init, which happens after ExoPlayer
+        // resolves the manifest. That's typically 200ms+ from now, which is enough lead time
+        // for a healthy Jellyfin server to round-trip `/MediaSources`. On slow networks the
+        // closure still blocks but only the libass renderer thread sees that, never the UI.
+        preloadLibassFontsAsync(url)
         val container = newIntent.getStringExtra(EXTRA_CONTAINER)
         val startMs = newIntent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L)
         val title = newIntent.getStringExtra(EXTRA_TITLE)
@@ -442,6 +519,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
         private const val MIN_TICKER_INTERVAL_MS: Long = 50L
         private const val TAG: String = "FCastInbound"
+
+        /**
+         * Matches `/Videos/<uuid>/stream` and the alternates Jellyfin actually serves
+         * (`/Videos/<uuid>/<sessionId>/stream`, `/Videos/<uuid>/main.m3u8`, etc.). The first
+         * captured UUID is the item id.
+         */
+        private val JELLYFIN_VIDEO_PATH_REGEX = Regex(
+            "/Videos/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/",
+        )
 
         fun createIntent(
             context: Context,
