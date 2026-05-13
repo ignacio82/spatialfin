@@ -57,8 +57,9 @@ fun FCastCastIconButton(
     sessionManager: CastSessionManager,
     modifier: Modifier = Modifier,
 ) {
-    val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
-    val tint = if (pickedReceiver != null) {
+    // Tint reflects "is anything picked" across all protocols — Cast / FCast / future AirPlay.
+    val pickedTarget by sessionManager.pickedTarget.collectAsState()
+    val tint = if (pickedTarget != null) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
@@ -145,13 +146,19 @@ fun FCastMiniController(
     modifier: Modifier = Modifier,
 ) {
     val pickedReceiver by sessionManager.pickedReceiver.collectAsState()
+    val pickedTarget by sessionManager.pickedTarget.collectAsState()
     val status by sessionManager.status.collectAsState()
     val remoteState by sessionManager.remoteState.collectAsState()
-    val receiver = pickedReceiver ?: return
+    // Mini-controller is visible whenever *anything* is picked — FCast or Cast. The
+    // per-protocol controls below gracefully degrade when the picked receiver isn't FCast
+    // (PR 5's redesign unifies them).
+    val anyTarget = pickedTarget ?: return
+    val receiver = pickedReceiver
+    val isFCastSession = receiver != null
     val scope = rememberCoroutineScope()
 
     val isPlaying = remoteState?.playbackState == PlaybackState.Playing
-    val controlsEnabled = status == FCastCastingController.Status.Casting
+    val controlsEnabled = isFCastSession && status == FCastCastingController.Status.Casting
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -170,19 +177,26 @@ fun FCastMiniController(
                 )
                 Spacer(Modifier.width(12.dp))
                 androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = when (status) {
+                    // For FCast we have a live status flow; Cast picks just say "Casting to X"
+                    // until PR 5 plumbs the adapter event flow into a unified session-state.
+                    val label = if (isFCastSession && receiver != null) {
+                        when (status) {
                             FCastCastingController.Status.Casting -> "Casting to ${receiver.name}"
                             FCastCastingController.Status.Connecting -> "Connecting to ${receiver.name}…"
                             FCastCastingController.Status.Failed -> "Cast failed — ${receiver.name}"
                             FCastCastingController.Status.Idle -> "Ready to cast to ${receiver.name}"
-                        },
+                        }
+                    } else {
+                        "Casting to ${anyTarget.name}"
+                    }
+                    Text(
+                        text = label,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "${receiver.host}:${receiver.port}",
+                        text = "${anyTarget.host}:${anyTarget.port} · ${anyTarget.protocol}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
