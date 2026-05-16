@@ -6,12 +6,16 @@ import dev.jdtech.jellyfin.fcast.protocol.FCastMessage
 import dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage
 import dev.jdtech.jellyfin.fcast.protocol.InitialSenderMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
+import dev.jdtech.jellyfin.fcast.protocol.PingMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
+import dev.jdtech.jellyfin.fcast.protocol.PongMessage
+import dev.jdtech.jellyfin.fcast.protocol.ResumeMessage
 import dev.jdtech.jellyfin.fcast.protocol.SeekMessage
 import dev.jdtech.jellyfin.fcast.protocol.SetSpeedMessage
 import dev.jdtech.jellyfin.fcast.protocol.SetVolumeMessage
 import dev.jdtech.jellyfin.fcast.protocol.VersionMessage
 import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
+import android.os.SystemClock
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
@@ -53,6 +57,13 @@ class FCastSenderClient(
         appName = "SpatialFin",
     ),
     private val connectTimeoutMs: Int = 4_000,
+    /**
+     * Monotonic clock for RTT measurement. Defaults to [SystemClock.elapsedRealtime]; never
+     * `System.currentTimeMillis()`, which can step (NTP/DST) between a Ping send and its Pong
+     * and yield a negative or wildly inflated RTT that poisons split-A/V drift correction.
+     * Injectable for tests.
+     */
+    private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
 
     enum class State { Idle, Connecting, Connected, Disconnected, Failed }
@@ -100,22 +111,32 @@ class FCastSenderClient(
 
     /**
      * Observation emitted when a [FCastMessage.Pong] arrives in response to one of our
-     * [ping] calls. Pairs the wall-clock time of our original Ping send with the wall-clock
+     * [ping] calls. Pairs the monotonic time of our original Ping send with the monotonic
      * time we received the Pong so consumers can compute round-trip time. Used by split-A/V
      * sync to estimate network one-way delay.
      */
     data class PongObservation(
+        /** Monotonic clock at Ping send (NTP t1). */
         val pingSentWallMs: Long,
+        /** Monotonic clock at Pong receipt (NTP t4). */
         val pongReceivedWallMs: Long,
+        /** Receiver monotonic clock when it read the Ping (NTP t2). Null on a legacy
+         *  body-less Pong (pre-v4 / non-SpatialFin peer). */
+        val receiverRecvMs: Long? = null,
+        /** Receiver monotonic clock when it wrote the Pong (NTP t3). Null on legacy Pong. */
+        val receiverSendMs: Long? = null,
     ) {
         val rttMs: Long get() = pongReceivedWallMs - pingSentWallMs
+
+        /** True when the four-timestamp NTP set is present (v4 SpatialFin peer). */
+        val hasClockSync: Boolean get() = receiverRecvMs != null && receiverSendMs != null
     }
 
     private val _pongs = MutableSharedFlow<PongObservation>(extraBufferCapacity = 8)
     val pongs: SharedFlow<PongObservation> = _pongs.asSharedFlow()
 
     /**
-     * Wall-clock send time of the most recent outbound Ping awaiting Pong. Reset to null when
+     * Monotonic send time of the most recent outbound Ping awaiting Pong. Reset to null when
      * the Pong arrives. Single slot — Ping cadence is low (~2 s in split mode) so we never
      * have more than one outstanding.
      */
@@ -160,9 +181,27 @@ class FCastSenderClient(
         }
     }
 
+    /** True once the Version handshake settled on protocol ≥ 4 (peer is a v4 SpatialFin
+     *  build). Gates emission of every v4 optional body so we never send one to a peer that
+     *  negotiated v3 — keeps the wire byte-identical to v3 for them. */
+    private fun negotiatedV4(): Boolean = (_negotiatedVersion.value ?: 0) >= 4
+
     suspend fun play(payload: PlayMessage) = sendInternal(FCastMessage.Play(payload))
     suspend fun pause() = sendInternal(FCastMessage.Pause)
-    suspend fun resume() = sendInternal(FCastMessage.Resume)
+    suspend fun resume() = sendInternal(FCastMessage.Resume())
+
+    /**
+     * v4 synchronized resume: ask the receiver to begin playback when *its* monotonic clock
+     * reaches [atReceiverMonotonicMs]. Degrades to a plain resume-now against a pre-v4 peer
+     * (which would mis-parse an unexpected body).
+     */
+    suspend fun resumeAt(atReceiverMonotonicMs: Long) =
+        if (negotiatedV4()) {
+            sendInternal(FCastMessage.Resume(ResumeMessage(atReceiverMonotonicMs)))
+        } else {
+            sendInternal(FCastMessage.Resume())
+        }
+
     suspend fun stop() = sendInternal(FCastMessage.Stop)
     suspend fun seek(seconds: Double) = sendInternal(FCastMessage.Seek(SeekMessage(seconds)))
     suspend fun setVolume(volume: Double) =
@@ -175,8 +214,9 @@ class FCastSenderClient(
      * write is acceptable: the kernel buffer write is microseconds and not user-perceivable.
      */
     suspend fun ping() {
-        lastPingSentWallMs = System.currentTimeMillis()
-        sendInternal(FCastMessage.Ping)
+        val t1 = nowMs()
+        lastPingSentWallMs = t1
+        sendInternal(FCastMessage.Ping(if (negotiatedV4()) PingMessage(t1) else null))
     }
 
     /**
@@ -222,14 +262,30 @@ class FCastSenderClient(
                 val peer = msg.payload.version
                 _negotiatedVersion.value = minOf(FCAST_PROTOCOL_VERSION, peer)
             }
-            FCastMessage.Ping -> sendInternal(FCastMessage.Pong)
-            FCastMessage.Pong -> {
-                val sent = lastPingSentWallMs
+            is FCastMessage.Ping -> {
+                // A peer can ping us too; echo NTP timestamps when it sent them so it can
+                // solve offset against us, otherwise reply body-less (legacy).
+                val t1 = msg.payload?.t1
+                if (t1 != null) {
+                    val t2 = nowMs()
+                    sendInternal(FCastMessage.Pong(PongMessage(t1 = t1, t2 = t2, t3 = nowMs())))
+                } else {
+                    sendInternal(FCastMessage.Pong())
+                }
+            }
+            is FCastMessage.Pong -> {
+                val t4 = nowMs()
+                val p = msg.payload
+                // v4: trust the echoed t1 (pairs even if pings overlapped); legacy: fall
+                // back to the single outstanding-ping slot.
+                val sent = p?.t1 ?: lastPingSentWallMs
                 if (sent != null) {
                     _pongs.tryEmit(
                         PongObservation(
                             pingSentWallMs = sent,
-                            pongReceivedWallMs = System.currentTimeMillis(),
+                            pongReceivedWallMs = t4,
+                            receiverRecvMs = p?.t2,
+                            receiverSendMs = p?.t3,
                         ),
                     )
                     lastPingSentWallMs = null

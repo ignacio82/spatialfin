@@ -24,6 +24,15 @@ interface FCastIngressRouter {
 
     fun onPause()
     fun onResume()
+
+    /**
+     * v4 synchronized-start: begin playback when the receiver's monotonic clock
+     * (`SystemClock.elapsedRealtime`) reaches [atReceiverMonotonicMs]. Implementations must
+     * clamp — if the instant is already past or unreasonably far out, resume immediately.
+     * Defaults to a plain [onResume] so pre-v4 routers need no change.
+     */
+    fun onResumeAt(atReceiverMonotonicMs: Long) = onResume()
+
     fun onStop()
     fun onSeek(seconds: Double)
     fun onSetVolume(volume: Double)

@@ -176,11 +176,27 @@ class CalibrationOrchestrator @Inject constructor(
                 )
             }
 
-            val detection = ChirpDetector.detect(
+            val minRequired = ChirpGenerator.CHIRP_COUNT - 1  // tolerate one missing detection
+            // Prefer the matched filter (better onset timing + echo rejection). Fall back to
+            // the rolling-RMS detector only if the correlator under-detects, so this can never
+            // regress below the previous behaviour.
+            val matched = ChirpDetector.detectMatched(
                 samples = capture.samples,
                 sampleRateHz = ChirpGenerator.SAMPLE_RATE_HZ,
+                template = ChirpGenerator.chirpTemplate(),
             )
-            val minRequired = ChirpGenerator.CHIRP_COUNT - 1  // tolerate one missing detection
+            val detection = if (matched.onsets.size >= minRequired) {
+                matched
+            } else {
+                Timber.tag(TAG).w(
+                    "Matched filter found %d/%d chirps — falling back to RMS detector",
+                    matched.onsets.size, ChirpGenerator.CHIRP_COUNT,
+                )
+                ChirpDetector.detect(
+                    samples = capture.samples,
+                    sampleRateHz = ChirpGenerator.SAMPLE_RATE_HZ,
+                )
+            }
             if (detection.onsets.size < minRequired) {
                 return@coroutineScope Result.Failure(
                     "Detected only ${detection.onsets.size} of ${ChirpGenerator.CHIRP_COUNT} " +

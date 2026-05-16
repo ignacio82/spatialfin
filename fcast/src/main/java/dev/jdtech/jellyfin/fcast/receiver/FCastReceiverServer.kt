@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.fcast.receiver
 
+import android.os.SystemClock
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
@@ -38,6 +39,12 @@ class FCastReceiverServer(
         val displayName: String = "SpatialFin",
         val appName: String = "SpatialFin",
         val appVersion: String? = null,
+        /**
+         * Monotonic clock for per-session NTP Ping/Pong timestamps. Defaults to
+         * [SystemClock.elapsedRealtime]; injectable so JVM unit tests (no Robolectric) don't
+         * hit the throwing Android stub on the v4 Ping path.
+         */
+        val clock: () -> Long = { SystemClock.elapsedRealtime() },
     )
 
     enum class State { Stopped, Starting, Running, Failed }
@@ -93,6 +100,7 @@ class FCastReceiverServer(
                     router = routerFactory(),
                     receiverInfo = info,
                     parentScope = scope,
+                    nowMs = config.clock,
                 )
                 sessions.add(session)
             }

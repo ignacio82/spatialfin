@@ -78,10 +78,16 @@ object FCastFrame {
         return when (opcode) {
             FCastOpcode.None -> FCastMessage.None
             FCastOpcode.Pause -> FCastMessage.Pause
-            FCastOpcode.Resume -> FCastMessage.Resume
             FCastOpcode.Stop -> FCastMessage.Stop
-            FCastOpcode.Ping -> FCastMessage.Ping
-            FCastOpcode.Pong -> FCastMessage.Pong
+            // v4: optional bodies. Empty body ⇒ legacy body-less variant (back-compat); a
+            // present body is the SpatialFin extension. ignoreUnknownKeys covers a peer that
+            // sends a richer body than we know.
+            FCastOpcode.Resume ->
+                FCastMessage.Resume(if (text.isEmpty()) null else FCastJson.decode(text))
+            FCastOpcode.Ping ->
+                FCastMessage.Ping(if (text.isEmpty()) null else FCastJson.decode(text))
+            FCastOpcode.Pong ->
+                FCastMessage.Pong(if (text.isEmpty()) null else FCastJson.decode(text))
             FCastOpcode.Play -> FCastMessage.Play(FCastJson.decode(text))
             FCastOpcode.Seek -> FCastMessage.Seek(FCastJson.decode(text))
             FCastOpcode.PlaybackUpdate -> FCastMessage.PlaybackUpdate(FCastJson.decode(text))
@@ -105,11 +111,16 @@ object FCastFrame {
     fun encodeBody(message: FCastMessage): ByteArray = when (message) {
         FCastMessage.None,
         FCastMessage.Pause,
-        FCastMessage.Resume,
         FCastMessage.Stop,
-        FCastMessage.Ping,
-        FCastMessage.Pong,
         -> ByteArray(0)
+        // v4: serialize the extension body only when present; null ⇒ body-less, byte-identical
+        // to v2/v3 (the back-compat guarantee that lets us bump the version safely).
+        is FCastMessage.Resume -> message.payload
+            ?.let { FCastJson.encodeToString(it).toByteArray(Charsets.UTF_8) } ?: ByteArray(0)
+        is FCastMessage.Ping -> message.payload
+            ?.let { FCastJson.encodeToString(it).toByteArray(Charsets.UTF_8) } ?: ByteArray(0)
+        is FCastMessage.Pong -> message.payload
+            ?.let { FCastJson.encodeToString(it).toByteArray(Charsets.UTF_8) } ?: ByteArray(0)
         is FCastMessage.Play -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
         is FCastMessage.Seek -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
         is FCastMessage.PlaybackUpdate -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)

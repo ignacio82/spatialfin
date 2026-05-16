@@ -41,6 +41,10 @@ object FCastInboundSession {
     @Volatile private var pendingPlayIntent: PendingPlayIntent? = null
     @Volatile private var pendingSeekSeconds: Double? = null
 
+    /** v4 synchronized-start target carried alongside a pending [PendingPlayIntent.Resume].
+     *  Non-null ⇒ the queued resume should be a scheduled `resumeAt`, not a resume-now. */
+    @Volatile private var pendingResumeAtMs: Long? = null
+
     private enum class PendingPlayIntent { Resume, Pause }
 
     fun bindControl(c: ExternalStreamPlayer) {
@@ -49,13 +53,16 @@ object FCastInboundSession {
         // intent re-binds) can't double-apply the same pending intent.
         val seek = pendingSeekSeconds
         val intent = pendingPlayIntent
+        val resumeAt = pendingResumeAtMs
         pendingSeekSeconds = null
         pendingPlayIntent = null
+        pendingResumeAtMs = null
         // Seek before play-intent: senders send them in that order, and applying a Seek
         // *after* a Resume forces an extra buffer-flush mid-playback.
         if (seek != null) c.seek(seek)
         when (intent) {
-            PendingPlayIntent.Resume -> c.resume()
+            PendingPlayIntent.Resume ->
+                if (resumeAt != null) c.resumeAt(resumeAt) else c.resume()
             PendingPlayIntent.Pause -> c.pause()
             null -> Unit
         }
@@ -68,6 +75,7 @@ object FCastInboundSession {
             // Clear any stale pending intents — they belonged to the now-departed Activity.
             pendingPlayIntent = null
             pendingSeekSeconds = null
+            pendingResumeAtMs = null
         }
     }
 
@@ -87,12 +95,32 @@ object FCastInboundSession {
     // Called by IntentBasedExternalStreamPlayer when an FCast frame lands on the router.
     fun pause() {
         val c = control
-        if (c != null) c.pause() else pendingPlayIntent = PendingPlayIntent.Pause
+        if (c != null) {
+            c.pause()
+        } else {
+            pendingPlayIntent = PendingPlayIntent.Pause
+            pendingResumeAtMs = null
+        }
     }
 
     fun resume() {
         val c = control
-        if (c != null) c.resume() else pendingPlayIntent = PendingPlayIntent.Resume
+        if (c != null) {
+            c.resume()
+        } else {
+            pendingPlayIntent = PendingPlayIntent.Resume
+            pendingResumeAtMs = null // a plain resume supersedes any queued scheduled start
+        }
+    }
+
+    fun resumeAt(atReceiverMonotonicMs: Long) {
+        val c = control
+        if (c != null) {
+            c.resumeAt(atReceiverMonotonicMs)
+        } else {
+            pendingPlayIntent = PendingPlayIntent.Resume
+            pendingResumeAtMs = atReceiverMonotonicMs
+        }
     }
 
     fun stop() {
@@ -102,6 +130,7 @@ object FCastInboundSession {
         // when its session-stop watchdog fires. We don't try to dispatch a stop to a not-yet-
         // bound control because it'd race the Activity's own initialization.
         pendingPlayIntent = null
+        pendingResumeAtMs = null
         control?.stop()
     }
 

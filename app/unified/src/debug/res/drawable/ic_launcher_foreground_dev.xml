@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dev launcher foreground: the production foreground flipped 180°. Static
+  RotateDrawable (fromDegrees == toDegrees) renders the child permanently
+  upside-down, so the dev install is obvious at a glance on the launcher.
+-->
+<rotate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_foreground"
+    android:fromDegrees="180"
+    android:toDegrees="180"
+    android:pivotX="50%"
+    android:pivotY="50%" />

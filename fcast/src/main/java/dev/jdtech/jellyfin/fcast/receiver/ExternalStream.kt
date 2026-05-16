@@ -87,6 +87,15 @@ interface ExternalStreamPlayer {
 
     fun pause()
     fun resume()
+
+    /**
+     * v4 synchronized start: begin playback when the device's monotonic clock
+     * (`SystemClock.elapsedRealtime`) reaches [atReceiverMonotonicMs]. Implementations clamp
+     * (past instant / too far out ⇒ resume now). Defaults to [resume] for players that don't
+     * support scheduled start.
+     */
+    fun resumeAt(atReceiverMonotonicMs: Long) = resume()
+
     fun stop()
     fun seek(seconds: Double)
     fun setVolume(volume: Double)
@@ -132,6 +141,7 @@ class ExternalStreamIngressRouter(
 
     override fun onPause() = player.pause()
     override fun onResume() = player.resume()
+    override fun onResumeAt(atReceiverMonotonicMs: Long) = player.resumeAt(atReceiverMonotonicMs)
     override fun onStop() = player.stop()
     override fun onSeek(seconds: Double) = player.seek(seconds)
     override fun onSetVolume(volume: Double) = player.setVolume(volume)

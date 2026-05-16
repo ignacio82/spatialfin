@@ -135,6 +135,94 @@ object ChirpDetector {
         }
     }
 
+    /**
+     * Matched-filter onset detection: normalized cross-correlation of the capture against the
+     * known chirp [template]. More accurate than rolling-RMS for onset timing and far more
+     * robust to room echo and broadband noise — the correlation only spikes where the *swept*
+     * waveform actually aligns, so a reflection (delayed, filtered copy) produces a smaller,
+     * later peak that the spacing/grouping rejects, and stationary HVAC/fan noise correlates
+     * near zero with a 1–4 kHz sweep.
+     *
+     * The lag axis is strided by [lagStrideMs] (default 1 ms) so cost stays ~`N/stride · M`
+     * instead of `N · M`; 1 ms easily clears the ~5 ms accuracy the orchestrator needs.
+     *
+     * Returns the same [Result] shape as [detect] so it's a drop-in: the orchestrator prefers
+     * this and only falls back to [detect] if it under-detects, so a correlator regression can
+     * never do worse than the previous RMS behaviour.
+     */
+    fun detectMatched(
+        samples: ShortArray,
+        sampleRateHz: Int,
+        template: ShortArray,
+        thresholdMultiplier: Double = DEFAULT_THRESHOLD_MULTIPLIER,
+        lagStrideMs: Int = 1,
+        minSpacingMs: Int = DEFAULT_MIN_SPACING_MS,
+    ): Result {
+        val m = template.size
+        if (m == 0 || samples.size < m) return Result(emptyList(), 0.0, 0.0)
+        val stride = (sampleRateHz * lagStrideMs / 1_000).coerceAtLeast(1)
+
+        var tplEnergy = 0.0
+        for (v in template) tplEnergy += v.toDouble() * v.toDouble()
+        val tplNorm = sqrt(tplEnergy)
+        if (tplNorm == 0.0) return Result(emptyList(), 0.0, 0.0)
+
+        val lastLag = samples.size - m
+        val corr = DoubleArray(lastLag / stride + 1)
+        for (idx in corr.indices) {
+            val lag = idx * stride
+            var dot = 0.0
+            var sigEnergy = 0.0
+            for (j in 0 until m) {
+                val s = samples[lag + j].toDouble()
+                dot += s * template[j].toDouble()
+                sigEnergy += s * s
+            }
+            val denom = sqrt(sigEnergy) * tplNorm
+            corr[idx] = if (denom > 0.0) (dot / denom) else 0.0
+        }
+
+        // Noise floor = median |corr|; an event is a run of lags whose correlation clears the
+        // threshold, and the onset is the *peak* lag within that run (sub-sampled to `stride`).
+        val absCorr = DoubleArray(corr.size) { kotlin.math.abs(corr[it]) }
+        val noiseFloor = median(absCorr)
+        val threshold = (noiseFloor * thresholdMultiplier).coerceIn(MIN_CORRELATION, 0.95)
+
+        // Candidate peaks: every above-threshold local maximum of the correlation curve. Then
+        // greedily keep the strongest and reject anything within minSpacing of an already-kept
+        // peak. This is what kills room echo: a reflection's peak is later *and* weaker than
+        // the direct path, so it's always discarded in favour of the true onset, while genuine
+        // chirps are spaced far enough apart (chirp gap) to survive.
+        data class Peak(val idx: Int, val v: Double)
+        val candidates = ArrayList<Peak>()
+        for (i in corr.indices) {
+            val c = absCorr[i]
+            if (c < threshold) continue
+            val leftOk = i == 0 || absCorr[i - 1] <= c
+            val rightOk = i == corr.lastIndex || absCorr[i + 1] < c
+            if (leftOk && rightOk) candidates += Peak(i, c)
+        }
+        val minSpacingIdx = ((sampleRateHz * minSpacingMs / 1_000) / stride).coerceAtLeast(1)
+        val kept = ArrayList<Peak>()
+        for (p in candidates.sortedByDescending { it.v }) {
+            if (kept.none { kotlin.math.abs(it.idx - p.idx) < minSpacingIdx }) kept += p
+        }
+        val onsets = kept.sortedBy { it.idx }.map { p ->
+            Onset(
+                timeSeconds = (p.idx * stride).toDouble() / sampleRateHz,
+                snr = if (noiseFloor > 0) p.v / noiseFloor else Double.POSITIVE_INFINITY,
+            )
+        }
+        return Result(onsets, noiseFloor, threshold)
+    }
+
+    /** Lower bound on the correlation threshold so a noiseless capture can't degenerate to 0. */
+    const val MIN_CORRELATION: Double = 0.30
+
+    /** Reject any matched peak within this of a stronger one — suppresses room echo while
+     *  staying well under the inter-chirp gap so genuine chirps are never merged. */
+    const val DEFAULT_MIN_SPACING_MS: Int = 250
+
     private fun median(values: DoubleArray): Double {
         if (values.isEmpty()) return 0.0
         val copy = values.copyOf().also { it.sort() }
