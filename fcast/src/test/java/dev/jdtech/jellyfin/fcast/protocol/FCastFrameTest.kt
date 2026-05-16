@@ -79,10 +79,51 @@ class FCastFrameTest {
 
     @Test
     fun `body-less control opcodes round-trip`() {
-        for (msg in listOf(FCastMessage.None, FCastMessage.Pause, FCastMessage.Resume, FCastMessage.Stop, FCastMessage.Ping, FCastMessage.Pong)) {
+        for (
+            msg in listOf(
+                FCastMessage.None, FCastMessage.Pause, FCastMessage.Resume(), FCastMessage.Stop,
+                FCastMessage.Ping(), FCastMessage.Pong(),
+            )
+        ) {
             val decoded = roundTrip(msg)
             assertEquals(msg, decoded)
         }
+    }
+
+    @Test
+    fun `v4 Ping-Pong-Resume bodies survive a round-trip`() {
+        assertEquals(
+            FCastMessage.Ping(PingMessage(t1 = 123_456L)),
+            roundTrip(FCastMessage.Ping(PingMessage(t1 = 123_456L))),
+        )
+        assertEquals(
+            FCastMessage.Pong(PongMessage(t1 = 1L, t2 = 2L, t3 = 3L)),
+            roundTrip(FCastMessage.Pong(PongMessage(t1 = 1L, t2 = 2L, t3 = 3L))),
+        )
+        assertEquals(
+            FCastMessage.Resume(ResumeMessage(atReceiverMonotonicMs = 9_999L)),
+            roundTrip(FCastMessage.Resume(ResumeMessage(atReceiverMonotonicMs = 9_999L))),
+        )
+    }
+
+    @Test
+    fun `a v4 body-less message is byte-identical to v3 (back-compat guarantee)`() {
+        // The whole reason the version bump is safe: no payload ⇒ size=1, no body bytes.
+        for (m in listOf(FCastMessage.Ping(), FCastMessage.Pong(), FCastMessage.Resume())) {
+            val bytes = FCastFrame.encode(m)
+            assertEquals("size header must be 1 (body-less)", 1, bytes[0].toInt())
+            assertEquals("frame is header(4)+opcode(1) only", 5, bytes.size)
+        }
+    }
+
+    @Test
+    fun `PlaybackUpdate carries the v4 monotonicSampleMs extension`() {
+        val msg = FCastMessage.PlaybackUpdate(
+            PlaybackUpdateMessage(
+                generationTime = 1L, state = 1, time = 12.5, monotonicSampleMs = 777_777L,
+            ),
+        )
+        assertEquals(msg, roundTrip(msg))
     }
 
     @Test

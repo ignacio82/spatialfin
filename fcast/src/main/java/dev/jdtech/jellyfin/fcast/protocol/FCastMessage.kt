@@ -13,7 +13,12 @@ sealed class FCastMessage(val opcode: FCastOpcode) {
     data object None : FCastMessage(FCastOpcode.None)
     data class Play(val payload: PlayMessage) : FCastMessage(FCastOpcode.Play)
     data object Pause : FCastMessage(FCastOpcode.Pause)
-    data object Resume : FCastMessage(FCastOpcode.Resume)
+
+    /**
+     * Resume. [payload] is the SpatialFin v4 synchronized-start extension; null = a legacy
+     * resume-now (body-less on the wire, byte-identical to v2/v3).
+     */
+    data class Resume(val payload: ResumeMessage? = null) : FCastMessage(FCastOpcode.Resume)
     data object Stop : FCastMessage(FCastOpcode.Stop)
     data class Seek(val payload: SeekMessage) : FCastMessage(FCastOpcode.Seek)
     data class PlaybackUpdate(val payload: PlaybackUpdateMessage) : FCastMessage(FCastOpcode.PlaybackUpdate)
@@ -22,8 +27,14 @@ sealed class FCastMessage(val opcode: FCastOpcode) {
     data class PlaybackError(val payload: PlaybackErrorMessage) : FCastMessage(FCastOpcode.PlaybackError)
     data class SetSpeed(val payload: SetSpeedMessage) : FCastMessage(FCastOpcode.SetSpeed)
     data class Version(val payload: VersionMessage) : FCastMessage(FCastOpcode.Version)
-    data object Ping : FCastMessage(FCastOpcode.Ping)
-    data object Pong : FCastMessage(FCastOpcode.Pong)
+    /**
+     * Ping. [payload] is the SpatialFin v4 NTP-timestamp extension; null = a legacy body-less
+     * Ping (byte-identical to v2/v3).
+     */
+    data class Ping(val payload: PingMessage? = null) : FCastMessage(FCastOpcode.Ping)
+
+    /** Pong. [payload] is the SpatialFin v4 NTP four-timestamp echo; null = legacy body-less. */
+    data class Pong(val payload: PongMessage? = null) : FCastMessage(FCastOpcode.Pong)
 
     /**
      * Initial body shape depends on direction (sender vs receiver). The codec decodes into

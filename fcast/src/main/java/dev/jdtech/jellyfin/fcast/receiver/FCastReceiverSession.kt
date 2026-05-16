@@ -7,7 +7,9 @@ import dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackErrorMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.protocol.VersionMessage
+import dev.jdtech.jellyfin.fcast.protocol.PongMessage
 import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
+import android.os.SystemClock
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
@@ -37,6 +39,9 @@ class FCastReceiverSession(
     private val router: FCastIngressRouter,
     private val receiverInfo: InitialReceiverMessage,
     parentScope: CoroutineScope,
+    /** Monotonic clock for NTP Ping/Pong timestamps; must be the same clock the player uses
+     *  to stamp `PlaybackUpdateMessage.monotonicSampleMs`. Injectable for tests. */
+    private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
 
     private val output: DataOutputStream = DataOutputStream(socket.getOutputStream().buffered())
@@ -85,12 +90,28 @@ class FCastReceiverSession(
                 }
             }
             FCastMessage.Pause -> router.onPause()
-            FCastMessage.Resume -> router.onResume()
+            is FCastMessage.Resume -> {
+                // v4: a body requests a synchronized start at a receiver-clock instant; no
+                // body = legacy resume-now.
+                val at = message.payload?.atReceiverMonotonicMs
+                if (at != null) router.onResumeAt(at) else router.onResume()
+            }
             FCastMessage.Stop -> router.onStop()
             is FCastMessage.Seek -> router.onSeek(message.payload.time)
             is FCastMessage.SetVolume -> router.onSetVolume(message.payload.volume)
             is FCastMessage.SetSpeed -> router.onSetSpeed(message.payload.speed)
-            FCastMessage.Ping -> sendInternal(FCastMessage.Pong)
+            is FCastMessage.Ping -> {
+                // v4 NTP exchange: echo the sender's t1 and add our monotonic receive (t2)
+                // and send (t3) stamps so the sender can solve clock offset θ. A body-less
+                // Ping (pre-v4 / non-SpatialFin) still gets a plain body-less Pong.
+                val t1 = message.payload?.t1
+                if (t1 != null) {
+                    val t2 = nowMs()
+                    sendInternal(FCastMessage.Pong(PongMessage(t1 = t1, t2 = t2, t3 = nowMs())))
+                } else {
+                    sendInternal(FCastMessage.Pong())
+                }
+            }
             // We don't care about senders' Version or Initial bodies for routing — the
             // handshake is informational once we've sent ours.
             is FCastMessage.Version, is FCastMessage.Initial -> Unit

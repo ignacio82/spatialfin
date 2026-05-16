@@ -107,6 +107,11 @@ open class FCastCastingController {
 
     suspend fun pause() = withClient { it.pause() }
     suspend fun resume() = withClient { it.resume() }
+
+    /** v4 synchronized resume — see [FCastSenderClient.resumeAt]. Degrades to resume-now
+     *  against a pre-v4 peer. */
+    suspend fun resumeAt(atReceiverMonotonicMs: Long) =
+        withClient { it.resumeAt(atReceiverMonotonicMs) }
     suspend fun seek(seconds: Double) = withClient { it.seek(seconds) }
     suspend fun setVolume(volume: Double) = withClient { it.setVolume(volume) }
     suspend fun setSpeed(speed: Double) = withClient { it.setSpeed(speed) }

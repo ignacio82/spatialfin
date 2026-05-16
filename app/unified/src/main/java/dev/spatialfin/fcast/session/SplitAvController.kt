@@ -12,18 +12,19 @@ import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoMaster
 import javax.inject.Inject
 import javax.inject.Singleton
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -73,10 +74,41 @@ class SplitAvController @Inject constructor(
 
     private val seekLimiter = HardSeekRateLimiter()
     private val networkDelay = NetworkDelayEstimator()
+    private val driftEstimator = DriftEstimator()
+    private val freshnessGate = BeaconFreshnessGate()
+
+    /** FCast v4 NTP clock-offset θ. Fed by the Ping/Pong loop; enables the precise beacon
+     *  mapping in [SplitAvPolicy.expectedXrPositionMs] and the synchronized start. Stays empty
+     *  (→ legacy paths) against a pre-v4 / non-SpatialFin receiver. */
+    private val clockOffset = ClockOffsetEstimator()
+
+    /**
+     * Monotonic clock for all *local interval* math (warmup window, beacon receive time, drift
+     * timestamps). Must never be `System.currentTimeMillis()`: a wall-clock step (NTP
+     * correction, DST, manual change) would otherwise fabricate seconds of phantom drift and
+     * trigger a hard-seek storm. Overridable for tests.
+     */
+    var clock: () -> Long = SystemClock::elapsedRealtime
+
+    /** Sink for per-beacon trace records — see [SplitAvTrace]. Defaults to a logcat line. */
+    var traceSink: SplitAvTraceSink = LogcatSplitAvTraceSink
 
     private var sessionJob: Job? = null
-    private var nudgeRevertJob: Job? = null
-    private var currentNudgeFactor: Float? = null
+
+    /**
+     * PI speed-trim controller. Unlike the old transient ±1 % nudge, the trim is applied
+     * *continuously* while the receiver plays and recomputed every beacon, so a constant
+     * clock skew is held nulled instead of sawtoothing. Reset to neutral on hard-seek / stop.
+     */
+    private val nudgeController = NudgeController()
+
+    /** Last speed multiplier handed to the master, so we only call the (buffer-flushing)
+     *  setPlaybackSpeed when it meaningfully changes. */
+    private var appliedSpeed: Float = 1.0f
+
+    /** Monotonic time of the previous processed beacon, for the controller's dt. */
+    private var lastBeaconAtMs: Long? = null
+
     private var cachedAudioLatencyMs: Int = 0
     private var sessionReceiver: FCastReceiver? = null
 
@@ -171,6 +203,12 @@ class SplitAvController @Inject constructor(
         SplitAvSessionRegistry.setActive(castReceiver)
         seekLimiter.reset()
         networkDelay.reset()
+        driftEstimator.reset()
+        freshnessGate.reset()
+        clockOffset.reset()
+        nudgeController.reset()
+        appliedSpeed = 1.0f
+        lastBeaconAtMs = null
         _lastDriftMs.value = null
         _state.value = State.AwaitingMaster
         sessionJob = scope.launch { runSession() }
@@ -239,9 +277,11 @@ class SplitAvController @Inject constructor(
         if (_state.value !in ACTIVE_STATES) return@withLock
         sessionJob?.cancel()
         sessionJob = null
-        nudgeRevertJob?.cancel()
-        nudgeRevertJob = null
-        SplitAvVideoBridge.activeMaster.value?.setAudioMuted(false)
+        SplitAvVideoBridge.activeMaster.value?.let {
+            nudgeController.reset()
+            it.setPlaybackSpeed(1.0f)
+            it.setAudioMuted(false)
+        }
         _state.value = State.Idle
         _lastDriftMs.value = null
         sessionReceiver = null
@@ -252,8 +292,8 @@ class SplitAvController @Inject constructor(
     private suspend fun stopInternal() {
         sessionJob?.cancel()
         sessionJob = null
-        nudgeRevertJob?.cancel()
-        nudgeRevertJob = null
+        nudgeController.reset()
+        appliedSpeed = 1.0f
         if (_state.value != State.Idle) {
             try {
                 castingController.stopCast()
@@ -277,9 +317,15 @@ class SplitAvController @Inject constructor(
      * [networkDelay] so the policy's `networkOneWayMs` term is non-zero), and a Pong observer
      * that records each observation. Both stop when the session ends.
      */
-    private suspend fun runSession() {
-        scope.launch { runPingLoop() }
-        scope.launch { runPongCollector() }
+    private suspend fun runSession() = coroutineScope {
+        // These MUST be children of the session coroutine (this `coroutineScope`), not the
+        // singleton `scope`. Launching them on `scope` leaked a ping loop on every repeated
+        // session: stop()/endByReceiver() only cancel `sessionJob`, so old loops kept calling
+        // castingController.ping() forever — and since FCastSenderClient tracks a single
+        // outstanding ping, the overlapping pings corrupted every RTT sample. Structured here,
+        // they die with the session.
+        launch { runPingLoop() }
+        launch { runPongCollector() }
         SplitAvVideoBridge.activeMaster.collectLatest { master ->
             if (master == null) {
                 _state.value = State.AwaitingMaster
@@ -355,23 +401,57 @@ class SplitAvController @Inject constructor(
             if (playing == lastSent) return@collect
             lastSent = playing
             if (playing && masterFirstPlayingWallMs == null) {
-                masterFirstPlayingWallMs = System.currentTimeMillis()
+                masterFirstPlayingWallMs = clock()
                 Timber.tag(TAG).i("master first playWhenReady=true — warmup grace begins")
             }
+            var sentScheduledStart = false
             if (playing && !aligned) {
                 aligned = true
                 val masterPos = master.currentPositionMs()
-                val expectedReceiverStreamPos = (masterPos - mediaStartOffsetMs).coerceAtLeast(0L)
-                Timber.tag(TAG).i(
-                    "first play: master=%dms mediaStartOffset=%dms → align receiver to stream pos %dms",
-                    masterPos, mediaStartOffsetMs, expectedReceiverStreamPos,
-                )
-                try {
-                    castingController.seek(expectedReceiverStreamPos / 1000.0)
-                } catch (e: Exception) {
-                    Timber.tag(TAG).w(e, "first-play receiver seek failed")
+                val offset = clockOffset.offsetMs()
+                if (offset != null) {
+                    // v4 synchronized start: pick T0 a short lead out, seek the receiver to
+                    // where the (free-running ~1×) master video *will* be at T0, and have the
+                    // receiver begin audio exactly at T0 (mapped into its clock via θ). Both
+                    // render the same media position at the same instant → ~zero initial drift,
+                    // no warmup-grace hard-seek storm. We do NOT touch XR playback (it auto-
+                    // plays); only the audio side is scheduled.
+                    val now = clock()
+                    val t0 = now + ALIGNED_START_LEAD_MS
+                    val masterPosAtT0 = masterPos + ALIGNED_START_LEAD_MS
+                    val recvStreamPos = (masterPosAtT0 - mediaStartOffsetMs).coerceAtLeast(0L)
+                    Timber.tag(TAG).i(
+                        "first play (v4 aligned): master=%dms θ=%dms T0=+%dms → recv stream %dms",
+                        masterPos, offset, ALIGNED_START_LEAD_MS, recvStreamPos,
+                    )
+                    try {
+                        castingController.seek(recvStreamPos / 1000.0)
+                        castingController.resumeAt(t0 + offset)
+                        sentScheduledStart = true
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "v4 aligned start failed — falling back to resume-now")
+                    }
+                }
+                if (!sentScheduledStart) {
+                    // Legacy path: θ not converged (pre-v4 peer, or first-play beat the ping
+                    // burst). Seek to the master's current position; the generic resume below
+                    // starts the receiver now; warmup-grace absorbs the start transient.
+                    val expectedReceiverStreamPos =
+                        (masterPos - mediaStartOffsetMs).coerceAtLeast(0L)
+                    Timber.tag(TAG).i(
+                        "first play (legacy): master=%dms offset=%dms → align receiver to %dms",
+                        masterPos, mediaStartOffsetMs, expectedReceiverStreamPos,
+                    )
+                    try {
+                        castingController.seek(expectedReceiverStreamPos / 1000.0)
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "first-play receiver seek failed")
+                    }
                 }
             }
+            // The v4 aligned start already issued a (scheduled) resume; don't also send a
+            // resume-now or we'd cancel the schedule.
+            if (sentScheduledStart) return@collect
             Timber.tag(TAG).i("mirror master state: playing=%b — cascading to receiver", playing)
             try {
                 if (playing) castingController.resume() else castingController.pause()
@@ -411,7 +491,7 @@ class SplitAvController @Inject constructor(
             // post-seek buffer-fill (which can take a second or two on a slow LAN). Without
             // this the policy sees the gap and hard-seeks the master back to where the
             // receiver was, undoing the user's scrub.
-            masterFirstPlayingWallMs = System.currentTimeMillis()
+            masterFirstPlayingWallMs = clock()
         }
     }
 
@@ -425,6 +505,16 @@ class SplitAvController @Inject constructor(
         // floods logcat at 0.5 Hz forever. After [PING_GIVEUP_FAILURES] consecutive failures
         // we declare the session degraded and exit the loop — the user has to dismiss + re-pick
         // a receiver to re-establish the cast.
+        // Fast initial burst so the v4 clock offset θ converges *before* first-play and the
+        // synchronized start can engage. Cheap (a handful of tiny frames) and one-shot;
+        // failures here are non-fatal — the steady loop below handles a dead receiver.
+        repeat(CLOCK_SYNC_BURST_PINGS) {
+            try {
+                castingController.ping()
+            } catch (_: Exception) { /* steady loop will diagnose */ }
+            delay(CLOCK_SYNC_BURST_INTERVAL_MS)
+        }
+
         var consecutiveFailures = 0
         while (true) {
             delay(PING_INTERVAL_MS)
@@ -451,15 +541,38 @@ class SplitAvController @Inject constructor(
 
     private suspend fun runPongCollector() {
         castingController.pongs.collect { obs ->
-            networkDelay.recordRtt(obs.rttMs)
+            networkDelay.recordRtt(obs.rttMs) // legacy RTT/2 path (fallback)
+            // v4: feed the NTP four-timestamp set into the clock-offset estimator. Only
+            // present when the receiver echoed timestamps (negotiated v4 SpatialFin peer).
+            if (obs.hasClockSync) {
+                clockOffset.record(
+                    t1 = obs.pingSentWallMs,
+                    t2 = obs.receiverRecvMs!!,
+                    t3 = obs.receiverSendMs!!,
+                    t4 = obs.pongReceivedWallMs,
+                )
+            }
         }
     }
 
-    private fun clearNudge(master: SplitAvVideoMaster) {
-        if (currentNudgeFactor != null) {
-            nudgeRevertJob?.cancel()
+    /**
+     * Apply [factor] to the master, but only call the (renderer-re-evaluating, possibly
+     * buffer-flushing) setPlaybackSpeed when it moves more than a hair — beacons arrive at
+     * 10 Hz and the PI output wobbles in the 4th decimal, so a naive set would thrash ExoPlayer.
+     */
+    private fun applyTrim(master: SplitAvVideoMaster, factor: Float) {
+        if (kotlin.math.abs(factor - appliedSpeed) >= TRIM_EPSILON) {
+            master.setPlaybackSpeed(factor)
+            appliedSpeed = factor
+        }
+    }
+
+    /** Drop the standing trim and zero the integrator (used on hard-seek / pause). */
+    private fun resetTrim(master: SplitAvVideoMaster) {
+        nudgeController.reset()
+        if (appliedSpeed != 1.0f) {
             master.setPlaybackSpeed(1.0f)
-            currentNudgeFactor = null
+            appliedSpeed = 1.0f
         }
     }
 
@@ -467,7 +580,7 @@ class SplitAvController @Inject constructor(
         master: SplitAvVideoMaster,
         update: dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage,
     ) {
-        val now = System.currentTimeMillis()
+        val now = clock()
         val tvIsPlaying = update.playbackState == PlaybackState.Playing
         if (tvIsPlaying) hasObservedTvPlaying = true
         val prevTvIsPlaying = lastBeaconTvIsPlaying
@@ -495,6 +608,19 @@ class SplitAvController @Inject constructor(
             return
         }
 
+        // Drop beacons that spent an anomalous time queued in the network/receiver before
+        // reaching us — their `time` field is already stale, so acting on it injects error.
+        if (!freshnessGate.accept(update.generationTime, now)) {
+            Timber.tag(TAG).v("stale beacon dropped (generationTime=%d)", update.generationTime)
+            return
+        }
+
+        // Layer a codec-specific decode latency on top of the calibrated AVR tail. The
+        // receiver reports exactly what ExoPlayer is decoding; a bitstreamed Dolby/DTS format
+        // incurs an AVR object-decode the PCM/AAC calibration chirp never exercised. This is
+        // re-selected for free when the codec changes mid-stream (ad break, episode change).
+        val codecExtraMs = AudioLatencyProfile.extraLatencyMs(update.audioFormat?.mimeType)
+
         val state = SplitAvPolicy.BeaconState(
             // Receiver reports time inside *its* stream (which begins at mediaStartOffsetMs
             // when Jellyfin transcodes via startTimeTicks); add the offset to land back on the
@@ -503,23 +629,71 @@ class SplitAvController @Inject constructor(
             beaconReceivedWallMs = now,
             xrPositionMs = master.currentPositionMs(),
             nowWallMs = now,
-            audioLatencyMs = cachedAudioLatencyMs,
+            audioLatencyMs = cachedAudioLatencyMs + codecExtraMs,
             networkOneWayMs = networkDelay.oneWayMs() ?: 0,
             tvIsPlaying = tvIsPlaying,
+            // v4 precise mapping when available; both null ⇒ policy uses the legacy path.
+            clockOffsetMs = clockOffset.offsetMs(),
+            receiverMonotonicSampleMs = update.monotonicSampleMs,
         )
-        when (val action = SplitAvPolicy.decide(state)) {
+
+        // Feed the raw drift into the smoothing + rate estimator before deciding. A rejected
+        // sample is a transient Wi-Fi spike — record a trace row but take no action this beacon.
+        val rawDriftMs = state.xrPositionMs - SplitAvPolicy.expectedXrPositionMs(state)
+        if (tvIsPlaying && !driftEstimator.record(rawDriftMs, now)) {
+            traceSink.record(
+                SplitAvTrace(
+                    atMs = now,
+                    rawDriftMs = rawDriftMs,
+                    smoothedDriftMs = driftEstimator.driftMs() ?: rawDriftMs,
+                    driftRateMsPerSec = driftEstimator.driftRateMsPerSec(),
+                    rttMs = networkDelay.rttMs(),
+                    codecMime = update.audioFormat?.mimeType,
+                    action = "RejectedOutlier",
+                ),
+            )
+            return
+        }
+        val smoothedDriftMs = driftEstimator.driftMs() ?: rawDriftMs
+        val driftRateMsPerSec = driftEstimator.driftRateMsPerSec()
+
+        val action = SplitAvPolicy.decide(state, smoothedDriftMs, driftRateMsPerSec)
+        traceSink.record(
+            SplitAvTrace(
+                atMs = now,
+                rawDriftMs = rawDriftMs,
+                smoothedDriftMs = smoothedDriftMs,
+                driftRateMsPerSec = driftRateMsPerSec,
+                rttMs = networkDelay.rttMs(),
+                codecMime = update.audioFormat?.mimeType,
+                action = action::class.simpleName ?: "?",
+            ),
+        )
+        val dtMs = lastBeaconAtMs?.let { now - it } ?: 100L
+        lastBeaconAtMs = now
+        when (action) {
             is SplitAvPolicy.DriftAction.Hold -> {
-                _lastDriftMs.value = master.currentPositionMs() - SplitAvPolicy.expectedXrPositionMs(state)
-                clearNudge(master)
+                // Keep applying the standing trim (it's what cancels a steady skew) but freeze
+                // the integrator so sub-perceptual jitter can't wind it up.
+                _lastDriftMs.value = smoothedDriftMs
+                applyTrim(
+                    master,
+                    nudgeController.update(smoothedDriftMs, driftRateMsPerSec, dtMs, frozen = true),
+                )
             }
             is SplitAvPolicy.DriftAction.NudgeSpeed -> {
                 _lastDriftMs.value = action.driftMs
-                Timber.tag(TAG).i("drift=%dms — speed nudge factor=%.2f", action.driftMs, action.factor)
-                applyNudge(master, action.factor)
+                val factor =
+                    nudgeController.update(action.driftMs, driftRateMsPerSec, dtMs, frozen = false)
+                Timber.tag(TAG).i(
+                    "drift=%dms rate=%.1fms/s — speed trim=%.4f",
+                    action.driftMs, driftRateMsPerSec, factor,
+                )
+                applyTrim(master, factor)
             }
             is SplitAvPolicy.DriftAction.HardSeek -> {
                 _lastDriftMs.value = action.driftMs
-                clearNudge(master)
+                resetTrim(master)
                 if (seekLimiter.wouldDegrade(now)) {
                     Timber.tag(TAG).w(
                         "Split-A/V drift cap exceeded (%d in %dms) — degrading to single-renderer",
@@ -530,11 +704,15 @@ class SplitAvController @Inject constructor(
                     return
                 }
                 seekLimiter.record(now)
+                // The smoothed history described the *pre-seek* gap; it's meaningless once we
+                // jump. Reset so the estimator re-converges from the new alignment instead of
+                // dragging the old drift into the next decision.
+                driftEstimator.reset()
                 Timber.tag(TAG).i("drift=%dms — hard seek to %dms", action.driftMs, action.toPositionMs)
                 master.seekTo(action.toPositionMs)
             }
             SplitAvPolicy.DriftAction.TvNotPlaying -> {
-                clearNudge(master)
+                resetTrim(master)
                 // Only cascade the receiver's "I'm paused" back to the master on the *edge*
                 // (Playing→Paused transition), not on every Paused beacon. Without this gate
                 // the controller fires `pauseFromMaster` at 10 Hz forever once the receiver
@@ -554,26 +732,6 @@ class SplitAvController @Inject constructor(
                     )
                     master.pauseFromMaster()
                 }
-            }
-        }
-    }
-
-    private fun applyNudge(master: SplitAvVideoMaster, factor: Float) {
-        nudgeRevertJob?.cancel()
-        // Only call setPlaybackSpeed if the factor actually changed. ExoPlayer's
-        // setPlaybackSpeed is expensive (re-evaluates renderers, may cause buffer flush);
-        // beacons arrive at 10 Hz so a naive applyNudge would issue 10 redundant calls per
-        // second while the drift stays in the nudge band. Re-arm the revert timer either way
-        // so a sustained nudge holds the factor until the policy says Hold.
-        if (currentNudgeFactor != factor) {
-            master.setPlaybackSpeed(factor)
-            currentNudgeFactor = factor
-        }
-        nudgeRevertJob = scope.launch {
-            delay(SplitAvPolicy.NUDGE_DURATION_MS)
-            if (isActive) {
-                master.setPlaybackSpeed(1.0f)
-                currentNudgeFactor = null
             }
         }
     }
@@ -598,9 +756,23 @@ class SplitAvController @Inject constructor(
     private companion object {
         const val TAG = "SplitAvController"
 
+        /** Minimum speed-multiplier change worth a setPlaybackSpeed call (avoids 10 Hz churn
+         *  on the PI controller's 4th-decimal wobble). */
+        const val TRIM_EPSILON = 1e-3f
+
         /** Cadence for RTT-probe Pings while in a split session. Low enough not to spam, high
          *  enough that NetworkDelayEstimator's smoothed RTT keeps up with link changes. */
         const val PING_INTERVAL_MS: Long = 2_000L
+
+        /** One-shot fast Ping burst at session start so the v4 clock offset θ converges before
+         *  first-play (the steady 2 s cadence would take ~16 s to fill the θ window). */
+        const val CLOCK_SYNC_BURST_PINGS: Int = 6
+        const val CLOCK_SYNC_BURST_INTERVAL_MS: Long = 150L
+
+        /** Lead time for the v4 synchronized start: how far in the future T0 is set so the
+         *  receiver has time to seek + buffer + receive the scheduled Resume before it fires.
+         *  The receiver clamps anyway (past/too-far ⇒ resume now), so this is a target. */
+        const val ALIGNED_START_LEAD_MS: Long = 700L
 
         /**
          * After this many consecutive ping failures we declare the session dead and stop

@@ -109,7 +109,7 @@ class FCastSenderClientTest {
         try {
             waitForFrame(); waitForFrame() // drain handshake
 
-            sendToClient(FCastMessage.Ping)
+            sendToClient(FCastMessage.Ping())
             val pong = waitForFrame()
             assertEquals(FCastOpcode.Pong, pong.opcode)
         } finally {

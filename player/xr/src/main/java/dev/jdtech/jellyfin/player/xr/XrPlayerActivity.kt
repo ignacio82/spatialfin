@@ -339,8 +339,8 @@ class XrPlayerActivity : AppCompatActivity() {
             ipc.connect()
             // Periodic state push so the proxy's currentPositionMs() and isPlaying are fresh
             // for drift correction and the controller's pause-mirror coroutine. 50 ms cadence
-            // keeps position drift below half a frame at 24 fps and is well below the policy's
-            // HOLD_THRESHOLD_MS of 20 ms once paired with networkOneWayMs.
+            // keeps position drift below half a frame at 24 fps and well inside the policy's
+            // asymmetric hold band (15–30 ms) once paired with networkOneWayMs.
             splitAvStateTickerJob = lifecycleScope.launch {
                 while (isActive) {
                     ipc.pushState(

@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.fcast.receiver
 import dev.jdtech.jellyfin.fcast.protocol.FCastFrame
 import dev.jdtech.jellyfin.fcast.protocol.FCastMessage
 import dev.jdtech.jellyfin.fcast.protocol.FCastOpcode
+import dev.jdtech.jellyfin.fcast.protocol.PingMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import java.io.DataInputStream
@@ -19,6 +20,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -155,17 +158,52 @@ class FCastReceiverServerTest {
             val (input, output) = connectFakeSender(freePort)
             FCastFrame.read(input); FCastFrame.read(input) // handshake
 
-            FCastFrame.write(output, FCastMessage.Ping)
-            val pong: FCastMessage = withTimeout(2_000) {
-                var msg: FCastMessage? = FCastFrame.read(input)
-                while (msg !is FCastMessage.Pong) {
-                    msg = FCastFrame.read(input)
-                }
-                msg
-            }
+            FCastFrame.write(output, FCastMessage.Ping())
+            val pong = withTimeout(2_000) { readUntilPong(input) }
             assertEquals(FCastOpcode.Pong, pong.opcode)
+            assertNull("body-less Ping → body-less Pong", pong.payload)
         } finally {
             server.stop()
+        }
+    }
+
+    @Test fun `v4 Ping with timestamps gets an NTP Pong echo`() = runBlocking {
+        val freePort = ServerSocket(0).use { it.localPort }
+        val server = FCastReceiverServer(
+            // Inject a deterministic clock: the real default is SystemClock.elapsedRealtime,
+            // an Android stub that throws "Stub!" under plain JUnit — which on the v4 Ping
+            // path would crash the session read loop instead of replying.
+            config = FCastReceiverServer.Config(port = freePort, clock = { 777L }),
+            routerFactory = { FCastIngressRouter.NoOp },
+            parentScope = scope,
+        )
+        server.start()
+        try {
+            val (input, output) = connectFakeSender(freePort)
+            FCastFrame.read(input); FCastFrame.read(input) // handshake
+
+            FCastFrame.write(output, FCastMessage.Ping(PingMessage(t1 = 4_242L)))
+            val pong = withTimeout(2_000) { readUntilPong(input) }
+            val p = pong.payload
+            assertNotNull("v4 Ping must get an NTP Pong body", p)
+            assertEquals("t1 must be echoed unchanged", 4_242L, p!!.t1)
+            assertEquals("t2 from injected clock", 777L, p.t2)
+            assertEquals("t3 from injected clock", 777L, p.t3)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * Read frames until a Pong. Fails fast if the stream closes first (returns null) instead
+     * of spinning on EOF forever — a closed-then-spin loop is uncancellable by withTimeout and
+     * hangs the whole suite for ~15 min until the worker is force-killed.
+     */
+    private fun readUntilPong(input: DataInputStream): FCastMessage.Pong {
+        while (true) {
+            val msg = FCastFrame.read(input)
+                ?: error("connection closed before a Pong arrived (receiver crashed?)")
+            if (msg is FCastMessage.Pong) return msg
         }
     }
 

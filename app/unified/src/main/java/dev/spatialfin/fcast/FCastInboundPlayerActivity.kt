@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import android.widget.Button
 import android.widget.ImageView
@@ -116,15 +118,49 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         }
     }
 
+    private val scheduleHandler = Handler(Looper.getMainLooper())
+    private var scheduledResume: Runnable? = null
+
+    /** Cancel any pending v4 synchronized-start so a later pause/resume/stop wins. */
+    private fun cancelScheduledResume() {
+        scheduledResume?.let { scheduleHandler.removeCallbacks(it) }
+        scheduledResume = null
+    }
+
     private val control = object : ExternalStreamPlayer {
         // Inbound senders never call this — Play frames go through the Intent-based path —
         // but the interface requires it.
         override fun play(request: ExternalStreamRequest): ExternalStreamPlayer.PlayResult =
             ExternalStreamPlayer.PlayResult.Rejected("Use the Intent-based play path")
 
-        override fun pause() = runOnUiThread { player?.pause() }.let { Unit }
-        override fun resume() = runOnUiThread { player?.play() }.let { Unit }
+        override fun pause() = runOnUiThread {
+            cancelScheduledResume()
+            player?.pause()
+        }.let { Unit }
+        override fun resume() = runOnUiThread {
+            cancelScheduledResume()
+            player?.play()
+        }.let { Unit }
+
+        /**
+         * v4 synchronized start: begin playback exactly when this device's monotonic clock
+         * reaches [atReceiverMonotonicMs] (the sender mapped its target instant into our clock
+         * via the NTP offset θ). Clamp hard — a past or absurdly-far instant resumes now —
+         * so a bad estimate can never be worse than the legacy resume-now path.
+         */
+        override fun resumeAt(atReceiverMonotonicMs: Long) = runOnUiThread {
+            cancelScheduledResume()
+            val delay = atReceiverMonotonicMs - SystemClock.elapsedRealtime()
+            if (delay <= 0L || delay > MAX_SCHEDULED_START_WAIT_MS) {
+                player?.play()
+            } else {
+                val r = Runnable { player?.play(); scheduledResume = null }
+                scheduledResume = r
+                scheduleHandler.postDelayed(r, delay)
+            }
+        }.let { Unit }
         override fun stop() = runOnUiThread {
+            cancelScheduledResume()
             player?.stop()
             finish()
         }.let { Unit }
@@ -564,6 +600,9 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 duration = duration,
                 speed = p.playbackParameters.speed.toDouble(),
                 audioFormat = AudioFormatProbe.probe(p),
+                // v4: monotonic stamp of the position sample, in the *same* clock as the
+                // NTP Ping/Pong, so the sender maps this beacon precisely via offset θ.
+                monotonicSampleMs = SystemClock.elapsedRealtime(),
             )
         )
     }
@@ -615,6 +654,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         playbackTickerJob = null
         subtitleRenderJob?.cancel()
         subtitleRenderJob = null
+        cancelScheduledResume()
         FCastInboundSession.unbindControl(control)
         // Tell the sender the stream is over so its mini-controller drops back to Idle.
         FCastInboundSession.pushPlaybackUpdate(
@@ -640,6 +680,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         const val EXTRA_SPLIT_AV_CADENCE_HZ: String = "fcast.in.split_av_cadence_hz"
         const val EXTRA_SOURCE_AUDIO_CODEC: String = "fcast.in.source_audio_codec"
         const val EXTRA_AUDIO_TRANSCODED: String = "fcast.in.audio_transcoded"
+
+        /** Upper bound on how long a v4 synchronized-start may defer playback. Beyond this
+         *  the receiver resumes immediately — a scheduled start should be a few hundred ms
+         *  out, so a larger value means a bad offset estimate; resume-now is the safe floor. */
+        private const val MAX_SCHEDULED_START_WAIT_MS: Long = 4_000L
 
         private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
         private const val MIN_TICKER_INTERVAL_MS: Long = 50L

@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
 import dev.jdtech.jellyfin.fcast.receiver.FCastIngressRouter
+import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.receiver.FCastReceiverService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.BuildConfig
@@ -67,10 +68,23 @@ object FCastReceiverWiring {
      * Best-effort foreground-service start. Returns true on success, false if the OS denied the
      * start (background-FGS restriction) or any other launch error occurred. Never throws.
      */
+    /**
+     * FCast receiver TCP port. The debug ("Dev") build installs *alongside* the release app
+     * (applicationIdSuffix `.debug`), so two SpatialFin receivers run on the same device —
+     * they cannot both bind the single fixed [FCAST_DEFAULT_PORT]. Whoever loses the race
+     * gets EADDRINUSE, `stopSelf()`s, and never advertises (the device then appears/disappears
+     * from pickers nondeterministically). Give the dev build its own port so prod and dev
+     * coexist as independent receivers. Senders honour the mDNS-advertised SRV port, so
+     * discovery is unaffected.
+     */
+    private val receiverPort: Int
+        get() = if (BuildConfig.DEBUG) FCAST_DEFAULT_PORT + 1 else FCAST_DEFAULT_PORT
+
     private fun tryStartReceiver(context: Context, prefs: AppPreferences): Boolean = try {
         FCastReceiverService.start(
             context = context,
             displayName = resolveDisplayName(prefs),
+            port = receiverPort,
             appVersion = BuildConfig.VERSION_NAME,
         )
         Timber.i("FCast receiver service started")
@@ -121,7 +135,11 @@ object FCastReceiverWiring {
             if (written.isNotEmpty()) return written
         }
         val model = (android.os.Build.MODEL ?: "").trim()
-        return if (model.isNotEmpty()) model else "SpatialFin"
+        val base = if (model.isNotEmpty()) model else "SpatialFin"
+        // Debug build coexists with release on the same device; prefix so the dev receiver is
+        // unmistakable in a picker and never collides with the release install's mDNS
+        // instance name. An explicit user-written name (handled above) still wins outright.
+        return if (BuildConfig.DEBUG) "Dev $base" else base
     }
 
     /**
@@ -209,6 +227,8 @@ private class IntentBasedExternalStreamPlayer(
     // these calls re-enter that on the main thread. Silent no-ops if no Activity is alive.
     override fun pause() = FCastInboundSession.pause()
     override fun resume() = FCastInboundSession.resume()
+    override fun resumeAt(atReceiverMonotonicMs: Long) =
+        FCastInboundSession.resumeAt(atReceiverMonotonicMs)
     override fun stop() = FCastInboundSession.stop()
     override fun seek(seconds: Double) = FCastInboundSession.seek(seconds)
     override fun setVolume(volume: Double) = FCastInboundSession.setVolume(volume)

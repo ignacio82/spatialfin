@@ -48,9 +48,53 @@ data class PlaybackUpdateMessage(
      * `ignoreUnknownKeys = true`. Null = receiver hasn't probed yet or non-SpatialFin peer.
      */
     val audioFormat: AudioFormatInfo? = null,
+    /**
+     * SpatialFin v4 extension. Receiver's monotonic clock (`SystemClock.elapsedRealtime`) at
+     * the instant [time] was sampled — the *same* clock used for the Ping/Pong NTP timestamps,
+     * so the sender can map this beacon onto its own clock precisely via the estimated offset
+     * θ instead of the `RTT/2` symmetry guess. Null for pre-v4 / non-SpatialFin receivers.
+     */
+    val monotonicSampleMs: Long? = null,
 ) {
     val playbackState: PlaybackState? get() = PlaybackState.fromCode(state)
 }
+
+/**
+ * SpatialFin v4 extension — optional Ping body. Empty/absent body ⇒ a legacy body-less Ping
+ * (byte-identical to v2/v3). Only emitted when the negotiated protocol version ≥ 4.
+ */
+@Serializable
+data class PingMessage(
+    /** Sender monotonic clock (`SystemClock.elapsedRealtime`) at Ping send (NTP t1). */
+    val t1: Long,
+)
+
+/**
+ * SpatialFin v4 extension — optional Pong body echoing the NTP four-timestamp set. The
+ * receiver copies [t1] back unchanged and adds its own monotonic receive/send stamps so the
+ * sender can solve clock offset θ and round-trip delay δ.
+ */
+@Serializable
+data class PongMessage(
+    /** Echo of [PingMessage.t1]. */
+    val t1: Long,
+    /** Receiver monotonic clock when the Ping was read (NTP t2). */
+    val t2: Long,
+    /** Receiver monotonic clock when this Pong was written (NTP t3). */
+    val t3: Long,
+)
+
+/**
+ * SpatialFin v4 extension — optional Resume body requesting a *synchronized* start. Empty/
+ * absent body ⇒ a legacy resume-now. Used to start XR video and remote audio at the same wall
+ * instant, killing the multi-second initial split-A/V gap.
+ */
+@Serializable
+data class ResumeMessage(
+    /** Receiver monotonic clock instant at which to begin playback. If already past, or
+     *  further out than the receiver's sanity cap, the receiver resumes immediately. */
+    val atReceiverMonotonicMs: Long,
+)
 
 /**
  * SpatialFin-only beacon extension describing what ExoPlayer's actually decoding right now.

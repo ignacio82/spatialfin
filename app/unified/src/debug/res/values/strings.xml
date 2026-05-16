@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug build type = the "dev" build. It installs alongside the release app
+  (applicationIdSuffix ".debug") so this overridden label makes the dev install
+  unmistakable on a device that also has the production build.
+-->
+<resources>
+    <string name="app_name">SpatialFin Dev</string>
+</resources>

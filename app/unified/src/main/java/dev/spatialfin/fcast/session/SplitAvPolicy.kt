@@ -26,12 +26,17 @@ import kotlin.math.absoluteValue
  *  - drift > 0  → XR is showing future video (audio behind)
  *  - drift < 0  → XR is showing past video (audio ahead)
  *
- * Three-tier response:
- *  - |drift| < [HOLD_THRESHOLD_MS]: do nothing (within lipsync tolerance)
- *  - |drift| < [HARD_SEEK_THRESHOLD_MS]: NudgeSpeed in the appropriate direction
- *  - else: HardSeek to the expected position
+ * Decision (on the *smoothed* drift from [DriftEstimator], not the raw beacon value):
+ *  - |drift| ≥ [HARD_SEEK_THRESHOLD_MS]: HardSeek to the expected position
+ *  - inside the asymmetric perceptual band ([HOLD_VIDEO_LEADS_MS] / [HOLD_AUDIO_LEADS_MS])
+ *    and steady (|rate| < [STEADY_RATE_MS_PER_SEC]): Hold — the orchestrator keeps the
+ *    standing [NudgeController] trim but freezes its integrator
+ *  - otherwise: NudgeSpeed — the orchestrator drives the integrating [NudgeController]
  *
- * The orchestrator is responsible for capping the *rate* of HardSeeks (see [HardSeekRateLimiter]).
+ * This object only picks the *mode*; the speed multiplier is the stateful [NudgeController]'s
+ * job (an integral term is required to null a constant-rate clock-skew disturbance — pure
+ * proportional control leaves a large steady-state offset). The orchestrator caps the *rate*
+ * of HardSeeks (see [HardSeekRateLimiter]).
  */
 object SplitAvPolicy {
 
@@ -54,28 +59,36 @@ object SplitAvPolicy {
     fun isAvailable(receiver: CastReceiver): Boolean =
         CastCapability.SplitAv in receiver.capabilities
 
-    /** Below this absolute drift the user can't tell, so no correction. */
-    const val HOLD_THRESHOLD_MS: Int = 20
+    /**
+     * Perceptual hold band — *asymmetric* by design (ITU-R BT.1359). The human visual+aural
+     * system tolerates video *leading* audio far more than audio leading video:
+     *
+     *  - `drift > 0` → XR video is ahead of the audio ("video leads audio"): tolerated to
+     *    [HOLD_VIDEO_LEADS_MS]. Detectable threshold is ~+125 ms; we hold conservatively below.
+     *  - `drift < 0` → audio is ahead of XR video ("audio leads video"): much more jarring,
+     *    detectable around ~-45 ms; we hold only to [HOLD_AUDIO_LEADS_MS].
+     *
+     * A symmetric ±20 ms band wasted correction effort on imperceptible video-leads drift and
+     * under-protected the audio-leads side. Both bounds stay well inside the perceptual limits
+     * so steady-state lipsync is still tight.
+     */
+    const val HOLD_VIDEO_LEADS_MS: Int = 30
+    const val HOLD_AUDIO_LEADS_MS: Int = 15
 
     /**
-     * Below this absolute drift we nudge speed; above it we hard-seek instead. 500 ms is
-     * deliberately wider than perceptible A/V offset (~80–120 ms) because hard-seeks cost a
-     * brief buffer cycle on the XR master and are far more disruptive than a residual offset
-     * the speed-nudge will close within a couple of seconds. Wi-Fi RTT jitter alone can
-     * spike apparent drift by 100–200 ms momentarily, and we don't want every transient
-     * spike to trigger a seek.
+     * Above this *smoothed* absolute drift we hard-seek instead of trimming speed. Wider than
+     * perceptible A/V offset because a hard-seek costs a buffer cycle (a black frame inside an
+     * immersive headset) and is far more disruptive than a residual the speed trim closes
+     * within a few seconds. The smoothing in [DriftEstimator] means a transient Wi-Fi spike no
+     * longer reaches this threshold, so it can sit tighter than the old raw-signal value.
      */
     const val HARD_SEEK_THRESHOLD_MS: Int = 500
 
-    /** Speed multiplier used when nudging (XR is behind / ahead). */
-    const val SPEEDUP_FACTOR: Float = 1.01f
-    const val SLOWDOWN_FACTOR: Float = 0.99f
-
-    /**
-     * How long a NudgeSpeed should run before reverting to 1.0×. The orchestrator schedules
-     * the revert; the policy doesn't track time itself.
-     */
-    const val NUDGE_DURATION_MS: Long = 500L
+    /** Below this |drift-rate| (ms/s) the skew is "steady". Combined with the hold band it
+     *  lets the policy return [DriftAction.Hold], which freezes the [NudgeController]
+     *  integrator so it *maintains* the standing trim instead of winding up on sub-perceptual
+     *  noise. */
+    const val STEADY_RATE_MS_PER_SEC: Double = 4.0
 
     data class BeaconState(
         /** PlaybackUpdate.time, converted from seconds to ms. */
@@ -88,7 +101,11 @@ object SplitAvPolicy {
         val nowWallMs: Long,
         /** Cached AVR/soundbar tail latency from calibration; 0 when uncalibrated. */
         val audioLatencyMs: Int,
-        /** Estimated XR→TV network one-way delay (RTT/2); 0 when no Ping/Pong samples yet. */
+        /**
+         * Estimated XR→TV network one-way delay (RTT/2); 0 when no Ping/Pong samples yet.
+         * Only used on the *legacy* path — when [clockOffsetMs] + [receiverMonotonicSampleMs]
+         * are both present the precise NTP mapping replaces this approximation entirely.
+         */
         val networkOneWayMs: Int,
         /**
          * The TV's reported playback state. Drift correction only fires while the TV is
@@ -96,17 +113,33 @@ object SplitAvPolicy {
          * propagate them via the cascade rules.
          */
         val tvIsPlaying: Boolean,
+        /**
+         * FCast v4: estimated receiver↔sender clock offset θ (`receiver ≈ sender + θ`) from
+         * [ClockOffsetEstimator]. Null until θ converges / pre-v4 peer → legacy path.
+         */
+        val clockOffsetMs: Int? = null,
+        /**
+         * FCast v4: the receiver's monotonic clock when it sampled [beaconStreamPositionMs]
+         * (`PlaybackUpdateMessage.monotonicSampleMs`). Null pre-v4 → legacy path.
+         */
+        val receiverMonotonicSampleMs: Long? = null,
     )
 
     sealed interface DriftAction {
-        /** Within tolerance — do nothing. */
-        data object Hold : DriftAction
+        /**
+         * Within the perceptual band and steady. The orchestrator keeps applying the
+         * [NudgeController]'s *current* speed trim (so a standing skew correction is held —
+         * resetting to 1.0× here is what caused the old sawtooth) but tells the controller to
+         * freeze its integrator so sub-perceptual jitter doesn't wind it up. [driftMs] is the
+         * smoothed drift, for telemetry.
+         */
+        data class Hold(val driftMs: Long) : DriftAction
 
         /**
-         * Apply a small playback-rate change for [SplitAvPolicy.NUDGE_DURATION_MS] ms.
-         * [factor] is the multiplier to feed to ExoPlayer.setPlaybackSpeed().
+         * Actively correcting: the orchestrator drives the [NudgeController] (integrating) and
+         * applies its speed trim. [driftMs] is the smoothed drift.
          */
-        data class NudgeSpeed(val factor: Float, val driftMs: Long) : DriftAction
+        data class NudgeSpeed(val driftMs: Long) : DriftAction
 
         /** Drift too large to mask — seek the XR player to [toPositionMs]. */
         data class HardSeek(val toPositionMs: Long, val driftMs: Long) : DriftAction
@@ -115,7 +148,26 @@ object SplitAvPolicy {
         data object TvNotPlaying : DriftAction
     }
 
+    /**
+     * Where XR's video *should* be right now to match the audio the user is hearing.
+     *
+     * Precise (v4) path — when both the clock offset θ and the receiver's monotonic sample
+     * time are known: the beacon position was sampled at sender-time
+     * `receiverMonotonicSampleMs − θ`, so add the wall time elapsed since then. No `RTT/2`
+     * guess and no "received ≈ generated" approximation — both error sources are eliminated.
+     *
+     * Legacy path — otherwise: advance the beacon by the time since *receipt* and correct by
+     * the symmetric one-way estimate.
+     */
     fun expectedXrPositionMs(state: BeaconState): Long {
+        val offset = state.clockOffsetMs
+        val recvSample = state.receiverMonotonicSampleMs
+        if (offset != null && recvSample != null) {
+            val senderSampleTimeMs = recvSample - offset
+            return state.beaconStreamPositionMs +
+                (state.nowWallMs - senderSampleTimeMs) -
+                state.audioLatencyMs
+        }
         val elapsedSinceBeaconMs = state.nowWallMs - state.beaconReceivedWallMs
         return state.beaconStreamPositionMs +
             elapsedSinceBeaconMs -
@@ -123,19 +175,36 @@ object SplitAvPolicy {
             state.networkOneWayMs
     }
 
-    fun decide(state: BeaconState): DriftAction {
+    /** True when [driftMs] is inside the asymmetric perceptual hold band. */
+    fun withinHoldBand(driftMs: Long): Boolean =
+        if (driftMs >= 0) driftMs < HOLD_VIDEO_LEADS_MS else -driftMs < HOLD_AUDIO_LEADS_MS
+
+    /**
+     * Decide the *mode* given the smoothed drift and its rate (both from [DriftEstimator]),
+     * plus [state] for the play flag and the hard-seek target. The actual speed multiplier is
+     * computed statefully by [NudgeController] — a constant clock skew is a constant-rate
+     * disturbance, and only an integral term drives its steady-state error to zero (pure
+     * proportional control leaves a large residual offset). Acting on the smoothed signal,
+     * not the raw per-beacon value, is what lets the thresholds sit tight without thrashing.
+     */
+    fun decide(
+        state: BeaconState,
+        smoothedDriftMs: Long,
+        driftRateMsPerSec: Double,
+    ): DriftAction {
         if (!state.tvIsPlaying) return DriftAction.TvNotPlaying
 
-        val expected = expectedXrPositionMs(state)
-        val drift = state.xrPositionMs - expected
-
         return when {
-            drift.absoluteValue < HOLD_THRESHOLD_MS -> DriftAction.Hold
-            drift.absoluteValue < HARD_SEEK_THRESHOLD_MS -> {
-                val factor = if (drift > 0) SLOWDOWN_FACTOR else SPEEDUP_FACTOR
-                DriftAction.NudgeSpeed(factor = factor, driftMs = drift)
-            }
-            else -> DriftAction.HardSeek(toPositionMs = expected.coerceAtLeast(0L), driftMs = drift)
+            smoothedDriftMs.absoluteValue >= HARD_SEEK_THRESHOLD_MS ->
+                DriftAction.HardSeek(
+                    toPositionMs = expectedXrPositionMs(state).coerceAtLeast(0L),
+                    driftMs = smoothedDriftMs,
+                )
+            withinHoldBand(smoothedDriftMs) &&
+                driftRateMsPerSec.absoluteValue < STEADY_RATE_MS_PER_SEC ->
+                DriftAction.Hold(driftMs = smoothedDriftMs)
+            else ->
+                DriftAction.NudgeSpeed(driftMs = smoothedDriftMs)
         }
     }
 }
