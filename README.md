@@ -2,9 +2,22 @@
 
 ![SpatialFin](docs/images/SpatialFin-banner.png)
 
-A Jellyfin client built specifically for Android XR, delivering an immersive spatial media experience.
+An XR-first Jellyfin client that also runs on phones and Android TV — one codebase, one APK, a spatial experience on the headset and a native experience everywhere else.
 
 > **Forked from [Findroid](https://github.com/jarnedemeulemeester/findroid)** — SpatialFin started as a fork of Findroid, an open-source native Jellyfin client for Android. We thank the Findroid contributors for their excellent work.
+
+## Why SpatialFin is different
+
+SpatialFin is not a phone Jellyfin app with an XR skin. It is built XR-first and then folds down to phone and TV from the same source tree. The things below are, to the best of our knowledge, either unique among Jellyfin clients or substantially ahead of them:
+
+- **True spatial playback on Android XR** — native Full Space cinema, movable panels, orbiter controls, stereoscopic 3D (SBS / top-bottom / MV-HEVC) and head-locked spatial audio. Not a floating 2D window.
+- **One codebase, three form factors** — Galaxy XR, Beam Pro / phone, and Android TV ship from a single unified APK that branches at runtime on device class. Two Play Store bundles (`libre` for phone/XR/Beam, `tv` for the Play TV track).
+- **On-device AI voice assistant** — hold an open palm near your face and ask "what just happened?" or "play something funny under 90 minutes". Runs a local LiteRT Gemma model with a 60-second rolling subtitle buffer for context; cloud Gemini is opt-in, never required.
+- **Pixel-perfect anime subtitles — including across the cast link** — an integrated `libass` JNI renderer handles full ASS/SSA typesetting, and that fidelity survives casting: native styled ASS streams SpatialFin→SpatialFin over FCast, with an automatic burn-in transcode fallback only when the receiver (Chromecast / AirPlay) genuinely can't render it.
+- **Split-A/V** — watch on the headset while audio plays through a paired phone, TV, or speaker, kept in lip-sync by an NTP-style clock-sync and a continuous PI drift-correction loop.
+- **Multi-protocol casting** — FCast (v4), Google Cast, and AirPlay behind one protocol-agnostic layer, with subtitle-fidelity awareness baked into the cast decision.
+- **Privacy-first by construction** — optional AES-256-CTR encryption of downloaded video tied to a biometric/PIN app-lock, centrally enforceable from the Companion. Off by default; the key never leaves Keystore.
+- **No server required** — browse and stream straight from SMB/NFS shares with TMDB metadata enrichment, or play headset-local files, fully offline.
 
 ## Community
 
@@ -31,8 +44,8 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **In-Player AI Search** — Voice search now opens as a spatial overlay inside the XR player so you can search, disambiguate, and launch new media without breaking immersion.
 - **Voice Diagnostics** — A dedicated voice settings section shows enablement, permissions, on-device availability, example commands, and local telemetry summaries for tuning the experience.
 - **SyncPlay Watch Parties** — Create, join, refresh, and leave Jellyfin SyncPlay groups directly from the XR player orbiter. SpatialFin now listens for Jellyfin playstate and SyncPlay websocket commands and mirrors pause, resume, seek, and stop changes back to the group.
-- **FCast Sender + Receiver** — SpatialFin speaks the full [FCast](https://fcast.org) v3 protocol from a new `:fcast` module. **As a sender**, the XR player's secondary-controls orbiter and the Beam phone player's top bar both expose a Cast button: pick an FCast receiver (mDNS auto-discovery + manual host entry) and the current Jellyfin stream starts playing on that device while SpatialFin keeps showing playback state. **As a receiver**, an opt-in foreground service listens on port 46899 and lets any FCast sender (Grayjay, the FCast desktop app, etc.) push YouTube/HLS/DASH URLs into a 2D ExoPlayer Activity, with optional autopromote into XR Full Space when an inbound Play arrives. Voice integration ("cast this to the living room") is wired through `XrPlayerAction.CastToFCastReceiver` with fuzzy receiver-name matching.
-- **Split-A/V on Galaxy XR** — Watch a movie on the headset while the audio plays through a paired phone, TV, or speaker running SpatialFin. The XR holds the video master clock; the receiver renders audio with a one-time calibration chirp to measure the speaker latency, and the sender's controller keeps both ends in lip-sync via a 10 Hz PlaybackUpdate beacon, EWMA-smoothed RTT estimator, and a three-tier drift policy (hold under 20 ms / nudge 1.01× or 0.99× / hard-seek over 500 ms). Stop the audio split from the receiver and the headset unmutes automatically so the movie keeps playing locally without a beat skipped.
+- **Multi-Protocol Casting (FCast v4 + Google Cast + AirPlay)** — a protocol-agnostic `:fcast` module casts to whatever's on your network. **FCast** (full v4 protocol with NTP-style clock sync) is the first-class path: SpatialFin↔SpatialFin casts keep native styled ASS subtitles and embedded fonts intact. **Google Cast** (Default Media Receiver) and **AirPlay v1** are supported behind the same picker for Chromecast / Apple TV / AirPlay speakers. The cast button lives in the XR orbiter, the Beam top bar, and inline on every playable hero card; a unified mini-controller drives play/pause/seek/volume across all three protocols. **Subtitle-fidelity aware** — when a receiver can't render styled ASS, SpatialFin transparently switches that stream to a server-side burn-in transcode and surfaces a "transcoding for subtitle compatibility" chip rather than silently dropping the typesetting. **As a receiver**, an opt-in foreground service lets any FCast sender (Grayjay, the FCast desktop app, etc.) push YouTube/HLS/DASH URLs into a 2D ExoPlayer Activity — with embedded-font fetch so inbound anime renders with the author's typefaces — and optional autopromote into XR Full Space. Voice ("cast this to the living room") routes through `XrPlayerAction.CastToFCastReceiver` with fuzzy name matching.
+- **Split-A/V on Galaxy XR** — Watch a movie on the headset while the audio plays through a paired phone, TV, or speaker running SpatialFin. The XR holds the video master clock; the receiver renders audio with a one-time matched-filter calibration chirp to measure speaker + codec latency. An FCast v4 four-timestamp NTP exchange disciplines a shared clock so the two ends can be *started* already aligned, and a continuous PI + feed-forward drift controller (fed by a freshness-gated 10 Hz beacon and an outlier-rejecting drift estimator) nulls residual clock skew over hours of playback instead of bang-bang nudging. Stop the audio split from the receiver and the headset unmutes automatically so the movie keeps playing locally without a beat skipped.
 - **Seerr Integration** — Connect your [Jellyseerr](https://github.com/fallenbagel/jellyseerr) or [Overseerr](https://github.com/sct/overseerr) instance to search for and request new media directly from the SpatialFin search screen when items aren't already in your library.
 - **Large-Target Playback UI** — The XR player exposes larger controls and a dedicated chapter picker for easier hand-first interaction.
 - **Jellyfin Integration** — Full Jellyfin server connectivity: browse movies, shows, episodes, and collections.
@@ -132,9 +145,9 @@ SpatialFin can browse and stream media directly from SMB and NFS shares on your 
 
 ## Requirements
 
-- Android XR device (requires `android.hardware.xr.immersive` feature)
+- One of: an Android XR device (Samsung Galaxy XR and similar), an Android phone (primary target: Beam Pro), or an Android TV / Google TV device — SpatialFin adapts at runtime to whichever it's running on
 - Android 12 (API 31) or higher
-- Optional: a running [Jellyfin](https://jellyfin.org) server
+- Optional: a running [Jellyfin](https://jellyfin.org) server (SpatialFin also works with SMB/NFS shares or headset-local files, no server needed)
 
 ## Android Packaging
 
@@ -153,7 +166,7 @@ Release signing uses the standard SpatialFin variables:
 
 These values can be provided through Gradle properties, `local.properties`, or environment variables.
 
-The legacy per-device packaging shells under `app/xr`, `app/beam`, and `app/tv` have been consolidated into `app/unified`. Their remaining Kotlin sources are still staged into the unified app at build time, but separate manifests, launcher assets, and per-form-factor `Application` / `MainActivity` entrypoints are no longer used.
+There are no longer any `app/xr`, `app/beam`, or `app/tv` source trees. All application code lives in `app/unified/src/main/java` under per-form-factor packages (`dev.jdtech.jellyfin.*` for XR, `dev.spatialfin.tv.*`, `dev.spatialfin.beam.*`) — a single source set with no build-time source staging. The form factor is selected at runtime by `DeviceClass`.
 
 ## Local Library
 
@@ -280,7 +293,7 @@ SpatialFin is a multi-module Android project. `:app:unified` is the only applica
 
 | Module | Description |
 |--------|-------------|
-| `:app:unified` | The only application module. Application id `dev.spatialfin`. Stages the legacy `app/xr`, `app/tv`, and `app/beam` source trees into the build. |
+| `:app:unified` | The only application module. Application id `dev.spatialfin`. XR / TV / Beam code all live in its single `src/main/java` tree under their own packages; branches at runtime on `DeviceClass`. |
 | `:player:xr` | Immersive XR player, libass JNI subtitle pipeline, voice subsystem, spatial UI. |
 | `:player:local` | Media3 / ExoPlayer wrapper for local and Jellyfin playback. |
 | `:player:session` | Typed player actions, voice command execution, SyncPlay orchestration. |
@@ -289,11 +302,12 @@ SpatialFin is a multi-module Android project. `:app:unified` is the only applica
 | `:player:tv` | TV-form-factor (Leanback) player. |
 | `:modes:film` | Browse and detail screens for movies, shows, episodes, and collections. |
 | `:data` | Jellyfin / TMDB / Seerr API clients, Room database, downloads, network shares (SMB/NFS), mDNS discovery. |
+| `:fcast` | Protocol-agnostic casting: FCast (v4) sender + receiver, Google Cast and AirPlay adapters, multi-protocol discovery, the subtitle-fidelity policy, and split-A/V wire schema. Pure-Kotlin, JVM-testable. |
 | `:core` | Shared UI components, LLM model manager, WorkManager workers. |
 | `:settings` | DataStore-based preferences and voice telemetry. |
 | `:setup` | Server onboarding and login flows. |
 
-The directories `app/xr/`, `app/beam/`, and `app/tv/` exist on disk but are **not** Gradle modules. Their Kotlin sources are staged into `:app:unified` at build time by the `StageSourcesTask` in `app/unified/build.gradle.kts`. Editing those files affects the unified APK on the next build; no extra Gradle wiring is required.
+There are no `app/xr/`, `app/beam/`, or `app/tv/` directories — the per-form-factor trees were consolidated into `:app:unified`'s single source set. Edit files under `app/unified/src/main/java`; the form factor is resolved at runtime, not at build time.
 
 ## AI Usage
 
@@ -324,7 +338,7 @@ The debug APK is generated at:
 app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
 ```
 
-There is one product flavor (`libre`). Build types are `debug`, `staging`, and `release`. Release is currently shipped unminified — see `GEMINI.md` for the R8 / `androidx.xr` rationale and the keep rules that must stay in `app/unified/proguard-rules.pro`.
+There are two product flavors: `libre` (universal — phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only; versionCode `APP_CODE + 1_000_000`). Build types are `debug`, `staging`, and `release`. Two Play Store bundles ship from the same source tree — `./gradlew :app:unified:bundleLibreRelease` and `:bundleTvRelease`. Release is currently shipped unminified — see `GEMINI.md` for the R8 / `androidx.xr` rationale and the keep rules that must stay in `app/unified/proguard-rules.pro`.
 
 ### Native Subtitle Library
 

@@ -6,45 +6,21 @@ entries as they ship; do not let this file rot.
 **Status markers:** ✅ shipped (commit hash) · ⏭️ deferred · 🚫 dropped (with
 reason). Mark in the same commit that lands the change.
 
+**Last full audit:** 2026-05-17 (covers through commit `5b4feb6`; version
+2.7.2 / 103). Sprints 0–1 are fully shipped; the cast / split-A/V / AirPlay
+subsystem (PRs 1–6) and the auth-livelock + first-frame-audio fixes landed
+*after* the previous audit and surfaced a new P0/P1 tail — see **Sprint A**.
+
 ## Why this exists
 
 Anchored in an audit triggered by a recurring user-reported bug: "sometimes
 when I'm offline I just see the left navbar instead of the videos I have
-available because I downloaded them." That investigation surfaced a residual
-gap in `HomeViewModel.loadData()`'s error path that commit `6e70a37` did not
-close, plus a long tail of adjacent issues across the player, downloads,
-voice/AI, XR, TV, and build subsystems.
-
----
-
-## Root cause: offline home screen is sometimes empty
-
-`modes/film/src/main/java/dev/jdtech/jellyfin/film/presentation/home/HomeViewModel.kt:116-119`
-— the outer `try/catch` in `loadData()` swallows any exception by setting
-`error = e, isLoading = false` **without ever calling
-`loadOfflineLibrarySections()`**. Commit `6e70a37` only fixed eager clearing
-on the success path; the error path is still un-fallback'd.
-
-Failure path:
-
-1. App is online, or in the 15-second `isDegradedMode` grace window
-   (`ServerConnectionMonitor.kt`) — `shouldUseOfflineRepository()` returns
-   `false` so the online branch runs.
-2. `SmartJellyfinRepository.fetchWithFallback`
-   (`core/src/main/java/dev/jdtech/jellyfin/repository/SmartJellyfinRepository.kt:458`)
-   only treats `IOException` + `ApiClientException` as "connection failure"
-   worth falling back to offline. Anything else propagates up.
-3. The exception lands in `HomeViewModel.kt:116`. State becomes:
-   `error = <something>`, `isLoading = false`, **all sections empty** because
-   the offline-load fallback never ran.
-4. `HomeScreen.kt:159-243` renders an empty `LazyColumn`; the error icon is
-   hidden in `HomeHeader` and only opens a dialog on click. The nav rail /
-   header stays visible. Result: **navbar only**.
-
-There is also a cold-start sliver where `serverAccessible = true` is the
-default until the first probe completes; if the probe gets stuck, the load
-either hangs in `loadResumeItems()` or times out into the same buggy outer
-catch.
+available because I downloaded them." The empty-offline-home root cause is
+now **fully closed** — `a65e620` populated the offline fallback in
+`HomeViewModel.loadData()`'s error path and `44513e3` killed the related
+cold-start auth-livelock by re-binding the persisted session in
+`MainViewModel.check()` before Home mounts. This document now tracks the
+long tail that audit surfaced plus everything found since.
 
 ---
 
@@ -53,202 +29,367 @@ catch.
 Severity scale: **P0** (crash / data loss / blocks user) · **P1** (broken
 feature) · **P2** (paper cut) · **P3** (polish).
 
-### Offline / home / repository
+### Sprint A — newly surfaced, verified (audit 2026-05-17)
 
-- **P0** `HomeViewModel.kt:116-119` outer catch never falls back to offline
-  sections — root cause of the empty-screen bug.
-- **P0** `JellyfinRepositoryOfflineImpl.getStreamUrl`
-  (`data/src/main/java/dev/jdtech/jellyfin/repository/JellyfinRepositoryOfflineImpl.kt:293`)
-  throws via `error(...)`. Should return the cached path or a typed
-  exception.
-- **P1** `ServerConnectionMonitor.isConnectionFailure` only matches
-  `IOException | ApiClientException`. Reality has more shapes (some Jellyfin
-  SDK errors wrap in `RuntimeException`; SSL handshake exceptions in
-  captive-portal scenarios).
-- **P1** `HomeViewModel.observeConnectionState` captures `previousState`
-  before the first emission and only reloads on changes; initial
-  probe-completion does not retrigger `loadData()`.
-- **P2** `HomeViewModel` calls `loadResumeItems` / `loadNextUpItems` *before*
-  the branch; if either silently fell back to offline, those sections show
-  offline data even on the online branch — blurs the online vs offline UX
-  promise.
+These were found and source-verified in the 2026-05-17 audit of the
+post-roadmap code (cast subsystem, split-A/V, the first-frame audio gate,
+the on-device AI mutex). They are the new top of the list.
 
-### Downloads / WorkManager
+- **P0** `core/.../llm/LlmChatModelHelper.kt:230` (and `:306`) —
+  `inferenceMutex.lock()` is taken at `:212`, but `createConversation(...)`
+  runs at `:230` **outside** the `try` at `:232` whose `finally`/callbacks
+  are the only unlock path. If `createConversation` throws (GPU OOM, engine
+  in a failed state, engine closed mid-call by `LlmModelManager`), the
+  process-wide mutex is held forever — **every subsequent voice command and
+  chat query deadlocks until app restart**, with no error surfaced.
+  `runToolCall` has the identical shape. Fix: move `createConversation`
+  inside the try (or unlock on any throw before `suspendCancellableCoroutine`).
+- **P0** `data/.../downloads/DownloadStorageManager.kt:127` —
+  `reconcileItemSources` does `if (!File(source.path).exists())
+  deleteItemBlocking(...)` with no "is a download active for this item"
+  guard and no DB transaction. When a PRIMARY download is mid-flight (or
+  `DownloadIntegrityWorker.requeueBrokenTask` just flipped `sources.path`
+  back to the not-yet-existing `.download` tempPath), any offline
+  `getMediaSources`/`getItem`/`getEpisode` for that item **wipes the
+  movie/episode/season/show + userdata from the DB** and orphans the
+  still-queued download task. Fix: skip deletion when a non-`SUCCESSFUL`
+  `downloadtasks` row exists for the source; wrap the cascade in one
+  `@Transaction`.
+- **P0** `fcast/.../receiver/FCastReceiverServer.kt:105,133` — `sessions`
+  is only ever `.add()`-ed; individual `FCastReceiverSession`s are never
+  removed on disconnect (only a bulk `.clear()` at server stop). Every
+  sender connect/disconnect over the receiver service's whole lifetime
+  (Wi-Fi flaps, repeated split-A/V sessions, discovery probes) leaks a
+  `Socket` + streams + cancelled `Job`, and the ~10 Hz beacon broadcast
+  iterates the unbounded list. Multi-hour viewing on an unstable link ends
+  in OOM. Fix: session notifies the server on close (callback/WeakRef);
+  prune in `broadcast*` or via a `readerJob` completion handler.
+- **P1** `player/tv/.../TvPlayerActivity.kt:600` &
+  `player/beam/.../BeamPlayerActivity.kt:941` — the first-frame audio-gate
+  escape hatch `tracks.groups.none { it.type == VIDEO }` is **vacuously
+  true for the empty `Tracks` ExoPlayer emits early in prepare**, so on a
+  slow Jellyfin/transcode start the gate releases and audio plays over a
+  black screen — re-introducing exactly the bug `5b4feb6` fixed. Fix:
+  require non-empty groups **and** a positive supported audio group.
+- **P1** `player/beam/.../BeamPlayerActivity.kt:471` &
+  `player/tv/.../TvPlayerActivity.kt:362` — backgrounding the activity
+  while the first-frame gate holds playback persists the gate-forced
+  `playWhenReady=false`; on return nothing re-requests play, so the screen
+  is frozen black with no spinner and no path back. Fix: persist the
+  *intended* `playWhenReady`, or restore through the gate on `onResume`.
+- **P1** `app/unified/.../fcast/session/SplitAvController.kt:399-454` — the
+  v4 synchronized-start `aligned` latch is set `true` on first `playing`
+  regardless of whether θ converged, and the clock-sync ping burst is
+  fire-and-forget (`catch (_: Exception)`, no retry). One dropped early
+  ping ⇒ the whole movie silently runs on the inferior RTT/2 legacy
+  mapping with an 8 s blind window. Fix: gate `aligned=true` on a
+  successful path; retry/extend the burst until θ has an estimate or a
+  short deadline.
+- **P1** `SplitAvController.kt:498-516` + `FCastSenderClient.kt:216-293` —
+  the 6-ping burst overwhelms `FCastSenderClient`'s single-outstanding-ping
+  tracking; on a pre-v4 / non-SpatialFin receiver every Pong mis-pairs to
+  the latest send time, feeding garbage RTT into the legacy
+  `NetworkDelayEstimator` for the rest of the session. Fix: serialize the
+  burst, or keep a small FIFO of outstanding send-times.
+- **P1** `fcast/.../cast/adapter/googlecast/GoogleCastAdapter.kt:220-253` —
+  the post-LAUNCH RECEIVER_STATUS filter can match a *spontaneous/stale*
+  status frame (Cast devices emit unsolicited ones) and bind `transportId`
+  to a dead Default-Media-Receiver instance; every later LOAD/PLAY goes
+  nowhere. Fix: correlate on the LAUNCH `requestId` or snapshot
+  pre-LAUNCH sessions.
+- **P1** `fcast/.../cast/adapter/airplay/AirPlayHttpClient.kt:106-124` —
+  volume map `-30 + 30v` makes the bottom ~half of the slider a dead zone
+  and the only mute is the exact-zero sentinel; every AirPlay cast has a
+  broken volume curve. Fix: map across the receiver's real perceptual
+  range; treat a small epsilon as mute.
+- **P1** `app/unified/.../HomeVoiceController.kt:387-442` — `destroy()`
+  tears down the LLM/TTS services but never cancels `activeVoiceJob` nor
+  no-ops the recognizer callback, so a transcript arriving after destroy
+  re-builds LLM services nothing will dispose (leak) and an in-flight
+  `assistant.query` races half-torn-down services. Fix: cancel the job
+  first; guard the recognizer callback on a destroyed flag.
+- **P1** `data/.../work/ResumableDownloadWorker.kt:142` — `OkHttpClient()`
+  is constructed fresh per `doWork()` (and per retry); each owns a
+  dispatcher pool + connection pool that are never shut down. Bulk season
+  downloads leak threads/sockets steadily. Fix: inject/share one client.
+- **P1** `data/.../utils/DownloaderImpl.kt:236` /
+  `ResumableDownloadWorker.kt:130` — `resumeDownloadById` enqueues the
+  resumable worker directly for a task paused/failed *before* prep filled
+  `requestUrl`; `Request.Builder().url("")` (outside the try) throws and
+  the worker dies with no `errorMessage`, leaving a stuck, undiagnosable
+  task. Fix: re-enqueue prep when `requestUrl.isBlank()`; guard at worker
+  entry.
+- **P1** `data/.../network/NetworkStreamProxy.kt:30,49` — the loopback
+  proxy that serves SMB/NFS files with stored share credentials binds
+  `0.0.0.0`, so any LAN device can exfiltrate share content; `stop()` also
+  leaks its coroutine scope (accept loop + open SMB/NFS connections keep
+  running). Fix: bind `InetAddress.getLoopbackAddress()`; cancel the scope
+  on stop; optionally add a per-session token.
+- **P1** `data/.../network/SmbFileClient.kt:62-103` — `openFile` has no
+  try/finally; any failure after `connect()` (bad share, IPC$ cast,
+  missing file, seek error) leaks the SMB connection/session/share/file.
+  `NetworkStreamProxy` retries per Range request, so it leaks repeatedly.
+  Fix: nested try/catch that closes the chain and rethrows.
+- **P1** `data/.../network/NfsFileClient.kt:233-252` — `read()` returns
+  `-1` on any zero-byte READ without checking the NFSv4 `eof` flag; a
+  legitimate server short-read terminates playback mid-file. Fix: inspect
+  `opread.resok4.eof`; only EOF on `eof==true || position>=fileSize`.
+- **P1** `player/local/.../SyncPlayCoordinator.kt:94-97,555-611` — the
+  1500 ms echo-suppression window is wall-clock; an async
+  `setMediaItems().prepare()` / `seekTo` that completes after it expires
+  makes the client report state the server re-broadcasts → a SyncPlay
+  group seek/pause feedback loop. Fix: refresh the window when the
+  triggered player op actually completes.
 
-- **P1** `DownloadIntegrityWorker` only sweeps PRIMARY tasks. Subtitle tasks
-  can be truncated and the app keeps treating them as healthy.
-- **P1** `ResumableDownloadWorker` doesn't pre-check free disk space;
-  storage-full triggers MAX_AUTO_RETRIES of `IOException` retries with no
-  UI surface.
-- **P2** `DownloadIntegrityWorker:83-95` deletes leftover bytes *before*
-  flipping the DB row to PENDING — crash in between leaves a "downloaded"
-  row with no file.
+### Perf / build / infra (re-confirmed open)
+
+- **P1** No perf foundation **and no CI to host one**: no
+  baseline-profile module, no `androidx.profileinstaller` dependency, no
+  Macrobenchmark module, no Compose-compiler reports wiring, no `.github/`
+  workflow at all. Highest-leverage perf gap, especially for the
+  2 GB / Mali-G31 TV target. (Roadmap items 14–16 — scoped below; note
+  the missing CI pipeline they depend on.)
+- **P1** Unstable Compose state holders carried through the UI:
+  `player/session/.../voice/PlayerStateSnapshot.kt` (35 fields, ~12 bare
+  `List`, a `List<Pair<…>>`) and `modes/film/.../home/HomeState.kt`
+  (`error: Exception?` + bare `List`s). Cheap to fix independent of CI:
+  `kotlinx.collections.immutable` + a typed error + `@Immutable`.
+- **P2** `UnifiedApplication.onCreate` front-loads main-thread disk I/O
+  (log-file tree, several synchronous `SharedPreferences` reads, LLM warm,
+  FCast wiring) before first frame — compounds the missing baseline
+  profile. Defer non-essential work off-main / post-first-frame.
+- **P2** `UnifiedMainActivity.onResume` fires an unconditional
+  `MainViewModel.check()` (Room queries + a fresh `MainState` emit that
+  ripples the whole `setContent` tree) on *every* resume. Gate on an
+  actual session-version change (`activeSessionBus` already exists).
+
+### Carried over from the original audit (still open)
+
+#### Downloads / WorkManager
 - **P2** No metered-network guard on `DownloadPreparationWorker`; Beam
   users on cellular silently kick off large downloads.
 - **P2** Bulk download (`DownloaderImpl.downloadItems`) resolves per-episode
-  `getMediaSources()` in the caller's coroutine (already in GEMINI.md
-  known-gaps).
+  `getMediaSources()` in the caller's coroutine — navigating away mid-loop
+  drops un-queued episodes.
+- **P2** `DownloadPreparationWorker` retries re-run all prep side effects;
+  `downloadExternalMediaStreams` mints a fresh `UUID` per subtitle per
+  attempt, inserting **duplicate `mediastreams` rows + duplicate subtitle
+  tasks**. Make subtitle ids deterministic; gate prep steps to resume.
+- **P2** `SyncWorker` builds its own `JellyfinApi` (not the DI singleton)
+  and returns `Result.success()` on failure with no backoff — a transient
+  failure mid-batch silently abandons unsynced offline edits until the
+  next reconnect event. Return `Result.retry()` on partial failure.
+- **P2** `SmartJellyfinRepository.runWrite` skips the offline mirror when
+  the online write succeeds, so a downloaded item's local `userdata` goes
+  stale (offline Continue Watching wrong; `SyncWorker` may push the stale
+  value back). Make user-data writes write-through.
 
-### Player
-
-- **P1** `PlayerViewModel.onCleared` launches the SyncPlay `leaveGroup` in a
-  detached `GlobalScope` with `runCatching` only — failure is invisible,
-  server-side group can be orphaned.
-- **P2** `PlaylistManager.toPlayerItem` swallows conversion errors with bare
-  `catch(e: Exception)` returning null — playlist navigation appears to
-  "skip" silently.
-- **P2** `BeamPlayerActivity` uses several hard-coded `delay(...)` for
-  feedback / control fades (4000ms, 500ms, 5000ms) without explicit
-  cancellation tokens.
-- **P2** `LibassRendererState` declares `@Stable` but exposes
-  `mutableStateOf<Bitmap?>()`; `Bitmap` is not Compose-stable, every
-  render-loop swap risks invalidating callers.
+#### Player / voice / AI
+- **P1** `PlayerViewModel.onCleared` SyncPlay `leaveGroup` — *partially*
+  addressed by item 11 (pending-leave pref); the detached-`GlobalScope`
+  shape of the immediate leave still has no failure surfacing.
+- **P2** `PlaylistManager.toPlayerItem` swallows conversion errors with
+  bare `catch(e: Exception)` returning null — playlist nav silently skips.
+- **P2** `PlaylistManager` loads the entire season eagerly and has no
+  cross-season continue (finale auto-stops instead of S+1E1); large
+  seasons pay a startup-latency cost. Resolve next/prev lazily across
+  season boundaries via `getNextUp`.
+- **P2** `PlaylistManager.probeSubtitleSize` runs unbounded parallel
+  blocking HTTP (3 s+3 s each) on the player-open path; an anime
+  signs-and-songs pack on a slow server stalls `toPlayerItem` for ~6 s.
+  Wrap in `withTimeoutOrNull` + bound concurrency.
+- **P2** `BeamPlayerActivity` hard-coded `delay(...)` for control fades
+  without explicit cancellation tokens.
+- **P2** `SpatialVoiceSynthesizer` `_isSpeaking` is a single shared boolean
+  ignoring `utteranceId`; a late `onDone(N)` after `onStart(N+1)` (the
+  `QUEUE_FLUSH` chunked-reply path uses) prematurely fires
+  `onTtsFinished`, resuming the player while the assistant is still
+  talking. Track the active utterance id.
+- **P2** `AssistantSpeechStateMachine.kt:31-48` `LaunchedEffect` branches
+  on `followUpDeadlineMs` without keying on it (stale capture) — can skip
+  a legitimate follow-up arm or arm against a reset deadline. Add it to
+  the key list.
 - **P2** `BeamPlayerActivity.createIntentForSpatialItem` returns `null` for
-  `Show` / `Season` / `BoxSet` — voice "play <show>" silently does nothing
-  instead of routing to detail or auto-resolving the next episode.
+  some container types — verify the item 10 `resolveAndCreate…` path
+  covers every Beam call site (TV equivalent still a follow-up).
+- **P3** `SmartChatEngine` RECAP early-return leaves the LiteRT mutex held
+  up to the 40 s timeout while Gemma keeps generating; next voice command
+  blocks silently. Add telemetry + a "still thinking" surface.
+- **P3** No telemetry when the 15 s first-frame backstop (rather than
+  `onRenderedFirstFrame`) releases the gate — this is exactly the signal
+  needed to detect the two P1 gate regressions in the field.
+- **P3** `SpatialVoiceService` `onResult` is not nulled in
+  `destroy()`/`stopListening()`; a retry firing post-destroy flips
+  `_state` to a phantom `LISTENING`.
 
-### Voice / AI
-
-- **P1** `WebSearchClient` SearXNG fallback has no auth and accepts non-HTTPS
-  URLs; mismatch with the GEMINI.md guidance that "SearXNG must be sidecared
-  behind the companion."
-- **P1** `RecommendationPlanner` MOOD_SURPRISE empty-library path returns the
-  generic "I couldn't find a strong match" string with no telemetry
-  distinction — looks broken to the user.
-- **P2** `SkillClassifierRegressionTest`'s `ASPIRATIONAL_IMPROVEMENTS` list
-  documents drift but is not promoted to issues.
+#### Voice / AI (carried)
+- **P1** `WebSearchClient` SearXNG fallback has no auth and accepts
+  non-HTTPS URLs; enforce HTTPS + surface a "no auth configured" settings
+  warning.
+- **P1** `RecommendationPlanner` MOOD_SURPRISE empty-library path returns
+  the generic "no strong match" string with no telemetry distinction.
+- **P2** `SkillClassifierRegressionTest` `ASPIRATIONAL_IMPROVEMENTS` not
+  promoted to asserted cases.
 - **P2** No queue depth / timeout guard on consecutive voice requests.
-- **P2** `VoiceTelemetryStore` CSV encoding (`|`, `;`) is fragile with
-  redacted-but-still-user-text inputs; JSON-line would prevent corrupted
-  entries.
+- **P2** `VoiceTelemetryStore` CSV encoding fragile with redacted user
+  text; move to JSON-line.
 
-### XR
+#### Cast / split-A/V (carried, lower severity)
+- **P2** `CalibrationServer.pickLocalLanIpv4` returns the first non-LAN
+  IPv4 — a VPN/tether/secondary interface produces a URL the receiver
+  can't route to; calibration silently times out with no actionable
+  signal. Prefer the default-route / Wi-Fi interface.
+- **P2** `CastV2Channel` hostname verification is dead code and the TLS
+  session is never pinned to the mDNS-discovered `id` the comment claims
+  to "trust" — a LAN MITM on host:8009 is transparent. Acceptable for
+  Cast V2 parity, but pin per-remembered-receiver or drop the overstated
+  comment.
+- **P2** `BinaryPlist.parse` reads 8-byte trailer fields as `Int`; a
+  malformed/hostile AirPlay response can throw `ArrayIndexOutOfBounds`
+  (escapes the documented `IllegalArgumentException` contract). Add
+  bounds checks.
+- **P3** No user-facing surfacing of split-A/V `State.Degraded` — the user
+  experiences silent lipsync drift with no prompt to re-pick the receiver.
+- **P3** `MultiProtocolDiscovery` runs three concurrent `JmDNS` instances
+  on one interface (acknowledged TODO; some XR firmware drops responses).
+- **P3** Calibration alignment failures discarded with no min-distance
+  telemetry — field debugging is intractable.
 
-- **P1** Ambilight blocked by Jetpack XR not exposing the `XrSession` handle
-  for Mixed Reality (tracked in `project_ambilight_feature.md`); upstream
-  issue, but worth a degraded fallback path.
-- **P2** `XrPlayerActivity`'s self-process-kill workaround means
-  `Session.destroy()` never runs; any registered lifecycle observers leak.
-  GEMINI.md acknowledges this; needs a periodic check whether the Filament
-  bug is fixed.
+#### XR
+- **P1** Ambilight blocked by Jetpack XR not exposing the `XrSession`
+  handle for Mixed Reality (`project_ambilight_feature.md`). Worth a
+  degraded 2D fallback (item 25).
+- **P2** `XrPlayerActivity` self-process-kill means `Session.destroy()`
+  never runs; lifecycle observers leak. Periodic check whether the
+  upstream Filament bug is fixed.
 
-### TV
-
-- **P2** `WatchNextWorker` periodic + manual triggers can race and write
-  duplicate Watch Next rows; need dedup at the `WatchNextSync` layer.
+#### TV
+- **P2** `WatchNextWorker` periodic + manual triggers race and write
+  duplicate Watch Next rows; dedup at the `WatchNextSync` layer.
 - **P2** `SpatialFinSearchProvider` authority comes from a `resValue` —
-  silently breaks if `buildFeatures.resValues = false` is ever flipped.
+  silently breaks if `buildFeatures.resValues` is ever flipped off.
 
-### Build / dependencies / perf
-
-- **P1** `gradle/libs.versions.toml:65` hardcodes
-  `androidx-compose-material-icons-extended = "...:1.7.8"` (violates
-  GEMINI.md mandate to use `version.ref`).
-- **P1** No baseline-profile module / no committed `baseline-prof.txt` —
-  Compose-heavy app on XR + TV + phone, this is the highest-leverage perf
-  win available.
-- **P1** Release is `isMinifyEnabled = false` — known debt from XR R8 fault.
-  Needs a tracking issue with a dated revisit (every Jetpack XR release).
-- **P2** No Compose Compiler stability reports / `stabilityCheck` CI gate —
-  `PlayerStateSnapshot` (30+ fields) and other carriers slip into "runtime
-  stable" silently.
-- **P2** No AGP 9 upgrade path tracked.
+#### Build / dependencies / perf
+- **P2** Room `fallbackToDestructiveMigration(dropAllTables = true)` plus
+  the manual/auto migration chain means any migration gap silently
+  **drops `downloadtasks` and all offline userdata** in production. Drop
+  destructive fallback (or exclude the download tables) so a missing
+  migration fails loudly in CI/QA instead of nuking user downloads.
+- **P1** Release is `isMinifyEnabled = false` — known XR/R8 debt. Needs a
+  dated revisit each Jetpack XR release (item 23).
+- **P2** No Compose stability reports / `stabilityCheck` CI gate
+  (item 15).
 
 ---
 
-## Sprint 0 — fix the offline empty screen (this week)
+## Shipped log (Sprints 0–1, all verified 2026-05-17)
 
-1. ✅ (`a65e620`) Make `HomeViewModel.loadData()` always end with offline
-   sections populated. The outer catch now calls `loadOfflineLibrarySections()`
-   (wrapped in `runCatching`) and marks the server inaccessible if the
-   failure looks network-shaped, so the offline status card surfaces.
-2. ✅ (`a65e620`) Widen `ServerConnectionMonitor.isConnectionFailure` to
-   walk the cause chain. Pure logic extracted to
-   `isApparentConnectionFailure`; new `ServerConnectionFailureTest` in
-   `:core` locks the contract (direct + wrapped + SSL + cancellation +
-   non-network cases).
-3. 🚫 `JellyfinRepositoryOfflineImpl.getStreamUrl` is dead code in
-   practice — `SmartJellyfinRepository.getStreamUrl` calls
-   `runOnlineOnly { onlineRepository.getStreamUrl(...) }`, so the offline
-   impl's `error(...)` is never reached through the public facade. Re-open
-   if/when something injects the offline impl directly.
-4. ⏭️ Trigger an initial `loadData()` from `observeConnectionState` —
-   narrow race; the catch-block fallback in (1) closes the user-visible
-   failure mode for the cold-start probe scenario. Revisit if telemetry
-   shows residual blanks.
-5. ⏭️ Explicit "Showing downloads only" empty state — already covered by
-   the existing `HomeStatusCard` once `markServerInaccessible()` fires
-   from the catch block (which (1) now does). Revisit only if users
-   report blank panels with zero downloads + no error icon.
-6. ⏭️ HomeViewModel Robolectric test — the policy is covered by the new
-   `ServerConnectionFailureTest`. A behavioral test of `HomeViewModel`
-   needs `Dispatchers.Default` injection (currently hardcoded in
-   `loadData()`); rolling that into the bug fix would balloon the diff.
-   Test infra is wired up in `:modes:film` so the follow-up commit can
-   land cleanly.
+All items below were re-verified against source during the 2026-05-17
+audit; the ✅ markers are trustworthy.
 
-## Sprint 1 — bug fixes adjacent to the user's pain (next 1–2 weeks)
+1. ✅ (`a65e620`) `HomeViewModel.loadData()` always ends with offline
+   sections populated; outer catch calls `loadOfflineLibrarySections()`
+   and marks the server inaccessible on network-shaped failures.
+2. ✅ (`a65e620`) `ServerConnectionMonitor.isApparentConnectionFailure`
+   walks the cause chain; `ServerConnectionFailureTest` locks the
+   contract. Extended by `44513e3`: returns `false` for HTTP 401/403
+   (server answered → reachable, only creds bad) to kill the cold-start
+   auth livelock; `MainViewModel.check()` re-binds the persisted session
+   before Home mounts.
+3. 🚫 `JellyfinRepositoryOfflineImpl.getStreamUrl` — dead code via the
+   `SmartJellyfinRepository` facade; re-open only if the offline impl is
+   injected directly.
+4. 🚫 Initial `loadData()` from `observeConnectionState` — **no longer
+   applicable**: `44513e3`'s deterministic pre-Home session re-bind
+   closed the cold-start race this item described.
+5. ⏭️ Explicit "Showing downloads only" empty state — covered by
+   `HomeStatusCard` once `markServerInaccessible()` fires.
+6. ⏭️ HomeViewModel Robolectric behavioral test — still open; needs
+   `Dispatchers.Default` injection. Test infra wired in `:modes:film`.
+7. ✅ `DownloadIntegrityWorker` sweeps PRIMARY + SUBTITLE.
+8. ✅ `ResumableDownloadWorker` pre-checks disk space (64 MB margin).
+9. ✅ `requeueBrokenTask` flips the DB row before deleting the file.
+10. ✅ `BeamPlayerActivity.resolveAndCreateIntentForSpatialItem`
+    auto-resolves Show/Season/BoxSet via `getNextUp()`. TV equivalent
+    still a follow-up.
+11. ✅ `PlayerViewModel` arms a `pendingSyncPlayLeave` pref and drains it
+    on next launch (the immediate leave's failure surfacing is still in
+    the open list above).
+12. ✅ libass reads moved inside the `SpatialPanel` content lambda so the
+    SceneCoreEntity scope no longer recomposes per frame.
+13. ✅ `libs.versions.toml` icons-extended uses `version.ref`.
 
-7. ✅ Sweep PRIMARY + SUBTITLE in `DownloadIntegrityWorker`. New
-   `getCompletedDownloadTasks(kind)` DAO method drives both kinds; subtitle
-   broken-task path flips `mediastreams.path` back to tempPath before re-enqueue.
-8. ✅ Pre-check disk space in `ResumableDownloadWorker` against
-   `parentDir.usableSpace` with a 64 MB safety margin. On insufficient,
-   `Result.failure()` (no auto-retry), task marked FAILED with a clear
-   "need X MB, have Y MB" message, and a low-storage notification posted.
-9. ✅ Reorder `requeueBrokenTask` so DB flip happens **before** file delete.
-   Crash-safety: a process kill mid-requeue leaves the DB consistent and the
-   worker re-downloads; the orphan finalPath is overwritten by the rename.
-10. ✅ `BeamPlayerActivity.resolveAndCreateIntentForSpatialItem` is the new
-    suspending companion that auto-resolves Show / Season / BoxSet to a
-    next-up episode via `repository.getNextUp()`. Both Beam call sites
-    (search-result tap, voice-search dialog selection) now route through it.
-    TV equivalent left as a follow-up; same pattern transposes cleanly.
-11. ✅ `PlayerViewModel.onCleared` now Timber.e's the leave failure and
-    arms a `pendingSyncPlayLeave` preference. `PlayerViewModel.init`
-    drains the flag on next launch by firing a fire-and-forget leave
-    call so the user isn't stuck in an orphan group server-side.
-12. ✅ The actual perf cost was at the consumer site, not the holder.
-    Moved `libass.bitmap` / `libass.hasContent` reads inside the
-    `SpatialPanel` content lambda in `SpatialPlayerScreen` so the
-    SceneCoreEntity scope no longer recomposes per libass frame. The
-    `key(libass.frameVersion)` already scoped the inner Image swap;
-    this stops the sibling Media3-fallback branch from recomposing too.
-13. ✅ `libs.versions.toml` icons-extended now uses `version.ref` against a
-    new `androidx-compose-material-icons-extended = "1.7.8"` entry in
-    `[versions]`. Comment notes that Google froze the artifact at 1.7.8 in
-    mid-2025 in favor of Material Symbols.
+Cast / split-A/V multi-protocol stack (PRs 1–6, commits `29e3135`…
+`d65c077`, `bb51d37`, plus `554c667` BeaconFreshnessGate and `5b4feb6`
+first-frame audio gate) shipped after Sprint 1. Its residual gaps are
+tracked in **Sprint A** and the cast/split-A/V carried list above — they
+were previously invisible in this roadmap.
 
-## Sprint 2 — perf foundations (2–3 weeks)
+---
 
-14. Add a baseline-profile module. Pays back ~30% startup, ~40% first-scroll
-    on phone & TV.
-15. Wire Compose Compiler reports + `skydoves/compose-stability-analyzer` CI
-    gate so `PlayerStateSnapshot` and `HomeState` don't silently become
-    unstable.
-16. `@TraceRecomposition` + Macrobenchmark on the home screen, the player,
-    and the Beam shell. Establish before/after numbers.
+## Sprint A — fix the verified P0/P1 tail (this week)
 
-## Sprint 3 — feature polish (3–6 weeks)
+Order within the sprint is by blast radius:
 
-17. Fix the `WatchNextWorker` dedup race.
-18. WebSearchClient: enforce HTTPS for SearXNG; surface "no auth configured"
-    warning in settings.
-19. RecommendationPlanner: differentiate "empty library" from "no good match"
-    in telemetry + UI.
-20. Promote 1–2 `ASPIRATIONAL_IMPROVEMENTS` from `SkillClassifierRegressionTest`
-    into asserted cases.
-21. Voice request queue: drop or coalesce taps while busy.
-22. Audit nav rail / `NavigationRail` for raycast blocking on XR (per
-    GEMINI.md pitfall).
+1. P0 `LlmChatModelHelper` mutex-unlock-on-throw (whole AI pipeline dies).
+2. P0 `reconcileItemSources` download-vs-reconcile data-loss guard.
+3. P0 `FCastReceiverServer` session pruning.
+4. P1 first-frame audio gate: empty-`Tracks` + background/foreground
+   regressions (both stem from `5b4feb6`).
+5. P1 `NetworkStreamProxy` loopback bind + scope cancel (security + leak).
+6. P1 `SmbFileClient.openFile` / `NfsFileClient.read` resource + EOF fixes.
+7. P1 split-A/V v4 aligned-start latch + ping-burst estimator poisoning.
+8. P1 `HomeVoiceController.destroy()` job cancel + recognizer guard.
+9. P1 `ResumableDownloadWorker` shared OkHttp + blank-URL guard.
+10. P1 SyncPlay echo-suppression window completion-gating.
+11. P1 GoogleCast LAUNCH `requestId` correlation; AirPlay volume curve.
 
-## Sprint 4 — debt with a clock on it
+## Sprint B — perf foundations + the Compose-stability prerequisite
 
-23. Re-attempt `isMinifyEnabled = true` against the latest Jetpack XR
+12. Stand up a minimal GitHub Actions workflow (assemble + unit tests) —
+    prerequisite for any CI gate.
+13. Add the `androidx.baseline-profile` generator module +
+    `androidx.profileinstaller` dependency; commit `baseline-prof.txt`.
+    ~30% startup / ~40% first-scroll on phone & TV.
+14. Stabilize `PlayerStateSnapshot` / `HomeState`
+    (`kotlinx.collections.immutable` + typed error + `@Immutable`) — cheap,
+    unblockable now.
+15. Wire Compose compiler reports + `skydoves/compose-stability-analyzer`
+    `stabilityCheck` gate on the new CI.
+16. `@TraceRecomposition` + Macrobenchmark on home / player / Beam shell;
+    establish before/after numbers.
+17. Defer `UnifiedApplication.onCreate` non-essential work off-main; gate
+    `UnifiedMainActivity.onResume` `refresh()` on a session-version change.
+
+## Sprint C — feature polish
+
+18. Fix the `WatchNextWorker` dedup race.
+19. WebSearchClient: enforce HTTPS for SearXNG; surface "no auth
+    configured" warning in settings.
+20. RecommendationPlanner: differentiate "empty library" from "no good
+    match" in telemetry + UI.
+21. `SmartJellyfinRepository.runWrite` write-through for user-data writes.
+22. `PlaylistManager`: cross-season continue + bounded subtitle probe +
+    typed conversion errors.
+23. Promote 1–2 `ASPIRATIONAL_IMPROVEMENTS` into asserted classifier cases.
+24. Voice request queue: drop or coalesce taps while busy; TTS
+    `utteranceId` tracking; `AssistantSpeechStateMachine` key fix.
+25. Audit nav rail / `NavigationRail` for raycast blocking on XR.
+
+## Sprint D — debt with a clock on it
+
+26. Remove `fallbackToDestructiveMigration(dropAllTables = true)` (or
+    exclude the download tables) so a missing migration fails loudly
+    instead of nuking user downloads.
+27. Re-attempt `isMinifyEnabled = true` against the latest Jetpack XR
     release; fix or refresh keep rules.
-24. Track and prepare for AGP 9 upgrade.
-25. Revisit ambilight blocker — file / upgrade upstream issue, ship a
-    degraded "ambient panel glow" 2D fallback in the meantime.
+28. ~~AGP 9 upgrade~~ ✅ **done by fact** — `libs.versions.toml`
+    `android-plugin = "9.2.1"`. Re-scope this slot to AGP 9.x maintenance
+    / AGP 10 watch.
+29. Revisit the ambilight blocker — file/upgrade the upstream Jetpack XR
+    issue; ship a degraded 2D "ambient panel glow" fallback meanwhile.
+30. `DownloaderImpl.downloadItems` bulk per-episode source resolution →
+    move into a worker. Metered-network guard on `DownloadPreparationWorker`.
 
 ## Stretch / parking lot
 
@@ -258,12 +399,22 @@ feature) · **P2** (paper cut) · **P3** (polish).
   (`project_npu_blocker.md`).
 - Migrate `XrPlayerActivity` off the process-kill workaround when upstream
   Filament bug closes.
-- Custom Google Cast receiver app shipping libass via WebAssembly. PR 3
-  ships against Google's Default Media Receiver (appId `CC1AD845`), which
-  supports WebVTT / TTML but not ASS — styled anime subs hit the
-  burn-in-transcode path from PR 2 instead of rendering on the Chromecast.
-  Lifting that would require registering a Cast app id with Google, hosting
-  receiver HTML/JS publicly, and maintaining a CAF receiver that runs
-  libass.wasm against the inbound media URL. Substantial infra; only worth
-  doing if real user demand for high-fidelity Chromecast anime subs
-  materialises. Per the cast-implementation brief §17.
+- AirPlay 2 SRP-6a pairing (PIN-required HomeKit devices) — currently
+  surface a typed error and disconnect.
+- Custom Google Cast receiver app shipping libass via WebAssembly. PRs
+  3–6 ship against Google's Default Media Receiver (`CC1AD845`), which
+  supports WebVTT/TTML but not ASS — styled anime subs hit the
+  burn-in-transcode path instead of rendering natively on Chromecast.
+  Lifting that needs a registered Cast app id, public receiver HTML/JS,
+  and a maintained CAF receiver running libass.wasm. Substantial infra;
+  only worth doing if real demand for high-fidelity Chromecast anime subs
+  materialises.
+
+---
+
+> **Doc-drift note (not a roadmap item, but flagged by the audit):**
+> GEMINI.md:545 claims `UnifiedMainActivity.kt` is "~750 lines"; it is
+> ~1059. The `SpatialPlayerScreen`/`PlayerViewModel` line counts at
+> GEMINI.md:544 are likely stale post-cast. Per the GEMINI self-update
+> mandate these should be corrected in the next commit that touches those
+> files.

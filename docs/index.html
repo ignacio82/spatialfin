@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SpatialFin | Jellyfin For Android XR &amp; Beyond</title>
-    <meta name="description" content="SpatialFin is a Jellyfin client for Android XR. Immersive playback, spatial audio, stereoscopic 3D, voice control, offline media, and SyncPlay.">
+    <meta name="description" content="SpatialFin is an XR-first Jellyfin client for Android XR, phone, and TV. Spatial cinema, stereoscopic 3D, an on-device AI voice assistant, anime-grade subtitles that survive casting, multi-protocol casting (FCast/Google Cast/AirPlay), split-A/V, encrypted offline downloads, and SyncPlay.">
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="images/icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -38,22 +38,23 @@
                 <p class="eyebrow">Jellyfin for Android XR &amp; beyond</p>
                 <h1>Turn your headset into a real spatial cinema.</h1>
                 <p class="hero-lead">
-                    SpatialFin is built for immersive playback from the ground up: Full Space Mode, stereoscopic 3D,
-                    spatial audio, voice control, offline media, and Jellyfin SyncPlay.
+                    Built XR-first, then folded down to phone and TV from one codebase. Full Space cinema,
+                    stereoscopic 3D, spatial audio, an on-device AI voice assistant, anime-grade subtitles
+                    that survive casting, and multi-protocol casting (FCast, Google Cast, AirPlay).
                 </p>
                 <div class="hero-buttons">
                     <a href="#early-access" class="btn btn-primary">Get Early Access</a>
                     <a href="companion.html" class="btn btn-secondary">Companion App</a>
                 </div>
                 <div class="hero-highlights" aria-label="Key features">
-                    <span>Home + Full Space</span>
+                    <span>XR + Phone + TV</span>
+                    <span>On-Device AI Assistant</span>
+                    <span>Anime-Grade Subtitles</span>
                     <span>Encrypted Downloads</span>
                     <span>Companion Hub</span>
-                    <span>Voice + AI Search</span>
-                    <span>Smart Language Memory</span>
                     <span>Network Shares (SMB/NFS)</span>
                     <span>Offline Engine</span>
-                    <span>FCast Sender + Receiver</span>
+                    <span>FCast · Google Cast · AirPlay</span>
                     <span>Split-A/V on Galaxy XR</span>
                 </div>
             </div>
@@ -115,7 +116,7 @@
                 <div class="section-heading reveal">
                     <p class="eyebrow">Why SpatialFin</p>
                     <h2>An XR media client that goes deeper than a skin.</h2>
-                    <p>Every major layer of the app, from layout and controls to playback and offline behavior, is tuned for how media actually feels inside a headset.</p>
+                    <p>Built XR-first and tuned for how media actually feels inside a headset — then the same codebase folds down to a native phone and Android TV experience.</p>
                 </div>
 
                 <div class="bento-grid reveal">
@@ -133,9 +134,9 @@
                         <p>Scan a QR code from the <a href="companion.html" style="color: var(--primary); text-decoration: none;">Companion App</a> to setup servers and users instantly.</p>
                     </div>
                     <div class="bento-item">
-                        <span class="card-kicker">Control</span>
-                        <h3>Hands-free control</h3>
-                        <p>Voice commands and AI search preserve immersion while you watch.</p>
+                        <span class="card-kicker">On-Device AI</span>
+                        <h3>Ask it anything</h3>
+                        <p>An open-palm gesture starts a local Gemma assistant that knows the last 60s of subtitles — "what just happened?" works offline, no cloud key required.</p>
                     </div>
                     <div class="bento-item">
                         <span class="card-kicker">Connectivity</span>
@@ -254,8 +255,8 @@
                                     <ul class="explorer-list">
                                         <li><strong>Server Connectivity:</strong> Deep integration with Jellyfin for libraries and collections.</li>
                                         <li><strong>Seerr Integration:</strong> Connect Jellyseerr or Overseerr to search and request media.</li>
-                                        <li><strong>FCast Sender + Receiver:</strong> SpatialFin speaks the full <a href="https://fcast.org" style="color: var(--primary); text-decoration: none;">FCast</a> v3 protocol. As a <em>sender</em>, the XR player orbiter and the Beam phone player both expose a Cast button — pick a receiver via mDNS auto-discovery or manual entry to push the current Jellyfin stream to any FCast-capable TV or PC. As a <em>receiver</em>, an opt-in foreground service accepts inbound media (YouTube via Grayjay, public HLS/DASH URLs) directly into the headset with optional autopromote into XR Full Space.</li>
-                                        <li><strong>Split-A/V on Galaxy XR:</strong> Watch a movie on the headset while the audio plays through a phone, Google TV Streamer, or any SpatialFin-running device on the same Wi-Fi. The XR holds the video master clock; the picked receiver renders audio with a one-time calibration chirp that measures speaker latency, and the sender's controller keeps both ends in lip-sync via a 10 Hz beacon plus a three-tier drift policy (hold under 20 ms / speed nudge in the middle band / hard-seek over 500 ms). Tap Stop on the receiver and the headset unmutes automatically so the movie keeps playing locally — no interruption.</li>
+                                        <li><strong>Multi-Protocol Casting:</strong> One picker, three protocols — <a href="https://fcast.org" style="color: var(--primary); text-decoration: none;">FCast</a> (full v4 with NTP-style clock sync), Google Cast (Chromecast), and AirPlay v1 (Apple TV / AirPlay speakers). SpatialFin↔SpatialFin FCast casts keep <em>native styled ASS subtitles and embedded fonts</em> intact; when a receiver can't render them, SpatialFin transparently switches to a server-side burn-in transcode and tells you, instead of silently dropping the typesetting. As a <em>receiver</em>, an opt-in service accepts inbound media (YouTube via Grayjay, public HLS/DASH URLs) — fetching embedded fonts so inbound anime renders correctly — with optional autopromote into XR Full Space.</li>
+                                        <li><strong>Split-A/V on Galaxy XR:</strong> Watch a movie on the headset while the audio plays through a phone, Google TV Streamer, or any SpatialFin-running device on the same Wi-Fi. The XR holds the video master clock; the receiver renders audio after a one-time matched-filter calibration chirp that measures speaker + codec latency. An FCast v4 NTP exchange disciplines a shared clock so both ends can be <em>started already aligned</em>, then a continuous PI drift controller — fed by a freshness-gated beacon and an outlier-rejecting estimator — holds lip-sync over hours instead of bang-bang nudging. Tap Stop on the receiver and the headset unmutes automatically so the movie keeps playing locally — no interruption.</li>
                                     </ul>
                                 </div>
                             </div>
