@@ -5,6 +5,8 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
 import kotlin.coroutines.cancellation.CancellationException
+import org.jellyfin.sdk.api.client.exception.ApiClientException
+import org.jellyfin.sdk.api.client.exception.InvalidStatusException
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -57,6 +59,36 @@ class ServerConnectionFailureTest {
         assertFalse(isApparentConnectionFailure(IllegalArgumentException("bad arg")))
         assertFalse(isApparentConnectionFailure(NullPointerException("oops")))
         assertFalse(isApparentConnectionFailure(IllegalStateException("state")))
+    }
+
+    @Test fun `HTTP 401 is not a connection failure`() {
+        // The server answered with 401 — it is reachable; our access token is
+        // missing/expired. Treating this as offline live-locked the home
+        // screen against the unauthenticated reachability probe.
+        assertFalse(isApparentConnectionFailure(InvalidStatusException(401)))
+    }
+
+    @Test fun `HTTP 403 is not a connection failure`() {
+        assertFalse(isApparentConnectionFailure(InvalidStatusException(403)))
+    }
+
+    @Test fun `HTTP 401 wrapped in a cause chain is still not a connection failure`() {
+        val wrapped = RuntimeException("call failed", InvalidStatusException(401))
+        assertFalse(isApparentConnectionFailure(wrapped))
+    }
+
+    @Test fun `HTTP 500 is still a connection failure`() {
+        // Server reachable but erroring — offline fallback is still the
+        // desired UX here, so this must stay classified as a failure.
+        assertTrue(isApparentConnectionFailure(InvalidStatusException(500)))
+    }
+
+    @Test fun `HTTP 404 is still a connection failure`() {
+        assertTrue(isApparentConnectionFailure(InvalidStatusException(404)))
+    }
+
+    @Test fun `bare ApiClientException is still a connection failure`() {
+        assertTrue(isApparentConnectionFailure(ApiClientException()))
     }
 
     @Test fun `CancellationException is never a connection failure`() {

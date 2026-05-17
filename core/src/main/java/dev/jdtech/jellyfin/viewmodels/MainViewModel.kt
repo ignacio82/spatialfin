@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.User
@@ -23,6 +24,7 @@ constructor(
     private val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
     private val activeSessionBus: ActiveSessionBus,
+    private val jellyfinApi: JellyfinApi,
 ) :
     ViewModel() {
     private val _state = MutableStateFlow(MainState())
@@ -48,6 +50,30 @@ constructor(
             _state.emit(MainState(isLoading = true))
             val serverId = appPreferences.getValue(appPreferences.currentServer)
             val serverData = serverId?.let { database.getServerWithAddressAndUser(it) }
+
+            // Repair the cold-start race: ApiModule.provideJellyfinApi is a
+            // @Singleton built exactly once, sometimes before SharedPreferences
+            // or Room are warm — when that happens it leaves the shared
+            // JellyfinApi with no base URL / access token, and never re-binds
+            // because the provider only runs once. Authenticated reads then
+            // 401, which (with isApparentConnectionFailure no longer treating
+            // 401 as offline) surfaces as an auth error rather than a livelock,
+            // but the screen still has no credentials. Re-applying the
+            // persisted session here — deterministically, before we emit the
+            // non-loading state that lets navigation mount Home — guarantees
+            // the API client reflects the stored session by first load.
+            // Idempotent: re-applying the same session is a no-op.
+            val address = serverData?.address?.address
+            if (address != null) {
+                jellyfinApi.apply {
+                    api.update(
+                        baseUrl = address,
+                        accessToken = serverData.user?.accessToken,
+                    )
+                    userId = serverData.user?.id
+                }
+            }
+
             val mainState =
                 MainState(
                     isLoading = false,

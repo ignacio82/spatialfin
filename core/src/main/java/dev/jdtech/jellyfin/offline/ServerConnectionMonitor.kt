@@ -44,6 +44,18 @@ internal fun isApparentConnectionFailure(throwable: Throwable): Boolean {
     var current: Throwable? = throwable
     val seen = mutableSetOf<Throwable>()
     while (current != null && seen.add(current)) {
+        // An HTTP status response means the server *answered* — it is reachable.
+        // 401/403 means our access token is missing or expired, not that the
+        // server is offline. Classifying an auth failure as a connection
+        // failure marks the server inaccessible, which then disagrees forever
+        // with the unauthenticated `/System/Info/Public` reachability probe
+        // (probe says "up", data calls say "down"): the server flip-flops
+        // accessible↔inaccessible and HomeViewModel re-loads on every flip,
+        // blinking the "Loading your media…" banner indefinitely. Surface it
+        // as a real error instead so the UI can route to login / show auth UX.
+        if (current is org.jellyfin.sdk.api.client.exception.InvalidStatusException) {
+            return current.status != 401 && current.status != 403
+        }
         if (
             current is IOException ||
                 current is org.jellyfin.sdk.api.client.exception.ApiClientException
