@@ -86,6 +86,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.session.MediaSession
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -758,6 +759,11 @@ private fun BeamPlayerScreen(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(player.isPlaying) }
+    // Until the first video frame is actually on-screen we hold audio back
+    // (see the first-frame gate below) and show a loading state instead of the
+    // misleading Play overlay.
+    var firstFrameRendered by remember { mutableStateOf(player.isPlaying) }
+    val gateWantsPlay = remember { mutableStateOf(false) }
     var availableSources by remember { mutableStateOf<List<SpatialFinSource>>(emptyList()) }
     var sourcesLoading by remember { mutableStateOf(false) }
     var useLibass by remember { mutableStateOf(false) }
@@ -911,11 +917,83 @@ private fun BeamPlayerScreen(
         }
     }
 
+    // First-frame audio gate. ExoPlayer's video renderer reports itself "ready"
+    // even before its surface is attached, so without this the player reaches
+    // STATE_READY and starts audio while the screen is still black and the
+    // overlay shows a stale Play icon. We hold playWhenReady=false until the
+    // first video frame is rendered (ExoPlayer still decodes/presents that
+    // frame while paused), then resume so audio and video start together. The
+    // gate is one-shot — normal pause/resume after startup is untouched.
+    DisposableEffect(player) {
+        val listener =
+            object : Player.Listener {
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                }
+
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    if (!firstFrameRendered && playWhenReady) {
+                        gateWantsPlay.value = true
+                        player.playWhenReady = false
+                    }
+                }
+
+                override fun onTracksChanged(tracks: Tracks) {
+                    // Audio-only stream: no frame will ever render, so release
+                    // the gate as soon as we know there is no video track.
+                    if (!firstFrameRendered &&
+                        tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }
+                    ) {
+                        firstFrameRendered = true
+                        if (gateWantsPlay.value) {
+                            gateWantsPlay.value = false
+                            player.play()
+                        }
+                    }
+                }
+
+                override fun onRenderedFirstFrame() {
+                    if (!firstFrameRendered) {
+                        firstFrameRendered = true
+                        if (gateWantsPlay.value) {
+                            gateWantsPlay.value = false
+                            player.play()
+                        }
+                    }
+                }
+            }
+        // The ViewModel may have already requested playback before this
+        // listener attached; reconcile that up-front.
+        when {
+            player.isPlaying -> firstFrameRendered = true // resumed mid-stream
+            !firstFrameRendered && player.playWhenReady -> {
+                gateWantsPlay.value = true
+                player.playWhenReady = false
+            }
+        }
+        isPlaying = player.isPlaying
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    // Last-resort anti-hang backstop: if no first frame arrives in a long
+    // window (e.g. an unexpected surface problem) release the gate so playback
+    // can never be silently stuck behind it.
+    LaunchedEffect(player) {
+        delay(15_000L)
+        if (!firstFrameRendered) {
+            firstFrameRendered = true
+            if (gateWantsPlay.value) {
+                gateWantsPlay.value = false
+                player.play()
+            }
+        }
+    }
+
     LaunchedEffect(player) {
         while (true) {
             currentPosition = player.currentPosition
             duration = player.duration.coerceAtLeast(0L)
-            isPlaying = player.isPlaying
             viewModel.updateCurrentSegment()
             delay(500L)
         }
@@ -1021,8 +1099,18 @@ private fun BeamPlayerScreen(
                 }
             }
 
+            // While the first video frame is still pending (initial buffering /
+            // surface attach) show a spinner instead of the misleading Play
+            // overlay; the controls and pause overlay below are held back too.
+            if (!firstFrameRendered && !isPipMode) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White,
+                )
+            }
+
             AnimatedVisibility(
-                visible = controlsVisible && !isPipMode,
+                visible = firstFrameRendered && controlsVisible && !isPipMode,
                 enter = fadeIn(),
                 exit = fadeOut(),
             ) {
@@ -1114,7 +1202,7 @@ private fun BeamPlayerScreen(
             // collide with the top action row (Mic / SyncPlay / Quality). The controls auto-hide,
             // at which point the pause overlay takes over.
             dev.jdtech.jellyfin.core.presentation.components.PlayerPauseOverlay(
-                visible = !isPlaying && !isPipMode && !controlsVisible,
+                visible = firstFrameRendered && !isPlaying && !isPipMode && !controlsVisible,
                 title = uiState.currentSeriesName?.takeIf { it.isNotBlank() } ?: uiState.currentItemTitle,
                 subtitle = if (!uiState.currentSeriesName.isNullOrBlank()) uiState.currentItemTitle else null,
                 positionMs = currentPosition,

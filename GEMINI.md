@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.6.8 (99)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000099`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.2 (103)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000103`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -136,6 +136,8 @@ Because everything is in one module now, TV/Beam files that reference `R` or `Bu
 ### Player Module Cross-Reference
 
 `:player:beam` exposes `:player:xr` via `api(project(":player:xr"))` to keep `libass_jni.so` and `LibassRenderer` flowing through a single dex-merge path. Do not also `implementation(project(":player:xr"))` from `:app:unified` — it causes duplicate-class errors. The current `:app:unified` build pulls XR transitively through `:player:beam`.
+
+**First-frame audio gate (TV + Beam `PlayerView` players).** `TvPlayerActivity` and `BeamPlayerActivity` host ExoPlayer in a Compose `AndroidView`-wrapped `PlayerView`/`SurfaceView` whose surface attaches asynchronously, while `PlayerViewModel.initializePlayer` calls `player.prepare()` then `player.play()` immediately. ExoPlayer's video renderer reports `STATE_READY` even with no surface, so audio used to start over a black screen with the overlay still showing the Play icon. Both screens now install a one-shot `Player.Listener` that forces `playWhenReady=false` until `onRenderedFirstFrame` (or `onTracksChanged` with no video track → audio-only), then resumes; a 15 s backstop releases the gate so playback can never hang behind it, and the controls / pause overlay are gated on `firstFrameRendered` with a spinner shown until then. `isPlaying` is now driven by `onIsPlayingChanged` (was a stale 500 ms poll). Do not re-add a `player.play()` in the `PlayerView` factory — it races ahead of the surface. XR (`SpatialPlayerScreen`) uses `SurfaceEntity`, a different attach path, and is not gated this way. <!-- added 2026-05-17: fix audio-before-video on TV/Beam -->
 
 ---
 
