@@ -474,6 +474,108 @@ class JellyfinRepositoryImpl(
             }
         }
 
+    override suspend fun getAudioTranscodeStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        allowedAudioCodecs: List<String>,
+    ): String =
+        withContext(Dispatchers.IO) {
+            try {
+                val codecs = allowedAudioCodecs
+                    .ifEmpty { listOf("aac") }
+                    .joinToString(",")
+                // Effectively-unbounded bitrate: the *only* reason Jellyfin should transcode
+                // here is that the source audio codec isn't in [codecs] — never a stale
+                // bandwidth cap. That cap is exactly what silently degraded audio before
+                // (TranscodeReasons=ContainerBitrateExceedsLimit); the user wants best audio.
+                val bitrate = 1_000_000_000
+                val playbackInfo = jellyfinApi.mediaInfoApi
+                    .getPostedPlaybackInfo(
+                        itemId,
+                        PlaybackInfoDto(
+                            userId = jellyfinApi.userId!!,
+                            mediaSourceId = mediaSourceId,
+                            maxStreamingBitrate = bitrate,
+                            // Force the transcode explicitly instead of relying on the device
+                            // profile to reject direct-play: a file with a *secondary*
+                            // direct-playable audio track (common — e.g. a TrueHD-Atmos main
+                            // track plus an AC-3 compatibility track) makes Jellyfin direct-play
+                            // the whole container, and the receiver (video disabled) then lands
+                            // on the undecodable primary track ⇒ `groups=0` silence. Disabling
+                            // direct play / direct stream and forcing a transcode of the
+                            // *primary* audio guarantees an HLS stream whose audio the chain
+                            // can render. Video is stream-copied (h264/hevc remux into TS) so
+                            // only the audio is re-encoded — fast, and never bandwidth-capped.
+                            enableDirectPlay = false,
+                            enableDirectStream = false,
+                            enableTranscoding = true,
+                            allowVideoStreamCopy = true,
+                            allowAudioStreamCopy = false,
+                            deviceProfile =
+                                DeviceProfile(
+                                    name = "SplitAv audio-compatible",
+                                    maxStaticBitrate = bitrate,
+                                    maxStreamingBitrate = bitrate,
+                                    codecProfiles = emptyList(),
+                                    containerProfiles = emptyList(),
+                                    // Video direct-plays (copied) for any container; only the
+                                    // *audio* direct-play set is constrained. A source whose
+                                    // audio codec is outside [codecs] therefore can't be fully
+                                    // direct-played → Jellyfin returns an HLS transcodingUrl
+                                    // with audio re-encoded to [codecs] and video copied.
+                                    directPlayProfiles =
+                                        listOf(
+                                            DirectPlayProfile(
+                                                container = "",
+                                                audioCodec = codecs,
+                                                type = DlnaProfileType.VIDEO,
+                                            ),
+                                        ),
+                                    transcodingProfiles =
+                                        listOf(
+                                            TranscodingProfile(
+                                                container = "ts",
+                                                type = DlnaProfileType.VIDEO,
+                                                videoCodec = "h264,hevc",
+                                                audioCodec = codecs,
+                                                protocol = MediaStreamProtocol.HLS,
+                                                estimateContentLength = false,
+                                                enableMpegtsM2TsMode = false,
+                                                transcodeSeekInfo = TranscodeSeekInfo.AUTO,
+                                                copyTimestamps = false,
+                                                context = EncodingContext.STREAMING,
+                                                enableSubtitlesInManifest = false,
+                                                maxAudioChannels = null,
+                                                minSegments = 0,
+                                                segmentLength = 0,
+                                                breakOnNonKeyFrames = false,
+                                                conditions = emptyList(),
+                                                enableAudioVbrEncoding = true,
+                                            ),
+                                        ),
+                                    subtitleProfiles = emptyList(),
+                                ),
+                        ),
+                    )
+                    .content
+                val src = playbackInfo.mediaSources
+                    .firstOrNull { it.id == mediaSourceId }
+                    ?: playbackInfo.mediaSources.firstOrNull()
+                val mapped = src?.toSpatialFinSource(
+                    this@JellyfinRepositoryImpl,
+                    itemId,
+                    includePath = true,
+                )
+                // transcodingUrl is the HLS .m3u8 when Jellyfin chose to transcode; path is
+                // the populated stream URL otherwise (source audio already compatible).
+                (mapped?.transcodingUrl?.takeIf { it.isNotBlank() }
+                    ?: mapped?.path.orEmpty())
+            } catch (e: Exception) {
+                Timber.e(e, "getAudioTranscodeStreamUrl failed item=%s", itemId)
+                ""
+            }
+        }
+
     override suspend fun getMediaAttachment(
         itemId: UUID,
         mediaSourceId: String,

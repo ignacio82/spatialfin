@@ -293,6 +293,15 @@ class JellyfinRepositoryOfflineImpl(
         error("getStreamUrl is not available in offline mode (item=$itemId)")
     }
 
+    override suspend fun getAudioTranscodeStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        allowedAudioCodecs: List<String>,
+    ): String {
+        // Split-A/V casts a server stream; it is never initiated for an offline download.
+        error("getAudioTranscodeStreamUrl is not available in offline mode (item=$itemId)")
+    }
+
     override suspend fun getMediaAttachment(
         itemId: UUID,
         mediaSourceId: String,

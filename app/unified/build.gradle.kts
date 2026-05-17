@@ -205,6 +205,12 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.paging.compose)
     implementation(libs.androidx.media3.exoplayer)
+    // HLS source for the FCast inbound receiver: split-A/V transcodes the audio to an
+    // HLS (master.m3u8 + TS) stream when the receiver chain can't render the source codec
+    // (e.g. TrueHD on a DD+ soundbar). Without this, DefaultMediaSourceFactory can't build
+    // an HlsMediaSource and falls back to ProgressiveMediaSource → the .m3u8 hits
+    // UnrecognizedInputFormatException → groups=0 → silent. (player/local already has it.)
+    implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
 

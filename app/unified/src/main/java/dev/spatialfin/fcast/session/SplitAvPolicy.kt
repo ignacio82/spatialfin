@@ -117,7 +117,7 @@ object SplitAvPolicy {
          * FCast v4: estimated receiver↔sender clock offset θ (`receiver ≈ sender + θ`) from
          * [ClockOffsetEstimator]. Null until θ converges / pre-v4 peer → legacy path.
          */
-        val clockOffsetMs: Int? = null,
+        val clockOffsetMs: Long? = null,
         /**
          * FCast v4: the receiver's monotonic clock when it sampled [beaconStreamPositionMs]
          * (`PlaybackUpdateMessage.monotonicSampleMs`). Null pre-v4 → legacy path.

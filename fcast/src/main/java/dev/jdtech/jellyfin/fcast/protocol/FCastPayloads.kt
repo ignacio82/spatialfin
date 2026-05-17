@@ -55,6 +55,18 @@ data class PlaybackUpdateMessage(
      * θ instead of the `RTT/2` symmetry guess. Null for pre-v4 / non-SpatialFin receivers.
      */
     val monotonicSampleMs: Long? = null,
+    /**
+     * SpatialFin extension. The receiver's *authoritative* set of audio codecs it can
+     * actually render — software-decodable codecs plus whatever the attached HDMI / SPDIF
+     * chain advertises for passthrough (`AudioCapabilities.supportsEncoding`). Lowercase
+     * Jellyfin codec tokens (`ac3`, `eac3`, `truehd`, `dts`, `dts-hd`, `aac`, …). The sender
+     * uses this — never a hardcoded codec table — to decide split-A/V direct-stream vs
+     * server transcode, so the same build is correct on a TrueHD-capable AVR, a DD+/Atmos
+     * soundbar, and a PCM-only TV alike. Null for pre-extension / non-SpatialFin receivers
+     * (sender then falls back to a conservative default and self-corrects on the first
+     * beacon that carries this).
+     */
+    val supportedAudioCodecs: List<String>? = null,
 ) {
     val playbackState: PlaybackState? get() = PlaybackState.fromCode(state)
 }

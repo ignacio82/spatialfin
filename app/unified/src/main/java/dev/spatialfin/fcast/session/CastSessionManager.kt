@@ -29,6 +29,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.spatialfin.fcast.ReceiverAudioCodecs
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
 import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject
@@ -277,6 +278,53 @@ class CastSessionManager @Inject constructor(
     private val unsupportedAudioReceivers = java.util.Collections.synchronizedSet(
         mutableSetOf<String>(),
     )
+
+    /**
+     * Per-`host:port` cache of the receiver's *authoritative* passthrough-capable audio codec
+     * tokens, latched from the SpatialFin `supportedAudioCodecs` beacon extension. This — not
+     * a hardcoded codec table — is what drives the split-A/V direct-stream vs transcode
+     * decision, so one build is correct on a TrueHD AVR, a DD+/Atmos soundbar, and a PCM-only
+     * TV. Survives across casts within a process (a receiver's chain doesn't change without a
+     * reconfigure); seeds the *next* split-A/V cast's decision before any beacon and lets the
+     * current one self-correct once the first beacon lands.
+     */
+    private val receiverAudioCaps = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, List<String>>(),
+    )
+
+    /**
+     * One-shot user notice (mini-controller / toast) emitted when split-A/V had to fall back
+     * to a server audio transcode because the picked receiver's chain can't render the source
+     * codec (e.g. TrueHD on a DD+ soundbar). Replaces the old silent failure. Consumed by the
+     * UI then cleared via [consumeAudioTranscodeNotice].
+     */
+    private val _pendingAudioTranscodeNotice = MutableStateFlow<String?>(null)
+    val pendingAudioTranscodeNotice: StateFlow<String?> =
+        _pendingAudioTranscodeNotice.asStateFlow()
+
+    fun consumeAudioTranscodeNotice() {
+        _pendingAudioTranscodeNotice.value = null
+    }
+
+    /**
+     * The most recent split-A/V request, stashed so a beacon that reveals the receiver can't
+     * render the chosen audio can transparently re-cast with the corrected (transcode)
+     * decision — instead of only fixing "the next manual cast". [recastDone] guards against a
+     * re-cast loop and is reset on every fresh user-initiated cast.
+     */
+    private data class SplitAvRequest(
+        val item: dev.jdtech.jellyfin.models.SpatialFinItem,
+        val localPlayerIntentBuilder: () -> Intent?,
+        val sourceAudioCodec: String?,
+        val wasDirectStream: Boolean,
+        val receiverKey: String,
+    )
+
+    @Volatile
+    private var lastSplitAvRequest: SplitAvRequest? = null
+
+    @Volatile
+    private var recastDone: Boolean = false
 
     /**
      * Most-recent latest cached Google Cast results. Surfaced to the picker UI so users can
@@ -953,6 +1001,39 @@ class CastSessionManager @Inject constructor(
                         }
                     }
                 }
+                // Latch the receiver's authoritative codec capability and self-correct: if
+                // we direct-streamed a codec it actually can't render (its first beacon just
+                // told us — e.g. TrueHD on a DD+ soundbar, where the audio track is dropped
+                // entirely so the `audioFormat`-based signal above never fires), transparently
+                // re-cast from the current position with the corrected transcode decision.
+                update.supportedAudioCodecs?.let { codecs ->
+                    val rcv = controller.activeReceiver.value ?: return@let
+                    val key = "${rcv.host}:${rcv.port}"
+                    receiverAudioCaps[key] = codecs
+                    val req = lastSplitAvRequest
+                    if (!recastDone &&
+                        req != null &&
+                        req.wasDirectStream &&
+                        req.receiverKey == key &&
+                        _splitAvMode.value &&
+                        !ReceiverAudioCodecs.canRenderDirect(req.sourceAudioCodec, codecs)
+                    ) {
+                        recastDone = true
+                        Timber.tag(TAG).w(
+                            "split-A/V self-correct: %s can't render %s (caps=%s) — " +
+                                "re-casting as transcode",
+                            key, req.sourceAudioCodec, codecs,
+                        )
+                        scope.launch {
+                            castSpatialItemSplitAv(
+                                item = req.item,
+                                startPositionMs = _activePositionMs.value,
+                                recast = true,
+                                localPlayerIntentBuilder = req.localPlayerIntentBuilder,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1150,8 +1231,15 @@ class CastSessionManager @Inject constructor(
     suspend fun castSpatialItemSplitAv(
         item: SpatialFinItem,
         startPositionMs: Long? = null,
+        recast: Boolean = false,
         localPlayerIntentBuilder: () -> Intent?,
     ): Boolean {
+        // Fresh user-initiated cast re-arms the one-shot self-correcting re-cast guard; a
+        // re-cast triggered from a beacon must not (it already set recastDone = true).
+        if (!recast) {
+            recastDone = false
+            _pendingAudioTranscodeNotice.value = null
+        }
         val receiver = _pickedReceiver.value ?: run {
             Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
             return false
@@ -1191,37 +1279,76 @@ class CastSessionManager @Inject constructor(
                 val audioCodec = source.mediaStreams
                     .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
-                val audioDecision = audioCodecDecision(receiver)
-                val baseUrl = repository.getStreamUrl(itemId, source.id)
-                    .withCastCompatibleCodecs(audioCodec, audioDecision)
-                // Direct-play vs transcode determines whether `startTimeTicks=` does anything.
-                // `withCastCompatibleCodecs` flips static=true → static=false ONLY when the
-                // audio codec can't direct-play (dts/truehd/eac3/etc.) — that's the trigger
-                // we detect to know if the resulting URL is a transcoded HLS stream.
-                //
-                // Behavior of startTimeTicks on each path:
-                //   - Transcoded (static=false): Jellyfin re-encodes the stream starting at
-                //     the requested position. Receiver byte 0 = absolute media-time `startMs`.
-                //   - Direct-play (static=true): JF serves the raw container with HTTP byte-
-                //     range support. `startTimeTicks` is IGNORED — the file is served from
-                //     byte 0 regardless. Receiver byte 0 = absolute media-time 0.
-                //
-                // Pre-fix bug: we appended `startTimeTicks=` to direct-play URLs too, and
-                // told SplitAvController `mediaStartOffsetMs = startMs`. JF served the file
-                // from byte 0, so receiver played from 0 absolute, while the controller's
-                // first-play seek computed `master.currentPositionMs() - startMs = 0` and
-                // seeked the receiver to 0 → audio at 0:00 while XR video resumed at e.g. 2:00.
-                val transcoded = "audioCodec=" in baseUrl || "static=false" in baseUrl
-                val url = baseUrl
-                    .let { if (transcoded) it.withStartTimeTicks(startMs) else it }
-                    .withJellyfinAuth()
-                // The controller's `mediaStartOffsetMs` is the absolute media-time at which
-                // the receiver's stream-time 0 lives. For transcoded streams that's `startMs`;
-                // for direct-play streams the file timeline IS absolute, so 0.
-                val mediaStartOffsetMs = if (transcoded) startMs else 0L
+                val recvKey = "${receiver.host}:${receiver.port}"
+                // Capability-driven decision — never a hardcoded codec table. The receiver
+                // advertises exactly what its HDMI/SPDIF chain can render via the
+                // `supportedAudioCodecs` beacon extension; we cache it per host:port. We
+                // direct-stream (best quality — lossless / Atmos preserved) whenever the chain
+                // can render the source codec, and only server-transcode when it genuinely
+                // can't. This is correct on a TrueHD AVR, a DD+/Atmos soundbar, and a
+                // PCM-only TV with the same build. Settings override the heuristic: "Always
+                // direct play" forces direct (full-fidelity Dolby setups), "Always transcode"
+                // forces transcode (no-Dolby setups). `caps` is null on the first cast to a
+                // never-seen receiver → conservative (only universally-software-decodable
+                // codecs direct-stream); the first beacon then self-corrects via the re-cast
+                // in [startFCastStateBridge].
+                val caps = receiverAudioCaps[recvKey]
+                val canDirect = when (
+                    appPreferences.getValue(appPreferences.castAudioFallback)
+                ) {
+                    "transcode_aac" -> false
+                    "passthrough" -> true
+                    else -> ReceiverAudioCodecs.canRenderDirect(audioCodec, caps)
+                }
+                val transcoded = !canDirect
+                // Behavior of startTimeTicks per path:
+                //   - Direct-play (static=true raw container): startTimeTicks is IGNORED — the
+                //     file timeline IS absolute, so receiver stream-time 0 == media-time 0;
+                //     mediaStartOffsetMs = 0 and the controller's first-play seek aligns it.
+                //   - HLS transcode: Jellyfin re-encodes from startTimeTicks, so receiver
+                //     stream-time 0 == media-time startMs ⇒ mediaStartOffsetMs = startMs.
+                val url: String
+                val mediaStartOffsetMs: Long
+                if (canDirect) {
+                    url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
+                    mediaStartOffsetMs = 0L
+                } else {
+                    // Best codec the chain CAN render (E-AC-3 → AC-3 → AAC). HLS path mirrors
+                    // the proven direct-play stream (master.m3u8 + TS); the legacy
+                    // `static=false&audioCodec=` raw-/stream rewrite produced an unreadable
+                    // live-transcode container (receiver `groups=0`) and is gone. Bitrate is
+                    // unbounded so the only transcode reason is the codec, never bandwidth.
+                    val targets = ReceiverAudioCodecs.preferredTranscodeCodecs(caps)
+                    val hls = repository.getAudioTranscodeStreamUrl(itemId, source.id, targets)
+                    if (hls.isBlank()) {
+                        url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
+                        mediaStartOffsetMs = 0L
+                        Timber.tag(TAG).w(
+                            "split-A/V: transcode URL empty for %s — direct-stream fallback",
+                            recvKey,
+                        )
+                    } else {
+                        url = hls.withStartTimeTicks(startMs).withJellyfinAuth()
+                        mediaStartOffsetMs = startMs
+                        _pendingAudioTranscodeNotice.value =
+                            "${receiver.name} can't play " +
+                                "${ReceiverAudioCodecs.normalize(audioCodec).ifEmpty { "this" }} " +
+                                "audio — streaming a compatible track " +
+                                "(${targets.firstOrNull() ?: "aac"})."
+                    }
+                }
+                // Stash for the self-correcting re-cast: if a beacon later proves this
+                // receiver can't render a codec we direct-streamed, re-cast with transcode.
+                lastSplitAvRequest = SplitAvRequest(
+                    item = item,
+                    localPlayerIntentBuilder = localPlayerIntentBuilder,
+                    sourceAudioCodec = audioCodec,
+                    wasDirectStream = canDirect,
+                    receiverKey = recvKey,
+                )
                 Timber.tag(TAG).i(
-                    "castSpatialItemSplitAv: source audio codec=%s transcoded=%b startMs=%d mediaStartOffsetMs=%d",
-                    audioCodec, transcoded, startMs, mediaStartOffsetMs,
+                    "castSpatialItemSplitAv: source audio codec=%s transcoded=%b caps=%s startMs=%d mediaStartOffsetMs=%d",
+                    audioCodec, transcoded, caps, startMs, mediaStartOffsetMs,
                 )
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 

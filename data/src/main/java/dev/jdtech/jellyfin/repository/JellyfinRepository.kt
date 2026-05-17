@@ -100,6 +100,22 @@ interface JellyfinRepository {
 
     suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String
 
+    /**
+     * An HLS stream URL whose audio is server-transcoded to one of [allowedAudioCodecs] while
+     * the video is copied. Used by split-A/V when the picked receiver's chain cannot render
+     * the source audio codec (e.g. TrueHD on a DD+/Atmos soundbar). Mirrors the proven
+     * direct-play HLS path (`master.m3u8` + `SegmentContainer=ts`) rather than the
+     * `static=false&audioCodec=` raw-`/stream` rewrite, which produced an unreadable
+     * live-transcode container on some receivers. Uses an effectively-unbounded bitrate so
+     * the *only* transcode reason is the audio codec — never bandwidth — preserving the best
+     * possible audio. Returns "" if no URL could be produced.
+     */
+    suspend fun getAudioTranscodeStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        allowedAudioCodecs: List<String>,
+    ): String
+
     suspend fun getMediaAttachment(
         itemId: UUID,
         mediaSourceId: String,

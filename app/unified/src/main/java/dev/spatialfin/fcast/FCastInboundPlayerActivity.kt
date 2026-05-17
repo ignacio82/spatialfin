@@ -88,6 +88,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var splitAvRole: SplitAvRole? = null
     private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
+    /** Passthrough-capable audio codec tokens of the attached chain; set in [logAudioCapabilities]. */
+    private var receiverAudioCodecs: List<String> = emptyList()
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushPlaybackSnapshot()
         override fun onPlaybackStateChanged(playbackState: Int) = pushPlaybackSnapshot()
@@ -300,6 +302,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     @OptIn(UnstableApi::class)
     private fun logAudioCapabilities() {
         val caps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this)
+        // Stash the passthrough-capable codec tokens so every beacon advertises them to the
+        // sender. This is the authoritative input to the sender's split-A/V direct-stream vs
+        // transcode decision — see [ReceiverAudioCodecs] / SplitAvController.
+        receiverAudioCodecs = ReceiverAudioCodecs.fromCapabilities(caps)
         val encodings = listOf(
             android.media.AudioFormat.ENCODING_PCM_16BIT to "PCM_16BIT",
             android.media.AudioFormat.ENCODING_PCM_FLOAT to "PCM_FLOAT",
@@ -523,7 +529,18 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 MediaMetadata.Builder().setTitle(title ?: "FCast media").build(),
             )
             .apply {
+                // Adaptive-manifest detection must win over the sender's `container` hint and
+                // must use media3's *canonical* MIME constants. The sender guesses HLS as
+                // `application/vnd.apple.mpegurl`, but DefaultMediaSourceFactory only maps the
+                // canonical `application/x-mpegURL` (MimeTypes.APPLICATION_M3U8) to
+                // HlsMediaSource — the vnd-variant falls through to ProgressiveMediaSource,
+                // which then can't parse the playlist (UnrecognizedInputFormatException ⇒
+                // groups=0 ⇒ silent split-A/V audio transcode). Inspect the path (sans query)
+                // so `…/master.m3u8?DeviceId=…` is still recognised.
+                val path = url.substringBefore('?').lowercase()
                 when {
+                    path.endsWith(".m3u8") -> setMimeType(MimeTypes.APPLICATION_M3U8)
+                    path.endsWith(".mpd") -> setMimeType(MimeTypes.APPLICATION_MPD)
                     !container.isNullOrBlank() -> setMimeType(container)
                     url.contains(".m3u8", ignoreCase = true) -> setMimeType(MimeTypes.APPLICATION_M3U8)
                     url.contains(".mpd", ignoreCase = true) -> setMimeType(MimeTypes.APPLICATION_MPD)
@@ -603,6 +620,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 // v4: monotonic stamp of the position sample, in the *same* clock as the
                 // NTP Ping/Pong, so the sender maps this beacon precisely via offset θ.
                 monotonicSampleMs = SystemClock.elapsedRealtime(),
+                // Authoritative audio-codec capability of this chain → drives the sender's
+                // split-A/V direct-stream vs transcode decision (capability-driven, not a
+                // hardcoded table, so it is correct on any AVR/soundbar/TV).
+                supportedAudioCodecs = receiverAudioCodecs.takeIf { it.isNotEmpty() },
             )
         )
     }

@@ -137,8 +137,18 @@ class ClockOffsetEstimator(
         return true
     }
 
-    /** Best θ (ms): the offset from the lowest-delay round trip in the window; null if empty. */
-    fun offsetMs(): Int? = recent.minByOrNull { it.deltaMs }?.thetaMs?.toInt()
+    /**
+     * Best θ (ms): the offset from the lowest-delay round trip in the window; null if empty.
+     *
+     * MUST be `Long`. θ is the offset between the two devices' `elapsedRealtime` clocks,
+     * whose epochs differ by *each device's uptime difference* — easily tens of days
+     * (>2^31 ms) between, say, an always-on Google TV Streamer and a recently-booted
+     * headset. Truncating to `Int` here wrapped a real ~4.3e9 ms offset to ~8.3e7, which
+     * corrupted `expectedXrPositionMs`, produced a spurious multi-gigasecond drift, and made
+     * the policy hard-seek every beacon → drift-cap → degrade → pause cascaded to the XR
+     * master.
+     */
+    fun offsetMs(): Long? = recent.minByOrNull { it.deltaMs }?.thetaMs
 
     fun hasEstimate(): Boolean = recent.isNotEmpty()
 
