@@ -250,44 +250,70 @@ object AudioLatencyProfile {
 
 /**
  * Rejects beacons that spent an anomalous amount of time in the network/receiver queue before
- * reaching us — their `time` field is already stale by the time the policy would act on it.
+ * reaching us — their position sample is already stale by the time the policy would act on it.
  *
- * The receiver stamps every [dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage] with
- * `generationTime` (its own wall clock at emit). We can't know the receiver↔sender clock
- * offset without a protocol-level exchange, but it's ~constant within a session, so the
- * *minimum* observed `(localRecvMonotonic − generationTime)` across the session is the best
- * estimate of "offset + minimum path delay" — classic NTP min-filtering. Any beacon whose
- * observed delay exceeds that floor by more than [staleThresholdMs] sat in a queue and should
- * be dropped rather than fed into drift correction.
+ * Staleness is judged on the beacon's age in the sender's *monotonic* clock: the orchestrator
+ * maps the receiver's monotonic sample stamp into sender time via the continuously-estimated
+ * v4 clock offset θ (see [ClockOffsetEstimator]) and passes `senderNow − sampleTimeₛ`. Both
+ * endpoints are `elapsedRealtime` (no NTP steps) and θ tracks inter-device crystal drift out,
+ * so the age doesn't accumulate skew.
+ *
+ * An earlier version compared the receiver's *wall* clock (`generationTime`) against the
+ * sender's monotonic clock and kept an *all-time* minimum as the reference. That mixed two
+ * undisciplined heterogeneous clocks: crystal drift made the gap grow unbounded (every fresh
+ * beacon dropped within ~1–2 h of a long movie) and a single receiver NTP backward step
+ * dropped *every* beacon for the rest of the session permanently. This version (a) uses the
+ * θ-disciplined monotonic age and (b) takes the reference as a *sliding-window* minimum so
+ * any residual baseline shift self-heals within [floorWindowMs] instead of forever.
  */
 class BeaconFreshnessGate(
     private val staleThresholdMs: Long = DEFAULT_STALE_THRESHOLD_MS,
+    private val floorWindowMs: Long = DEFAULT_FLOOR_WINDOW_MS,
 ) {
-    private var minObservedDelayMs: Long? = null
+    private data class Sample(val atMonotonicMs: Long, val ageMs: Long)
+
+    private val recent = ArrayDeque<Sample>()
 
     /**
-     * @param generationTimeMs receiver wall-clock stamp from the beacon
-     * @param localRecvMonotonicMs our monotonic clock when the beacon arrived
-     * @return true if the beacon is fresh enough to act on
+     * @param ageMs beacon age in the *sender's* monotonic clock — `senderNow − (receiver
+     *   monotonicSampleMs − θ)`, computed by the orchestrator. Null when no disciplined clock
+     *   relationship exists yet (θ unconverged / pre-v4 / non-SpatialFin receiver): we then
+     *   can't tell stale from skewed, so accept — the gate is a bonus on top of
+     *   [DriftEstimator]'s outlier rejection, never a single point of failure.
+     * @param atMonotonicMs sender monotonic clock now; the sliding-window axis.
+     * @return true if the beacon is fresh enough to act on.
      */
-    fun accept(generationTimeMs: Long, localRecvMonotonicMs: Long): Boolean {
-        // generationTime==0 means a non-SpatialFin / spec-minimal receiver that doesn't stamp
-        // it usefully — don't gate in that case, we'd reject everything.
-        if (generationTimeMs <= 0L) return true
-        val observedDelay = localRecvMonotonicMs - generationTimeMs
-        val floor = minObservedDelayMs
-        if (floor == null || observedDelay < floor) {
-            minObservedDelayMs = observedDelay
-            return true
+    fun accept(ageMs: Long?, atMonotonicMs: Long): Boolean {
+        if (ageMs == null) return true
+        val cutoff = atMonotonicMs - floorWindowMs
+        while (recent.isNotEmpty() && recent.first().atMonotonicMs < cutoff) {
+            recent.removeFirst()
         }
-        return observedDelay - floor <= staleThresholdMs
+        // Reference is the *windowed* minimum, not an all-time minimum: even though θ
+        // discipline keeps `ageMs` skew-free, a θ re-base or transient still shifts the
+        // baseline — a sliding window lets it wash out within [floorWindowMs] instead of
+        // permanently biasing the floor and silently dropping every beacon for the rest of a
+        // long movie (the all-time-min bug this replaced).
+        val floor = recent.minOfOrNull { it.ageMs }
+        recent.addLast(Sample(atMonotonicMs, ageMs))
+        if (floor == null) return true // first in window — nothing to compare against
+        if (ageMs <= floor) return true // a new best is fresh by definition
+        return ageMs - floor <= staleThresholdMs
     }
 
     fun reset() {
-        minObservedDelayMs = null
+        recent.clear()
     }
 
     companion object {
         const val DEFAULT_STALE_THRESHOLD_MS: Long = 250L
+
+        /**
+         * Window the "best-case age" reference is taken over. Long enough to span transient
+         * congestion (so a brief stall doesn't redefine "fresh"), short enough that any
+         * residual baseline shift self-heals in at most this long of dropped beacons —
+         * versus *permanently* with the previous all-time minimum.
+         */
+        const val DEFAULT_FLOOR_WINDOW_MS: Long = 30_000L
     }
 }

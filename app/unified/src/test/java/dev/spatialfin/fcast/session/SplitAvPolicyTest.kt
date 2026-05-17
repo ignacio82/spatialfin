@@ -340,33 +340,67 @@ class AudioLatencyProfileTest {
 class BeaconFreshnessGateTest {
 
     @Test
-    fun `first beacon establishes the baseline and is accepted`() {
+    fun `null age disables the gate (no disciplined clock yet)`() {
         val g = BeaconFreshnessGate()
-        assertTrue(g.accept(generationTimeMs = 1_000L, localRecvMonotonicMs = 1_050L))
+        assertTrue(g.accept(ageMs = null, atMonotonicMs = 9_999L))
+        assertTrue(g.accept(ageMs = null, atMonotonicMs = 1L))
     }
 
     @Test
-    fun `a lower observed delay re-bases the floor`() {
-        val g = BeaconFreshnessGate(staleThresholdMs = 100L)
-        g.accept(1_000L, 1_080L)            // delay 80
-        assertTrue(g.accept(2_000L, 2_040L)) // delay 40 → new floor
-        // floor 40 + threshold 100 = 140 ceiling: delay 140 accepted, 141 stale
-        assertTrue(g.accept(3_000L, 3_140L))
-        assertFalse(g.accept(4_000L, 4_141L))
-    }
-
-    @Test
-    fun `queued beacon beyond the stale threshold is rejected`() {
+    fun `first sample accepted, steady ages accepted, a spike rejected`() {
         val g = BeaconFreshnessGate(staleThresholdMs = 200L)
-        g.accept(1_000L, 1_050L)             // floor delay 50
-        assertFalse(g.accept(2_000L, 2_300L)) // delay 250 = 50 + 200(+) → stale
+        var t = 0L
+        assertTrue(g.accept(40L, t)) // first
+        repeat(5) { t += 100; assertTrue(g.accept(45L, t)) } // steady ~40-45
+        t += 100
+        assertFalse("250ms over the ~40ms floor → queued", g.accept(300L, t))
+        // A new low becomes the reference and is fresh by definition.
+        t += 100
+        assertTrue(g.accept(35L, t))
     }
 
     @Test
-    fun `unstamped generationTime disables the gate`() {
-        val g = BeaconFreshnessGate()
-        assertTrue(g.accept(0L, 9_999L))
-        assertTrue(g.accept(0L, 1L))
+    fun `a permanent baseline step self-heals within the window (not forever)`() {
+        // Models a clock re-base / step: age jumps +2000 and stays there. With the old
+        // all-time-min floor this dropped every beacon forever; the sliding window must
+        // recover once the pre-step low samples age out.
+        val g = BeaconFreshnessGate(staleThresholdMs = 250L, floorWindowMs = 5_000L)
+        var t = 0L
+        repeat(10) { t += 100; g.accept(50L, t) } // floor ≈ 50
+        // Step: +2000. Rejected while the 50ms samples are still in the 5s window.
+        t += 100
+        assertFalse(g.accept(2_050L, t))
+        t += 1_000
+        assertFalse("still within window of the old low", g.accept(2_050L, t))
+        // Past the window: only post-step samples remain → 2050 is the new floor → fresh.
+        t += 6_000
+        assertTrue("recovered after the window", g.accept(2_050L, t))
+        t += 100
+        assertTrue(g.accept(2_060L, t))
+    }
+
+    @Test
+    fun `slow disciplined drift never trips the threshold`() {
+        // θ keeps residual drift sub-ms/s; over a long session the windowed min tracks it,
+        // so age−floor stays tiny. (The old all-time-min grew unbounded here.)
+        val g = BeaconFreshnessGate(staleThresholdMs = 250L, floorWindowMs = 30_000L)
+        var t = 0L
+        var age = 40.0
+        repeat(36_000) { // 1 h at 10 Hz
+            t += 100
+            age += 0.0005 // 0.5 ms per 100 ms ≈ 5 ms/s residual (already pessimistic)
+            assertTrue("dropped at t=$t age=$age", g.accept(age.toLong(), t))
+        }
+    }
+
+    @Test
+    fun `reset clears the window`() {
+        val g = BeaconFreshnessGate(staleThresholdMs = 50L)
+        var t = 0L
+        repeat(5) { t += 100; g.accept(40L, t) }
+        g.reset()
+        t += 100
+        assertTrue("post-reset first sample is a fresh baseline", g.accept(5_000L, t))
     }
 }
 

@@ -609,9 +609,23 @@ class SplitAvController @Inject constructor(
         }
 
         // Drop beacons that spent an anomalous time queued in the network/receiver before
-        // reaching us — their `time` field is already stale, so acting on it injects error.
-        if (!freshnessGate.accept(update.generationTime, now)) {
-            Timber.tag(TAG).v("stale beacon dropped (generationTime=%d)", update.generationTime)
+        // reaching us — their `time`/position is already stale. Judge staleness as the
+        // beacon's age in *our* monotonic clock: map the receiver's monotonic sample stamp
+        // into sender time via the continuously-estimated offset θ. Both ends are
+        // elapsedRealtime (no NTP steps) and θ tracks inter-device crystal drift out, so this
+        // doesn't accumulate skew the way a wall-clock `generationTime` delta would. Null
+        // when θ hasn't converged / pre-v4 receiver → the gate is a no-op (don't gate on a
+        // clock we can't trust; DriftEstimator's outlier rejection still covers jitter).
+        val gateOffset = clockOffset.offsetMs()
+        val gateSampleMs = update.monotonicSampleMs
+        val beaconAgeMs: Long? =
+            if (gateOffset != null && gateSampleMs != null) {
+                now - (gateSampleMs - gateOffset)
+            } else {
+                null
+            }
+        if (!freshnessGate.accept(beaconAgeMs, now)) {
+            Timber.tag(TAG).v("stale beacon dropped (age=%s ms)", beaconAgeMs)
             return
         }
 
