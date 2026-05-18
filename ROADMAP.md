@@ -141,6 +141,36 @@ the on-device AI mutex). They are the new top of the list.
   group seek/pause feedback loop. Fix: refresh the window when the
   triggered player op actually completes.
 
+### Sprint B — surfaced during 2.7.4 split-A/V hardening (2026-05-18)
+
+Found while shipping the capability-driven split-A/V audio + clock-offset
++ Stop-button + fold-back work (commits `3353ca0`…`3406887`, version
+2.7.4 / 105). The split-A/V fixes themselves are **shipped & live-verified**
+(Galaxy XR + Google TV Streamer + Pixel 10 Pro XL); these are the residual
+tail.
+
+- **P1** TV-mode D-pad focus broken on the hero carousel + search
+  (`dev.spatialfin.unified.UnifiedMainActivity` TV content — hero card
+  carousel and search composables; exact file:line not yet localized).
+  Pressing right to the next hero item makes the card unusable: the click
+  hits the whole card, neither Play nor Details is individually
+  focusable; the search view can't receive text and clicks do nothing
+  while the launcher behind it moves. Confirmed **not caused by the
+  split-A/V work** (that change set touched zero TV-UI files). Likely a
+  pre-existing HEAD `tv`-build focus-traversal regression or a
+  test-setup artifact — repro against prod `2.7.2-tv` and a clean
+  relaunch to isolate before fixing. Relates to the earlier
+  `98e873c` "resolve TV settings focus traversal" work.
+- **P3** Split-A/V fold-back re-inits the audio renderer unconditionally
+  (`PlayerSplitAvAdapter.onFoldBackToLocal` → `XrPlayerActivity` /
+  `BeamPlayerActivity`): re-enabling the disabled `TRACK_TYPE_AUDIO`
+  makes ExoPlayer re-select and decode audio with a brief hiccup even
+  when the source codec was locally decodable the whole time. Behavior
+  is correct, just not maximally seamless. Polish: pre-check the source
+  audio codec against this device's `ReceiverAudioCodecs.fromCapabilities`
+  and skip the re-enable churn when the track was already decodable.
+  Shipped fold-back in `8cd2b84`.
+
 ### Perf / build / infra (re-confirmed open)
 
 - **P1** No perf foundation **and no CI to host one**: no
