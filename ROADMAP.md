@@ -35,7 +35,7 @@ These were found and source-verified in the 2026-05-17 audit of the
 post-roadmap code (cast subsystem, split-A/V, the first-frame audio gate,
 the on-device AI mutex). They are the new top of the list.
 
-- **P0** `core/.../llm/LlmChatModelHelper.kt:230` (and `:306`) —
+- ✅ **P0** `core/.../llm/LlmChatModelHelper.kt:230` (and `:306`) —
   `inferenceMutex.lock()` is taken at `:212`, but `createConversation(...)`
   runs at `:230` **outside** the `try` at `:232` whose `finally`/callbacks
   are the only unlock path. If `createConversation` throws (GPU OOM, engine

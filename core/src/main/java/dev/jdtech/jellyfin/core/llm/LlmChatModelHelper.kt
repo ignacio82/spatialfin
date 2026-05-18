@@ -227,7 +227,12 @@ object LlmChatModelHelper {
             instance.backendName,
         )
 
-        val conversation = createConversation(instance.engine, profile)
+        val conversation = try {
+            createConversation(instance.engine, profile)
+        } catch (e: Exception) {
+            inferenceMutex.unlock()
+            throw e
+        }
 
         return try {
             suspendCancellableCoroutine { continuation ->
@@ -303,17 +308,22 @@ object LlmChatModelHelper {
             override fun execute(args: String): String = ""
         }
 
-        val conversation = instance.engine.createConversation(
-            ConversationConfig(
-                tools = listOf(tool(openApiTool)),
-                automaticToolCalling = false,
-                samplerConfig = SamplerConfig(
-                    topK = profile.topK,
-                    topP = profile.topP.toDouble(),
-                    temperature = profile.temperature.toDouble(),
+        val conversation = try {
+            instance.engine.createConversation(
+                ConversationConfig(
+                    tools = listOf(tool(openApiTool)),
+                    automaticToolCalling = false,
+                    samplerConfig = SamplerConfig(
+                        topK = profile.topK,
+                        topP = profile.topP.toDouble(),
+                        temperature = profile.temperature.toDouble(),
+                    ),
                 ),
-            ),
-        )
+            )
+        } catch (e: Exception) {
+            inferenceMutex.unlock()
+            throw e
+        }
 
         Timber.d(
             "LiteRT: runToolCall profile=%s promptChars=%d backend=%s",
