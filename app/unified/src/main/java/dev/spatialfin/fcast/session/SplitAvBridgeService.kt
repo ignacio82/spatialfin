@@ -10,6 +10,13 @@ import dev.jdtech.jellyfin.player.core.splitav.ProxyVideoMaster
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
 import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
@@ -30,7 +37,14 @@ import timber.log.Timber
  * override in the manifest). [SplitAvVideoBridge] and [SplitAvController] are singletons in
  * the same process, so once the proxy is bound everything below is in-process again.
  */
+@AndroidEntryPoint
 class SplitAvBridgeService : Service() {
+
+    /** Same `@Singleton` instance the in-process cast UI drives; lets the cross-process XR
+     *  "Stop split-A/V" button reach [SplitAvController.endFromMaster]. */
+    @Inject lateinit var splitAvController: SplitAvController
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val proxy = ProxyVideoMaster()
 
@@ -84,6 +98,18 @@ class SplitAvBridgeService : Service() {
                 proxy.applyUserSeek(data.getLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS))
                 true
             }
+            SplitAvBridgeIpcMessage.MSG_END_FROM_MASTER -> {
+                // XR user tapped "Stop split-A/V — play audio on this headset". The real
+                // session lives in this (main) process; fold audio back without stopping
+                // playback. endFromMaster() stops the receiver's audio overlay and unmutes
+                // the local master via the bridge.
+                Timber.tag(TAG).i("MSG_END_FROM_MASTER — folding audio back to headset")
+                serviceScope.launch {
+                    runCatching { splitAvController.endFromMaster() }
+                        .onFailure { Timber.tag(TAG).w(it, "endFromMaster failed") }
+                }
+                true
+            }
             else -> false
         }
     }
@@ -96,6 +122,7 @@ class SplitAvBridgeService : Service() {
         super.onDestroy()
         SplitAvVideoBridge.unbind(proxy)
         proxy.detachClient()
+        serviceScope.cancel()
     }
 
     private companion object {

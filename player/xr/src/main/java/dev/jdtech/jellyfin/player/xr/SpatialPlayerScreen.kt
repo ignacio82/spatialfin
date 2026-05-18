@@ -236,6 +236,12 @@ fun SpatialPlayerScreen(
      * voice-ducking effect must respect mute in that mode — see [PlayerVoiceCoordinator].
      */
     splitAvVideoRole: Boolean = false,
+    /**
+     * Fold split-A/V audio back to this headset. Must reach the main-process
+     * [SplitAvController] (via the IPC bridge) — the `:xrplayer`-local FCast controller has
+     * no session, so calling it here is a no-op. Default no-op for non-split callers.
+     */
+    onEndSplitAvFromMaster: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -1972,9 +1978,11 @@ fun SpatialPlayerScreen(
                                         // unmute the master so audio comes back to the XR.
                                         androidx.compose.material3.Button(
                                             onClick = {
-                                                coroutineScope.launch {
-                                                    runCatching { fcastCastingController.stopCast() }
-                                                }
+                                                // Route through the IPC bridge to the
+                                                // main-process SplitAvController; the
+                                                // :xrplayer-local FCast controller has no
+                                                // session so stopCast() here did nothing.
+                                                onEndSplitAvFromMaster()
                                                 activeDialog = null
                                             },
                                             modifier = androidx.compose.ui.Modifier

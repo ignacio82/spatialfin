@@ -446,6 +446,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         fcastController = fcastController,
                         onBackClick = { requestFinish("xr-player-back") },
                         splitAvVideoRole = splitAvActive,
+                        onEndSplitAvFromMaster = { splitAvIpcClient?.requestEndFromMaster() },
                     )
                 } else {
                     // Fallback UI or close if session failed

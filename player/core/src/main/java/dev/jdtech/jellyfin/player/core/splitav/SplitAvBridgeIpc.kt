@@ -89,6 +89,16 @@ object SplitAvBridgeIpcMessage {
      */
     const val MSG_USER_SEEK: Int = 16
 
+    /**
+     * Client → service. The XR user tapped "Stop split-A/V — play audio on this headset" in
+     * the in-player cast sheet. The service invokes [SplitAvController.endFromMaster] (stop
+     * the receiver's audio overlay + unmute the local master), folding audio back to the
+     * headset *without* stopping playback. No payload. Without this, the button could only
+     * call the `:xrplayer`-local FCast controller, which has no session (the real one lives
+     * in `:main`), so it was a silent no-op.
+     */
+    const val MSG_END_FROM_MASTER: Int = 17
+
     const val KEY_POSITION_MS: String = "positionMs"
     const val KEY_PLAYING: String = "playing"
     const val KEY_MUTED: String = "muted"
@@ -305,6 +315,21 @@ class SplitAvBridgeIpcClient(
         }
         try {
             sm.send(msg)
+        } catch (e: RemoteException) {
+            // Service died — onServiceDisconnected will re-null it.
+        }
+    }
+
+    /**
+     * The XR user asked to fold split-A/V audio back to the headset (in-player cast sheet's
+     * "Stop split-A/V" button). Tells the main-process controller to end the session
+     * ([SplitAvController.endFromMaster]: stop the receiver's audio + unmute this master).
+     * No-op when the service isn't connected.
+     */
+    fun requestEndFromMaster() {
+        val sm = serviceMessenger ?: return
+        try {
+            sm.send(Message.obtain(null, SplitAvBridgeIpcMessage.MSG_END_FROM_MASTER))
         } catch (e: RemoteException) {
             // Service died — onServiceDisconnected will re-null it.
         }
