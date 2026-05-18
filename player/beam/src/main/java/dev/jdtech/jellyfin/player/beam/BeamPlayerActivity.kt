@@ -641,6 +641,22 @@ class BeamPlayerActivity : AppCompatActivity() {
                 player = player,
                 onStopFromMaster = { finish() },
                 postToPlayer = { runOnUiThread(it) },
+                onFoldBackToLocal = {
+                    // Fold audio back to this phone (user "Stop split-A/V" or receiver-ended).
+                    // Beam plays the normal capability-aware stream (Jellyfin transcodes audio
+                    // to a phone-decodable codec for this device's profile), so split-A/V only
+                    // *disabled the audio track* defensively. Re-enabling it makes ExoPlayer
+                    // re-select and decode audio locally — seamless, no reload, video keeps
+                    // playing. Volume was already restored by the controller's preceding
+                    // setAudioMuted(false). Mirrors XrPlayerActivity.
+                    runOnUiThread {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                            .build()
+                        Timber.i("split-A/V fold-back: re-enabled local audio track")
+                    }
+                },
             )
             splitAvAdapter = adapter
             // setAudioMuted(true) silences the *output* but the audio track is still selected,

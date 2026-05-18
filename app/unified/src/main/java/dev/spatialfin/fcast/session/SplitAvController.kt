@@ -281,12 +281,18 @@ class SplitAvController @Inject constructor(
             nudgeController.reset()
             it.setPlaybackSpeed(1.0f)
             it.setAudioMuted(false)
+            // Unmuting alone is silent: the master entered split-A/V with its audio *track*
+            // disabled (the raw stream may be a codec the headset can't decode). Fold-back
+            // re-enables local audio the way non-split playback works — the host re-enables
+            // the track and, if needed, reloads via the capability-aware transcoding path at
+            // the current position.
+            it.foldBackToLocal()
         }
         _state.value = State.Idle
         _lastDriftMs.value = null
         sessionReceiver = null
         SplitAvSessionRegistry.setActive(null)
-        Timber.tag(TAG).i("Split-A/V ended by receiver — master unmuted, drift loop stopped")
+        Timber.tag(TAG).i("Split-A/V ended by receiver — master folded back to local audio")
     }
 
     private suspend fun stopInternal() {

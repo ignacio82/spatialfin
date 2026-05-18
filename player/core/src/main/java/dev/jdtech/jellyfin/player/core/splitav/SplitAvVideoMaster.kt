@@ -65,6 +65,17 @@ interface SplitAvVideoMaster {
      * the whole time the session is active — TV is rendering audio, not the headset.
      */
     fun setAudioMuted(muted: Boolean)
+
+    /**
+     * The user (or a receiver-initiated end) asked to fold audio back to the headset without
+     * stopping playback. The split-A/V master entered with its audio track *disabled* (the
+     * raw stream may carry a codec the headset can't decode), so simply unmuting is silent.
+     * The implementation must restore local audio the way non-split playback already works:
+     * re-enable the audio track and, if the source codec isn't headset-decodable, reload the
+     * media via the normal capability-aware (transcoding) path at the current position. Must
+     * NOT stop playback — the user wants to keep watching, now with sound on the headset.
+     */
+    fun foldBackToLocal()
 }
 
 /**

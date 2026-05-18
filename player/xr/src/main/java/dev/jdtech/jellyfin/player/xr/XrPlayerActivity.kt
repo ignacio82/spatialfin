@@ -322,6 +322,23 @@ class XrPlayerActivity : AppCompatActivity() {
                 player = player,
                 onStopFromMaster = { requestFinish("split-av-stop") },
                 postToPlayer = { runOnUiThread(it) },
+                onFoldBackToLocal = {
+                    // User asked to fold audio back to the headset (or the receiver ended the
+                    // session). The XR master is already playing the normal capability-aware
+                    // stream — Jellyfin transcodes audio to aac/ac3/eac3 for this device's
+                    // profile (master.m3u8 &AudioCodec=aac,mp3,ac3,eac3), so the audio is
+                    // decodable here; split-A/V only *disabled the audio track* defensively.
+                    // Re-enabling it makes ExoPlayer re-select and decode the audio locally
+                    // — seamless, no reload, video keeps playing. Volume was already restored
+                    // by the setAudioMuted(false) the controller issues just before this.
+                    runOnUiThread {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                            .build()
+                        Timber.i("split-A/V fold-back: re-enabled local audio track")
+                    }
+                },
             )
             splitAvAdapter = adapter
             // Disable the audio track type so the audio renderer never tries to init a

@@ -30,6 +30,13 @@ class PlayerSplitAvAdapter(
     private val player: Player,
     private val onStopFromMaster: () -> Unit,
     private val postToPlayer: (() -> Unit) -> Unit,
+    /**
+     * Fold audio back to this device without stopping playback. The host Activity supplies
+     * this: it must re-enable the audio track and, when the source codec isn't decodable
+     * here, reload the media via the normal capability-aware (transcoding) path at the
+     * current position. Default no-op for hosts that don't support fold-back.
+     */
+    private val onFoldBackToLocal: () -> Unit = {},
 ) : SplitAvVideoMaster {
 
     private val _isPlaying = MutableStateFlow(false)
@@ -167,6 +174,10 @@ class PlayerSplitAvAdapter(
     override fun stopFromMaster() = postToPlayer {
         player.stop()
         onStopFromMaster()
+    }
+
+    override fun foldBackToLocal() = postToPlayer {
+        onFoldBackToLocal()
     }
 
     override fun setAudioMuted(muted: Boolean) = postToPlayer {

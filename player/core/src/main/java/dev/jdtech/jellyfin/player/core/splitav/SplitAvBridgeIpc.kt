@@ -99,6 +99,15 @@ object SplitAvBridgeIpcMessage {
      */
     const val MSG_END_FROM_MASTER: Int = 17
 
+    /**
+     * Service → client. Fold split-A/V audio back to the headset without stopping playback.
+     * The controller sends this from `endByReceiver()`/`endFromMaster()`. The `:xrplayer`
+     * client re-enables its audio track and, if the source codec isn't headset-decodable,
+     * reloads the media via the normal capability-aware (transcoding) path at the current
+     * position — the same mechanism that makes non-split playback work. No payload.
+     */
+    const val MSG_FOLD_BACK: Int = 18
+
     const val KEY_POSITION_MS: String = "positionMs"
     const val KEY_PLAYING: String = "playing"
     const val KEY_MUTED: String = "muted"
@@ -195,6 +204,8 @@ class ProxyVideoMaster(
         }
     }
 
+    override fun foldBackToLocal() = sendNoData(SplitAvBridgeIpcMessage.MSG_FOLD_BACK)
+
     private fun sendNoData(what: Int) = send(what) { /* empty */ }
 
     private fun send(what: Int, dataBuilder: Bundle.() -> Unit) {
@@ -245,6 +256,7 @@ class SplitAvBridgeIpcClient(
             SplitAvBridgeIpcMessage.MSG_PAUSE_FROM_MASTER -> adapter.pauseFromMaster()
             SplitAvBridgeIpcMessage.MSG_RESUME_FROM_MASTER -> adapter.resumeFromMaster()
             SplitAvBridgeIpcMessage.MSG_STOP_FROM_MASTER -> adapter.stopFromMaster()
+            SplitAvBridgeIpcMessage.MSG_FOLD_BACK -> adapter.foldBackToLocal()
             else -> return@Handler false
         }
         true
