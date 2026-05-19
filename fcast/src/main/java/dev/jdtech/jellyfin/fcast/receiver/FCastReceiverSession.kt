@@ -42,6 +42,8 @@ class FCastReceiverSession(
     /** Monotonic clock for NTP Ping/Pong timestamps; must be the same clock the player uses
      *  to stamp `PlaybackUpdateMessage.monotonicSampleMs`. Injectable for tests. */
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
+    /** Callback invoked when the session reader loop exits or the session is manually closed. */
+    private val onDisconnect: (FCastReceiverSession) -> Unit = {},
 ) {
 
     private val output: DataOutputStream = DataOutputStream(socket.getOutputStream().buffered())
@@ -49,6 +51,9 @@ class FCastReceiverSession(
     private val writeMutex = Mutex()
     private val closed = AtomicBoolean(false)
     private val readerJob: Job
+
+    /** True if the session has been closed manually or its reader loop has exited. */
+    val isClosed: Boolean get() = closed.get()
 
     val remoteAddress: String = socket.remoteSocketAddress?.toString().orEmpty()
 
@@ -146,6 +151,7 @@ class FCastReceiverSession(
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        onDisconnect(this)
         readerJob.cancel()
         try { input.close() } catch (_: Exception) {}
         try { output.close() } catch (_: Exception) {}

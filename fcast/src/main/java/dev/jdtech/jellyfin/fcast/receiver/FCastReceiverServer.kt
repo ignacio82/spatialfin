@@ -101,6 +101,7 @@ class FCastReceiverServer(
                     receiverInfo = info,
                     parentScope = scope,
                     nowMs = config.clock,
+                    onDisconnect = { sessions.remove(it) },
                 )
                 sessions.add(session)
             }
@@ -111,17 +112,38 @@ class FCastReceiverServer(
 
     /** Broadcast a [PlaybackUpdateMessage] to every connected sender. */
     suspend fun broadcastPlaybackUpdate(update: PlaybackUpdateMessage) {
+        pruneClosedSessions()
         for (session in sessions) session.pushPlaybackUpdate(update)
     }
 
     /** Broadcast a [VolumeUpdateMessage] to every connected sender. */
     suspend fun broadcastVolumeUpdate(update: VolumeUpdateMessage) {
+        pruneClosedSessions()
         for (session in sessions) session.pushVolumeUpdate(update)
     }
 
     /** Broadcast a PlaybackError message. Useful for e.g. DRM-required streams. */
     suspend fun broadcastError(message: String) {
+        pruneClosedSessions()
         for (session in sessions) session.pushError(message)
+    }
+
+    /**
+     * Remove any sessions that have been closed but whose [FCastReceiverSession.onDisconnect]
+     * callback hasn't cleared them from our list yet (or was missed). Prevents the session list
+     * from growing indefinitely if the callback is delayed or races with a broadcast.
+     */
+    private fun pruneClosedSessions() {
+        // sessions is a CopyOnWriteArrayList, so we can iterate and remove concurrently.
+        val iterator = sessions.iterator()
+        while (iterator.hasNext()) {
+            val session = iterator.next()
+            // We use the session's internal closed state. Note: FCastReceiverSession.closed
+            // is private; we'll need to expose it or a helper.
+            if (session.isClosed) {
+                sessions.remove(session)
+            }
+        }
     }
 
     fun stop() {

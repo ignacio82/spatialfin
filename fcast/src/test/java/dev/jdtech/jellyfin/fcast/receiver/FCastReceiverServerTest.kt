@@ -54,7 +54,7 @@ class FCastReceiverServerTest {
         )
         server.start()
         try {
-            val (input, output) = connectFakeSender(freePort)
+            val (input, output, _) = connectFakeSender(freePort)
             // Drain server-initiated handshake (Version + Initial).
             assertEquals(FCastOpcode.Version, FCastFrame.read(input)!!.opcode)
             assertEquals(FCastOpcode.Initial, FCastFrame.read(input)!!.opcode)
@@ -94,7 +94,7 @@ class FCastReceiverServerTest {
         )
         server.start()
         try {
-            val (input, output) = connectFakeSender(freePort)
+            val (input, output, _) = connectFakeSender(freePort)
             FCastFrame.read(input); FCastFrame.read(input) // drain handshake
 
             FCastFrame.write(
@@ -125,8 +125,8 @@ class FCastReceiverServerTest {
         )
         server.start()
         try {
-            val (input1, _) = connectFakeSender(freePort)
-            val (input2, _) = connectFakeSender(freePort)
+            val (input1, _, _) = connectFakeSender(freePort)
+            val (input2, _, _) = connectFakeSender(freePort)
             // drain handshake on both
             FCastFrame.read(input1); FCastFrame.read(input1)
             FCastFrame.read(input2); FCastFrame.read(input2)
@@ -155,7 +155,7 @@ class FCastReceiverServerTest {
         )
         server.start()
         try {
-            val (input, output) = connectFakeSender(freePort)
+            val (input, output, _) = connectFakeSender(freePort)
             FCastFrame.read(input); FCastFrame.read(input) // handshake
 
             FCastFrame.write(output, FCastMessage.Ping())
@@ -179,7 +179,7 @@ class FCastReceiverServerTest {
         )
         server.start()
         try {
-            val (input, output) = connectFakeSender(freePort)
+            val (input, output, _) = connectFakeSender(freePort)
             FCastFrame.read(input); FCastFrame.read(input) // handshake
 
             FCastFrame.write(output, FCastMessage.Ping(PingMessage(t1 = 4_242L)))
@@ -207,10 +207,38 @@ class FCastReceiverServerTest {
         }
     }
 
-    private fun connectFakeSender(port: Int): Pair<DataInputStream, DataOutputStream> {
+    @Test fun `closed sessions are pruned from the server`() = runBlocking {
+        val freePort = ServerSocket(0).use { it.localPort }
+        val server = FCastReceiverServer(
+            config = FCastReceiverServer.Config(port = freePort),
+            routerFactory = { FCastIngressRouter.NoOp },
+            parentScope = scope,
+        )
+        server.start()
+        try {
+            val (input, _) = connectFakeSender(freePort)
+            FCastFrame.read(input); FCastFrame.read(input) // handshake
+            withTimeout(2_000) { while (server.sessionCount < 1) delay(20) }
+            assertEquals(1, server.sessionCount)
+
+            // Close the sender socket.
+            input.close()
+
+            // Wait for the server to prune the session via callback.
+            withTimeout(2_000) { while (server.sessionCount > 0) delay(20) }
+            assertEquals("session should be removed on disconnect", 0, server.sessionCount)
+        } finally {
+            server.stop()
+        }
+    }
+
+    private fun connectFakeSender(port: Int): Triple<DataInputStream, DataOutputStream, Socket> {
         val socket = Socket("127.0.0.1", port)
         socket.tcpNoDelay = true
-        return DataInputStream(socket.getInputStream().buffered()) to
-            DataOutputStream(socket.getOutputStream().buffered())
+        return Triple(
+            DataInputStream(socket.getInputStream().buffered()),
+            DataOutputStream(socket.getOutputStream().buffered()),
+            socket,
+        )
     }
 }
