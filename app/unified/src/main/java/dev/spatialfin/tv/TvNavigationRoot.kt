@@ -285,7 +285,7 @@ fun TvNavigationRoot(
                 }
                 Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
-                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.loadData() })
+                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
                         TvRoute.Library -> TvLibraryScreen(selectedView, homeState.views.map { it.view }, { popBack() }, { selectedView = it }, ::openItem)
                         TvRoute.Detail -> TvItemDetailScreen(selectedItemId?.let(UUID::fromString), { popBack() }, ::openItem, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, { selectedShowId = it.toString(); navigate(TvRoute.Show) }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) })

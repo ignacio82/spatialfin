@@ -555,7 +555,7 @@ fun BeamHomeScreen(
                 ErrorCard(
                     title = "Couldn't reach your server",
                     body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = { viewModel.loadData() },
+                    onRetry = { viewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) },
                 )
             }
             else -> {
