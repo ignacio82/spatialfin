@@ -113,6 +113,7 @@ constructor(
     }
 
     fun reconnect() {
+        check()
         connectionMonitor.triggerRefresh()
     }
 

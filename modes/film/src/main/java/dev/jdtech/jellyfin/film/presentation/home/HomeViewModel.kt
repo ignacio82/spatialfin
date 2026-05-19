@@ -337,7 +337,7 @@ constructor(
 
     fun onAction(action: HomeAction) {
         when (action) {
-            is HomeAction.OnRetryClick -> {
+            is HomeAction.OnRetryClick, is HomeAction.OnReconnectClick -> {
                 connectionMonitor.triggerRefresh()
                 loadData()
             }
