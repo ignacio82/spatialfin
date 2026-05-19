@@ -696,7 +696,7 @@ private fun TvDetailHeroCard(item: SpatialFinItem, eyebrow: String, supportingLi
 
 @Composable
 private fun TvStatusCard(title: String, value: String, detail: String, modifier: Modifier = Modifier) {
-    Card(onClick = {}, modifier = modifier, colors = CardDefaults.colors(containerColor = Color.White.copy(alpha = 0.05f)), shape = CardDefaults.shape(RoundedCornerShape(24.dp))) {
+    Box(modifier = modifier.clip(RoundedCornerShape(24.dp)).background(Color.White.copy(alpha = 0.05f))) {
         Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) { Text(title, style = MaterialTheme.typography.labelLarge); Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold); Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2) }
     }
 }
@@ -718,7 +718,7 @@ private fun TvActionTile(title: String, body: String, icon: ImageVector, modifie
 private fun TvHomeHeroCard(item: SpatialFinItem, eyebrow: String, parkInitialFocus: Boolean, onDidParkFocus: () -> Unit, onPrimaryAction: () -> Unit, onDetails: () -> Unit) {
     val primaryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(parkInitialFocus) { if (parkInitialFocus) { runCatching { primaryFocus.requestFocus() }; onDidParkFocus() } }
-    Card(onClick = {}, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(RoundedCornerShape(32.dp))) {
+    Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(32.dp)).background(Color(0x77131A24))) {
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(model = tvBackdropArtwork(item), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.72f)
             Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xF506111B), Color(0xD006111B), Color.Transparent), endX = 1250f)))
@@ -878,7 +878,7 @@ private fun TvSeasonCard(season: SpatialFinSeason, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     Card(onClick = onClick, modifier = Modifier.width(250.dp).height(132.dp).onFocusChanged { isFocused = it.isFocused }, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(RoundedCornerShape(22.dp))) {
         Row(Modifier.fillMaxSize().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Card(onClick = {}, Modifier.width(74.dp).fillMaxHeight(), shape = CardDefaults.shape(RoundedCornerShape(16.dp))) { AsyncImage(tvPrimaryArtwork(season), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Box(Modifier.width(74.dp).fillMaxHeight().clip(RoundedCornerShape(16.dp))) { AsyncImage(tvPrimaryArtwork(season), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             Column { Text(tvSeasonLabel(season), fontWeight = FontWeight.SemiBold); Text(season.seriesName, style = MaterialTheme.typography.bodySmall) }
         }
     }
