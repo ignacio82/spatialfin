@@ -412,7 +412,6 @@ class SplitAvController @Inject constructor(
             }
             var sentScheduledStart = false
             if (playing && !aligned) {
-                aligned = true
                 val masterPos = master.currentPositionMs()
                 val offset = clockOffset.offsetMs()
                 if (offset != null) {
@@ -434,6 +433,7 @@ class SplitAvController @Inject constructor(
                         castingController.seek(recvStreamPos / 1000.0)
                         castingController.resumeAt(t0 + offset)
                         sentScheduledStart = true
+                        aligned = true
                     } catch (e: Exception) {
                         Timber.tag(TAG).w(e, "v4 aligned start failed — falling back to resume-now")
                     }
@@ -442,6 +442,8 @@ class SplitAvController @Inject constructor(
                     // Legacy path: θ not converged (pre-v4 peer, or first-play beat the ping
                     // burst). Seek to the master's current position; the generic resume below
                     // starts the receiver now; warmup-grace absorbs the start transient.
+                    // We DO NOT set aligned=true here; we want to try again on the next Play
+                    // transition (e.g. after a manual Pause/Resume) once θ converges.
                     val expectedReceiverStreamPos =
                         (masterPos - mediaStartOffsetMs).coerceAtLeast(0L)
                     Timber.tag(TAG).i(
@@ -512,14 +514,26 @@ class SplitAvController @Inject constructor(
         // we declare the session degraded and exit the loop — the user has to dismiss + re-pick
         // a receiver to re-establish the cast.
         // Fast initial burst so the v4 clock offset θ converges *before* first-play and the
-        // synchronized start can engage. Cheap (a handful of tiny frames) and one-shot;
-        // failures here are non-fatal — the steady loop below handles a dead receiver.
-        repeat(CLOCK_SYNC_BURST_PINGS) {
+        // synchronized start can engage. We wait for each ping to finish (serialized) and
+        // continue until θ has at least one valid sample, up to a 5 s deadline.
+        val burstStart = clock()
+        var burstCount = 0
+        while (clockOffset.offsetMs() == null && (clock() - burstStart) < 5_000L) {
             try {
                 castingController.ping()
-            } catch (_: Exception) { /* steady loop will diagnose */ }
-            delay(CLOCK_SYNC_BURST_INTERVAL_MS)
+                burstCount++
+            } catch (e: Exception) {
+                Timber.tag(TAG).w("Initial burst ping %d failed: %s", burstCount, e.message)
+            }
+            delay(if (burstCount < CLOCK_SYNC_BURST_PINGS) CLOCK_SYNC_BURST_INTERVAL_MS else PING_INTERVAL_MS)
+            if (burstCount >= CLOCK_SYNC_BURST_PINGS && clockOffset.offsetMs() == null) {
+                // We've finished the fast burst but still no θ; keep probing at the steady
+                // rate until we get it or time out.
+                continue
+            }
+            if (burstCount >= CLOCK_SYNC_BURST_PINGS) break
         }
+        Timber.tag(TAG).i("Initial ping burst finished after %d pings, θ converged=%b", burstCount, clockOffset.offsetMs() != null)
 
         var consecutiveFailures = 0
         while (true) {

@@ -21,6 +21,7 @@ import java.io.DataOutputStream
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -135,12 +136,11 @@ class FCastSenderClient(
     private val _pongs = MutableSharedFlow<PongObservation>(extraBufferCapacity = 8)
     val pongs: SharedFlow<PongObservation> = _pongs.asSharedFlow()
 
-    /**
-     * Monotonic send time of the most recent outbound Ping awaiting Pong. Reset to null when
-     * the Pong arrives. Single slot — Ping cadence is low (~2 s in split mode) so we never
-     * have more than one outstanding.
-     */
-    @Volatile private var lastPingSentWallMs: Long? = null
+    /** Wall-clock at which the most recent Ping was sent. Used as fallback for legacy Pongs. */
+    private var lastPingSentWallMs: Long? = null
+
+    /** In-flight pings for robust pairing (v4). Map of send-time -> send-time. */
+    private val pendingPings = ConcurrentHashMap<Long, Long>()
 
     /**
      * Open the socket, send Version + Initial. Suspends until the handshake is written; the
@@ -215,8 +215,13 @@ class FCastSenderClient(
      */
     suspend fun ping() {
         val t1 = nowMs()
-        lastPingSentWallMs = t1
-        sendInternal(FCastMessage.Ping(if (negotiatedV4()) PingMessage(t1) else null))
+        if (negotiatedV4()) {
+            pendingPings[t1] = t1
+            sendInternal(FCastMessage.Ping(PingMessage(t1)))
+        } else {
+            lastPingSentWallMs = t1
+            sendInternal(FCastMessage.Ping(null))
+        }
     }
 
     /**
@@ -278,7 +283,13 @@ class FCastSenderClient(
                 val p = msg.payload
                 // v4: trust the echoed t1 (pairs even if pings overlapped); legacy: fall
                 // back to the single outstanding-ping slot.
-                val sent = p?.t1 ?: lastPingSentWallMs
+                val sent = if (p?.t1 != null) {
+                    pendingPings.remove(p.t1)
+                } else {
+                    val fallback = lastPingSentWallMs
+                    lastPingSentWallMs = null
+                    fallback
+                }
                 if (sent != null) {
                     _pongs.tryEmit(
                         PongObservation(
@@ -288,7 +299,6 @@ class FCastSenderClient(
                             receiverSendMs = p?.t3,
                         ),
                     )
-                    lastPingSentWallMs = null
                 }
             }
             is FCastMessage.Initial -> _initialReceiver.tryEmit(msg.payload)
