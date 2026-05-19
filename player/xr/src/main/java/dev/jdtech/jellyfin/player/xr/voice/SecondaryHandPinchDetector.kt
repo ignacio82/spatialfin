@@ -111,6 +111,8 @@ class SecondaryHandPinchDetector(
         var cooldownUntil = 0L
         var lastProgressBucket = -1
         var lastState: GestureState = GestureState.Idle
+        var raisePalmHintShown = false
+        var raisePalmHintDeadline = 0L
 
         suspend fun emitIfChanged(state: GestureState) {
             val shouldEmit =
@@ -283,7 +285,15 @@ class SecondaryHandPinchDetector(
                         phase = ActivationPhase.IDLE
                         resetGestureTracking()
                         if (gestureType == GestureType.ACTIVATE) {
-                            emitIfChanged(GestureState.Arming(gestureType, 0f, RAISE_PALM_HINT))
+                            if (!raisePalmHintShown) {
+                                raisePalmHintShown = true
+                                raisePalmHintDeadline = now + 4000L
+                            }
+                            if (now < raisePalmHintDeadline) {
+                                emitIfChanged(GestureState.Arming(gestureType, 0f, RAISE_PALM_HINT))
+                            } else {
+                                emitIfChanged(GestureState.Idle)
+                            }
                         } else {
                             emitIfChanged(GestureState.Idle)
                         }
