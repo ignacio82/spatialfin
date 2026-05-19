@@ -55,9 +55,9 @@ the on-device AI mutex). They are the new top of the list.
   still-queued download task. Fix: skip deletion when a non-`SUCCESSFUL`
   `downloadtasks` row exists for the source; wrap the cascade in one
   `@Transaction`.
-- **P0** `fcast/.../receiver/FCastReceiverServer.kt:105,133` — `sessions`
+- ✅ **P0** `fcast/.../receiver/FCastReceiverServer.kt:105,133` — `sessions`
   is only ever `.add()`-ed; individual `FCastReceiverSession`s are never
-  removed on disconnect (only a bulk `.clear()` at server stop). Every
+  removed on disconnect (only a bulk `.clear()` at server stop) (`5b80c8f`). Every
   sender connect/disconnect over the receiver service's whole lifetime
   (Wi-Fi flaps, repeated split-A/V sessions, discovery probes) leaks a
   `Socket` + streams + cancelled `Job`, and the ~10 Hz beacon broadcast
