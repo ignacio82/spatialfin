@@ -79,20 +79,20 @@ the on-device AI mutex). They are the new top of the list.
   is frozen black with no spinner and no path back. Fix: persist the
   *intended* `playWhenReady`, or restore through the gate on `onResume`.
   (`5982921`)
-- **P1** `app/unified/.../fcast/session/SplitAvController.kt:399-454` — the
+- ✅ **P1** `app/unified/.../fcast/session/SplitAvController.kt:399-454` — the
   v4 synchronized-start `aligned` latch is set `true` on first `playing`
   regardless of whether θ converged, and the clock-sync ping burst is
-  fire-and-forget (`catch (_: Exception)`, no retry). One dropped early
-  ping ⇒ the whole movie silently runs on the inferior RTT/2 legacy
-  mapping with an 8 s blind window. Fix: gate `aligned=true` on a
-  successful path; retry/extend the burst until θ has an estimate or a
-  short deadline.
-- **P1** `SplitAvController.kt:498-516` + `FCastSenderClient.kt:216-293` —
+  fire-and-forget (`f3f9920`). One dropped early ping ⇒ the whole movie
+  silently runs on the inferior RTT/2 legacy mapping with an 8 s blind
+  window. Fix: gate `aligned=true` on a successful path; retry/extend the
+  burst until θ has an estimate or a short deadline.
+- ✅ **P1** `SplitAvController.kt:498-516` + `FCastSenderClient.kt:216-293` —
   the 6-ping burst overwhelms `FCastSenderClient`'s single-outstanding-ping
   tracking; on a pre-v4 / non-SpatialFin receiver every Pong mis-pairs to
   the latest send time, feeding garbage RTT into the legacy
   `NetworkDelayEstimator` for the rest of the session. Fix: serialize the
   burst, or keep a small FIFO of outstanding send-times.
+  (`f3f9920`)
 - **P1** `fcast/.../cast/adapter/googlecast/GoogleCastAdapter.kt:220-253` —
   the post-LAUNCH RECEIVER_STATUS filter can match a *spontaneous/stale*
   status frame (Cast devices emit unsolicited ones) and bind `transportId`
