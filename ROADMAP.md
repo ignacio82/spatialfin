@@ -72,12 +72,13 @@ the on-device AI mutex). They are the new top of the list.
   black screen — re-introducing exactly the bug `5b4feb6` fixed. Fix:
   require non-empty groups **and** a positive supported audio group.
   (`78defd6`)
-- **P1** `player/beam/.../BeamPlayerActivity.kt:471` &
+- ✅ **P1** `player/beam/.../BeamPlayerActivity.kt:471` &
   `player/tv/.../TvPlayerActivity.kt:362` — backgrounding the activity
   while the first-frame gate holds playback persists the gate-forced
   `playWhenReady=false`; on return nothing re-requests play, so the screen
   is frozen black with no spinner and no path back. Fix: persist the
   *intended* `playWhenReady`, or restore through the gate on `onResume`.
+  (`5982921`)
 - **P1** `app/unified/.../fcast/session/SplitAvController.kt:399-454` — the
   v4 synchronized-start `aligned` latch is set `true` on first `playing`
   regardless of whether θ converged, and the clock-sync ping burst is
