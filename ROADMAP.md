@@ -64,13 +64,14 @@ the on-device AI mutex). They are the new top of the list.
   iterates the unbounded list. Multi-hour viewing on an unstable link ends
   in OOM. Fix: session notifies the server on close (callback/WeakRef);
   prune in `broadcast*` or via a `readerJob` completion handler.
-- **P1** `player/tv/.../TvPlayerActivity.kt:600` &
+- ✅ **P1** `player/tv/.../TvPlayerActivity.kt:600` &
   `player/beam/.../BeamPlayerActivity.kt:941` — the first-frame audio-gate
   escape hatch `tracks.groups.none { it.type == VIDEO }` is **vacuously
   true for the empty `Tracks` ExoPlayer emits early in prepare**, so on a
   slow Jellyfin/transcode start the gate releases and audio plays over a
   black screen — re-introducing exactly the bug `5b4feb6` fixed. Fix:
   require non-empty groups **and** a positive supported audio group.
+  (`78defd6`)
 - **P1** `player/beam/.../BeamPlayerActivity.kt:471` &
   `player/tv/.../TvPlayerActivity.kt:362` — backgrounding the activity
   while the first-frame gate holds playback persists the gate-forced
@@ -364,8 +365,8 @@ Order within the sprint is by blast radius:
 1. P0 `LlmChatModelHelper` mutex-unlock-on-throw (whole AI pipeline dies).
 2. P0 `reconcileItemSources` download-vs-reconcile data-loss guard.
 3. P0 `FCastReceiverServer` session pruning.
-4. P1 first-frame audio gate: empty-`Tracks` + background/foreground
-   regressions (both stem from `5b4feb6`).
+4. ✅ first-frame audio gate: empty-`Tracks` + background/foreground
+   regressions (both stem from `5b4feb6`). (`78defd6`)
 5. P1 `NetworkStreamProxy` loopback bind + scope cancel (security + leak).
 6. P1 `SmbFileClient.openFile` / `NfsFileClient.read` resource + EOF fixes.
 7. P1 split-A/V v4 aligned-start latch + ping-burst estimator poisoning.
