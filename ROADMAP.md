@@ -149,7 +149,7 @@ Found while shipping the capability-driven split-A/V audio + clock-offset
 (Galaxy XR + Google TV Streamer + Pixel 10 Pro XL); these are the residual
 tail.
 
-- **P1** TV-mode D-pad focus broken on the hero carousel + search
+- ✅ **P1** TV-mode D-pad focus broken on the hero carousel + search
   (`dev.spatialfin.unified.UnifiedMainActivity` TV content — hero card
   carousel and search composables; exact file:line not yet localized).
   Pressing right to the next hero item makes the card unusable: the click
