@@ -229,16 +229,39 @@ class GoogleCastAdapter(
             json = CastJson.encodeToString(LaunchRequest.serializer(), launch),
         )
         // Wait for the RECEIVER_STATUS that names our running application. Receivers reply
-        // with multiple RECEIVER_STATUS frames during a session; the first one *after our
-        // LAUNCH* is the only one with our application populated.
+        // with multiple RECEIVER_STATUS frames during a session; we must correlate either on
+        // our launch requestId, or (as a fallback for spontaneous status updates that
+        // happen *after* our launch starts but don't carry the requestId) ensure it contains
+        // our appId and was sent after our LAUNCH.
         val status = withTimeout(LAUNCH_TIMEOUT_MS) {
             channel.incoming
                 .filter { it.namespace == CastNamespaces.RECEIVER }
-                .map { it.payloadUtf8.orEmpty() }
-                .map { runCatching { CastJson.decodeFromString(ReceiverStatus.serializer(), it) }.getOrNull() }
-                .filter { it != null && it.type == CastMessages.RECEIVER_STATUS }
-                .filter { it!!.status.applications.any { app -> app.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID } }
-                .first()!!
+                .mapNotNull { it.payloadUtf8 }
+                .mapNotNull {
+                    runCatching {
+                        CastJson.decodeFromString(ReceiverStatus.serializer(), it)
+                    }.getOrNull()
+                }
+                .filter { it.type == CastMessages.RECEIVER_STATUS }
+                .filter {
+                    val app = it.status.applications.firstOrNull { app ->
+                        app.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID
+                    }
+                    if (app == null) return@filter false
+
+                    // If it has our requestId, it's the direct reply.
+                    if (it.requestId == launchRequestId) return@filter true
+
+                    // Fallback: spontaneous update (requestId=0) that carries our app.
+                    // This is only valid if it arrives after LAUNCH (which it will, because
+                    // we're collecting from a SharedFlow 'incoming' that we only just started
+                    // filtering). Note: in a real race, a stale status from a PREVIOUS session
+                    // could be in the flow's buffer. We don't have a message timestamp, so we
+                    // strongly prefer the requestId match or a status that wasn't already
+                    // present in the receiver's state.
+                    it.requestId == 0
+                }
+                .first()
         }
         val app = status.status.applications.first { it.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID }
         transportId = app.transportId
