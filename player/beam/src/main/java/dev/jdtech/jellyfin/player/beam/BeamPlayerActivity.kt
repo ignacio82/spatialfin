@@ -957,9 +957,12 @@ private fun BeamPlayerScreen(
                 override fun onTracksChanged(tracks: Tracks) {
                     // Audio-only stream: no frame will ever render, so release
                     // the gate as soon as we know there is no video track.
-                    if (!firstFrameRendered &&
-                        tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }
-                    ) {
+                    // We require non-empty groups and at least one supported audio
+                    // group to avoid releasing on the empty Tracks emitted during
+                    // early preparation.
+                    val hasVideo = tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+                    val hasAudio = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
+                    if (!firstFrameRendered && !hasVideo && hasAudio) {
                         firstFrameRendered = true
                         if (gateWantsPlay.value) {
                             gateWantsPlay.value = false
