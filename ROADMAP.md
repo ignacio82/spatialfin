@@ -93,12 +93,13 @@ the on-device AI mutex). They are the new top of the list.
   `NetworkDelayEstimator` for the rest of the session. Fix: serialize the
   burst, or keep a small FIFO of outstanding send-times.
   (`f3f9920`)
-- **P1** `fcast/.../cast/adapter/googlecast/GoogleCastAdapter.kt:220-253` —
-  the post-LAUNCH RECEIVER_STATUS filter can match a *spontaneous/stale*
+- ✅ **P1** `fcast/.../cast/adapter/googlecast/GoogleCastAdapter.kt:220-253` —
+  the post-LAUNCH `RECEIVER_STATUS` filter can match a *spontaneous/stale*
   status frame (Cast devices emit unsolicited ones) and bind `transportId`
   to a dead Default-Media-Receiver instance; every later LOAD/PLAY goes
   nowhere. Fix: correlate on the LAUNCH `requestId` or snapshot
   pre-LAUNCH sessions.
+  (`c560ccd`)
 - **P1** `fcast/.../cast/adapter/airplay/AirPlayHttpClient.kt:106-124` —
   volume map `-30 + 30v` makes the bottom ~half of the slider a dead zone
   and the only mute is the exact-zero sentinel; every AirPlay cast has a
