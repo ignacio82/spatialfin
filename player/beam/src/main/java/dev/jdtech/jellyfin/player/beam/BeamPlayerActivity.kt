@@ -470,6 +470,10 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // If the first frame hasn't rendered, we may be held back by the audio gate.
+        // We restore playWhenReady from the ViewModel; if the gate is active, the
+        // DisposableEffect inside BeamPlayerScreen will re-intercept this and
+        // re-arm gateWantsPlay.
         viewModel.player.playWhenReady = viewModel.playWhenReady
     }
 
@@ -940,7 +944,7 @@ private fun BeamPlayerScreen(
     // first video frame is rendered (ExoPlayer still decodes/presents that
     // frame while paused), then resume so audio and video start together. The
     // gate is one-shot — normal pause/resume after startup is untouched.
-    DisposableEffect(player) {
+    DisposableEffect(player, firstFrameRendered) {
         val listener =
             object : Player.Listener {
                 override fun onIsPlayingChanged(playing: Boolean) {
@@ -981,14 +985,15 @@ private fun BeamPlayerScreen(
                     }
                 }
             }
-        // The ViewModel may have already requested playback before this
-        // listener attached; reconcile that up-front.
-        when {
-            player.isPlaying -> firstFrameRendered = true // resumed mid-stream
-            !firstFrameRendered && player.playWhenReady -> {
-                gateWantsPlay.value = true
-                player.playWhenReady = false
-            }
+        // Reconcile playback state on entry and after resume (keyed on firstFrameRendered).
+        // If the activity was backgrounded and resumed, ExoPlayer may have
+        // playWhenReady=true but audio is still held back; we re-intercept it here.
+        if (!firstFrameRendered && player.playWhenReady) {
+            gateWantsPlay.value = true
+            player.playWhenReady = false
+        }
+        if (player.isPlaying) {
+            firstFrameRendered = true
         }
         isPlaying = player.isPlaying
         player.addListener(listener)
