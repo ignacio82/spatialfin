@@ -13,14 +13,32 @@ android {
     defaultConfig {
         minSdk = Versions.MIN_SDK
 
-        buildConfigField("int", "VERSION_CODE", Versions.APP_CODE.toString())
-        buildConfigField("String", "VERSION_NAME", "\"${Versions.APP_NAME}\"")
-
         consumerProguardFile("proguard-rules.pro")
 
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
             arg("room.generateKotlin", "true")
+        }
+    }
+
+    androidComponents {
+        onVariants { variant ->
+            variant.buildConfigFields?.put(
+                "VERSION_CODE",
+                com.android.build.api.variant.BuildConfigField(
+                    "int",
+                    Versions.APP_CODE.toString(),
+                    "Monotonically increasing version code"
+                )
+            )
+            variant.buildConfigFields?.put(
+                "VERSION_NAME",
+                com.android.build.api.variant.BuildConfigField(
+                    "String",
+                    "\"${Versions.APP_NAME}\"",
+                    "Semantic version name"
+                )
+            )
         }
     }
 
