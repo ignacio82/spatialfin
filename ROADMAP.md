@@ -44,7 +44,7 @@ the on-device AI mutex). They are the new top of the list.
   chat query deadlocks until app restart**, with no error surfaced.
   `runToolCall` has the identical shape. Fix: move `createConversation`
   inside the try (or unlock on any throw before `suspendCancellableCoroutine`).
-- **P0** `data/.../downloads/DownloadStorageManager.kt:127` —
+- ✅ **P0** `data/.../downloads/DownloadStorageManager.kt:127` —
   `reconcileItemSources` does `if (!File(source.path).exists())
   deleteItemBlocking(...)` with no "is a download active for this item"
   guard and no DB transaction. When a PRIMARY download is mid-flight (or

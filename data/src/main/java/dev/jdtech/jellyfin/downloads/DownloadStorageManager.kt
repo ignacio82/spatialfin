@@ -125,7 +125,10 @@ constructor(
             .filter { it.type == SpatialFinSourceType.LOCAL }
             .forEach { source ->
                 if (!File(source.path).exists()) {
-                    deleteItemBlocking(item, source)
+                    val hasActiveDownload = database.getDownloadTasksBySourceId(source.id).any { it.status != 8 }
+                    if (!hasActiveDownload) {
+                        deleteItemBlocking(item, source)
+                    }
                 } else {
                     database.getMediaStreamsBySourceId(source.id).forEach { mediaStream ->
                         if (mediaStream.path.isNotBlank() && !File(mediaStream.path).exists()) {
@@ -137,30 +140,32 @@ constructor(
     }
 
     private fun deleteItemBlocking(item: SpatialFinItem, source: SpatialFinSource) {
-        when (item) {
-            is SpatialFinMovie -> database.deleteMovie(item.id)
-            is SpatialFinEpisode -> {
-                database.deleteEpisode(item.id)
-                val remainingEpisodes = database.getEpisodesBySeasonId(item.seasonId)
-                if (remainingEpisodes.isEmpty()) {
-                    database.deleteSeason(item.seasonId)
-                    database.deleteUserData(item.seasonId)
-                    File(context.filesDir, "trickplay/${item.seasonId}").deleteRecursively()
-                    File(context.filesDir, "images/${item.seasonId}").deleteRecursively()
-                    val remainingSeasons = database.getSeasonsByShowId(item.seriesId)
-                    if (remainingSeasons.isEmpty()) {
-                        database.deleteShow(item.seriesId)
-                        database.deleteUserData(item.seriesId)
-                        File(context.filesDir, "trickplay/${item.seriesId}").deleteRecursively()
-                        File(context.filesDir, "images/${item.seriesId}").deleteRecursively()
+        database.executeInTransaction {
+            when (item) {
+                is SpatialFinMovie -> database.deleteMovie(item.id)
+                is SpatialFinEpisode -> {
+                    database.deleteEpisode(item.id)
+                    val remainingEpisodes = database.getEpisodesBySeasonId(item.seasonId)
+                    if (remainingEpisodes.isEmpty()) {
+                        database.deleteSeason(item.seasonId)
+                        database.deleteUserData(item.seasonId)
+                        File(context.filesDir, "trickplay/${item.seasonId}").deleteRecursively()
+                        File(context.filesDir, "images/${item.seasonId}").deleteRecursively()
+                        val remainingSeasons = database.getSeasonsByShowId(item.seriesId)
+                        if (remainingSeasons.isEmpty()) {
+                            database.deleteShow(item.seriesId)
+                            database.deleteUserData(item.seriesId)
+                            File(context.filesDir, "trickplay/${item.seriesId}").deleteRecursively()
+                            File(context.filesDir, "images/${item.seriesId}").deleteRecursively()
+                        }
                     }
                 }
             }
-        }
 
-        database.deleteSource(source.id)
-        database.getMediaStreamsBySourceId(source.id).forEach { database.deleteMediaStream(it.id) }
-        database.deleteUserData(item.id)
+            database.deleteSource(source.id)
+            database.getMediaStreamsBySourceId(source.id).forEach { database.deleteMediaStream(it.id) }
+            database.deleteUserData(item.id)
+        }
         File(context.filesDir, "trickplay/${item.id}").deleteRecursively()
         File(context.filesDir, "images/${item.id}").deleteRecursively()
     }
