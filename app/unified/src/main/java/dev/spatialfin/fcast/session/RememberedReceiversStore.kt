@@ -43,6 +43,7 @@ class RememberedReceiversStore @Inject constructor(
         // kotlinx.serialization respects default values for missing JSON properties.
         val audioLatencyMs: Int? = null,
         val audioLatencyCalibratedAtMs: Long? = null,
+        val supportedAudioCodecs: List<String>? = null,
     )
 
     suspend fun load(): List<RememberedReceiver> = withContext(Dispatchers.IO) {
@@ -58,6 +59,7 @@ class RememberedReceiversStore @Inject constructor(
                     lastSeenMs = it.lastSeenMs,
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
+                    supportedAudioCodecs = it.supportedAudioCodecs,
                 )
             }
     }
@@ -76,6 +78,7 @@ class RememberedReceiversStore @Inject constructor(
                 lastSeenMs = lastSeenMs,
                 audioLatencyMs = prior?.audioLatencyMs,
                 audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
+                supportedAudioCodecs = prior?.supportedAudioCodecs,
             )
             saveLocked(existing)
         }
@@ -138,6 +141,27 @@ class RememberedReceiversStore @Inject constructor(
         saveLocked(updated)
     }
 
+    /**
+     * Persist the receiver's advertised audio codec capability set. Split-A/V uses this on
+     * future casts, including after process restart, so a known Dolby/DTS-capable receiver can
+     * direct-stream from the first Play instead of temporarily falling back to AAC.
+     */
+    suspend fun setSupportedAudioCodecs(
+        host: String,
+        port: Int,
+        codecs: List<String>,
+    ) = mutex.withLock {
+        val sanitized = codecs.map { it.lowercase().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val existing = load()
+        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
+        val updated = existing.map {
+            if (it === target) it.copy(supportedAudioCodecs = sanitized) else it
+        }
+        saveLocked(updated)
+    }
+
     private fun saveLocked(receivers: List<RememberedReceiver>) {
         val capped = receivers
             .sortedByDescending { it.lastSeenMs }
@@ -150,6 +174,7 @@ class RememberedReceiversStore @Inject constructor(
                     lastSeenMs = it.lastSeenMs,
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
+                    supportedAudioCodecs = it.supportedAudioCodecs,
                 )
             }
         prefs.edit { putString(KEY_RECEIVERS, json.encodeToString(capped)) }
@@ -178,4 +203,9 @@ data class RememberedReceiver(
      */
     val audioLatencyMs: Int? = null,
     val audioLatencyCalibratedAtMs: Long? = null,
+    /**
+     * Receiver-advertised codecs it can render directly. Persisted from FCast beacons so
+     * split-A/V can start at best quality immediately for known hardware.
+     */
+    val supportedAudioCodecs: List<String>? = null,
 )

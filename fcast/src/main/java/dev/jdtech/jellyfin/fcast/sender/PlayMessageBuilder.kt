@@ -31,9 +31,9 @@ object PlayMessageBuilder {
          */
         sourceAudioCodec: String? = null,
         /**
-         * SpatialFin extension: true if the URL was rewritten to `static=false&audioCodec=aac`.
-         * Lets the receiver show "Source · transcoded to AAC" vs "Source · direct play" below
-         * the title. Independent of [sourceAudioCodec] so a non-SpatialFin receiver can still
+         * SpatialFin extension: true if the URL points at a server-side audio transcode.
+         * Lets the receiver show "Source · transcoded" vs "Source · direct play" below the
+         * title. Independent of [sourceAudioCodec] so a non-SpatialFin receiver can still
          * decode something useful.
          */
         audioTranscoded: Boolean? = null,

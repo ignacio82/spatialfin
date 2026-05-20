@@ -55,6 +55,7 @@ class RememberedReceiversStoreTest {
         assertEquals(1000L, loaded[0].lastSeenMs)
         assertNull(loaded[0].audioLatencyMs)
         assertNull(loaded[0].audioLatencyCalibratedAtMs)
+        assertNull(loaded[0].supportedAudioCodecs)
     }
 
     @Test fun `setAudioLatency persists and is reflected on next load`() = runTest {
@@ -97,6 +98,31 @@ class RememberedReceiversStoreTest {
         assertEquals(99, loaded.audioLatencyMs)
     }
 
+    @Test fun `setSupportedAudioCodecs persists sanitized receiver capabilities`() = runTest {
+        val store = newStore()
+        store.upsert(receiver("10.0.0.1"))
+        store.setSupportedAudioCodecs("10.0.0.1", 46899, listOf(" EAC3 ", "eac3", "TRUEHD", ""))
+
+        assertEquals(listOf("eac3", "truehd"), store.load().single().supportedAudioCodecs)
+    }
+
+    @Test fun `upsert preserves prior supported audio codecs on mDNS refresh`() = runTest {
+        val store = newStore()
+        store.upsert(receiver("10.0.0.1"), lastSeenMs = 1_000L)
+        store.setSupportedAudioCodecs("10.0.0.1", 46899, listOf("eac3", "truehd"))
+        store.upsert(receiver("10.0.0.1", name = "Tv (renamed)"), lastSeenMs = 2_000L)
+
+        val loaded = store.load().single()
+        assertEquals("Tv (renamed)", loaded.name)
+        assertEquals(listOf("eac3", "truehd"), loaded.supportedAudioCodecs)
+    }
+
+    @Test fun `setSupportedAudioCodecs on unknown receiver is a no-op`() = runTest {
+        val store = newStore()
+        store.setSupportedAudioCodecs("10.0.0.99", 46899, listOf("eac3"))
+        assertEquals(emptyList<RememberedReceiver>(), store.load())
+    }
+
     @Test fun `setAudioLatency on unknown receiver is a no-op`() = runTest {
         val store = newStore()
         // Nothing remembered yet — calling setAudioLatency must NOT silently insert a row,
@@ -120,6 +146,7 @@ class RememberedReceiversStoreTest {
         assertEquals("10.0.0.1", loaded[0].host)
         assertNull(loaded[0].audioLatencyMs)
         assertNull(loaded[0].audioLatencyCalibratedAtMs)
+        assertNull(loaded[0].supportedAudioCodecs)
     }
 
     @Test fun `forget removes the entry along with its calibration`() = runTest {

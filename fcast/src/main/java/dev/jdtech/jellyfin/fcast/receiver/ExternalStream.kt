@@ -40,8 +40,8 @@ data class ExternalStreamRequest(
      */
     val sourceAudioCodec: String? = null,
     /**
-     * SpatialFin extension: true when the URL is a `static=false` Jellyfin transcode (typically
-     * to AAC). Lets the receiver render "transcoded to AAC" vs "direct play" below the title.
+     * SpatialFin extension: true when the URL is a Jellyfin audio transcode. Lets the receiver
+     * render "transcoded" vs "direct play" below the title.
      */
     val audioTranscoded: Boolean? = null,
 ) {

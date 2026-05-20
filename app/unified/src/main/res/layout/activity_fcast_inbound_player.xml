@@ -62,7 +62,7 @@
 
         <!--
           SpatialFin extension: source audio codec + transcoded flag, e.g.
-          "Source · E-AC-3 · Direct play" or "Source · TrueHD → AAC · Transcoded".
+          "Source · E-AC-3 · Direct play" or "Source · TrueHD · Transcoded".
           Populated from PlayMessage.metadata.custom.audio when present; GONE otherwise so
           non-SpatialFin senders don't get a stray empty line.
         -->

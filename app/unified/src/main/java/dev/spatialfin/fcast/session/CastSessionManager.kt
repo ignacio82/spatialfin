@@ -307,10 +307,10 @@ class CastSessionManager @Inject constructor(
     }
 
     /**
-     * The most recent split-A/V request, stashed so a beacon that reveals the receiver can't
-     * render the chosen audio can transparently re-cast with the corrected (transcode)
-     * decision — instead of only fixing "the next manual cast". [recastDone] guards against a
-     * re-cast loop and is reset on every fresh user-initiated cast.
+     * The most recent split-A/V request, stashed so a beacon that resolves the receiver's audio
+     * capabilities can transparently re-cast to the best route: transcode if the direct stream
+     * is unsupported, or direct stream if an initially-conservative transcode was unnecessary.
+     * [recastDone] guards against a re-cast loop and is reset on every fresh user-initiated cast.
      */
     private data class SplitAvRequest(
         val item: dev.jdtech.jellyfin.models.SpatialFinItem,
@@ -318,6 +318,8 @@ class CastSessionManager @Inject constructor(
         val sourceAudioCodec: String?,
         val wasDirectStream: Boolean,
         val receiverKey: String,
+        val receiverMediaStartOffsetMs: Long,
+        val fallbackMode: SplitAvAudioRoutePolicy.FallbackMode,
     )
 
     @Volatile
@@ -479,6 +481,11 @@ class CastSessionManager @Inject constructor(
         _audioLatencies.value = receivers.mapNotNull { r ->
             r.audioLatencyMs?.let { "${r.host}:${r.port}" to it }
         }.toMap()
+        receivers.forEach { r ->
+            r.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
+                receiverAudioCaps["${r.host}:${r.port}"] = codecs
+            }
+        }
     }
 
     /** True iff there is a chosen receiver of any protocol — connection or not. */
@@ -1001,37 +1008,58 @@ class CastSessionManager @Inject constructor(
                         }
                     }
                 }
-                // Latch the receiver's authoritative codec capability and self-correct: if
-                // we direct-streamed a codec it actually can't render (its first beacon just
-                // told us — e.g. TrueHD on a DD+ soundbar, where the audio track is dropped
-                // entirely so the `audioFormat`-based signal above never fires), transparently
-                // re-cast from the current position with the corrected transcode decision.
+                // Latch the receiver's authoritative codec capability and self-correct in
+                // either direction. If we direct-streamed something unsupported, downgrade to
+                // a compatible transcode. If we initially transcoded because caps were unknown
+                // and the beacon proves the receiver can render the source, upgrade back to
+                // the original bitstream for the best possible audio quality.
                 update.supportedAudioCodecs?.let { codecs ->
                     val rcv = controller.activeReceiver.value ?: return@let
                     val key = "${rcv.host}:${rcv.port}"
                     receiverAudioCaps[key] = codecs
+                    scope.launch {
+                        rememberedReceiversStore.setSupportedAudioCodecs(rcv.host, rcv.port, codecs)
+                    }
                     val req = lastSplitAvRequest
-                    if (!recastDone &&
-                        req != null &&
-                        req.wasDirectStream &&
-                        req.receiverKey == key &&
-                        _splitAvMode.value &&
-                        !ReceiverAudioCodecs.canRenderDirect(req.sourceAudioCodec, codecs)
-                    ) {
-                        recastDone = true
-                        Timber.tag(TAG).w(
-                            "split-A/V self-correct: %s can't render %s (caps=%s) — " +
-                                "re-casting as transcode",
-                            key, req.sourceAudioCodec, codecs,
-                        )
-                        scope.launch {
-                            castSpatialItemSplitAv(
-                                item = req.item,
-                                startPositionMs = _activePositionMs.value,
-                                recast = true,
-                                localPlayerIntentBuilder = req.localPlayerIntentBuilder,
+                    if (recastDone || req == null || req.receiverKey != key || !_splitAvMode.value) {
+                        return@let
+                    }
+                    val action = SplitAvAudioRoutePolicy.recastForResolvedCapabilities(
+                        wasDirectStream = req.wasDirectStream,
+                        sourceAudioCodec = req.sourceAudioCodec,
+                        receiverAudioCodecs = codecs,
+                        fallbackMode = req.fallbackMode,
+                    )
+                    if (action == SplitAvAudioRoutePolicy.RecastAction.None) return@let
+
+                    recastDone = true
+                    val absolutePositionMs = (_activePositionMs.value + req.receiverMediaStartOffsetMs)
+                        .coerceAtLeast(0L)
+                    when (action) {
+                        SplitAvAudioRoutePolicy.RecastAction.DowngradeToTranscode -> {
+                            Timber.tag(TAG).w(
+                                "split-A/V self-correct: %s can't render %s (caps=%s) — " +
+                                    "re-casting as transcode",
+                                key, req.sourceAudioCodec, codecs,
                             )
                         }
+                        SplitAvAudioRoutePolicy.RecastAction.UpgradeToDirect -> {
+                            _pendingAudioTranscodeNotice.value = null
+                            Timber.tag(TAG).i(
+                                "split-A/V quality upgrade: %s can render %s (caps=%s) — " +
+                                    "re-casting direct",
+                                key, req.sourceAudioCodec, codecs,
+                            )
+                        }
+                        SplitAvAudioRoutePolicy.RecastAction.None -> Unit
+                    }
+                    scope.launch {
+                        castSpatialItemSplitAv(
+                            item = req.item,
+                            startPositionMs = absolutePositionMs,
+                            recast = true,
+                            localPlayerIntentBuilder = req.localPlayerIntentBuilder,
+                        )
                     }
                 }
             }
@@ -1112,20 +1140,19 @@ class CastSessionManager @Inject constructor(
      * unsupported on that receiver).
      */
     private data class AudioCodecDecision(
-        val mode: AudioFallbackMode,
+        val mode: SplitAvAudioRoutePolicy.FallbackMode,
         val receiverKey: String,
     )
 
-    private enum class AudioFallbackMode { Auto, Passthrough, TranscodeAac }
 
     private fun audioCodecDecision(receiver: FCastReceiver): AudioCodecDecision =
         audioCodecDecision(receiver.host, receiver.port)
 
     private fun audioCodecDecision(host: String, port: Int): AudioCodecDecision {
         val mode = when (appPreferences.getValue(appPreferences.castAudioFallback)) {
-            "passthrough" -> AudioFallbackMode.Passthrough
-            "transcode_aac" -> AudioFallbackMode.TranscodeAac
-            else -> AudioFallbackMode.Auto
+            "passthrough" -> SplitAvAudioRoutePolicy.FallbackMode.Passthrough
+            "transcode_aac" -> SplitAvAudioRoutePolicy.FallbackMode.TranscodeAac
+            else -> SplitAvAudioRoutePolicy.FallbackMode.Auto
         }
         return AudioCodecDecision(mode, "$host:$port")
     }
@@ -1142,10 +1169,10 @@ class CastSessionManager @Inject constructor(
         // explicit Dolby setups get full fidelity. "auto" falls through to the codec table
         // and the per-receiver auto-fallback cache.
         when (decision.mode) {
-            AudioFallbackMode.TranscodeAac ->
+            SplitAvAudioRoutePolicy.FallbackMode.TranscodeAac ->
                 return replace("static=true", "static=false") + "&audioCodec=aac"
-            AudioFallbackMode.Passthrough -> return this
-            AudioFallbackMode.Auto -> Unit // fall through to codec table + cache check
+            SplitAvAudioRoutePolicy.FallbackMode.Passthrough -> return this
+            SplitAvAudioRoutePolicy.FallbackMode.Auto -> Unit // fall through to codec table + cache check
         }
         // Auto-fallback cache: if a previous cast to this receiver hit an unsupported codec,
         // force AAC for every subsequent cast in this process. The cache is process-scoped so
@@ -1238,6 +1265,7 @@ class CastSessionManager @Inject constructor(
         // re-cast triggered from a beacon must not (it already set recastDone = true).
         if (!recast) {
             recastDone = false
+            lastSplitAvRequest = null
             _pendingAudioTranscodeNotice.value = null
         }
         val receiver = _pickedReceiver.value ?: run {
@@ -1280,6 +1308,12 @@ class CastSessionManager @Inject constructor(
                     .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
                 val recvKey = "${receiver.host}:${receiver.port}"
+                val rememberedReceiver = rememberedReceiversStore.load()
+                    .firstOrNull { it.host == receiver.host && it.port == receiver.port }
+                rememberedReceiver?.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
+                    receiverAudioCaps[recvKey] = codecs
+                }
+                val audioDecision = audioCodecDecision(receiver)
                 // Capability-driven decision — never a hardcoded codec table. The receiver
                 // advertises exactly what its HDMI/SPDIF chain can render via the
                 // `supportedAudioCodecs` beacon extension; we cache it per host:port. We
@@ -1293,13 +1327,11 @@ class CastSessionManager @Inject constructor(
                 // codecs direct-stream); the first beacon then self-corrects via the re-cast
                 // in [startFCastStateBridge].
                 val caps = receiverAudioCaps[recvKey]
-                val canDirect = when (
-                    appPreferences.getValue(appPreferences.castAudioFallback)
-                ) {
-                    "transcode_aac" -> false
-                    "passthrough" -> true
-                    else -> ReceiverAudioCodecs.canRenderDirect(audioCodec, caps)
-                }
+                val canDirect = SplitAvAudioRoutePolicy.canDirect(
+                    sourceAudioCodec = audioCodec,
+                    receiverAudioCodecs = caps,
+                    fallbackMode = audioDecision.mode,
+                )
                 val transcoded = !canDirect
                 // Behavior of startTimeTicks per path:
                 //   - Direct-play (static=true raw container): startTimeTicks is IGNORED — the
@@ -1321,7 +1353,7 @@ class CastSessionManager @Inject constructor(
                     // `static=false&audioCodec=` raw-/stream rewrite produced an unreadable
                     // live-transcode container (receiver `groups=0`) and is gone. Bitrate is
                     // unbounded so the only transcode reason is the codec, never bandwidth.
-                    val targets = ReceiverAudioCodecs.preferredTranscodeCodecs(caps)
+                    val targets = SplitAvAudioRoutePolicy.preferredTranscodeCodecs(caps)
                     val hls = repository.getAudioTranscodeStreamUrl(
                         itemId,
                         source.id,
@@ -1346,15 +1378,6 @@ class CastSessionManager @Inject constructor(
                                 "(${targets.firstOrNull() ?: "aac"})."
                     }
                 }
-                // Stash for the self-correcting re-cast: if a beacon later proves this
-                // receiver can't render a codec we direct-streamed, re-cast with transcode.
-                lastSplitAvRequest = SplitAvRequest(
-                    item = item,
-                    localPlayerIntentBuilder = localPlayerIntentBuilder,
-                    sourceAudioCodec = audioCodec,
-                    wasDirectStream = canDirect,
-                    receiverKey = recvKey,
-                )
                 Timber.tag(TAG).i(
                     "castSpatialItemSplitAv: source audio codec=%s transcoded=%b caps=%s startMs=%d mediaStartOffsetMs=%d",
                     audioCodec, transcoded, caps, startMs, mediaStartOffsetMs,
@@ -1362,9 +1385,7 @@ class CastSessionManager @Inject constructor(
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 
                 // 1. Calibrate audio latency if we don't have a cached value for this receiver.
-                var audioLatencyMs = rememberedReceiversStore.load()
-                    .firstOrNull { it.host == receiver.host && it.port == receiver.port }
-                    ?.audioLatencyMs
+                var audioLatencyMs = rememberedReceiver?.audioLatencyMs
                 if (audioLatencyMs == null) {
                     _calibrationState.value = CalibrationState.Running(receiver.name)
                     when (val result = calibrationOrchestrator.calibrate(receiver)) {
@@ -1395,6 +1416,19 @@ class CastSessionManager @Inject constructor(
                     title = title,
                     sourceAudioCodec = audioCodec,
                     audioTranscoded = transcoded,
+                )
+
+                // Stash for the self-correcting re-cast only after calibration is done.
+                // Calibration uses the same FCast controller and emits beacons too; setting
+                // this earlier could make a chirp-session beacon trigger a movie re-cast.
+                lastSplitAvRequest = SplitAvRequest(
+                    item = item,
+                    localPlayerIntentBuilder = localPlayerIntentBuilder,
+                    sourceAudioCodec = audioCodec,
+                    wasDirectStream = canDirect,
+                    receiverKey = recvKey,
+                    receiverMediaStartOffsetMs = mediaStartOffsetMs,
+                    fallbackMode = audioDecision.mode,
                 )
 
                 // 2. Tell the TV to start audio-only playback. audioLatencyMs has been

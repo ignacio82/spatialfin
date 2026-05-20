@@ -658,17 +658,17 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      * neither codec nor transcoded flag is known — caller hides the view in that case so
      * non-SpatialFin senders don't see an empty row. Examples:
      *   - codec=eac3, transcoded=false → "Source · E-AC-3 · Direct play"
-     *   - codec=truehd, transcoded=true → "Source · TrueHD → AAC · Transcoded"
-     *   - codec=null, transcoded=true → "Audio · Transcoded to AAC"
+     *   - codec=truehd, transcoded=true → "Source · TrueHD · Transcoded"
+     *   - codec=null, transcoded=true → "Audio · Transcoded"
      */
     private fun formatSourceAudioInfo(codec: String?, transcoded: Boolean?): String? {
         if (codec == null && transcoded == null) return null
         val pretty = codec?.let { prettyAudioCodec(it) }
         return when {
-            pretty != null && transcoded == true -> "Source · $pretty → AAC · Transcoded"
+            pretty != null && transcoded == true -> "Source · $pretty · Transcoded"
             pretty != null && transcoded == false -> "Source · $pretty · Direct play"
             pretty != null -> "Source · $pretty"
-            transcoded == true -> "Audio · Transcoded to AAC"
+            transcoded == true -> "Audio · Transcoded"
             transcoded == false -> "Audio · Direct play"
             else -> null
         }
