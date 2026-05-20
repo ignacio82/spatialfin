@@ -365,6 +365,34 @@ cast items are MultiProtocolDiscovery JmDNS consolidation, CastV2 trust
 wording/pinning, calibration min-distance telemetry, and fold-back renderer
 polish.
 
+2026-05-20 split-A/V audio-quality pass made the audio route codec-aware:
+the sender now prefers direct source audio when the receiver capability
+beacon/cache says it can decode the source codec, falls back to Jellyfin
+audio transcode only for receiver limits or explicit forced-transcode
+settings, and self-corrects in both directions after the first resolved
+receiver capability beacon. The cast mini-controller also surfaces the
+active route (direct, transcoded, upgraded to direct, or downgraded to
+transcode) so users can tell whether the best available audio path is
+active.
+
+Remaining cast / split-A/V follow-ups:
+
+- MultiProtocolDiscovery JmDNS consolidation so FCast / Google Cast /
+  AirPlay discovery share multicast setup instead of each protocol opening
+  its own JmDNS browser.
+- CastV2 trust wording and optional identity pinning / TOFU. Google Cast
+  still needs self-signed TLS handling; keep the permissive trust manager
+  scoped to CastV2 and make the local-network trust model explicit.
+- Calibration diagnostics: persist/report chirp confidence, detected lag,
+  rejected peaks, and noisy-room / mic-failure hints so sync failures are
+  diagnosable without logcat.
+- Fold-back renderer polish: stopping split audio already returns audio to
+  the headset; make that transition more explicit in UI state and route
+  messaging.
+- Long-session codec matrix validation across AAC, AC-3/E-AC-3, Atmos
+  E-AC-3 JOC, TrueHD where available, DTS/FLAC where available, receiver
+  app-kill, and Wi-Fi flap cases.
+
 ---
 
 ## Sprint A — fix the verified P0/P1 tail (this week)
@@ -373,12 +401,13 @@ Order within the sprint is by blast radius:
 
 1. P0 `LlmChatModelHelper` mutex-unlock-on-throw (whole AI pipeline dies).
 2. P0 `reconcileItemSources` download-vs-reconcile data-loss guard.
-3. P0 `FCastReceiverServer` session pruning.
+3. ✅ P0 `FCastReceiverServer` session pruning. (`5b80c8f`)
 4. ✅ first-frame audio gate: empty-`Tracks` + background/foreground
    regressions (both stem from `5b4feb6`). (`78defd6`)
 5. P1 `NetworkStreamProxy` loopback bind + scope cancel (security + leak).
 6. P1 `SmbFileClient.openFile` / `NfsFileClient.read` resource + EOF fixes.
-7. P1 split-A/V v4 aligned-start latch + ping-burst estimator poisoning.
+7. ✅ P1 split-A/V v4 aligned-start latch + ping-burst estimator poisoning.
+   (`f3f9920`)
 8. P1 `HomeVoiceController.destroy()` job cancel + recognizer guard.
 9. P1 `ResumableDownloadWorker` shared OkHttp + blank-URL guard.
 10. P1 SyncPlay echo-suppression window completion-gating.

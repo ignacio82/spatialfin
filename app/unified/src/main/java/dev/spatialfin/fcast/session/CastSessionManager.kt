@@ -266,6 +266,14 @@ class CastSessionManager @Inject constructor(
         _activeAudioFormat.asStateFlow()
 
     /**
+     * Sender-side split-A/V audio route. This tells the mini-controller whether we preserved
+     * the original bitstream or asked Jellyfin for a compatible audio transcode.
+     */
+    private val _activeAudioRoute = MutableStateFlow<SplitAvAudioRouteInfo?>(null)
+    val activeAudioRoute: StateFlow<SplitAvAudioRouteInfo?> =
+        _activeAudioRoute.asStateFlow()
+
+    /**
      * Process-scoped set of `host:port` receivers that have reported "not supported" for an
      * audio codec we tried to direct-play. The URL builder reads this to auto-fallback to
      * AAC transcode on the *next* cast to that receiver — so the user gets best-quality
@@ -705,6 +713,7 @@ class CastSessionManager @Inject constructor(
         startPositionMs: Long? = null,
     ): Boolean {
         val target = _pickedTarget.value ?: return false
+        _activeAudioRoute.value = null
         // Route by protocol. FCast keeps its existing path (controller + Play wire message);
         // Google Cast goes through the ProtocolAdapter API. Subtitle policy applies to both.
         return when (target.protocol) {
@@ -1059,6 +1068,13 @@ class CastSessionManager @Inject constructor(
                             startPositionMs = absolutePositionMs,
                             recast = true,
                             localPlayerIntentBuilder = req.localPlayerIntentBuilder,
+                            audioRouteOverride = when (action) {
+                                SplitAvAudioRoutePolicy.RecastAction.UpgradeToDirect ->
+                                    SplitAvAudioRouteInfo.Route.UpgradedToDirect
+                                SplitAvAudioRoutePolicy.RecastAction.DowngradeToTranscode ->
+                                    SplitAvAudioRouteInfo.Route.DowngradedToTranscode
+                                SplitAvAudioRoutePolicy.RecastAction.None -> null
+                            },
                         )
                     }
                 }
@@ -1260,6 +1276,7 @@ class CastSessionManager @Inject constructor(
         startPositionMs: Long? = null,
         recast: Boolean = false,
         localPlayerIntentBuilder: () -> Intent?,
+        audioRouteOverride: SplitAvAudioRouteInfo.Route? = null,
     ): Boolean {
         // Fresh user-initiated cast re-arms the one-shot self-correcting re-cast guard; a
         // re-cast triggered from a beacon must not (it already set recastDone = true).
@@ -1267,6 +1284,7 @@ class CastSessionManager @Inject constructor(
             recastDone = false
             lastSplitAvRequest = null
             _pendingAudioTranscodeNotice.value = null
+            _activeAudioRoute.value = null
         }
         val receiver = _pickedReceiver.value ?: run {
             Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
@@ -1332,7 +1350,6 @@ class CastSessionManager @Inject constructor(
                     receiverAudioCodecs = caps,
                     fallbackMode = audioDecision.mode,
                 )
-                val transcoded = !canDirect
                 // Behavior of startTimeTicks per path:
                 //   - Direct-play (static=true raw container): startTimeTicks is IGNORED — the
                 //     file timeline IS absolute, so receiver stream-time 0 == media-time 0;
@@ -1344,6 +1361,8 @@ class CastSessionManager @Inject constructor(
                 //     rejects `/hls/.../*.ts?startTimeTicks=...` with HTTP 400.
                 val url: String
                 val mediaStartOffsetMs: Long
+                var transcoded = false
+                var transcodeTargetCodec: String? = null
                 if (canDirect) {
                     url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
                     mediaStartOffsetMs = 0L
@@ -1371,11 +1390,13 @@ class CastSessionManager @Inject constructor(
                         url = hls.withJellyfinAuth()
                         mediaStartOffsetMs =
                             SplitAvStreamUrlPolicy.receiverMediaStartOffsetMs(hls, startMs)
+                        transcoded = true
+                        transcodeTargetCodec = targets.firstOrNull() ?: "aac"
                         _pendingAudioTranscodeNotice.value =
                             "${receiver.name} can't play " +
                                 "${ReceiverAudioCodecs.normalize(audioCodec).ifEmpty { "this" }} " +
                                 "audio — streaming a compatible track " +
-                                "(${targets.firstOrNull() ?: "aac"})."
+                                "($transcodeTargetCodec)."
                     }
                 }
                 Timber.tag(TAG).i(
@@ -1429,6 +1450,15 @@ class CastSessionManager @Inject constructor(
                     receiverKey = recvKey,
                     receiverMediaStartOffsetMs = mediaStartOffsetMs,
                     fallbackMode = audioDecision.mode,
+                )
+                _activeAudioRoute.value = SplitAvAudioRouteInfo(
+                    route = audioRouteOverride ?: if (transcoded) {
+                        SplitAvAudioRouteInfo.Route.Transcoded
+                    } else {
+                        SplitAvAudioRouteInfo.Route.Direct
+                    },
+                    sourceAudioCodec = audioCodec,
+                    targetAudioCodec = transcodeTargetCodec,
                 )
 
                 // 2. Tell the TV to start audio-only playback. audioLatencyMs has been
@@ -1546,6 +1576,7 @@ class CastSessionManager @Inject constructor(
         _pickedTarget.value = null
         _subtitleFidelity.value = SubtitleFidelity.None
         _activeAudioFormat.value = null
+        _activeAudioRoute.value = null
     }
 
     /**
@@ -1556,6 +1587,8 @@ class CastSessionManager @Inject constructor(
      */
     suspend fun endSplitAv() {
         splitAvController.endFromMaster()
+        _activeAudioFormat.value = null
+        _activeAudioRoute.value = null
     }
 
     /** True while a split-A/V session is active (between start and end). */

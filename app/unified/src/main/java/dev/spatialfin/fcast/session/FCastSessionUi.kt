@@ -243,7 +243,7 @@ fun FCastMiniController(
                 androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
                     // For FCast we have a live status flow; Cast picks just say "Casting to X"
                     // until PR 5 plumbs the adapter event flow into a unified session-state.
-                    val label = if (isFCastSession && receiver != null) {
+                    val label = if (receiver != null) {
                         when (status) {
                             FCastCastingController.Status.Casting -> "Casting to ${receiver.name}"
                             FCastCastingController.Status.Connecting -> "Connecting to ${receiver.name}…"
@@ -273,6 +273,15 @@ fun FCastMiniController(
                     if (!audioLabel.isNullOrBlank()) {
                         Text(
                             text = "Audio · $audioLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    val audioRoute by sessionManager.activeAudioRoute.collectAsState()
+                    val routeLabel = audioRoute?.label
+                    if (!routeLabel.isNullOrBlank()) {
+                        Text(
+                            text = "Route · $routeLabel",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
