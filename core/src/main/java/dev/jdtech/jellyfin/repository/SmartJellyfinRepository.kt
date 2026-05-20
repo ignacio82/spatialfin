@@ -583,6 +583,7 @@ constructor(
         try {
             online()
             connectionMonitor.markServerAccessible()
+            offline()
         } catch (throwable: Throwable) {
             if (!connectionMonitor.isConnectionFailure(throwable)) throw throwable
             connectionMonitor.markServerInaccessible()

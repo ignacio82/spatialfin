@@ -113,36 +113,33 @@ class DownloaderImpl(
             } else null
         }
 
-        var queued = 0
         var skipped = 0
-        var failed = 0
+        val pendingEpisodeIds = mutableListOf<String>()
         for (episode in episodes) {
             if (episode.isDownloaded()) {
                 skipped++
-                continue
-            }
-            val sources = runCatching { jellyfinRepository.getMediaSources(episode.id, true) }
-                .getOrNull()
-            val source = sources?.firstOrNull { it.type == SpatialFinSourceType.REMOTE }
-            if (source == null) {
-                Timber.w("downloadItems: no remote source found for episode %s, skipping", episode.id)
-                failed++
-                continue
-            }
-            val request = DownloadRequest(
-                sourceId = source.id,
-                mode = settings.mode,
-                videoBitrate = settings.videoBitrate,
-            )
-            val error = downloadItem(episode, request)
-            if (error != null) {
-                Timber.w("downloadItems: failed to queue episode %s: %s", episode.id, error)
-                failed++
             } else {
-                queued++
+                pendingEpisodeIds.add(episode.id.toString())
             }
         }
-        return BulkDownloadResult(queued = queued, skipped = skipped, failed = failed, storageShortfallBytes = storageShortfall)
+        
+        if (pendingEpisodeIds.isNotEmpty()) {
+            val inputBuilder = androidx.work.Data.Builder()
+                .putStringArray(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_ITEM_IDS, pendingEpisodeIds.toTypedArray())
+                .putString(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_MODE, settings.mode.name)
+            settings.videoBitrate?.let {
+                inputBuilder.putInt(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_VIDEO_BITRATE, it)
+            }
+            
+            val workRequest = androidx.work.OneTimeWorkRequestBuilder<dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker>()
+                .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+                .setInputData(inputBuilder.build())
+                .build()
+                
+            workManager.enqueue(workRequest)
+        }
+        
+        return BulkDownloadResult(queued = pendingEpisodeIds.size, skipped = skipped, failed = 0, storageShortfallBytes = storageShortfall)
     }
 
     override suspend fun cancelDownload(item: SpatialFinItem) {

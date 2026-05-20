@@ -198,20 +198,20 @@ tail.
 ### Carried over from the original audit (still open)
 
 #### Downloads / WorkManager
-- **P2** No metered-network guard on `DownloadPreparationWorker`; Beam
+- ✅ **P2** No metered-network guard on `DownloadPreparationWorker`; Beam
   users on cellular silently kick off large downloads.
-- **P2** Bulk download (`DownloaderImpl.downloadItems`) resolves per-episode
+- ✅ **P2** Bulk download (`DownloaderImpl.downloadItems`) resolves per-episode
   `getMediaSources()` in the caller's coroutine — navigating away mid-loop
   drops un-queued episodes.
-- **P2** `DownloadPreparationWorker` retries re-run all prep side effects;
+- ✅ **P2** `DownloadPreparationWorker` retries re-run all prep side effects;
   `downloadExternalMediaStreams` mints a fresh `UUID` per subtitle per
   attempt, inserting **duplicate `mediastreams` rows + duplicate subtitle
   tasks**. Make subtitle ids deterministic; gate prep steps to resume.
-- **P2** `SyncWorker` builds its own `JellyfinApi` (not the DI singleton)
+- ✅ **P2** `SyncWorker` builds its own `JellyfinApi` (not the DI singleton)
   and returns `Result.success()` on failure with no backoff — a transient
   failure mid-batch silently abandons unsynced offline edits until the
   next reconnect event. Return `Result.retry()` on partial failure.
-- **P2** `SmartJellyfinRepository.runWrite` skips the offline mirror when
+- ✅ **P2** `SmartJellyfinRepository.runWrite` skips the offline mirror when
   the online write succeeds, so a downloaded item's local `userdata` goes
   stale (offline Continue Watching wrong; `SyncWorker` may push the stale
   value back). Make user-data writes write-through.
@@ -459,6 +459,12 @@ Order within the sprint is by blast radius:
     issue; ship a degraded 2D "ambient panel glow" fallback meanwhile.
 30. `DownloaderImpl.downloadItems` bulk per-episode source resolution →
     move into a worker. Metered-network guard on `DownloadPreparationWorker`.
+31. Upgrade Jetpack XR SDK to DP4/Beta once available. Address any breaking API
+    changes resulting from the Kotlin-first architecture overhaul (e.g. removal
+    of legacy Guava/RxJava3 patterns in SceneCore).
+32. Refactor `spatialfin.glb` 3D model rendering in `SpatialPlayerScreen.kt`
+    to use the new native `SpatialGltfModel` composable introduced in DP4
+    instead of the manual `GltfModel.create` / `GltfModelEntity` pipeline.
 
 ## Stretch / parking lot
 

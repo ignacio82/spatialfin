@@ -119,8 +119,12 @@ constructor(
                 ?: return@withContext failTask(taskId, "Item not found")
 
             try {
-                prepareDownload(taskId, item, request)
-                Result.success()
+                val waitingReason = prepareDownload(taskId, item, request)
+                if (waitingReason != null) {
+                    Result.retry()
+                } else {
+                    Result.success()
+                }
             } catch (e: Exception) {
                 Timber.e(e, "DownloadPreparationWorker: prep failed taskId=%s", taskId)
                 failTask(taskId, e.message ?: "Download preparation failed")
@@ -132,7 +136,7 @@ constructor(
         taskId: String,
         item: SpatialFinItem,
         request: DownloadRequest,
-    ) {
+    ): String? {
         val source = jellyfinRepository.getMediaSources(item.id, true)
             .firstOrNull { it.id == request.sourceId }
             ?: error("Media source ${request.sourceId} not found")
@@ -188,6 +192,11 @@ constructor(
             errorMessage = waitingReason,
         )
 
+        if (waitingReason != null) {
+            Timber.i("DownloadPreparationWorker: paused taskId=%s reason=%s", taskId, waitingReason)
+            return waitingReason
+        }
+
         when (item) {
             is SpatialFinMovie -> {
                 database.insertMovie(
@@ -231,6 +240,7 @@ constructor(
 
         startImagesDownloader(item)
         enqueueResumableDownload(taskId, itemTitle = item.name)
+        return null
     }
 
     private fun failTask(taskId: String, message: String): Result {
@@ -298,7 +308,15 @@ constructor(
         for (mediaStream in source.mediaStreams.filter {
             it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank()
         }) {
-            val id = UUID.randomUUID()
+            val id = UUID.nameUUIDFromBytes("${item.id}_${source.id}_${mediaStream.index}".toByteArray())
+            val taskId = subtitleDownloadTaskId(item.id, id)
+            val existingTask = database.getDownloadTaskById(taskId)
+            if (existingTask != null) {
+                if (existingTask.status != DownloadManager.STATUS_SUCCESSFUL && existingTask.status != DownloadManager.STATUS_RUNNING) {
+                    enqueueResumableDownload(taskId, itemTitle = item.name)
+                }
+                continue
+            }
             val streamFile = downloadStorageManager.buildTargetFile(
                 item = item,
                 source = source,
@@ -310,8 +328,6 @@ constructor(
             database.insertMediaStream(
                 mediaStream.toSpatialFinMediaStreamDto(id, source.id, streamPath.path.orEmpty()),
             )
-            val taskId = subtitleDownloadTaskId(item.id, id)
-            val existingTask = database.getDownloadTaskById(taskId)
             val currentServerId = appPreferences.getValue(appPreferences.currentServer)
             val accessToken =
                 currentServerId?.let { database.getServerCurrentUser(it)?.accessToken }
@@ -399,9 +415,15 @@ constructor(
             images.backdrop?.toString()?.let { ImagesDownloaderWorker.KEY_URL_BACKDROP to it },
             images.logo?.toString()?.let { ImagesDownloaderWorker.KEY_URL_LOGO to it },
         )
+        val networkType =
+            if (appPreferences.getValue(appPreferences.downloadOverMobileData)) {
+                NetworkType.CONNECTED
+            } else {
+                NetworkType.UNMETERED
+            }
         val downloadImagesRequest =
             OneTimeWorkRequestBuilder<ImagesDownloaderWorker>()
-                .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+                .setConstraints(Constraints(requiredNetworkType = networkType))
                 .setInputData(
                     workDataOf(
                         ImagesDownloaderWorker.KEY_ITEM_ID to item.id.toString(),

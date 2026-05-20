@@ -27,6 +27,7 @@ constructor(
     val database: ServerDatabaseDao,
     val appPreferences: AppPreferences,
     val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
+    private val jellyfinApi: JellyfinApi,
 ) : CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -34,13 +35,10 @@ constructor(
         if (pendingChanges <= 0) return Result.success()
 
         offlineSyncStatusMonitor.markSyncStarted(pendingChanges)
-        val jellyfinApi =
-            JellyfinApi(
-                androidContext = context.applicationContext,
-                requestTimeout = appPreferences.getValue(appPreferences.requestTimeout),
-                connectTimeout = appPreferences.getValue(appPreferences.connectTimeout),
-                socketTimeout = appPreferences.getValue(appPreferences.socketTimeout),
-            )
+        
+        val originalBaseUrl = jellyfinApi.api.baseUrl
+        val originalAccessToken = jellyfinApi.api.accessToken
+        val originalUserId = jellyfinApi.userId
 
         return try {
             val syncResult =
@@ -89,14 +87,19 @@ constructor(
                         null
                     },
             )
-            Result.success()
+            if (syncResult.failed > 0) Result.retry() else Result.success()
         } catch (e: Exception) {
             offlineSyncStatusMonitor.markSyncFinished(
                 syncedChanges = 0,
                 failedChanges = database.getPendingUserDataSyncCount().coerceAtLeast(1),
                 errorMessage = e.message ?: "Offline sync failed",
             )
-            Result.success()
+            Result.retry()
+        } finally {
+            jellyfinApi.apply {
+                api.update(baseUrl = originalBaseUrl, accessToken = originalAccessToken)
+                userId = originalUserId
+            }
         }
     }
 
