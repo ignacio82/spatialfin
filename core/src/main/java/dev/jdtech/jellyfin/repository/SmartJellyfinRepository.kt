@@ -245,9 +245,15 @@ constructor(
         itemId: UUID,
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
+        startPositionMs: Long,
     ): String =
         runOnlineOnly {
-            onlineRepository.getAudioTranscodeStreamUrl(itemId, mediaSourceId, allowedAudioCodecs)
+            onlineRepository.getAudioTranscodeStreamUrl(
+                itemId,
+                mediaSourceId,
+                allowedAudioCodecs,
+                startPositionMs,
+            )
         }
 
     override suspend fun getMediaAttachment(

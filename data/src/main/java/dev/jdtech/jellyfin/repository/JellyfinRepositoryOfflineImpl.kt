@@ -297,6 +297,7 @@ class JellyfinRepositoryOfflineImpl(
         itemId: UUID,
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
+        startPositionMs: Long,
     ): String {
         // Split-A/V casts a server stream; it is never initiated for an offline download.
         error("getAudioTranscodeStreamUrl is not available in offline mode (item=$itemId)")

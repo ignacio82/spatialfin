@@ -114,11 +114,11 @@ class SplitAvController @Inject constructor(
 
     /**
      * Absolute media-time offset (ms) the receiver's stream begins at. When we ask Jellyfin to
-     * serve a transcoded stream with `startTimeTicks=`, the server emits a *new* timeline that
-     * begins at byte 0 → the Pixel's PlaybackUpdate beacons report `time=0+elapsed`, not the
-     * user-visible absolute media position. Add this offset to beacon times before feeding
-     * them to the drift policy so XR's master position (which IS absolute) and the beacon
-     * position end up on the same clock.
+     * serve a transcoded stream from a PlaybackInfo start offset, the server emits a *new*
+     * timeline that begins at byte 0 → the Pixel's PlaybackUpdate beacons report
+     * `time=0+elapsed`, not the user-visible absolute media position. Add this offset to
+     * beacon times before feeding them to the drift policy so XR's master position (which IS
+     * absolute) and the beacon position end up on the same clock.
      */
     private var mediaStartOffsetMs: Long = 0L
 
@@ -380,7 +380,7 @@ class SplitAvController @Inject constructor(
      * policy will see a huge initial gap and yank the master backwards, throwing away the
      * user's resume position.
      */
-    private suspend fun mirrorMasterPlayState(master: SplitAvVideoMaster) {
+    private suspend fun mirrorMasterPlayState(master: SplitAvVideoMaster): Unit = coroutineScope {
         // We **don't** seed lastSent from `master.isPlaying.value` and skip the initial value
         // anymore. Earlier the seed-and-skip pattern prevented an "I just sent Play, now I'm
         // re-pausing" double-fire when the master started paused — fine when the master always
@@ -434,6 +434,23 @@ class SplitAvController @Inject constructor(
                         castingController.resumeAt(t0 + offset)
                         sentScheduledStart = true
                         aligned = true
+                        launch {
+                            delay(ALIGNED_START_LEAD_MS + ALIGNED_START_FALLBACK_GRACE_MS)
+                            if (
+                                _state.value in ACTIVE_STATES &&
+                                master.isPlaying.value &&
+                                !hasObservedTvPlaying
+                            ) {
+                                Timber.tag(TAG).w(
+                                    "v4 aligned start still not playing; sending resume fallback",
+                                )
+                                try {
+                                    castingController.resume()
+                                } catch (e: Exception) {
+                                    Timber.tag(TAG).w(e, "resume fallback failed")
+                                }
+                            }
+                        }
                     } catch (e: Exception) {
                         Timber.tag(TAG).w(e, "v4 aligned start failed — falling back to resume-now")
                     }
@@ -657,7 +674,7 @@ class SplitAvController @Inject constructor(
 
         val state = SplitAvPolicy.BeaconState(
             // Receiver reports time inside *its* stream (which begins at mediaStartOffsetMs
-            // when Jellyfin transcodes via startTimeTicks); add the offset to land back on the
+            // when Jellyfin transcodes from a start offset); add the offset to land back on the
             // absolute media clock the XR master uses.
             beaconStreamPositionMs = ((update.time ?: 0.0) * 1_000.0).toLong() + mediaStartOffsetMs,
             beaconReceivedWallMs = now,
@@ -807,6 +824,7 @@ class SplitAvController @Inject constructor(
          *  receiver has time to seek + buffer + receive the scheduled Resume before it fires.
          *  The receiver clamps anyway (past/too-far ⇒ resume now), so this is a target. */
         const val ALIGNED_START_LEAD_MS: Long = 700L
+        const val ALIGNED_START_FALLBACK_GRACE_MS: Long = 1_500L
 
         /**
          * After this many consecutive ping failures we declare the session dead and stop

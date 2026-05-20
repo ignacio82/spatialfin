@@ -478,6 +478,7 @@ class JellyfinRepositoryImpl(
         itemId: UUID,
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
+        startPositionMs: Long,
     ): String =
         withContext(Dispatchers.IO) {
             try {
@@ -495,6 +496,9 @@ class JellyfinRepositoryImpl(
                         PlaybackInfoDto(
                             userId = jellyfinApi.userId!!,
                             mediaSourceId = mediaSourceId,
+                            startTimeTicks = startPositionMs
+                                .takeIf { it > 0L }
+                                ?.let { it * 10_000L },
                             maxStreamingBitrate = bitrate,
                             // Force the transcode explicitly instead of relying on the device
                             // profile to reject direct-play: a file with a *secondary*

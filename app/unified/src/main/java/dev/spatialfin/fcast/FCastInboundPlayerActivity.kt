@@ -24,6 +24,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -137,11 +138,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
         override fun pause() = runOnUiThread {
             cancelScheduledResume()
+            Timber.tag(TAG).i("control.pause role=%s", splitAvRole?.name ?: "fullAv")
             player?.pause()
+            pushPlaybackSnapshot()
         }.let { Unit }
         override fun resume() = runOnUiThread {
             cancelScheduledResume()
+            Timber.tag(TAG).i("control.resume role=%s", splitAvRole?.name ?: "fullAv")
             player?.play()
+            pushPlaybackSnapshot()
         }.let { Unit }
 
         /**
@@ -153,10 +158,23 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         override fun resumeAt(atReceiverMonotonicMs: Long) = runOnUiThread {
             cancelScheduledResume()
             val delay = atReceiverMonotonicMs - SystemClock.elapsedRealtime()
+            Timber.tag(TAG).i(
+                "control.resumeAt target=%d now=%d delay=%d role=%s",
+                atReceiverMonotonicMs,
+                SystemClock.elapsedRealtime(),
+                delay,
+                splitAvRole?.name ?: "fullAv",
+            )
             if (delay <= 0L || delay > MAX_SCHEDULED_START_WAIT_MS) {
                 player?.play()
+                pushPlaybackSnapshot()
             } else {
-                val r = Runnable { player?.play(); scheduledResume = null }
+                val r = Runnable {
+                    Timber.tag(TAG).i("control.resumeAt firing scheduled play")
+                    player?.play()
+                    pushPlaybackSnapshot()
+                    scheduledResume = null
+                }
                 scheduledResume = r
                 scheduleHandler.postDelayed(r, delay)
             }
@@ -395,8 +413,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
             .experimentalParseSubtitlesDuringExtraction(false)
 
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
         return ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setAudioAttributes(audioAttributes, true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
     }
 
@@ -666,7 +691,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        player?.pause()
+        if (splitAvRole == SplitAvRole.AUDIO) {
+            Timber.tag(TAG).i("onStop: keeping split-A/V audio receiver alive")
+        } else {
+            player?.pause()
+        }
     }
 
     override fun onDestroy() {

@@ -108,12 +108,16 @@ interface JellyfinRepository {
      * `static=false&audioCodec=` raw-`/stream` rewrite, which produced an unreadable
      * live-transcode container on some receivers. Uses an effectively-unbounded bitrate so
      * the *only* transcode reason is the audio codec — never bandwidth — preserving the best
-     * possible audio. Returns "" if no URL could be produced.
+     * possible audio. [startPositionMs] is sent in the PlaybackInfo request so Jellyfin bakes
+     * the offset into the generated playlist; callers must not append `startTimeTicks` to the
+     * returned HLS URL because Jellyfin rejects segment requests that inherit that query.
+     * Returns "" if no URL could be produced.
      */
     suspend fun getAudioTranscodeStreamUrl(
         itemId: UUID,
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
+        startPositionMs: Long = 0L,
     ): String
 
     suspend fun getMediaAttachment(

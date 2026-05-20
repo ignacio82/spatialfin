@@ -1202,6 +1202,9 @@ class CastSessionManager @Inject constructor(
         return "$this${sep}startTimeTicks=${positionMs * 10_000L}"
     }
 
+    private fun String.isJellyfinHlsUrl(): Boolean =
+        contains(".m3u8", ignoreCase = true) || contains("/hls", ignoreCase = true)
+
     /**
      * Send an already-resolved Play message to [receiver]. Used by the in-player cast button
      * which has the URL/container/position from the active ExoPlayer media item.
@@ -1305,8 +1308,11 @@ class CastSessionManager @Inject constructor(
                 //   - Direct-play (static=true raw container): startTimeTicks is IGNORED — the
                 //     file timeline IS absolute, so receiver stream-time 0 == media-time 0;
                 //     mediaStartOffsetMs = 0 and the controller's first-play seek aligns it.
-                //   - HLS transcode: Jellyfin re-encodes from startTimeTicks, so receiver
-                //     stream-time 0 == media-time startMs ⇒ mediaStartOffsetMs = startMs.
+                //   - HLS transcode: Jellyfin re-encodes from the PlaybackInfo start offset,
+                //     so receiver stream-time 0 == media-time startMs ⇒ mediaStartOffsetMs =
+                //     startMs. Do not append startTimeTicks to the returned playlist URL:
+                //     ExoPlayer propagates query params to segment requests and Jellyfin
+                //     rejects `/hls/.../*.ts?startTimeTicks=...` with HTTP 400.
                 val url: String
                 val mediaStartOffsetMs: Long
                 if (canDirect) {
@@ -1319,7 +1325,12 @@ class CastSessionManager @Inject constructor(
                     // live-transcode container (receiver `groups=0`) and is gone. Bitrate is
                     // unbounded so the only transcode reason is the codec, never bandwidth.
                     val targets = ReceiverAudioCodecs.preferredTranscodeCodecs(caps)
-                    val hls = repository.getAudioTranscodeStreamUrl(itemId, source.id, targets)
+                    val hls = repository.getAudioTranscodeStreamUrl(
+                        itemId,
+                        source.id,
+                        targets,
+                        startMs,
+                    )
                     if (hls.isBlank()) {
                         url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
                         mediaStartOffsetMs = 0L
@@ -1328,8 +1339,8 @@ class CastSessionManager @Inject constructor(
                             recvKey,
                         )
                     } else {
-                        url = hls.withStartTimeTicks(startMs).withJellyfinAuth()
-                        mediaStartOffsetMs = startMs
+                        url = hls.withJellyfinAuth()
+                        mediaStartOffsetMs = if (hls.isJellyfinHlsUrl()) startMs else 0L
                         _pendingAudioTranscodeNotice.value =
                             "${receiver.name} can't play " +
                                 "${ReceiverAudioCodecs.normalize(audioCodec).ifEmpty { "this" }} " +
