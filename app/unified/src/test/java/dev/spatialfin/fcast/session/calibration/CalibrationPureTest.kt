@@ -154,3 +154,45 @@ class ChirpDetectorTest {
         assertEquals(40L, ChirpDetector.medianLatencyMs(listOf(20L, 30L, 50L, 100L)))
     }
 }
+
+
+class CalibrationRouteSelectorTest {
+
+    @Test
+    fun `preferred local address favors wifi over vpn and ethernet`() {
+        val selected = CalibrationServer(ByteArray(0)).choosePreferredLocalIpv4(
+            listOf(
+                CalibrationServer.LocalIpv4Candidate(
+                    hostAddress = "100.64.0.2",
+                    interfaceName = "tailscale0",
+                    supportsMulticast = true,
+                ),
+                CalibrationServer.LocalIpv4Candidate(
+                    hostAddress = "192.168.1.25",
+                    interfaceName = "wlan0",
+                    supportsMulticast = true,
+                ),
+                CalibrationServer.LocalIpv4Candidate(
+                    hostAddress = "10.0.0.5",
+                    interfaceName = "eth0",
+                    supportsMulticast = true,
+                ),
+            ),
+        )
+        assertEquals("192.168.1.25", selected?.hostAddress)
+    }
+
+    @Test
+    fun `preferred local address keeps vpn as last resort`() {
+        val selected = CalibrationServer(ByteArray(0)).choosePreferredLocalIpv4(
+            listOf(
+                CalibrationServer.LocalIpv4Candidate(
+                    hostAddress = "100.64.0.2",
+                    interfaceName = "tailscale0",
+                    supportsMulticast = true,
+                ),
+            ),
+        )
+        assertEquals("100.64.0.2", selected?.hostAddress)
+    }
+}

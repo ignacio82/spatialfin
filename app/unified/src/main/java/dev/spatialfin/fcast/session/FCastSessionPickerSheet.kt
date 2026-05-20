@@ -36,6 +36,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,7 @@ import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
+import kotlinx.coroutines.launch
 
 /**
  * Session-aware cast picker. Reads the unified entries list from [CastSessionManager], so
@@ -98,10 +100,12 @@ fun FCastSessionPickerSheet(
         sessionManager.shouldShowProtocol(dev.jdtech.jellyfin.cast.CastProtocol.AirPlay)
     }
     val splitAvMode by sessionManager.splitAvMode.collectAsState()
+    val splitAvState by sessionManager.splitAvActive.collectAsState()
     val audioLatencies by sessionManager.audioLatencies.collectAsState()
     var manualHost by remember { mutableStateOf("") }
     var manualPort by remember { mutableStateOf(FCAST_DEFAULT_PORT.toString()) }
     var splitAvPermissionDenied by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     val context = LocalContext.current
     val recordAudioLauncher = rememberLauncherForActivityResult(
@@ -202,6 +206,14 @@ fun FCastSessionPickerSheet(
                     onToggle = onSplitAvToggle,
                     permissionDenied = splitAvPermissionDenied,
                 )
+                if (splitAvMode && splitAvState == SplitAvController.State.Degraded) {
+                    Spacer(Modifier.height(10.dp))
+                    SplitAvDegradedRow(
+                        onEndSplitAv = {
+                            coroutineScope.launch { sessionManager.endSplitAv() }
+                        },
+                    )
+                }
                 Spacer(Modifier.height(20.dp))
             }
 
@@ -347,6 +359,42 @@ fun FCastSessionPickerSheet(
                         Text("Close", style = MaterialTheme.typography.titleMedium)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitAvDegradedRow(
+    onEndSplitAv: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Split A/V sync degraded",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Re-pick the receiver or recalibrate audio sync.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            TextButton(onClick = onEndSplitAv) {
+                Text("End split")
             }
         }
     }

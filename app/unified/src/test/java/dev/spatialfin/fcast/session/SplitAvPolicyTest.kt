@@ -285,7 +285,7 @@ class ClockOffsetEstimatorTest {
         // t4=50 (recv pong = t3-offset+20 transit = 1030-1000+20).
         val e = ClockOffsetEstimator()
         assertTrue(e.record(t1 = 0, t2 = 1_020, t3 = 1_030, t4 = 50))
-        assertEquals(1_000, e.offsetMs())
+        assertEquals(1_000L, e.offsetMs())
     }
 
     @Test
@@ -295,7 +295,7 @@ class ClockOffsetEstimatorTest {
         e.record(t1 = 0, t2 = 1_300, t3 = 1_310, t4 = 600) // δ=590, θ≈1005
         // Clean low-δ sample: should win.
         e.record(t1 = 10_000, t2 = 11_020, t3 = 11_030, t4 = 10_050) // δ=40, θ=1000
-        assertEquals(1_000, e.offsetMs())
+        assertEquals(1_000L, e.offsetMs())
     }
 
     @Test

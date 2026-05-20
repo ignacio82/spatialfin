@@ -1202,9 +1202,6 @@ class CastSessionManager @Inject constructor(
         return "$this${sep}startTimeTicks=${positionMs * 10_000L}"
     }
 
-    private fun String.isJellyfinHlsUrl(): Boolean =
-        contains(".m3u8", ignoreCase = true) || contains("/hls", ignoreCase = true)
-
     /**
      * Send an already-resolved Play message to [receiver]. Used by the in-player cast button
      * which has the URL/container/position from the active ExoPlayer media item.
@@ -1340,7 +1337,8 @@ class CastSessionManager @Inject constructor(
                         )
                     } else {
                         url = hls.withJellyfinAuth()
-                        mediaStartOffsetMs = if (hls.isJellyfinHlsUrl()) startMs else 0L
+                        mediaStartOffsetMs =
+                            SplitAvStreamUrlPolicy.receiverMediaStartOffsetMs(hls, startMs)
                         _pendingAudioTranscodeNotice.value =
                             "${receiver.name} can't play " +
                                 "${ReceiverAudioCodecs.normalize(audioCodec).ifEmpty { "this" }} " +
@@ -1388,9 +1386,11 @@ class CastSessionManager @Inject constructor(
                 val play = PlayMessageBuilder.build(
                     url = url,
                     container = container,
-                    // The URL already starts the byte stream at startMs (via startTimeTicks),
-                    // so the receiver should play from position 0 in *its* stream, not seek
-                    // ahead. Sending 0 here avoids double-skipping.
+                    // HLS transcode URLs already start the byte stream at startMs because the
+                    // PlaybackInfo request included startTimeTicks. The returned playlist URL
+                    // itself must stay clean, otherwise ExoPlayer propagates that query to TS
+                    // segments and Jellyfin returns HTTP 400. Sending position 0 avoids
+                    // double-skipping inside the receiver's offset stream.
                     positionSeconds = 0.0,
                     title = title,
                     sourceAudioCodec = audioCodec,

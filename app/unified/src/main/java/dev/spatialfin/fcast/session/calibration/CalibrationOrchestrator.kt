@@ -106,7 +106,11 @@ class CalibrationOrchestrator @Inject constructor(
             ChirpGenerator.generatePcm(),
             ChirpGenerator.SAMPLE_RATE_HZ,
         )
-        val server = CalibrationServer(wavBytes)
+        val server = CalibrationServer(
+            wavBytes = wavBytes,
+            targetHost = receiver.host,
+            targetPort = receiver.port,
+        )
         val collectedBeacons = mutableListOf<TimedBeacon>()
         val collectorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 

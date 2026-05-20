@@ -100,11 +100,10 @@ the on-device AI mutex). They are the new top of the list.
   nowhere. Fix: correlate on the LAUNCH `requestId` or snapshot
   pre-LAUNCH sessions.
   (`c560ccd`)
-- **P1** `fcast/.../cast/adapter/airplay/AirPlayHttpClient.kt:106-124` —
-  volume map `-30 + 30v` makes the bottom ~half of the slider a dead zone
-  and the only mute is the exact-zero sentinel; every AirPlay cast has a
-  broken volume curve. Fix: map across the receiver's real perceptual
-  range; treat a small epsilon as mute.
+- ✅ **P1** `fcast/.../cast/adapter/airplay/AirPlayHttpClient.kt:106-124` —
+  AirPlay volume now maps linear slider values to receiver dB
+  perceptually (`20*log10(v)`, -30 dB floor, `<=0.001` mute), with
+  tests covering command URLs and edge cases.
 - **P1** `app/unified/.../HomeVoiceController.kt:387-442` — `destroy()`
   tears down the LLM/TTS services but never cancels `activeVoiceJob` nor
   no-ops the recognizer callback, so a transcript arriving after destroy
@@ -268,21 +267,22 @@ tail.
   text; move to JSON-line.
 
 #### Cast / split-A/V (carried, lower severity)
-- **P2** `CalibrationServer.pickLocalLanIpv4` returns the first non-LAN
-  IPv4 — a VPN/tether/secondary interface produces a URL the receiver
-  can't route to; calibration silently times out with no actionable
-  signal. Prefer the default-route / Wi-Fi interface.
+- ✅ **P2** `CalibrationServer.pickLocalLanIpv4` route selection —
+  calibration now asks the OS for the local IPv4 route to the target
+  receiver before falling back to scored Wi-Fi/Ethernet/VPN candidates,
+  with pure tests for the fallback ordering.
 - **P2** `CastV2Channel` hostname verification is dead code and the TLS
   session is never pinned to the mDNS-discovered `id` the comment claims
   to "trust" — a LAN MITM on host:8009 is transparent. Acceptable for
   Cast V2 parity, but pin per-remembered-receiver or drop the overstated
   comment.
-- **P2** `BinaryPlist.parse` reads 8-byte trailer fields as `Int`; a
-  malformed/hostile AirPlay response can throw `ArrayIndexOutOfBounds`
-  (escapes the documented `IllegalArgumentException` contract). Add
-  bounds checks.
-- **P3** No user-facing surfacing of split-A/V `State.Degraded` — the user
-  experiences silent lipsync drift with no prompt to re-pick the receiver.
+- ✅ **P2** `BinaryPlist.parse` hostile-input handling — malformed
+  AirPlay plists now fail with documented `IllegalArgumentException`s
+  after trailer, offset-table, object-reference, and payload bounds
+  validation; regression tests cover invalid trailer sizes and refs.
+- ✅ **P3** Split-A/V `State.Degraded` surfacing — the receiver picker now
+  shows an error-container row when sync degrades and offers an explicit
+  End split action, while keeping recalibration/re-pick guidance visible.
 - **P3** `MultiProtocolDiscovery` runs three concurrent `JmDNS` instances
   on one interface (acknowledged TODO; some XR firmware drops responses).
 - **P3** Calibration alignment failures discarded with no min-distance
@@ -358,6 +358,13 @@ first-frame audio gate) shipped after Sprint 1. Its residual gaps are
 tracked in **Sprint A** and the cast/split-A/V carried list above — they
 were previously invisible in this roadmap.
 
+2026-05-20 split-A/V / FCast hardening added route-aware calibration
+URLs, explicit degraded-state UI, HLS resume-offset policy tests, AirPlay
+perceptual volume mapping, and BinaryPlist bounds validation. Remaining
+cast items are MultiProtocolDiscovery JmDNS consolidation, CastV2 trust
+wording/pinning, calibration min-distance telemetry, and fold-back renderer
+polish.
+
 ---
 
 ## Sprint A — fix the verified P0/P1 tail (this week)
@@ -375,7 +382,7 @@ Order within the sprint is by blast radius:
 8. P1 `HomeVoiceController.destroy()` job cancel + recognizer guard.
 9. P1 `ResumableDownloadWorker` shared OkHttp + blank-URL guard.
 10. P1 SyncPlay echo-suppression window completion-gating.
-11. P1 GoogleCast LAUNCH `requestId` correlation; AirPlay volume curve.
+11. ✅ P1 GoogleCast LAUNCH `requestId` correlation; AirPlay volume curve.
 
 ## Sprint B — perf foundations + the Compose-stability prerequisite
 

@@ -148,6 +148,28 @@ class BinaryPlistTest {
         }
     }
 
+
+    @Test
+    fun `unsupported trailer int size is rejected as illegal argument`() {
+        val plist = buildPlist {
+            byte(0x09)
+            offsetTable(listOf(8))
+            trailer(offsetIntSize = 3, refIntSize = 1, numObjects = 1, topObject = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) { BinaryPlist.parse(plist) }
+    }
+
+    @Test
+    fun `out of bounds object reference is rejected as illegal argument`() {
+        val plist = buildPlist {
+            byte(0xA1) // array, one ref
+            byte(9)    // but there is only one object in the table
+            offsetTable(listOf(8))
+            trailer(offsetIntSize = 1, refIntSize = 1, numObjects = 1, topObject = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) { BinaryPlist.parse(plist) }
+    }
+
     // --- builder helper for hand-constructed fixtures ---
 
     private class PlistBuilder {

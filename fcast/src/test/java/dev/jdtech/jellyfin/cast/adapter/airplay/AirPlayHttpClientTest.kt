@@ -70,10 +70,13 @@ class AirPlayHttpClientTest {
     }
 
     @Test
-    fun `linear-to-dB conversion maps 0 to absolute mute and 1 to zero dB`() {
+    fun `linear-to-dB conversion maps near zero to mute and 1 to zero dB`() {
         assertEquals(-144f, client.dbFromLinear(0f), 0f)
+        assertEquals(-144f, client.dbFromLinear(0.0005f), 0f)
         assertEquals(0f, client.dbFromLinear(1f), 0.0001f)
-        assertEquals(-15f, client.dbFromLinear(0.5f), 0.0001f)
+        assertEquals(-6.0206f, client.dbFromLinear(0.5f), 0.0002f)
+        assertEquals(-20f, client.dbFromLinear(0.1f), 0.0002f)
+        assertEquals(-30f, client.dbFromLinear(0.01f), 0.0002f)
         // Clamp: values above 1 collapse to 0 dB rather than overflowing.
         assertEquals(0f, client.dbFromLinear(2.0f), 0.0001f)
     }
@@ -81,7 +84,7 @@ class AirPlayHttpClientTest {
     @Test
     fun `volume request URL carries the dB value`() {
         val url = client.buildVolumeRequest(0.5f).url.toString()
-        assertTrue("got $url", url.contains("/volume?volume=-15.0"))
+        assertTrue("got $url", url.contains("/volume?volume=-6.0206"))
     }
 
     @Test

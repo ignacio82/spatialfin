@@ -2,6 +2,8 @@ package dev.jdtech.jellyfin.cast.adapter.airplay
 
 import java.io.IOException
 import java.util.UUID
+import kotlin.math.log10
+import kotlin.math.max
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.Headers
@@ -99,9 +101,9 @@ internal class AirPlayHttpClient(
             .build()
 
     /**
-     * `POST /volume?volume=<dB>`. AirPlay accepts dB from -30 (mute) to 0 (full). Linear-to-dB
-     * conversion is the typical sender-side mapping: `db = -30 + 30 * linear` for v > 0,
-     * `-144` (the receiver's "absolute mute" sentinel) for v == 0.
+     * `POST /volume?volume=<dB>`. AirPlay accepts dB from -30 to 0, plus Apple's -144
+     * absolute-mute sentinel. Convert linear UI volume into perceptual dB with 20log10(v)
+     * instead of a linear dB ramp, so the lower half of the slider remains usable.
      */
     fun buildVolumeRequest(linearVolume: Float): Request {
         val db = dbFromLinear(linearVolume)
@@ -115,12 +117,13 @@ internal class AirPlayHttpClient(
         baseRequest("/playback-info").get().build()
 
     /**
-     * Linear (0..1) → AirPlay dB. Returns -144 for `0` (Apple's "absolute mute" sentinel),
-     * otherwise `-30 + 30 * v` so 0.5 maps to -15 dB and 1.0 maps to 0 dB.
+     * Linear (0..1) → AirPlay dB. Values near zero are treated as mute; everything else uses
+     * the receiver's -30..0 dB range with a perceptual amplitude mapping.
      */
     internal fun dbFromLinear(linearVolume: Float): Float {
-        if (linearVolume <= 0f) return -144f
-        return (-30f + 30f * linearVolume.coerceIn(0f, 1f))
+        val clamped = linearVolume.coerceIn(0f, 1f)
+        if (clamped <= MUTE_EPSILON) return AIRPLAY_MUTE_DB
+        return max(AIRPLAY_MIN_DB, 20f * log10(clamped))
     }
 
     // --- Execution. ---
@@ -161,6 +164,9 @@ internal class AirPlayHttpClient(
 
     private companion object {
         const val TAG = "AirPlayHttp"
+        const val AIRPLAY_MUTE_DB = -144f
+        const val AIRPLAY_MIN_DB = -30f
+        const val MUTE_EPSILON = 0.001f
 
         // text/parameters bodies on POSTs without keys are empty but the receiver still wants
         // the content-type — reuse one instance.

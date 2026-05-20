@@ -1,6 +1,8 @@
 package dev.spatialfin.fcast.session.calibration
 
 import java.io.IOException
+import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
@@ -30,6 +32,8 @@ import timber.log.Timber
 class CalibrationServer(
     private val wavBytes: ByteArray,
     private val resourcePath: String = DEFAULT_RESOURCE_PATH,
+    private val targetHost: String? = null,
+    private val targetPort: Int = 9,
 ) {
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var serverSocket: ServerSocket? = null
@@ -111,23 +115,90 @@ class CalibrationServer(
         served = true
     }
 
-    /**
-     * Pick the first non-loopback IPv4 interface address. Wi-Fi normally wins; fallbacks land
-     * on Ethernet or USB tethering interfaces if those are the only LAN-facing surfaces.
-     */
+    /** Pick the IPv4 address that routes to the receiver, then fall back to Wi-Fi/Ethernet. */
     private fun pickLocalLanIpv4(): String? {
-        val ifaces = NetworkInterface.getNetworkInterfaces() ?: return null
+        routeLocalIpv4()?.let { return it }
+        return choosePreferredLocalIpv4(enumerateLocalIpv4Candidates())?.hostAddress
+    }
+
+    private fun routeLocalIpv4(): String? {
+        val host = targetHost?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            DatagramSocket().use { socket ->
+                socket.connect(InetAddress.getByName(host), targetPort.coerceIn(1, 65_535))
+                val local = socket.localAddress
+                if (isUsableIpv4(local)) local.hostAddress else null
+            }
+        }.onFailure {
+            Timber.tag(TAG).w(it, "Could not resolve local route address for %s", host)
+        }.getOrNull()
+    }
+
+    private fun enumerateLocalIpv4Candidates(): List<LocalIpv4Candidate> {
+        val ifaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+        val out = mutableListOf<LocalIpv4Candidate>()
         for (iface in ifaces.toList()) {
             if (!iface.isUp || iface.isLoopback) continue
             for (addr in iface.inetAddresses.toList()) {
-                if (addr.isLoopbackAddress) continue
-                if (addr.isLinkLocalAddress) continue
-                if (addr is InetAddress && addr.address.size == 4) {
-                    return addr.hostAddress
+                if (isUsableIpv4(addr)) {
+                    val hostAddress = addr.hostAddress ?: continue
+                    out += LocalIpv4Candidate(
+                        hostAddress = hostAddress,
+                        interfaceName = iface.name.orEmpty(),
+                        supportsMulticast = runCatching { iface.supportsMulticast() }
+                            .getOrDefault(false),
+                    )
                 }
             }
         }
-        return null
+        return out
+    }
+
+    private fun isUsableIpv4(address: InetAddress): Boolean =
+        address is Inet4Address &&
+            !address.isAnyLocalAddress &&
+            !address.isLoopbackAddress &&
+            !address.isLinkLocalAddress
+
+    internal data class LocalIpv4Candidate(
+        val hostAddress: String,
+        val interfaceName: String,
+        val supportsMulticast: Boolean,
+    ) {
+        private val normalizedName: String = interfaceName.lowercase()
+
+        val isLikelyWifi: Boolean =
+            normalizedName.startsWith("wlan") ||
+                normalizedName.contains("wifi") ||
+                normalizedName.startsWith("ap")
+
+        val isLikelyEthernet: Boolean =
+            normalizedName.startsWith("eth") || normalizedName.startsWith("en")
+
+        val isLikelyVpn: Boolean =
+            normalizedName.startsWith("tun") ||
+                normalizedName.startsWith("tap") ||
+                normalizedName.startsWith("wg") ||
+                normalizedName.contains("tailscale") ||
+                normalizedName.startsWith("zt")
+    }
+
+    internal fun choosePreferredLocalIpv4(
+        candidates: List<LocalIpv4Candidate>,
+    ): LocalIpv4Candidate? {
+        fun score(candidate: LocalIpv4Candidate): Int {
+            var score = 0
+            if (!candidate.isLikelyVpn) score += 1_000
+            if (candidate.isLikelyWifi) score += 300
+            if (candidate.isLikelyEthernet) score += 200
+            if (candidate.supportsMulticast) score += 50
+            return score
+        }
+        return candidates.maxWithOrNull(
+            compareBy<LocalIpv4Candidate> { score(it) }
+                .thenBy { it.interfaceName }
+                .thenBy { it.hostAddress },
+        )
     }
 
     companion object {
