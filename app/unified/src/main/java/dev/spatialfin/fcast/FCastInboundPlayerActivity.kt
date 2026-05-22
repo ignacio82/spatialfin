@@ -502,6 +502,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         }
 
         val playerView = findViewById<PlayerView>(R.id.fcast_inbound_player_view)
+        playerView.findViewById<TextView>(R.id.fcast_inbound_control_title)?.apply {
+            text = title.orEmpty()
+            visibility = if (title.isNullOrBlank()) View.GONE else View.VISIBLE
+        }
         val audioOnlyOverlay = findViewById<LinearLayout>(R.id.fcast_inbound_audio_only_overlay)
         val audioOnlyTitle = findViewById<TextView>(R.id.fcast_inbound_audio_only_title)
         val audioOnlyStop = findViewById<Button>(R.id.fcast_inbound_audio_only_stop)
