@@ -65,8 +65,17 @@ class XrSpaceController(
             "last_used" -> lastUsed == "full"
             else -> false // "home" is the default
         }
-        if (wantFull) enterFullSpace()
-        // HOME is the default; no explicit request needed.
+        Timber.i(
+            "XrSpaceController: launchMode=%s lastUsed=%s wantFull=%b",
+            launchMode,
+            lastUsed,
+            wantFull,
+        )
+        if (wantFull) {
+            enterFullSpace()
+        } else {
+            enterHomeSpace()
+        }
     }
 
     fun enterHomeSpace() {

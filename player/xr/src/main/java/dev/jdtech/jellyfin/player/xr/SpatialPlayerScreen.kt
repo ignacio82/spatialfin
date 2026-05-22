@@ -83,14 +83,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
-import androidx.xr.compose.spatial.ContentEdge
 import androidx.xr.compose.spatial.Orbiter
+import androidx.xr.compose.spatial.OrbiterAnchorPoint
+import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.ResizePolicy
@@ -115,6 +118,7 @@ import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.GroupEntity
 import androidx.xr.scenecore.Space
 import androidx.xr.compose.subspace.SceneCoreEntity
+import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.scenecore.scene
 import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
@@ -180,6 +184,7 @@ private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
 private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
 private const val VIDEO_MOVE_HANDLE_MARGIN_METERS = 0.35f
 private const val VIDEO_MOVE_HANDLE_DEPTH_METERS = 0.5f
+private const val XR_VIDEO_FIRST_FRAME_TIMEOUT_MS = 3_000L
 
 private val PausedMascotPose =
     Pose(
@@ -198,6 +203,20 @@ private fun Cue.debugSummary(): String {
     val preview = text?.toString()?.replace('\n', ' ')?.replace('\r', ' ')?.take(60) ?: "<bitmap>"
     return "text=\"$preview\" line=$line lineType=$lineType lineAnchor=$lineAnchor position=$position positionAnchor=$positionAnchor size=$size textSize=$textSize verticalType=$verticalType"
 }
+
+private fun playerStateName(state: Int): String =
+    when (state) {
+        Player.STATE_IDLE -> "IDLE"
+        Player.STATE_BUFFERING -> "BUFFERING"
+        Player.STATE_READY -> "READY"
+        Player.STATE_ENDED -> "ENDED"
+        else -> state.toString()
+    }
+
+private fun Tracks.videoGroupCount(): Int =
+    groups.count { group -> group.type == C.TRACK_TYPE_VIDEO }
+
+private fun Tracks.hasVideoTrack(): Boolean = videoGroupCount() > 0
 
 /**
  * SpatialPlayerScreen — cinematic immersive XR playback experience.
@@ -381,6 +400,10 @@ fun SpatialPlayerScreen(
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var passthroughOverrideEnabled by remember { mutableStateOf<Boolean?>(null) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
+    var reportedVideoSize by remember { mutableStateOf(player.videoSize) }
+    var hasVideoTrack by remember { mutableStateOf(player.currentTracks.hasVideoTrack()) }
+    var firstVideoFrameRendered by remember { mutableStateOf(false) }
+    var videoSurfaceBound by remember { mutableStateOf(false) }
     var videoWidth by remember { mutableFloatStateOf(DEFAULT_VIDEO_WIDTH_METERS) }
     var videoHeight by remember { mutableFloatStateOf(DEFAULT_VIDEO_HEIGHT_METERS) }
 
@@ -585,6 +608,12 @@ fun SpatialPlayerScreen(
             }
         }
         runCatching {
+            videoEntity.value?.let { surface ->
+                surface.setPose(defaultPose)
+                surface.setScale(DEFAULT_VIDEO_PANEL_SCALE)
+            }
+        }
+        runCatching {
             uiRootEntity.value?.let { root ->
                 root.setPose(projectedOverlayPose)
                 root.setScale(DEFAULT_VIDEO_PANEL_SCALE)
@@ -608,6 +637,12 @@ fun SpatialPlayerScreen(
             videoRootEntity.value?.let { root ->
                 root.setPose(targetPose)
                 root.setScale(videoPanelScale)
+            }
+        }
+        runCatching {
+            videoEntity.value?.let { surface ->
+                surface.setPose(targetPose)
+                surface.setScale(videoPanelScale)
             }
         }
         runCatching {
@@ -672,6 +707,9 @@ fun SpatialPlayerScreen(
                     savePlayerRootScale(viewModel, updatedScale)
                     videoRootEntity.value?.let { root ->
                         runCatching { root.setScale(updatedScale) }
+                    }
+                    videoEntity.value?.let { surface ->
+                        runCatching { surface.setScale(updatedScale) }
                     }
                 },
                 onAdjustDistance = { delta, reset ->
@@ -1010,6 +1048,8 @@ fun SpatialPlayerScreen(
         duration = player.duration.coerceAtLeast(0L)
         isPlaying = player.isPlaying
         playbackState = player.playbackState
+        reportedVideoSize = player.videoSize
+        hasVideoTrack = player.currentTracks.hasVideoTrack()
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 isPlaying = isPlayingNow
@@ -1017,6 +1057,55 @@ fun SpatialPlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 duration = player.duration.coerceAtLeast(0L)
+            }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                firstVideoFrameRendered = false
+                reportedVideoSize = player.videoSize
+                hasVideoTrack = player.currentTracks.hasVideoTrack()
+                Timber.i(
+                    "XR_VIDEO: media item transition reason=%d mediaId=%s stereo=%s hasVideoTrack=%b",
+                    reason,
+                    mediaItem?.mediaId,
+                    currentStereoMode,
+                    hasVideoTrack,
+                )
+            }
+            override fun onTracksChanged(tracks: Tracks) {
+                hasVideoTrack = tracks.hasVideoTrack()
+                Timber.i(
+                    "XR_VIDEO: tracks changed videoGroups=%d hasVideoTrack=%b stereo=%s playbackState=%s",
+                    tracks.videoGroupCount(),
+                    hasVideoTrack,
+                    currentStereoMode,
+                    playerStateName(player.playbackState),
+                )
+            }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                reportedVideoSize = videoSize
+                Timber.i(
+                    "XR_VIDEO: video size changed %dx%d pixelRatio=%.3f stereo=%s surfaceBound=%b entityPresent=%b",
+                    videoSize.width,
+                    videoSize.height,
+                    videoSize.pixelWidthHeightRatio,
+                    currentStereoMode,
+                    videoSurfaceBound,
+                    videoEntity.value != null,
+                )
+            }
+            override fun onRenderedFirstFrame() {
+                if (!firstVideoFrameRendered) {
+                    firstVideoFrameRendered = true
+                    val videoSize = reportedVideoSize
+                    Timber.i(
+                        "XR_VIDEO: first rendered frame posMs=%d videoSize=%dx%d stereo=%s surfaceBound=%b entityPresent=%b",
+                        player.currentPosition,
+                        videoSize.width,
+                        videoSize.height,
+                        currentStereoMode,
+                        videoSurfaceBound,
+                        videoEntity.value != null,
+                    )
+                }
             }
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
@@ -1038,6 +1127,52 @@ fun SpatialPlayerScreen(
             currentPosition = player.currentPosition
             viewModel.updateCurrentSegment()
             delay(500)
+        }
+    }
+
+    LaunchedEffect(
+        player,
+        isPlaying,
+        playbackState,
+        hasVideoTrack,
+        firstVideoFrameRendered,
+        videoSurfaceBound,
+        videoEntity.value,
+        reportedVideoSize,
+        currentStereoMode,
+    ) {
+        if (
+            !isPlaying ||
+            playbackState != Player.STATE_READY ||
+            !hasVideoTrack ||
+            firstVideoFrameRendered
+        ) {
+            return@LaunchedEffect
+        }
+        delay(XR_VIDEO_FIRST_FRAME_TIMEOUT_MS)
+        if (
+            player.isPlaying &&
+            player.playbackState == Player.STATE_READY &&
+            hasVideoTrack &&
+            !firstVideoFrameRendered
+        ) {
+            val videoSize = reportedVideoSize
+            val entity = videoEntity.value
+            Timber.w(
+                "XR_VIDEO: playback is audible/ready without first rendered frame timeoutMs=%d stereo=%s videoSize=%dx%d playbackState=%s surfaceBound=%b entityPresent=%b entityDisposed=%b surfaceValid=%b posMs=%d durationMs=%d videoGroups=%d",
+                XR_VIDEO_FIRST_FRAME_TIMEOUT_MS,
+                currentStereoMode,
+                videoSize.width,
+                videoSize.height,
+                playerStateName(player.playbackState),
+                videoSurfaceBound,
+                entity != null,
+                entity?.isDisposed == true,
+                runCatching { entity?.getSurface()?.isValid == true }.getOrDefault(false),
+                player.currentPosition,
+                player.duration,
+                player.currentTracks.videoGroupCount(),
+            )
         }
     }
 
@@ -1087,6 +1222,10 @@ fun SpatialPlayerScreen(
 
         videoRoot.setPose(newVideoPose)
         videoRoot.setScale(videoPanelScale)
+        videoEntity.value?.let { surface ->
+            surface.setPose(newVideoPose)
+            surface.setScale(videoPanelScale)
+        }
         uiRoot.setPose(newUiPose)
         uiRoot.setScale(videoPanelScale)
         subtitleRoot.setPose(newUiPose)
@@ -1126,15 +1265,38 @@ fun SpatialPlayerScreen(
             uiRoot.setScale(videoPanelScale)
             subtitleRoot.setScale(videoPanelScale)
 
-            val entity = SurfaceEntity.create(
-                session = session,
-                pose = Pose.Identity,
-                shape = initialShape,
-                stereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO,
+            val sceneStereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
+            Timber.i(
+                "XR_VIDEO: creating SurfaceEntity stereo=%s requestedMode=%s shape=%.3fm x %.3fm rootPose=(%.3f, %.3f, %.3f)",
+                sceneStereoMode,
+                currentStereoMode,
+                DEFAULT_VIDEO_WIDTH_METERS,
+                DEFAULT_VIDEO_HEIGHT_METERS,
+                savedPose.translation.x,
+                savedPose.translation.y,
+                savedPose.translation.z,
+            )
+            val surfaceEntity = SurfaceEntity.create(
+                session,
+                savedPose,
+                initialShape,
+                sceneStereoMode,
+                SurfaceEntity.MediaBlendingMode.OPAQUE,
+                SurfaceEntity.SuperSampling.NONE,
+                SurfaceEntity.SurfaceProtection.NONE,
+                activitySpace,
             ).apply {
-                mediaBlendingMode = SurfaceEntity.MediaBlendingMode.OPAQUE
+                setScale(videoPanelScale)
             }
-            videoRoot.addChild(entity)
+            Timber.i(
+                "XR_VIDEO: SurfaceEntity.create succeeded stereo=%s surfaceValid=%b entityDisposed=%b directPose=(%.3f, %.3f, %.3f)",
+                surfaceEntity.stereoMode,
+                runCatching { surfaceEntity.getSurface().isValid }.getOrDefault(false),
+                surfaceEntity.isDisposed,
+                savedPose.translation.x,
+                savedPose.translation.y,
+                savedPose.translation.z,
+            )
             lastReportedMovePose.value = savedPose
 
             // createCustomMovable gives us full control over the entity pose during a grab.
@@ -1201,6 +1363,10 @@ fun SpatialPlayerScreen(
                         )
                         val depthPreservedPose = androidx.xr.runtime.math.Pose(newPos, currentPose.rotation)
                         runCatching { entity.setPose(depthPreservedPose) }
+                        runCatching {
+                            surfaceEntity.setPose(depthPreservedPose)
+                            surfaceEntity.setScale(videoPanelScale)
+                        }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                             lastReportedMovePose.value = depthPreservedPose
                         }
@@ -1233,6 +1399,10 @@ fun SpatialPlayerScreen(
                         val savedPose = lastReportedMovePose.value ?: finalPose
                         val effectiveDepth = extractVideoDepth(savedPose, videoDepth)
                         runCatching { entity.setPose(savedPose) }
+                        runCatching {
+                            surfaceEntity.setPose(savedPose)
+                            surfaceEntity.setScale(videoPanelScale)
+                        }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                             lastReportedMovePose.value = savedPose
                             videoDepth = effectiveDepth
@@ -1265,6 +1435,8 @@ fun SpatialPlayerScreen(
             runCatching {
                 videoRoot.setPose(savedPose)
                 videoRoot.setScale(videoPanelScale)
+                surfaceEntity.setPose(savedPose)
+                surfaceEntity.setScale(videoPanelScale)
             }
             syncProjectedOverlayRoots(
                 savedPose,
@@ -1278,12 +1450,21 @@ fun SpatialPlayerScreen(
             videoRootEntity.value = videoRoot
             uiRootEntity.value = uiRoot
             subtitleRootEntity.value = subtitleRoot
-            videoEntity.value = entity
+            videoEntity.value = surfaceEntity
             movableComponent.value = movable
 
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Timber.e(e, "XR_VIDEO: failed to create SurfaceEntity path")
+        }
 
         onDispose {
+            Timber.i(
+                "XR_VIDEO: disposing spatial player surface surfaceBound=%b firstFrame=%b entityPresent=%b playbackState=%s",
+                videoSurfaceBound,
+                firstVideoFrameRendered,
+                videoEntity.value != null,
+                playerStateName(player.playbackState),
+            )
             videoRootEntity.value?.let { root ->
                 val finalPose = lastReportedMovePose.value ?: safeGetEntityPose(root)
                 finalPose?.let { savePlayerRootPose(viewModel, it) }
@@ -1293,7 +1474,14 @@ fun SpatialPlayerScreen(
             // LiteRT/AICore handles, coroutine scopes) doesn't leak past the screen.
             voiceServices.destroy()
             runCatching { player.clearVideoSurface() }
+                .onSuccess {
+                    videoSurfaceBound = false
+                    Timber.i("XR_VIDEO: ExoPlayer video surface cleared")
+                }
+                .onFailure { Timber.w(it, "XR_VIDEO: failed to clear ExoPlayer video surface") }
             runCatching { videoEntity.value?.dispose() }
+                .onSuccess { Timber.i("XR_VIDEO: SurfaceEntity disposed") }
+                .onFailure { Timber.w(it, "XR_VIDEO: failed to dispose SurfaceEntity") }
             videoEntity.value = null
             // Close the GltfModel BEFORE disposing the GltfModelEntity. Filament tracks
             // material instances on the model; if the entity is disposed first, Filament
@@ -1311,6 +1499,7 @@ fun SpatialPlayerScreen(
             subtitleRootEntity.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
+            Timber.i("XR_VIDEO: spatial player surface disposal complete")
         }
     }
 
@@ -1324,9 +1513,12 @@ fun SpatialPlayerScreen(
         runCatching {
             val gltfModel = GltfModel.create(session, Paths.get("models", "spatialfin.glb"))
             mascotModel.value = gltfModel
-            GltfModelEntity.create(session, gltfModel).also { entity ->
-                entity.parent = session.scene.activitySpace
-                entity.setPose(PausedMascotPose)
+            GltfModelEntity.create(
+                session,
+                gltfModel,
+                PausedMascotPose,
+                session.scene.activitySpace,
+            ).also { entity ->
                 entity.setScale(1.35f)
                 entity.setEnabled(false)
                 mascotEntity.value = entity
@@ -1376,9 +1568,15 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
         while (true) {
-            val poseToMirror = safeGetEntityPose(videoRoot) ?: lastReportedMovePose.value
+            val poseToMirror = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot)
             poseToMirror?.let { pose ->
                 val effectiveVideoDepth = extractVideoDepth(pose, videoDepth)
+                videoEntity.value?.let { surface ->
+                    runCatching {
+                        surface.setPose(pose)
+                        surface.setScale(videoPanelScale)
+                    }
+                }
                 syncProjectedOverlayRoots(
                     pose,
                     videoPanelScale,
@@ -1425,43 +1623,60 @@ fun SpatialPlayerScreen(
         }
     }
 
-            var playerInitialized by remember { mutableStateOf(false) }
+    var playerInitialized by remember { mutableStateOf(false) }
     LaunchedEffect(player, videoEntity.value) {
-            videoEntity.value?.let { entity ->
-                player.setVideoSurface(entity.getSurface())
-                if (!playerInitialized) {
-                    when {
-                        localMediaId != null -> {
-                            viewModel.initializeLocalPlayer(
-                                localMediaId = localMediaId,
-                                startFromBeginning = startFromBeginning,
-                            )
-                        }
-                        networkVideoId != null -> {
-                            viewModel.initializeNetworkPlayer(
-                                networkVideoId = networkVideoId,
-                                startFromBeginning = startFromBeginning,
-                            )
-                        }
-                        itemId != null -> {
-                            viewModel.initializePlayer(
-                                itemId = itemId,
-                                itemKind = itemKind,
-                                startFromBeginning = startFromBeginning,
-                                mediaSourceIndex = mediaSourceIndex,
-                                maxBitrate = maxBitrate,
-                            )
-                        }
-                    }
-                    playerInitialized = true
+        val entity = videoEntity.value ?: run {
+            videoSurfaceBound = false
+            return@LaunchedEffect
+        }
+        val surface = entity.getSurface()
+        Timber.i(
+            "XR_VIDEO: binding ExoPlayer video surface surfaceValid=%b stereo=%s playerState=%s videoSize=%dx%d",
+            surface.isValid,
+            currentStereoMode,
+            playerStateName(player.playbackState),
+            reportedVideoSize.width,
+            reportedVideoSize.height,
+        )
+        player.setVideoSurface(surface)
+        videoSurfaceBound = true
+        Timber.i("XR_VIDEO: setVideoSurface complete")
+        if (!playerInitialized) {
+            firstVideoFrameRendered = false
+            when {
+                localMediaId != null -> {
+                    viewModel.initializeLocalPlayer(
+                        localMediaId = localMediaId,
+                        startFromBeginning = startFromBeginning,
+                    )
+                }
+                networkVideoId != null -> {
+                    viewModel.initializeNetworkPlayer(
+                        networkVideoId = networkVideoId,
+                        startFromBeginning = startFromBeginning,
+                    )
+                }
+                itemId != null -> {
+                    viewModel.initializePlayer(
+                        itemId = itemId,
+                        itemKind = itemKind,
+                        startFromBeginning = startFromBeginning,
+                        mediaSourceIndex = mediaSourceIndex,
+                        maxBitrate = maxBitrate,
+                    )
+                }
+                else -> {
+                    Timber.w("XR_VIDEO: no media id available after SurfaceEntity creation")
                 }
             }
+            playerInitialized = true
+        }
     }
     // Update SurfaceEntity shape when video dimensions or stereo mode changes.
     // Both are consolidated here to avoid races between separate LaunchedEffects.
-    LaunchedEffect(player.videoSize, currentStereoMode) {
+    LaunchedEffect(reportedVideoSize, currentStereoMode, videoEntity.value) {
         // 1. Recalculate video dimensions from the player if available.
-        val videoSize = player.videoSize
+        val videoSize = reportedVideoSize
 
         if (videoSize.width > 0 && videoSize.height > 0) {
             var aspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
@@ -1473,22 +1688,26 @@ fun SpatialPlayerScreen(
             videoWidth = DEFAULT_VIDEO_WIDTH_METERS
             videoHeight = videoWidth / (16f / 9f)
         }
-        Timber.d(
-            "subtitle: video geometry source=%dx%d ratio=%.4f stereo=%s world=%.3fm x %.3fm",
+        val sceneStereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
+        Timber.i(
+            "XR_VIDEO: video geometry source=%dx%d ratio=%.4f requestedStereo=%s sceneStereo=%s world=%.3fm x %.3fm entityPresent=%b",
             videoSize.width,
             videoSize.height,
             if (videoHeight > 0f) videoWidth / videoHeight else 0f,
             currentStereoMode,
+            sceneStereoMode,
             videoWidth,
             videoHeight,
+            videoEntity.value != null,
         )
 
         // 2. Apply the correct shape and pose to the entity.
         val entity = videoEntity.value ?: return@LaunchedEffect
         // Flat mode — simple quad with entity-level stereo mode.
         entity.shape = SurfaceEntity.Shape.Quad(FloatSize2d(videoWidth, videoHeight))
-        entity.stereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
-        entity.setPose(Pose.Identity)
+        entity.stereoMode = sceneStereoMode
+        entity.setPose(lastReportedMovePose.value ?: savedPlayerPose)
+        entity.setScale(videoPanelScale)
         movableComponent.value?.size = movableVideoBounds(videoWidth, videoHeight)
     }
 
@@ -1559,7 +1778,7 @@ fun SpatialPlayerScreen(
     // We are bringing it closer to 1.75 m (sweet spot).
     val uiAnchorZDp = 0f
 
-    LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, player.videoSize) {
+    LaunchedEffect(subtitlePanelWidthDp, subtitlePanelHeightDp, density.density, reportedVideoSize) {
         // Preserve panel aspect ratio in the render buffer. Clamping each axis
         // independently (coerceIn per-axis) silently distorts aspect for ultra-wide
         // or ultra-tall panels — and any bitmap/panel aspect mismatch shifts every
@@ -1575,8 +1794,8 @@ fun SpatialPlayerScreen(
         }
         val renderWidth = (targetW * scale).toInt().coerceIn(1280, 7680)
         val renderHeight = (targetH * scale).toInt().coerceIn(720, 4320)
-        val videoW = player.videoSize.width
-        val videoH = player.videoSize.height
+        val videoW = reportedVideoSize.width
+        val videoH = reportedVideoSize.height
         Timber.d(
             "subtitle: panel geometry mode=%s useLibass=%b panel=%.1fdp x %.1fdp density=%.3f render=%dx%d video=%dx%d finalTextSp=%.1f z=%.1fdp",
             currentStereoMode,
@@ -1783,9 +2002,8 @@ fun SpatialPlayerScreen(
                 ) {
                     if ((controlsVisible || isActuallyPaused) && !isLocked) {
                         Orbiter(
-                            position = ContentEdge.End,
-                            alignment = Alignment.CenterVertically,
-                            offset = 40.dp,
+                            anchorPoint = OrbiterAnchorPoint.End,
+                            offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                         ) {
                             SecondaryControlsOrbiter(
                                 onAudioClick = { activeDialog = "audio"; resetAutoHide() },
@@ -2259,4 +2477,3 @@ private fun safelyToggleMascotEntity(
         Timber.d(it, "Skipping paused mascot visibility update for disposed entity")
     }
 }
-

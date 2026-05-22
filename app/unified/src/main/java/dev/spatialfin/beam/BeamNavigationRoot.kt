@@ -164,7 +164,7 @@ fun BeamNavigationRoot(
             applicationContext = context.applicationContext,
             appPreferences = appPreferences,
             repository = repository,
-            llmModelManager = llmModelManager,
+            llmModelManagerProvider = { llmModelManager },
             voiceTelemetryStore = voiceTelemetryStore,
         )
     }

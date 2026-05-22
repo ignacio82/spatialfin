@@ -54,18 +54,14 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.xr.compose.material3.ExperimentalMaterial3XrApi
 import androidx.xr.compose.spatial.Subspace
-import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.height
-import androidx.xr.compose.subspace.layout.offset
+import androidx.xr.compose.subspace.layout.transformingMovable
 import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.SessionCreateSuccess
-import androidx.xr.scenecore.GroupEntity
-import androidx.xr.scenecore.MovableComponent
-import androidx.xr.scenecore.scene
 import dagger.Lazy
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
@@ -114,10 +110,8 @@ class UnifiedMainActivity : AppCompatActivity() {
         private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
         private const val PERMISSIONS_PREFS = "startup_permissions"
         private const val STARTUP_PERMISSIONS_REQUESTED_KEY = "startup_permissions_requested"
-        private const val XR_APP_PANEL_WIDTH_DP = 1792
-        private const val XR_APP_PANEL_HEIGHT_DP = 1008
-        private const val XR_APP_PANEL_WIDTH_METERS = 1.792f
-        private const val XR_APP_PANEL_HEIGHT_METERS = 1.008f
+        private const val XR_APP_PANEL_WIDTH_DP = 1400
+        private const val XR_APP_PANEL_HEIGHT_DP = 824
     }
 
     private val deviceClass by lazy { detectDeviceClass() }
@@ -459,7 +453,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 applicationContext = context.applicationContext,
                 appPreferences = appPreferences,
                 repository = repository,
-                llmModelManager = llmModelManager,
+                llmModelManagerProvider = modelManager::get,
                 voiceTelemetryStore = voiceTelemetryStore,
             )
         }
@@ -837,28 +831,15 @@ class UnifiedMainActivity : AppCompatActivity() {
         // panel teardown during Full→Home transitions on device. Only the
         // HomeSpaceContent fades in; Full Space entry snaps (still bearable,
         // since the XR compositor does its own brief cross-fade on mode switch).
-        val poseController = remember(appPreferences) { PanelPoseController(appPreferences) }
-        val rootEntity = remember { mutableStateOf<GroupEntity?>(null) }
-        val movableComponent = remember { mutableStateOf<MovableComponent?>(null) }
         var controlsVisible by remember { mutableStateOf(true) }
         var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
-        val latestRootEntity = rememberUpdatedState(rootEntity.value)
 
-        LaunchedEffect(rootEntity.value) {
-            val root = rootEntity.value ?: return@LaunchedEffect
-            if (movableComponent.value == null) {
-                val m = MovableComponent.createSystemMovable(session, true)
-                m.size =
-                    androidx.xr.runtime.math.FloatSize3d(
-                        XR_APP_PANEL_WIDTH_METERS,
-                        XR_APP_PANEL_HEIGHT_METERS,
-                        0.1f,
-                    )
-                m.addMoveListener(poseController.moveListener())
-                root.addComponent(m)
-                movableComponent.value = m
-                Timber.d("VOICE: Home movable permanently enabled")
-            }
+        LaunchedEffect(Unit) {
+            Timber.i(
+                "FullSpaceContent: rendering SpatialPanel widthDp=%d heightDp=%d",
+                XR_APP_PANEL_WIDTH_DP,
+                XR_APP_PANEL_HEIGHT_DP,
+            )
         }
 
         LaunchedEffect(controlsVisible, hideTimestamp) {
@@ -868,92 +849,68 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
         }
 
-        DisposableEffect(session) {
-            try {
-                val root = GroupEntity.create(session, "MainScreenRoot", poseController.loadPose())
-                rootEntity.value = root
-            } catch (e: Exception) {
-                Timber.w(e, "Failed to create movable root for main screen")
-            }
-            onDispose {
-                latestRootEntity.value?.let { root ->
-                    poseController.readEntityPose(root)?.let(poseController::savePose)
-                }
-                rootEntity.value?.dispose()
-                rootEntity.value = null
-            }
-        }
-
         Subspace {
-            val root = rootEntity.value
-            if (root != null) {
-                SceneCoreEntity(
-                    factory = { root },
-                    modifier = SubspaceModifier,
-                ) {
-                    SpatialPanel(
-                        modifier = SubspaceModifier
-                            .width(XR_APP_PANEL_WIDTH_DP.dp)
-                            .height(XR_APP_PANEL_HEIGHT_DP.dp)
-                            .offset(x = 0.dp, y = 0.dp, z = 0.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            if (
-                                                event.type == PointerEventType.Enter ||
-                                                event.type == PointerEventType.Move
-                                            ) {
-                                                controlsVisible = true
-                                                hideTimestamp = System.currentTimeMillis()
-                                            }
-                                        }
-                                    }
-                                }
-                        ) {
-                            NavigationRoot(
-                                navController = navController,
-                                hasServers = state.hasServers,
-                                hasCurrentServer = state.hasCurrentServer,
-                                hasCurrentUser = state.hasCurrentUser,
-                                onboardingCompleted = onboardingCompleted,
-                                appPreferences = appPreferences,
-                                initialSearchQuery = voiceSearchQuery,
-                                onReconnect = onReconnect,
-                                xrSpaceMode = XrSpaceMode.FULL,
-                                onEnterHomeSpace = onEnterHomeSpace,
-                                currentUser = state.currentUser,
-                                currentServerAddress = state.currentServerAddress,
-                                fcastSession = fcastSession,
-                            )
-                            VoiceControlOverlay(
-                                state = voiceState,
-                                partialTranscript = partialTranscript,
-                                feedbackText = voiceFeedback,
-                                gestureArmingProgress = voiceGestureArmingProgress,
-                                gestureHint = voiceGestureHint,
-                                micLevel = voiceMicLevel,
-                            )
-                            recommendationContext?.let { ctx ->
-                                if (ctx.items.size > 1) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(top = 80.dp),
-                                        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+            SpatialPanel(
+                modifier = SubspaceModifier
+                    .width(XR_APP_PANEL_WIDTH_DP.dp)
+                    .height(XR_APP_PANEL_HEIGHT_DP.dp)
+                    .transformingMovable()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (
+                                        event.type == PointerEventType.Enter ||
+                                        event.type == PointerEventType.Move
                                     ) {
-                                        DisambiguationCarousel(
-                                            query = ctx.query,
-                                            items = ctx.items,
-                                            onSelect = onSelectRecommendation,
-                                            onDismiss = onDismissRecommendation,
-                                        )
+                                        controlsVisible = true
+                                        hideTimestamp = System.currentTimeMillis()
                                     }
                                 }
+                            }
+                        }
+                ) {
+                    NavigationRoot(
+                        navController = navController,
+                        hasServers = state.hasServers,
+                        hasCurrentServer = state.hasCurrentServer,
+                        hasCurrentUser = state.hasCurrentUser,
+                        onboardingCompleted = onboardingCompleted,
+                        appPreferences = appPreferences,
+                        initialSearchQuery = voiceSearchQuery,
+                        onReconnect = onReconnect,
+                        xrSpaceMode = XrSpaceMode.FULL,
+                        onEnterHomeSpace = onEnterHomeSpace,
+                        currentUser = state.currentUser,
+                        currentServerAddress = state.currentServerAddress,
+                        fcastSession = fcastSession,
+                    )
+                    VoiceControlOverlay(
+                        state = voiceState,
+                        partialTranscript = partialTranscript,
+                        feedbackText = voiceFeedback,
+                        gestureArmingProgress = voiceGestureArmingProgress,
+                        gestureHint = voiceGestureHint,
+                        micLevel = voiceMicLevel,
+                    )
+                    recommendationContext?.let { ctx ->
+                        if (ctx.items.size > 1) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = 80.dp),
+                                contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+                            ) {
+                                DisambiguationCarousel(
+                                    query = ctx.query,
+                                    items = ctx.items,
+                                    onSelect = onSelectRecommendation,
+                                    onDismiss = onDismissRecommendation,
+                                )
                             }
                         }
                     }

@@ -64,7 +64,7 @@ class HomeVoiceController(
     private val applicationContext: Context,
     private val appPreferences: AppPreferences,
     private val repository: JellyfinRepository,
-    private val llmModelManager: LlmModelManager,
+    private val llmModelManagerProvider: () -> LlmModelManager,
     private val voiceTelemetryStore: VoiceTelemetryStore,
 ) {
     companion object {
@@ -173,7 +173,7 @@ class HomeVoiceController(
             nano,
             cloud,
             appPreferences,
-            llmModelManager,
+            llmModelManagerProvider(),
         )
         coordinator.initialize()
         commandCoordinator = coordinator
@@ -189,7 +189,7 @@ class HomeVoiceController(
             nano,
             cloud,
             appPreferences,
-            llmModelManager,
+            llmModelManagerProvider(),
             repository,
         )
         engine.initialize()

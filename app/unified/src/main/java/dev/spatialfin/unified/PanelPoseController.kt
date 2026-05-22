@@ -86,19 +86,19 @@ class PanelPoseController(
  */
 object PanelPosePolicy {
     /** Default panel depth (meters in front of the user) for fresh installs. */
-    const val DEFAULT_DEPTH_METERS = -3.5f
+    const val DEFAULT_DEPTH_METERS = -2.5f
 
     /**
      * Bumped whenever the on-disk pose layout changes (typically because the
      * default position moved). On read, anything below this version triggers
      * [migrateLegacyDefault].
      */
-    const val CURRENT_POSE_VERSION = 6
+    const val CURRENT_POSE_VERSION = 7
 
     private const val POSE_EPSILON = 0.05f
     private const val APPROX_EPSILON = 1e-4f
 
-    private val legacyDefaultDepths = floatArrayOf(-1.75f, -5f, -6f, -9f, -11f)
+    private val legacyDefaultDepths = floatArrayOf(-1.75f, -3.5f, -5f, -6f, -9f, -11f)
 
     /**
      * If [pose] looks like one of the previously-shipped centered default poses,

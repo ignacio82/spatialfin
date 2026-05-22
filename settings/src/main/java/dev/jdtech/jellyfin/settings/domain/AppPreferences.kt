@@ -182,7 +182,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrAppPanelPoseVersion = Preference("pref_xr_app_panel_pose_version", 0)
 
     // XR Space Mode
-    val xrLaunchMode = Preference("pref_xr_launch_mode", "last_used")
+    val xrLaunchMode = Preference("pref_xr_launch_mode", "home")
     val xrLastUsedMode = Preference("pref_xr_last_used_mode", "home")
     val xrAutoEnterFullSpaceOnPlayback = Preference("pref_xr_auto_enter_full_space_on_playback", true)
     val xrReturnHomeSpaceAfterPlayback = Preference("pref_xr_return_home_space_after_playback", false)

@@ -14,6 +14,7 @@
             android:autoRemoveFromRecents="true"
             android:process=":xrplayer"
             android:resizeableActivity="true"
+            android:enableOnBackInvokedCallback="true"
             android:theme="@style/Theme.SpatialFin.XrPlayer">
             <property
                 android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"

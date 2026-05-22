@@ -65,9 +65,9 @@ These paths are usually not useful for code understanding and should be skipped 
 ### Important Entry Points
 
 - `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only `Application`/`Activity` startup path. Branches on `DeviceClass` (XR/PHONE/TV) and orchestrates the XR session, panel placement, and gesture wiring. Delegates voice to `HomeVoiceController`.
-- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` — owns Home-Space voice services (`SpatialVoiceService`, TTS, Gemini Nano/Cloud, command coordinator, chat engine), the request/interrupt state machine, telemetry, and the Compose effects that drive feedback timeouts, ERROR auto-reset, TTS bookkeeping, and follow-up auto-listen. Delegates TTS transition logic to `AssistantSpeechTransitionEffect`.
+- `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` — owns Home-Space voice services (`SpatialVoiceService`, TTS, Gemini Nano/Cloud, command coordinator, chat engine), the request/interrupt state machine, telemetry, and the Compose effects that drive feedback timeouts, ERROR auto-reset, TTS bookkeeping, and follow-up auto-listen. Delegates TTS transition logic to `AssistantSpeechTransitionEffect`. Pass `LlmModelManager` as a provider/lambda, not an eager instance, or XR Home Space composition will warm LiteRT/GPU at launch. <!-- updated 2026-05-22: lazy LLM provider avoids Galaxy XR startup contention -->
 - `app/unified/src/main/java/dev/spatialfin/unified/HomeVoicePolicy.kt` — pure decision helpers (`isVoiceTurnBusy`, `decideRequest`, `shouldResumeFollowUpAfterInterrupt`, `feedbackTimeoutMs`) that the controller delegates to. Tested by `HomeVoicePolicyTest`.
-- `app/unified/src/main/java/dev/spatialfin/unified/PanelPoseController.kt` — persists the user-placed XR app panel pose, performs legacy-default migration, and tracks user-initiated motion via `EntityMoveListener`. Pure logic lives in the sibling `PanelPosePolicy` object and is covered by `PanelPosePolicyTest`. <!-- updated 2026-04-22: switched polling to event-driven tracking -->
+- `app/unified/src/main/java/dev/spatialfin/unified/PanelPoseController.kt` — legacy pose persistence helper for the old SceneCore-wrapped XR app panel. The active Galaxy XR browsing panel is now a direct Compose XR `SpatialPanel` with `transformingMovable()` in `UnifiedMainActivity`; do not reintroduce `PanelPoseController` into that path unless a real device proves the DP4 blank-panel regression is gone. Pure policy logic remains covered by `PanelPosePolicyTest`. <!-- updated 2026-05-22: immersive app panel moved off custom SceneCore GroupEntity after Galaxy XR blank Full Space regression -->
 - `app/unified/src/main/java/dev/spatialfin/unified/XrSpaceController.kt` — single source of truth for `HOME` ↔ `FULL` space transitions.
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/XrPlayerActivity.kt` — Full Space immersive player (separate Activity).
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/MultitaskPlayerActivity.kt` — Home Space side-by-side player.
@@ -255,9 +255,9 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 ### UI Best Practices & Ergonomics
 - **Material 3 for XR:** `NavigationRail`, `NavigationBar`, `TopAppBar` adapt to **XR Orbiters** automatically.
 - **Adaptive layouts:** `ListDetailPaneScaffold` / `SupportingPaneScaffold` map panes 1:1 to spatial panels.
-- **Cinema scale:** Use large `SpatialPanel` dimensions (≥1400dp) for cinematic feel. The unified main panel is `1792dp × 1008dp` (`UnifiedMainActivity` constants).
+- **Cinema scale:** Use large `SpatialPanel` dimensions (≥1400dp) for cinematic feel. The unified main browsing panel is `1400dp × 824dp` (`UnifiedMainActivity` constants), matching the current Compose XR examples and staying inside the Galaxy XR Home Space window. <!-- updated 2026-05-22: reduced from 1792×1008 during DP4/Galaxy XR immersive debug -->
 - **Depth & focus:** `SpatialDialog` / `SpatialPopup` push the parent panel back **125dp**.
-- **User agency:** `MovableComponent` + `ResizableComponent` for workspace customization.
+- **User agency:** For Compose XR panels, prefer `SubspaceModifier.transformingMovable()` / `movable()` / `resizable()` before dropping to SceneCore components. Reserve `MovableComponent` / `ResizableComponent` for direct SceneCore entity trees such as the player video surface hierarchy. <!-- updated 2026-05-22: direct Compose movement fixed Galaxy XR immersive app panel rendering -->
 
 ### Spatial Panel Placement (Android XR Design Guide)
 - **Spawn distance:** Place panel centers ~**1.75 m** from the user.
@@ -271,18 +271,23 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 - **Empty panels still intercept raycasts.** A `SpatialPanel` with no visible content (e.g. hidden via `AnimatedVisibility`) still blocks pointer/grab events for entities behind it.
 - **Fix:** Make the `SceneCoreEntity` / `SpatialPanel` *conditional* in the `Subspace` composition. `AnimatedVisibility` alone is not sufficient — the panel container itself must be removed from composition.
 - **Scrollable content vs. `MovableComponent`:** Scroll gestures inside a `MovableComponent` entity may be hijacked as drag/move. Use a separate `GroupEntity` (no `MovableComponent`) for scrollable panels, positioned so it doesn't sit between the user and the movable entity.
+- **Galaxy XR DP4 blank immersive app panel:** The app launched fine in Home Space, but switching to immersive showed only passthrough. Logs showed `FullSpaceContent` was reached and the task entered `full-space-managed`; the bug was the browsing UI's `SpatialPanel` nested under a custom `GroupEntity` via `SceneCoreEntity`, not the panel being too large or behind the user. Fix was to render `SpatialPanel` directly inside `Subspace` with `SubspaceModifier.width(1400.dp).height(824.dp).transformingMovable()`. Keep direct SceneCore parenting for the video player path (`SurfaceEntity` + controls) where it is needed, but do not wrap the unified browsing panel in `GroupEntity` again without Galaxy XR validation. <!-- added 2026-05-22: real-device Galaxy XR immersive regression -->
 
 ### Spatial Hierarchy & Parenting
-For low-latency movement of complex player UIs:
-- Attach Surfaces, Panels, and Orbiters to a single **Root** Entity (typically `PanelEntity` / `GroupEntity` / `ContentlessEntity`).
-- Apply `MovableComponent` only to the Root.
-- Lock children to fixed offsets via `entity.setParent(parent)` or the Compose `SceneCoreEntity` wrapper.
+For low-latency movement of complex **player/video** UIs:
+- Use a single movable **Root** entity for the player control panels, orbiters, subtitles, and gesture hit target when direct SceneCore control is required for pose, scale, stereo mode, frame rate, or teardown.
+- Keep `SurfaceEntity` placement explicit. On Galaxy XR DP4, the stable path is `SurfaceEntity.create(..., pose = launchPose, parent = activitySpace)` and then mirror the movable root's pose/scale onto the surface; creating the surface at `Pose.Identity` and parenting it under the movable root reproduced the "controls + audio but no video" failure. <!-- updated 2026-05-22: real-device SurfaceEntity video visibility fix -->
+- Apply `MovableComponent` only to the movable Root.
+- Lock Compose children to fixed offsets via the Compose `SceneCoreEntity` wrapper. For raw SceneCore entities, prefer explicit `parent` at creation when the API supports it.
+- Do **not** generalize this pattern to the unified browsing app panel. On Galaxy XR DP4, a custom `GroupEntity` parent around a Compose `SpatialPanel` produced a blank Full Space panel; the stable browsing path is direct `Subspace { SpatialPanel(...) }`. <!-- updated 2026-05-22: separate player SceneCore hierarchy from browsing Compose panel -->
 
 ### Rendering & Media Strategy
 - `SurfaceEntity` for video, with Media3 (ExoPlayer) feeding the surface.
+- **Galaxy XR DP4 video debugging:** If playback has audio/controls but no picture, first check `XR_VIDEO` logs. A `video size changed` plus `first rendered frame` means Media3 is decoding into the surface; the remaining problem is SceneCore placement/visibility. During the DP4 fix, reading entity poses in `Space.ACTIVITY` folded in the system full-space transform and inflated the saved/mirrored video depth to ~13.7 m. Pose persistence and mirror loops must use `Space.PARENT`, with `lastReportedMovePose` preferred over activity-space samples. Validate with headset screenshots/logcat, not compilation alone. <!-- added 2026-05-22: fixed Galaxy XR audio-without-video regression -->
 - Spatial video shapes: `Quad` (flat), `Hemisphere` (180°), `Sphere` (360°). SBS and MV-HEVC supported.
 - DRM: `surfaceProtection = SurfaceProtection.Protected`.
 - 2D overlays: `SpatialPanel`. Toolbars / secondary controls: `Orbiter`.
+- 3D models: use Compose XR `SpatialGltfModel` for static Compose-owned models. For the paused mascot we need direct SceneCore control, so keep the documented `GltfModel.create(session, Paths.get("models", "...glb"))` + `GltfModelEntity.create(session, model, pose, activitySpace)` path, gated by `SpatialCapability.SPATIAL_3D_CONTENT`. <!-- added 2026-05-22: checked against DP4 3D model guide -->
 
 ### Spatial Audio
 - Positional, stereo/surround (auto-spatialized vs main panel), or ambisonic ("skybox").

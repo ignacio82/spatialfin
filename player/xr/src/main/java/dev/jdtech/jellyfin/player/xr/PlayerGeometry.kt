@@ -117,7 +117,7 @@ internal fun constrainPoseToDepth(
 }
 
 internal fun safeGetEntityPose(entity: Entity): Pose? {
-    return runCatching { entity.getPose(Space.ACTIVITY) }
+    return runCatching { entity.getPose(Space.PARENT) }
         .onFailure { Timber.d("Skipping disposed XR player entity pose save") }
         .getOrNull()
 }

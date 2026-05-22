@@ -24,8 +24,8 @@ androidx-tv-material3 = "1.1.0"
 androidx-tvprovider = "1.1.0"
 androidx-window = "1.5.1"
 androidx-work = "2.11.2"
-androidx-xr-runtime = "1.0.0-alpha13"
-androidx-xr-scenecore = "1.0.0-alpha14"
+androidx-xr = "1.0.0-alpha14"
+androidx-xr-compose-material3 = "1.0.0-alpha17"
 bcprov-jdk18on = "1.84"
 coil = "3.4.0"
 hilt = "2.59.2"
@@ -97,10 +97,11 @@ androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "andr
 androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref = "androidx-tvprovider" }
 androidx-window = { module = "androidx.window:window", version.ref = "androidx-window" }
 androidx-work = { module = "androidx.work:work-runtime", version.ref = "androidx-work" }
-androidx-xr-compose = { module = "androidx.xr.compose:compose", version.ref = "androidx-xr-runtime" }
-androidx-xr-compose-material3 = "androidx.xr.compose.material3:material3:1.0.0-alpha16"
-androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr-runtime" }
-androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr-scenecore" }
+androidx-xr-arcore = { module = "androidx.xr.arcore:arcore", version.ref = "androidx-xr" }
+androidx-xr-compose = { module = "androidx.xr.compose:compose", version.ref = "androidx-xr" }
+androidx-xr-compose-material3 = { module = "androidx.xr.compose.material3:material3", version.ref = "androidx-xr-compose-material3" }
+androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr" }
+androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr" }
 bcprov-jdk18on = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov-jdk18on" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-cache-control = { module = "io.coil-kt.coil3:coil-network-cache-control", version.ref = "coil" }

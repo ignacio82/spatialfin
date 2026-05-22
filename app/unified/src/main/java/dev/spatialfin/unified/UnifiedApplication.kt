@@ -21,8 +21,6 @@ import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.jdtech.jellyfin.settings.domain.llm.DownloadState
-import dev.jdtech.jellyfin.settings.domain.llm.LlmDownloadManager
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
 import dev.spatialfin.BuildConfig
@@ -47,7 +45,6 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var llmModelManager: Lazy<LlmModelManager>
-    @Inject lateinit var llmDownloadManager: Lazy<LlmDownloadManager>
     @Inject lateinit var watchNextScheduler: WatchNextScheduler
     @Inject lateinit var splitAvDebugBridge: SplitAvDebugBridge
     @Inject lateinit var rememberedReceiversStore: dev.spatialfin.fcast.session.RememberedReceiversStore
@@ -188,25 +185,10 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     }
 
     private fun eagerInitializeLlmIfNeeded() {
-        // TV hardware (e.g. Chromecast with Google TV, Amlogic S905X3/D3, 2 GB RAM) cannot run
-        // on-device Gemma inference usefully. TV settings now expose the voice-assistant prefs
-        // (picker, cloud key, Gemma/AICore management) for parity with Beam/XR, but TV still has
-        // no active voice *listener*, so there is nothing to warm. Skipping init saves ~100 MB of
-        // working set plus GPU/NPU warm-up on low-end SoCs.
+        // TV has no active voice surface. XR does, but SceneCore/Compose need to present the
+        // first visible panel before LiteRT spends several seconds compiling GPU delegates.
         if (!capabilities.eagerInitLlm) return
         if (!appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)) return
-        if (capabilities.isXr) {
-            // On XR: only initialize if the model is already on disk. We never auto-download
-            // at launch (that would pull 2.6 GB without user consent), but if the user has
-            // already downloaded the model we should start warming up the engine immediately
-            // so that home-screen voice queries (recommendations, search) are ready quickly.
-            val modelReady = llmDownloadManager.get().downloadState.value is DownloadState.Ready
-            if (!modelReady) {
-                Timber.i("LlmModelManager: model not yet downloaded on XR — deferring until voice AI is used")
-                return
-            }
-            Timber.i("LlmModelManager: model already on disk on XR — starting engine warm-up at launch")
-        }
         llmModelManager.get()
     }
 

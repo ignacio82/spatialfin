@@ -38,10 +38,10 @@ data class DeviceClassCapabilities(val deviceClass: DeviceClass) {
     val useImageCrossfades: Boolean = deviceClass != DeviceClass.TV
 
     /**
-     * Eager LLM (Gemma) init is skipped on TV — no voice surface to pay for, and the ~100 MB
-     * RAM + GPU lock-in is harmful on a 2 GB device.
+     * Eager LLM (Gemma) init is skipped on TV and XR. TV has no voice surface, and XR needs
+     * to give SceneCore/Compose the first frame before LiteRT claims GPU time.
      */
-    val eagerInitLlm: Boolean = deviceClass != DeviceClass.TV
+    val eagerInitLlm: Boolean = deviceClass == DeviceClass.PHONE
 
     /** Beam Pro uses its own companion uploader pipeline; XR and TV share the standard one. */
     val usesBeamCompanion: Boolean = deviceClass == DeviceClass.PHONE

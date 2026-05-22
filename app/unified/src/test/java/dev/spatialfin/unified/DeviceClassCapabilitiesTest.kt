@@ -10,7 +10,7 @@ import org.junit.Test
  * factor should land here too.
  */
 class DeviceClassCapabilitiesTest {
-    @Test fun `XR has voice, persisted panel pose, image crossfades, and eager LLM init`() {
+    @Test fun `XR has voice, persisted panel pose, image crossfades, and deferred LLM init`() {
         val caps = DeviceClassCapabilities(DeviceClass.XR)
         assertTrue(caps.isXr)
         assertFalse(caps.isTv)
@@ -19,7 +19,7 @@ class DeviceClassCapabilitiesTest {
         assertFalse(caps.hasLeanback)
         assertTrue(caps.hasPersistedPanelPose)
         assertTrue(caps.useImageCrossfades)
-        assertTrue(caps.eagerInitLlm)
+        assertFalse(caps.eagerInitLlm)
         assertFalse(caps.usesBeamCompanion)
     }
 

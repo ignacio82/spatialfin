@@ -66,7 +66,7 @@ class PanelPosePolicyTest {
 
     @Test
     fun `each legacy default depth migrates to current default`() {
-        for (legacyZ in listOf(-1.75f, -5f, -6f, -9f, -11f)) {
+        for (legacyZ in listOf(-1.75f, -3.5f, -5f, -6f, -9f, -11f)) {
             val migrated = PanelPosePolicy.migrateLegacyDefault(pose(z = legacyZ))
             assertEquals(
                 "legacy $legacyZ should migrate",

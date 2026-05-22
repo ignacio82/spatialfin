@@ -36,8 +36,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.xr.compose.spatial.ContentEdge
 import androidx.xr.compose.spatial.Orbiter
+import androidx.xr.compose.spatial.OrbiterAnchorPoint
+import androidx.xr.compose.spatial.OrbiterDefaults
+import androidx.xr.compose.unit.DpVolumeOffset
 import dev.jdtech.jellyfin.core.R as CoreR
 import kotlin.math.PI
 import kotlin.math.sin
@@ -83,9 +85,8 @@ fun VoiceControlOverlay(
     if (!isVisible) return
 
     Orbiter(
-        position = ContentEdge.Top,
-        alignment = Alignment.CenterHorizontally,
-        offset = 40.dp,
+        anchorPoint = OrbiterAnchorPoint.Top,
+        offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
     ) {
         VoiceOrbOverlay(
             state = state,
