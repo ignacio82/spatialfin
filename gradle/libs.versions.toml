@@ -6,7 +6,7 @@ androidx-activity = "1.13.0"
 androidx-appcompat = "1.7.1"
 androidx-biometric = "1.4.0-alpha07"
 androidx-camera = "1.6.1"
-androidx-compose = "1.11.1"
+androidx-compose = "1.11.2"
 # Google froze androidx.compose.material:material-icons-extended at 1.7.8
 # in mid-2025 in favor of Material Symbols. Pin separately from the main
 # androidx.compose stack until we migrate icon usage in :app:unified.
@@ -30,7 +30,7 @@ bcprov-jdk18on = "1.84"
 coil = "3.4.0"
 hilt = "2.59.2"
 jcifs-ng = "2.1.10"
-jellyfin = "1.8.8"
+jellyfin = "1.8.9"
 jmdns = "3.6.3"
 junit = "4.13.2"
 kotlin = "2.3.21"
@@ -101,7 +101,7 @@ androidx-xr-arcore = { module = "androidx.xr.arcore:arcore", version.ref = "andr
 androidx-xr-compose = { module = "androidx.xr.compose:compose", version.ref = "androidx-xr" }
 androidx-xr-compose-material3 = { module = "androidx.xr.compose.material3:material3", version.ref = "androidx-xr-compose-material3" }
 androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr" }
-androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr" }
+androidx-xr-scenecore = "androidx.xr.scenecore:scenecore:1.0.0-alpha15"
 bcprov-jdk18on = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov-jdk18on" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-cache-control = { module = "io.coil-kt.coil3:coil-network-cache-control", version.ref = "coil" }
