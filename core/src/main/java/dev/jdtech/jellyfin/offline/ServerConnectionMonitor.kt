@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.MetadataRefreshWorker
 import dev.jdtech.jellyfin.work.SyncWorker
@@ -179,6 +180,18 @@ constructor(
         scope.launch { refreshServerAccessibility() }
     }
 
+    fun reconnect() {
+        scope.launch {
+            if (appPreferences.getValue(appPreferences.offlineMode)) {
+                appPreferences.setValue(appPreferences.offlineMode, false)
+            }
+            refreshServerAccessibility()
+            if (state.value.serverAccessible && !state.value.manualOfflineMode) {
+                enqueueSync()
+            }
+        }
+    }
+
     private suspend fun refreshServerAccessibility() {
         val manualOffline = appPreferences.getValue(appPreferences.offlineMode)
         val serverId = appPreferences.getValue(appPreferences.currentServer)
@@ -193,19 +206,28 @@ constructor(
             return
         }
 
-        val address = database.getServerCurrentAddress(serverId)?.address
-        if (address.isNullOrBlank()) {
+        val serverAddress = database.getServerCurrentAddress(serverId)
+        if (serverAddress == null || serverAddress.address.isBlank()) {
             updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
+        repairCurrentServerAddress(serverId, serverAddress)
 
         if (!hasActiveNetwork()) {
             updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
 
-        val accessible = probeServer(address)
+        val accessible = probeServer(serverAddress.address)
         updateAccessibility(accessible = accessible, manualOfflineMode = manualOffline)
+    }
+
+    private fun repairCurrentServerAddress(serverId: String, address: ServerAddress) {
+        val currentAddressId = database.get(serverId)?.currentServerAddressId
+        if (currentAddressId != address.id) {
+            database.updateServerCurrentAddress(serverId, address.id)
+            Timber.i("Repaired current server address for %s using %s", serverId, address.address)
+        }
     }
 
     private fun hasActiveNetwork(): Boolean {

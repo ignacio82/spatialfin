@@ -63,14 +63,18 @@ constructor(
             // non-loading state that lets navigation mount Home — guarantees
             // the API client reflects the stored session by first load.
             // Idempotent: re-applying the same session is a no-op.
-            val address = serverData?.address?.address
+            val fallbackAddress = serverId?.let { database.getServerCurrentAddress(it) }
+            fallbackAddress
+                ?.takeIf { serverData?.server?.currentServerAddressId != it.id }
+                ?.let { address -> serverId?.let { database.updateServerCurrentAddress(it, address.id) } }
+            val address = serverData?.address?.address ?: fallbackAddress?.address
             if (address != null) {
                 jellyfinApi.apply {
                     api.update(
                         baseUrl = address,
-                        accessToken = serverData.user?.accessToken,
+                        accessToken = serverData?.user?.accessToken,
                     )
-                    userId = serverData.user?.id
+                    userId = serverData?.user?.id
                 }
             }
 
@@ -83,7 +87,7 @@ constructor(
                     hasCurrentUser = serverData?.user != null,
                     isOfflineMode = connectionMonitor.state.value.effectiveOfflineMode,
                     currentUser = serverData?.user,
-                    currentServerAddress = serverData?.address?.address,
+                    currentServerAddress = address,
                 )
             _state.emit(mainState)
         }
@@ -114,7 +118,7 @@ constructor(
 
     fun reconnect() {
         check()
-        connectionMonitor.triggerRefresh()
+        connectionMonitor.reconnect()
     }
 
     fun loadServerAndUser() {

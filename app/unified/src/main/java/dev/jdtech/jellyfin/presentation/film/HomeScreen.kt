@@ -398,18 +398,6 @@ private fun HomeState.toStatusCardModel(nowMs: Long = System.currentTimeMillis()
                     UiText.StringResource(CoreR.string.offline_sync_pending, syncStatus.pendingChanges)
                 }
             }
-            recentSyncResult && syncStatus.lastSyncedChanges > 0 -> {
-                UiText.StringResource(CoreR.string.offline_sync_success, syncStatus.lastSyncedChanges)
-            }
-            recentSyncResult && syncStatus.lastFailedChanges > 0 -> {
-                UiText.StringResource(
-                    CoreR.string.offline_sync_failed,
-                    syncStatus.lastFailedChanges.coerceAtLeast(syncStatus.pendingChanges),
-                )
-            }
-            recentSyncResult && !syncStatus.lastErrorMessage.isNullOrBlank() -> {
-                UiText.DynamicString(syncStatus.lastErrorMessage!!)
-            }
             else -> null
         }
 

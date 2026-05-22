@@ -8,10 +8,8 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
-import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinUserDataDto
 import dev.jdtech.jellyfin.models.User
-import dev.jdtech.jellyfin.models.toSpatialFinEpisode
-import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.offline.OfflineSyncStatusMonitor
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
@@ -53,25 +51,21 @@ constructor(
                         val serverAddress =
                             serverWithAddressesAndUsers.addresses.firstOrNull {
                                 it.id == server.currentServerAddressId
-                            } ?: continue
+                            } ?: serverWithAddressesAndUsers.addresses.firstOrNull()
+                            ?: continue
+                        if (server.currentServerAddressId != serverAddress.id) {
+                            database.updateServerCurrentAddress(server.id, serverAddress.id)
+                        }
                         for (user in serverWithAddressesAndUsers.users) {
                             jellyfinApi.apply {
                                 api.update(baseUrl = serverAddress.address, accessToken = user.accessToken)
                                 userId = user.id
                             }
-                            val movies =
-                                database.getMoviesByServerId(server.id).map {
-                                    it.toSpatialFinMovie(database, user.id)
-                                }
-                            val episodes =
-                                database.getEpisodesByServerId(server.id).map {
-                                    it.toSpatialFinEpisode(database, user.id)
-                                }
 
-                            val movieResult = syncUserData(jellyfinApi, user, movies)
-                            val episodeResult = syncUserData(jellyfinApi, user, episodes)
-                            syncedChanges += movieResult.synced + episodeResult.synced
-                            failedChanges += movieResult.failed + episodeResult.failed
+                            val userResult =
+                                syncUserData(jellyfinApi, user, database.getUserDataToBeSynced(user.id))
+                            syncedChanges += userResult.synced
+                            failedChanges += userResult.failed
                         }
                     }
 
@@ -106,16 +100,14 @@ constructor(
     private suspend fun syncUserData(
         jellyfinApi: JellyfinApi,
         user: User,
-        items: List<SpatialFinItem>,
+        pendingUserData: List<SpatialFinUserDataDto>,
     ): SyncResult {
         var syncedChanges = 0
         var failedChanges = 0
-        for (item in items) {
-            val userData = database.getUserDataToBeSynced(user.id, item.id) ?: continue
-
+        for (userData in pendingUserData) {
             try {
                 jellyfinApi.itemsApi.updateItemUserData(
-                    itemId = item.id,
+                    itemId = userData.itemId,
                     userId = user.id,
                     data =
                         UpdateUserItemDataDto(
@@ -125,7 +117,7 @@ constructor(
                         ),
                 )
 
-                database.setUserDataToBeSynced(user.id, item.id, false)
+                database.setUserDataToBeSynced(user.id, userData.itemId, false)
                 syncedChanges++
             } catch (_: Exception) {
                 failedChanges++

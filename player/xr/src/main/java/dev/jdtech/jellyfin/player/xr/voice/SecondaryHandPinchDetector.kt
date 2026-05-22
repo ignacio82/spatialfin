@@ -91,7 +91,11 @@ class SecondaryHandPinchDetector(
         private const val MIN_ARMING_PALM_HEIGHT = -0.12f
         private const val HOLD_OPEN_PALM_HINT = "Hold palm to talk"
         private const val HOLD_FIST_HINT = "Hold fist to interrupt"
+        private const val RAISE_PALM_HINT_DURATION_MS = 2_500L
         private const val RAISE_PALM_HINT = "Raise palm to face"
+        private val raisePalmHintLock = Any()
+        private var raisePalmHintShownThisSession = false
+        private var raisePalmHintDeadline = 0L
     }
 
     private val hand: Hand? by lazy {
@@ -111,9 +115,6 @@ class SecondaryHandPinchDetector(
         var cooldownUntil = 0L
         var lastProgressBucket = -1
         var lastState: GestureState = GestureState.Idle
-        var raisePalmHintShown = false
-        var raisePalmHintDeadline = 0L
-
         suspend fun emitIfChanged(state: GestureState) {
             val shouldEmit =
                 when {
@@ -202,6 +203,15 @@ class SecondaryHandPinchDetector(
                 GestureType.INTERRUPT -> RELEASE_FIST_TRAVEL_METERS
             }
 
+        fun shouldShowRaisePalmHint(now: Long): Boolean =
+            synchronized(raisePalmHintLock) {
+                if (!raisePalmHintShownThisSession) {
+                    raisePalmHintShownThisSession = true
+                    raisePalmHintDeadline = now + RAISE_PALM_HINT_DURATION_MS
+                }
+                now < raisePalmHintDeadline
+            }
+
         while (currentCoroutineContext().isActive) {
             delay(POLL_INTERVAL_MS)
 
@@ -285,11 +295,7 @@ class SecondaryHandPinchDetector(
                         phase = ActivationPhase.IDLE
                         resetGestureTracking()
                         if (gestureType == GestureType.ACTIVATE) {
-                            if (!raisePalmHintShown) {
-                                raisePalmHintShown = true
-                                raisePalmHintDeadline = now + 4000L
-                            }
-                            if (now < raisePalmHintDeadline) {
+                            if (shouldShowRaisePalmHint(now)) {
                                 emitIfChanged(GestureState.Arming(gestureType, 0f, RAISE_PALM_HINT))
                             } else {
                                 emitIfChanged(GestureState.Idle)

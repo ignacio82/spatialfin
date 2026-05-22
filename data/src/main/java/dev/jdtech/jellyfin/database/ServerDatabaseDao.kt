@@ -90,13 +90,24 @@ interface ServerDatabaseDao {
     @Query("UPDATE servers SET currentUserId = :userId WHERE id = :serverId")
     fun updateServerCurrentUser(serverId: String, userId: UUID)
 
+    @Query("UPDATE servers SET currentServerAddressId = :addressId WHERE id = :serverId")
+    fun updateServerCurrentAddress(serverId: String, addressId: UUID)
+
     @Query(
         "SELECT * FROM users WHERE id = (SELECT currentUserId FROM servers WHERE id = :serverId)"
     )
     fun getServerCurrentUser(serverId: String): User?
 
     @Query(
-        "SELECT * FROM serverAddresses WHERE id = (SELECT currentServerAddressId FROM servers WHERE id = :serverId)"
+        """
+        SELECT * FROM serverAddresses
+        WHERE serverId = :serverId
+        ORDER BY CASE
+            WHEN id = (SELECT currentServerAddressId FROM servers WHERE id = :serverId) THEN 0
+            ELSE 1
+        END
+        LIMIT 1
+        """
     )
     fun getServerCurrentAddress(serverId: String): ServerAddress?
 
@@ -342,6 +353,9 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM userdata WHERE userId = :userId AND itemId = :itemId AND toBeSynced = 1")
     fun getUserDataToBeSynced(userId: UUID, itemId: UUID): SpatialFinUserDataDto?
+
+    @Query("SELECT * FROM userdata WHERE userId = :userId AND toBeSynced = 1")
+    fun getUserDataToBeSynced(userId: UUID): List<SpatialFinUserDataDto>
 
     @Query("SELECT COUNT(*) FROM userdata WHERE toBeSynced = 1")
     fun getPendingUserDataSyncCount(): Int
