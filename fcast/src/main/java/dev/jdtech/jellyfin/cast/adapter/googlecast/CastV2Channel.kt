@@ -6,6 +6,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.cert.X509Certificate
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
@@ -90,18 +91,30 @@ internal class CastV2Channel(
     suspend fun connect() {
         check(_state.value == State.Idle) { "CastV2Channel already connected (state=${_state.value})" }
         _state.value = State.Connecting
+        var phase = "TCP connect"
+        var rawSocket: Socket? = null
+        val targetHost = host
+        val targetPort = port
         try {
             val factory = permissiveSocketFactory()
             val ssl = withContext(Dispatchers.IO) {
-                (factory.createSocket() as SSLSocket).apply {
+                val raw = Socket().also { rawSocket = it }.apply {
                     soTimeout = readTimeoutMs
                     tcpNoDelay = true
                     keepAlive = true
-                    connect(InetSocketAddress(host, port), connectTimeoutMs)
+                    connect(InetSocketAddress(targetHost, targetPort), connectTimeoutMs)
+                }
+                Timber.tag(TAG).d("CastV2 TCP connected to %s:%d", targetHost, targetPort)
+                phase = "TLS setup"
+                (factory.createSocket(raw, targetHost, targetPort, true) as SSLSocket).apply {
+                    soTimeout = readTimeoutMs
+                    tcpNoDelay = true
+                    keepAlive = true
+                    phase = "TLS handshake"
                     // Permissive verifier — the cert's CN won't match the LAN IP. The mDNS id
                     // we discovered is the actual identity we trust.
-                    if (!PERMISSIVE_HOSTNAME_VERIFIER.verify(host, session)) {
-                        Timber.tag(TAG).d("hostname verify accepted: host=%s", host)
+                    if (!PERMISSIVE_HOSTNAME_VERIFIER.verify(targetHost, session)) {
+                        Timber.tag(TAG).d("hostname verify accepted: host=%s", targetHost)
                     }
                     startHandshake()
                 }
@@ -113,7 +126,9 @@ internal class CastV2Channel(
             _state.value = State.Connected
             Timber.tag(TAG).i("CastV2 connected to %s:%d", host, port)
         } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "CastV2 %s failed to %s:%d", phase, host, port)
             _state.value = State.Failed
+            runCatching { rawSocket?.close() }
             closeQuietly()
             throw e
         }

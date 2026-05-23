@@ -166,6 +166,12 @@ fun FCastGlobalPickerHost(
         ).show()
         sessionManager.consumeSubtitleDegradationWarning()
     }
+    val castError by sessionManager.pendingCastError.collectAsState()
+    LaunchedEffect(castError) {
+        val message = castError ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        sessionManager.consumeCastError()
+    }
 
     val visible by sessionManager.pickerVisible.collectAsState()
     androidx.compose.runtime.LaunchedEffect(visible) {

@@ -2,7 +2,10 @@ package dev.jdtech.jellyfin.cast.adapter.airplay
 
 import android.content.Context
 import dev.jdtech.jellyfin.cast.CastCapability
+import dev.jdtech.jellyfin.cast.CastProtocol
+import dev.jdtech.jellyfin.cast.CastReceiver
 import io.mockk.mockk
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,6 +20,22 @@ class AirPlayDiscoveryTest {
         assertTrue(CastCapability.Audio in caps)
         assertFalse(CastCapability.Video in caps)
         assertTrue(CastCapability.Volume in caps)
+    }
+
+    @Test
+    fun `airplay video endpoint replaces raop endpoint on the same host`() {
+        val airplay = receiver(
+            id = "airplay:video",
+            port = 7000,
+            capabilities = setOf(CastCapability.Video, CastCapability.Audio),
+        )
+        val raop = receiver(
+            id = "airplay:audio",
+            port = 5000,
+            capabilities = setOf(CastCapability.Audio),
+        )
+
+        assertEquals(listOf(airplay), discovery.mergeResults(listOf(airplay), listOf(raop)))
     }
 
     @Test
@@ -94,4 +113,18 @@ class AirPlayDiscoveryTest {
             }
         }
     }
+
+    private fun receiver(
+        id: String,
+        port: Int,
+        capabilities: Set<CastCapability>,
+    ) = CastReceiver(
+        id = id,
+        name = id,
+        host = "192.0.2.10",
+        port = port,
+        protocol = CastProtocol.AirPlay,
+        capabilities = capabilities,
+        source = CastReceiver.Source.Mdns,
+    )
 }

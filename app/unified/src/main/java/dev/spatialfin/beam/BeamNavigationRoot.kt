@@ -870,8 +870,8 @@ private fun BeamBottomNavigationRow(
             // sits flush with the rest of the bar but routes to the global FCast
             // picker instead of a navigation destination.
             if (fcastSession != null) {
-                val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
-                val castSelected = pickedReceiver != null
+                val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
+                val castSelected = pickedTarget != null
                 Surface(
                     onClick = { fcastSession.showPicker() },
                     color = if (castSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
@@ -1032,8 +1032,8 @@ private fun BeamSidebar(
             // sidebar next to the Network tab. It opens the global FCast picker
             // rather than navigating to a destination.
             if (fcastSession != null) {
-                val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
-                val castSelected = pickedReceiver != null
+                val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
+                val castSelected = pickedTarget != null
                 Surface(
                     onClick = { fcastSession.showPicker() },
                     color =

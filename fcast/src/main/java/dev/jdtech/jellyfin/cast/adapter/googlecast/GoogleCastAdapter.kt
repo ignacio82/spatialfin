@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -102,15 +103,22 @@ class GoogleCastAdapter(
     override suspend fun connect(): Result<Unit> = runCatching {
         _events.emit(CastSessionEvent.ConnectionStateChanged(CastConnectionState.Connecting))
         try {
+            Timber.tag(TAG).e("connect: step 1 — TLS connect to %s:%d", channel.host, channel.port)
             channel.connect()
+            Timber.tag(TAG).e("connect: step 2 — TLS OK, launching channel observer")
             listenerJob = scope.launch { observeChannel() }
+            Timber.tag(TAG).e("connect: step 3 — sending CONNECT to receiver-0")
             sendOnConnection(CastMessages.DEFAULT_RECEIVER_ID, CastMessages.CONNECT)
+            Timber.tag(TAG).e("connect: step 4 — starting heartbeat")
             startHeartbeat()
+            Timber.tag(TAG).e("connect: step 5 — launching Default Media Receiver")
             launchDefaultMediaReceiver()
+            Timber.tag(TAG).e("connect: step 6 — LAUNCH complete, connected!")
             _events.emit(CastSessionEvent.ConnectionStateChanged(CastConnectionState.Connected))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "connect: FAILED at some step")
             _events.emit(CastSessionEvent.Error(e.message ?: "Google Cast connect failed"))
             _events.emit(CastSessionEvent.ConnectionStateChanged(CastConnectionState.Failed))
             cleanup()
@@ -153,7 +161,7 @@ class GoogleCastAdapter(
                 ),
             ),
             autoplay = true,
-            currentTime = media.startPositionMs / 1000.0,
+            currentTime = if (media.startPositionMs == 0L) 0.1 else media.startPositionMs / 1000.0,
         )
         sendJson(
             destinationId = tid,
@@ -223,17 +231,7 @@ class GoogleCastAdapter(
             requestId = launchRequestId,
             appId = CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID,
         )
-        sendJson(
-            destinationId = CastMessages.DEFAULT_RECEIVER_ID,
-            namespace = CastNamespaces.RECEIVER,
-            json = CastJson.encodeToString(LaunchRequest.serializer(), launch),
-        )
-        // Wait for the RECEIVER_STATUS that names our running application. Receivers reply
-        // with multiple RECEIVER_STATUS frames during a session; we must correlate either on
-        // our launch requestId, or (as a fallback for spontaneous status updates that
-        // happen *after* our launch starts but don't carry the requestId) ensure it contains
-        // our appId and was sent after our LAUNCH.
-        val status = withTimeout(LAUNCH_TIMEOUT_MS) {
+        val statusDeferred = scope.async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             channel.incoming
                 .filter { it.namespace == CastNamespaces.RECEIVER }
                 .mapNotNull { it.payloadUtf8 }
@@ -244,24 +242,24 @@ class GoogleCastAdapter(
                 }
                 .filter { it.type == CastMessages.RECEIVER_STATUS }
                 .filter {
-                    val app = it.status.applications.firstOrNull { app ->
-                        app.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID
+                    val app = it.status.applications.firstOrNull { a ->
+                        a.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID
                     }
                     if (app == null) return@filter false
-
-                    // If it has our requestId, it's the direct reply.
                     if (it.requestId == launchRequestId) return@filter true
-
-                    // Fallback: spontaneous update (requestId=0) that carries our app.
-                    // This is only valid if it arrives after LAUNCH (which it will, because
-                    // we're collecting from a SharedFlow 'incoming' that we only just started
-                    // filtering). Note: in a real race, a stale status from a PREVIOUS session
-                    // could be in the flow's buffer. We don't have a message timestamp, so we
-                    // strongly prefer the requestId match or a status that wasn't already
-                    // present in the receiver's state.
                     it.requestId == 0
                 }
                 .first()
+        }
+
+        sendJson(
+            destinationId = CastMessages.DEFAULT_RECEIVER_ID,
+            namespace = CastNamespaces.RECEIVER,
+            json = CastJson.encodeToString(LaunchRequest.serializer(), launch),
+        )
+
+        val status = withTimeout(LAUNCH_TIMEOUT_MS) {
+            statusDeferred.await()
         }
         val app = status.status.applications.first { it.appId == CastMessages.DEFAULT_MEDIA_RECEIVER_APP_ID }
         transportId = app.transportId
@@ -273,6 +271,14 @@ class GoogleCastAdapter(
         // Open the second virtual connection on the transportId destination so the receiver
         // routes media-namespace messages to the running Default Media Receiver app.
         sendOnConnection(app.transportId, CastMessages.CONNECT)
+        sendJson(
+            destinationId = app.transportId,
+            namespace = CastNamespaces.MEDIA,
+            json = CastJson.encodeToString(
+                MediaGetStatusRequest.serializer(),
+                MediaGetStatusRequest(requestId = requestId()),
+            ),
+        )
     }
 
     /**

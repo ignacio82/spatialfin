@@ -175,12 +175,12 @@ fun ItemButtonsBar(
                 // when there's an CastSessionManager in scope (XR/Beam, not TV).
                 val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
                 if (fcastSession != null && item.canPlay) {
-                    val pickedReceiver by fcastSession.pickedReceiver.collectAsState()
+                    val pickedTarget by fcastSession.pickedTarget.collectAsState()
                     XrIconActionButton(
                         icon = CoreR.drawable.ic_cast,
                         contentDescription = "Cast to receiver",
                         onClick = { fcastSession.showPicker() },
-                        emphasized = pickedReceiver != null,
+                        emphasized = pickedTarget != null,
                     )
                 }
                 // 3-dots overflow holds every secondary action. The anchor Box

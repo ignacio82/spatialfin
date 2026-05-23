@@ -44,6 +44,7 @@ class FCastReceiverServerTest {
             override fun onSeek(seconds: Double) {}
             override fun onSetVolume(volume: Double) {}
             override fun onSetSpeed(speed: Double) {}
+            override fun onSetTrack(type: Int, trackId: String) {}
         }
         val freePort = ServerSocket(0).use { it.localPort }
 
@@ -84,6 +85,7 @@ class FCastReceiverServerTest {
             override fun onSeek(seconds: Double) {}
             override fun onSetVolume(volume: Double) {}
             override fun onSetSpeed(speed: Double) {}
+            override fun onSetTrack(type: Int, trackId: String) {}
         }
         val freePort = ServerSocket(0).use { it.localPort }
 

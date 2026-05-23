@@ -4,13 +4,11 @@ import android.content.Context
 import android.content.Intent
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 /**
- * Single decision point for "user tapped Play on a media item": route to FCast if a receiver is
+ * Single decision point for "user tapped Play on a media item": route to casting if a receiver is
  * picked, otherwise fall through to the local player Activity. Call sites used to do
  * `context.startActivity(BeamPlayerActivity.createIntentForSpatialItem(...))` directly; they now
  * call [launchPlayback] with the same item plus the [CastSessionManager], and the session
@@ -55,16 +53,7 @@ fun launchPlayback(
             }
             val ok = sessionManager.castSpatialItem(item, startPositionMs)
             if (!ok) {
-                Timber.tag("PlaybackLauncher").w("Cast routing failed; falling back to local player")
-                withContext(Dispatchers.Main) {
-                    val intent = intentBuilder()
-                    if (intent != null) {
-                        runCatching { context.startActivity(intent) }
-                                .onFailure { onLocalLaunchFailed() }
-                    } else {
-                        onLocalLaunchFailed()
-                    }
-                }
+                Timber.tag("PlaybackLauncher").w("Cast routing failed; preserving explicit cast intent")
             }
         }
         return true

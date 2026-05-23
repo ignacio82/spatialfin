@@ -51,6 +51,7 @@ class ExternalStreamTest {
             override fun seek(seconds: Double) {}
             override fun setVolume(volume: Double) {}
             override fun setSpeed(speed: Double) {}
+            override fun setTrack(type: Int, trackId: String) {}
         }
         val router = ExternalStreamIngressRouter(player)
         val res = router.onPlay(PlayMessage(container = "video/mp4", url = "u"))
@@ -67,6 +68,7 @@ class ExternalStreamTest {
             override fun seek(seconds: Double) {}
             override fun setVolume(volume: Double) {}
             override fun setSpeed(speed: Double) {}
+            override fun setTrack(type: Int, trackId: String) {}
         }
         val router = ExternalStreamIngressRouter(player)
         val res = router.onPlay(PlayMessage(container = "video/mp4", url = "u"))

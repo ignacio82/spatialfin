@@ -206,6 +206,13 @@ class CastSessionManager @Inject constructor(
         _pendingSubtitleDegradationWarning.value = null
     }
 
+    private val _pendingCastError = MutableStateFlow<String?>(null)
+    val pendingCastError: StateFlow<String?> = _pendingCastError.asStateFlow()
+
+    fun consumeCastError() {
+        _pendingCastError.value = null
+    }
+
     /**
      * Whether the "Transcoding for subtitle compatibility" chip should be shown when
      * [subtitleFidelity] is [SubtitleFidelity.Transcoding]. Wraps the [AppPreferences] lookup so
@@ -698,9 +705,9 @@ class CastSessionManager @Inject constructor(
             _pickedReceiver.value = null
             scope.launch { runCatching { controller.stopCast() } }
         }
-        // Switching between Cast receivers tears down the previous adapter so we don't end up
-        // with two live Cast sockets fighting over the wire.
-        scope.launch { releaseActiveCastAdapter() }
+        _pendingCastError.value = null
+        // Do not let delayed teardown close an adapter just opened by an immediate Play tap.
+        scope.launch { releaseActiveCastAdapterExcept(receiver.id) }
         _pickedTarget.value = receiver
     }
 
@@ -723,10 +730,11 @@ class CastSessionManager @Inject constructor(
         _activeItemTitle.value = item.name
         _activeItemArtworkUrl.value = item.images.primary?.toString() ?: item.images.backdrop?.toString()
         val target = _pickedTarget.value ?: return false
+        _pendingCastError.value = null
         _activeAudioRoute.value = null
         // Route by protocol. FCast keeps its existing path (controller + Play wire message);
         // Google Cast goes through the ProtocolAdapter API. Subtitle policy applies to both.
-        return when (target.protocol) {
+        val started = when (target.protocol) {
             CastProtocol.FCast -> castFCastItem(item, startPositionMs)
             // Cast and AirPlay share the protocol-agnostic adapter pipeline. The subtitle
             // policy inside castViaAdapter does the right thing for each — neither receiver
@@ -735,6 +743,10 @@ class CastSessionManager @Inject constructor(
             CastProtocol.AirPlay,
             -> castViaAdapter(target, item, startPositionMs)
         }
+        if (!started && _pendingCastError.value == null) {
+            _pendingCastError.value = "Couldn't cast to ${target.name}."
+        }
+        return started
     }
 
     private suspend fun castFCastItem(
@@ -869,10 +881,17 @@ class CastSessionManager @Inject constructor(
         item: SpatialFinItem,
         startPositionMs: Long?,
     ): Boolean {
+        Timber.tag(TAG).e(
+            "castViaAdapter: ENTRY name=%s target=%s:%d proto=%s item=%s",
+            target.name, target.host, target.port, target.protocol, item.name,
+        )
         val itemId = when (item) {
             is SpatialFinMovie -> item.id
             is SpatialFinEpisode -> item.id
-            else -> return false
+            else -> {
+                Timber.tag(TAG).e("castViaAdapter: item type not castable: %s", item::class.simpleName)
+                return false
+            }
         }
         val title = when (item) {
             is SpatialFinMovie -> item.name
@@ -881,15 +900,19 @@ class CastSessionManager @Inject constructor(
         }
         return withContext(Dispatchers.IO) {
             try {
+                Timber.tag(TAG).e("castViaAdapter: fetching media sources for %s", itemId)
                 val sources = repository.getMediaSources(itemId = itemId, includePath = false)
                 val source = sources.firstOrNull() ?: run {
-                    Timber.tag(TAG).w("castSpatialItem (adapter): no media sources for %s", itemId)
+                    Timber.tag(TAG).e("castViaAdapter: NO media sources for %s", itemId)
                     return@withContext false
                 }
+                Timber.tag(TAG).e("castViaAdapter: got source path=%s", source.path)
                 val audioCodec = source.mediaStreams
                     .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
+                Timber.tag(TAG).e("castViaAdapter: activating adapter for %s:%d", target.host, target.port)
                 val adapter = activeCastAdapterFor(target)
+                Timber.tag(TAG).e("castViaAdapter: adapter activated OK, capabilities=%s", adapter.currentCapabilities.value)
                 // Subtitle policy uses the receiver's *declared* capabilities — Cast receivers
                 // never carry NativeAss, so styled ASS lands on BurnIn or Degraded depending
                 // on the user's preference.
@@ -904,24 +927,65 @@ class CastSessionManager @Inject constructor(
                 applySubtitleFidelityAndWarnFor(decision, target)
 
                 val audioDecision = audioCodecDecision(target.host, target.port)
-                val url = repository.getStreamUrl(itemId, source.id)
-                    .withCastCompatibleCodecs(audioCodec, audioDecision)
-                    .withSubtitleBurnIn(decision)
-                    .withStartTimeTicks(startMs)
-                    .withJellyfinAuth()
+                val container = source.path.substringAfterLast('.', "").lowercase()
+                val isCastOrAirPlay = target.protocol in listOf(CastProtocol.GoogleCast, CastProtocol.AirPlay)
+                val receiverSafeAudio = audioCodec?.lowercase()?.trim() in setOf("aac", "mp3")
+                val requiresHlsRemux = isCastOrAirPlay && (
+                    !container.matches(Regex(".*(mp4|m4v|mov|webm).*")) || !receiverSafeAudio
+                )
+                Timber.tag(TAG).e("castViaAdapter: container=%s isCastOrAirPlay=%b requiresHlsRemux=%b", container, isCastOrAirPlay, requiresHlsRemux)
+
+                val url: String
+                val finalStartMs: Long
+
+                if (requiresHlsRemux) {
+                    // This path feeds external receivers, not the FCast/SpatialFin app where
+                    // audio passthrough is negotiated. AAC HLS is the common reliable profile.
+                    val hlsUrl = repository.getAudioTranscodeStreamUrl(
+                        itemId,
+                        source.id,
+                        listOf("aac"),
+                        startMs,
+                    )
+                    Timber.tag(TAG).e("castViaAdapter: HLS remux URL blank=%b len=%d", hlsUrl.isBlank(), hlsUrl.length)
+                    if (hlsUrl.isNotBlank()) {
+                        url = hlsUrl.withSubtitleBurnIn(decision).withJellyfinAuth()
+                        finalStartMs = 0L // baked into HLS, so receiver should start at 0
+                    } else {
+                        url = repository.getStreamUrl(itemId, source.id)
+                            .withCastCompatibleCodecs(audioCodec, audioDecision)
+                            .withSubtitleBurnIn(decision)
+                            .withStartTimeTicks(startMs)
+                            .withJellyfinAuth()
+                        finalStartMs = startMs
+                    }
+                } else {
+                    url = repository.getStreamUrl(itemId, source.id)
+                        .withCastCompatibleCodecs(audioCodec, audioDecision)
+                        .withSubtitleBurnIn(decision)
+                        .withStartTimeTicks(startMs)
+                        .withJellyfinAuth()
+                    finalStartMs = startMs
+                }
+
+                Timber.tag(TAG).e("castViaAdapter: final URL=%s contentType=%s startMs=%d", url.take(200), guessMediaContentType(url, container), finalStartMs)
                 val media = CastMedia(
                     url = url,
-                    contentType = guessMediaContentType(url),
+                    contentType = guessMediaContentType(url, container),
                     title = title,
-                    startPositionMs = startMs,
+                    startPositionMs = finalStartMs,
                 )
+                Timber.tag(TAG).e("castViaAdapter: calling adapter.load()")
                 adapter.load(media).onFailure {
-                    Timber.tag(TAG).w(it, "castViaAdapter: load() failed for %s", target.id)
+                    Timber.tag(TAG).e(it, "castViaAdapter: load() FAILED for %s", target.id)
+                    _pendingCastError.value = "Couldn't cast to ${target.name}: ${it.message ?: "load failed"}"
                     return@withContext false
                 }
+                Timber.tag(TAG).e("castViaAdapter: load() SUCCESS")
                 true
             } catch (e: Exception) {
-                Timber.tag(TAG).w(e, "castViaAdapter failed for %s", itemId)
+                Timber.tag(TAG).e(e, "castViaAdapter: EXCEPTION for %s", itemId)
+                _pendingCastError.value = "Couldn't cast to ${target.name}: ${e.message ?: "connection failed"}"
                 false
             }
         }
@@ -934,12 +998,18 @@ class CastSessionManager @Inject constructor(
      */
     private suspend fun activeCastAdapterFor(target: CastReceiver): ProtocolAdapter =
         castAdapterMutex.withLock {
-            activeCastAdapter?.takeIf { it.receiver.id == target.id }?.let { return@withLock it }
+            activeCastAdapter?.takeIf { it.receiver.id == target.id }?.let {
+                Timber.tag(TAG).e("activeCastAdapterFor: reusing existing adapter for %s", target.id)
+                return@withLock it
+            }
             // Receiver changed — tear the old adapter down before opening a new socket.
+            Timber.tag(TAG).e("activeCastAdapterFor: creating NEW adapter for %s:%d proto=%s", target.host, target.port, target.protocol)
             activeCastAdapter?.disconnect()
             castAdapterEventJob?.cancel()
             val adapter = CastAdapterFactory.create(target)
+            Timber.tag(TAG).e("activeCastAdapterFor: calling adapter.connect() to %s:%d", target.host, target.port)
             adapter.connect().getOrThrow()
+            Timber.tag(TAG).e("activeCastAdapterFor: connect() SUCCESS for %s:%d", target.host, target.port)
             activeCastAdapter = adapter
             castAdapterEventJob = scope.launch { bridgeAdapterEvents(adapter) }
             adapter
@@ -948,6 +1018,19 @@ class CastSessionManager @Inject constructor(
     /** Drop any active non-FCast adapter. Safe to call when no adapter is active. */
     private suspend fun releaseActiveCastAdapter() {
         castAdapterMutex.withLock {
+            castAdapterEventJob?.cancel()
+            castAdapterEventJob = null
+            activeCastAdapter?.disconnect()
+            activeCastAdapter = null
+            _activeMediaState.value = dev.jdtech.jellyfin.cast.CastMediaState.Idle
+            _activePositionMs.value = 0L
+            _activeDurationMs.value = null
+        }
+    }
+
+    private suspend fun releaseActiveCastAdapterExcept(targetId: String) {
+        castAdapterMutex.withLock {
+            if (activeCastAdapter?.receiver?.id == targetId) return@withLock
             castAdapterEventJob?.cancel()
             castAdapterEventJob = null
             activeCastAdapter?.disconnect()
@@ -985,7 +1068,10 @@ class CastSessionManager @Inject constructor(
                 is dev.jdtech.jellyfin.cast.CastSessionEvent.Ended -> {
                     _activeMediaState.value = dev.jdtech.jellyfin.cast.CastMediaState.Ended
                 }
-                else -> Unit // Connection state + Error already wired elsewhere
+                is dev.jdtech.jellyfin.cast.CastSessionEvent.Error ->
+                    _pendingCastError.value =
+                        "Couldn't cast to ${adapter.receiver.name}: ${event.reason}"
+                else -> Unit
             }
         }
     }
@@ -1124,15 +1210,27 @@ class CastSessionManager @Inject constructor(
         )
     }
 
-    /** Best-effort container guess from the URL extension. Cast receivers tolerate the
-     * vendor MIME types we send for FCast (video/mp4 / application/x-mpegURL etc). */
-    private fun guessMediaContentType(url: String): String = when {
-        url.contains(".m3u8", ignoreCase = true) -> "application/x-mpegURL"
-        url.contains(".mpd", ignoreCase = true) -> "application/dash+xml"
-        url.contains(".mkv", ignoreCase = true) -> "video/x-matroska"
-        url.contains(".webm", ignoreCase = true) -> "video/webm"
-        url.contains(".ts", ignoreCase = true) -> "video/mp2t"
-        else -> "video/mp4"
+    /** Best-effort container guess from the URL extension or source container. */
+    private fun guessMediaContentType(url: String, container: String? = null): String {
+        if (url.contains(".m3u8", ignoreCase = true)) return "application/vnd.apple.mpegurl"
+        if (container != null) {
+            when {
+                container.contains("mp4", ignoreCase = true) || container.contains("m4v", ignoreCase = true) -> return "video/mp4"
+                container.contains("mkv", ignoreCase = true) || container.contains("matroska", ignoreCase = true) -> return "video/x-matroska"
+                container.contains("webm", ignoreCase = true) -> return "video/webm"
+                container.contains("ts", ignoreCase = true) -> return "video/mp2t"
+                container.contains("mov", ignoreCase = true) -> return "video/quicktime"
+                container.contains("avi", ignoreCase = true) -> return "video/x-msvideo"
+                container.contains("wmv", ignoreCase = true) -> return "video/x-ms-wmv"
+            }
+        }
+        return when {
+            url.contains(".mpd", ignoreCase = true) -> "application/dash+xml"
+            url.contains(".mkv", ignoreCase = true) -> "video/x-matroska"
+            url.contains(".webm", ignoreCase = true) -> "video/webm"
+            url.contains(".ts", ignoreCase = true) -> "video/mp2t"
+            else -> "video/mp4"
+        }
     }
 
     /**

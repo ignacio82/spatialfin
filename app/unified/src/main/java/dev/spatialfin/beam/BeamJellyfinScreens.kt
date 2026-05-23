@@ -3058,12 +3058,12 @@ private fun openServerItem(
 @Composable
 private fun BeamCastOverflowItems(onItemSelected: () -> Unit) {
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current ?: return
-    val pickedReceiver by fcastSession.pickedReceiver.collectAsStateWithLifecycle()
+    val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     androidx.compose.material3.DropdownMenuItem(
         text = {
             Text(
-                if (pickedReceiver != null) "Cast (connected to ${pickedReceiver?.name})"
+                if (pickedTarget != null) "Cast (${pickedTarget?.name})"
                 else "Cast to receiver…"
             )
         },
@@ -3075,7 +3075,7 @@ private fun BeamCastOverflowItems(onItemSelected: () -> Unit) {
             androidx.compose.material3.Icon(
                 painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
                 contentDescription = null,
-                tint = if (pickedReceiver != null) {
+                tint = if (pickedTarget != null) {
                     MaterialTheme.colorScheme.primary
                 } else {
                     androidx.compose.material3.LocalContentColor.current
@@ -3083,7 +3083,7 @@ private fun BeamCastOverflowItems(onItemSelected: () -> Unit) {
             )
         },
     )
-    if (pickedReceiver != null) {
+    if (pickedTarget != null) {
         androidx.compose.material3.DropdownMenuItem(
             text = { Text("Stop casting") },
             onClick = {

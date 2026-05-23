@@ -182,7 +182,7 @@ class GoogleCastDiscovery(private val context: Context) {
     private fun ServiceInfo.resolveHostAddress(): String? {
         val ipv4 = inet4Addresses.firstOrNull()?.hostAddress
         if (!ipv4.isNullOrBlank()) return ipv4
-        return hostAddresses.firstOrNull { it.isNotBlank() }
+        return hostAddresses.firstOrNull { it.isNotBlank() && !it.contains(":") }
     }
 
     private companion object {

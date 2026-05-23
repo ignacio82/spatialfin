@@ -66,14 +66,16 @@ class AirPlayDiscovery(private val context: Context) {
      * (preferring the `_airplay` data so we have the video features). Audio-only devices
      * still appear so users see them in the picker.
      */
-    private fun mergeResults(
+    internal fun mergeResults(
         airplayV1: List<CastReceiver>,
         raop: List<CastReceiver>,
     ): List<CastReceiver> {
         val byHost = mutableMapOf<String, CastReceiver>()
-        for (entry in airplayV1) byHost["${entry.host}:${entry.port}"] = entry
+        // A receiver publishes AirPlay video and RAOP audio on different ports. Merge by
+        // address so the unusable RAOP endpoint cannot duplicate a video endpoint.
+        for (entry in airplayV1) byHost[entry.host] = entry
         for (entry in raop) {
-            val key = "${entry.host}:${entry.port}"
+            val key = entry.host
             if (byHost[key] == null) byHost[key] = entry
         }
         return byHost.values.toList()
@@ -241,7 +243,7 @@ class AirPlayDiscovery(private val context: Context) {
     private fun ServiceInfo.resolveHostAddress(): String? {
         val ipv4 = inet4Addresses.firstOrNull()?.hostAddress
         if (!ipv4.isNullOrBlank()) return ipv4
-        return hostAddresses.firstOrNull { it.isNotBlank() }
+        return hostAddresses.firstOrNull { it.isNotBlank() && !it.contains(":") }
     }
 
     private companion object {

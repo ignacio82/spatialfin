@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PickerEntry
@@ -286,13 +287,21 @@ fun FCastSessionPickerSheet(
                         val isPairingRequired = airReceiver.appName?.contains(
                             "pairing required", ignoreCase = true,
                         ) == true
+                        val supportsVideo = CastCapability.Video in airReceiver.capabilities
+                        val isEnabled = !isPairingRequired && supportsVideo
                         CastReceiverRow(
                             receiver = airReceiver,
-                            badge = if (isPairingRequired) "AirPlay 2" else "AirPlay",
-                            enabled = !isPairingRequired,
-                            unsupportedHint = if (isPairingRequired) {
-                                "Pairing not supported yet"
-                            } else null,
+                            badge = when {
+                                isPairingRequired -> "AirPlay 2"
+                                !supportsVideo -> "AirPlay Audio"
+                                else -> "AirPlay"
+                            },
+                            enabled = isEnabled,
+                            unsupportedHint = when {
+                                isPairingRequired -> "Pairing not supported yet"
+                                !supportsVideo -> "Audio-only AirPlay is not supported yet"
+                                else -> null
+                            },
                             onClick = { onCastReceiverPicked(airReceiver) },
                         )
                     }

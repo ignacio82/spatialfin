@@ -89,7 +89,11 @@ class AirPlayAdapter(
             // Sanity ping. The HTTP client has a 5s connect timeout — anything failing here
             // means the receiver is offline / on a different network / blocking 7000.
             withContext(Dispatchers.IO) {
-                http.execute(http.buildPlaybackInfoRequest())
+                try {
+                    http.execute(http.buildPlaybackInfoRequest())
+                } catch (e: AirPlayHttpClient.AirPlayException.HttpFailure) {
+                    Timber.tag(TAG).i("AirPlay receiver reachable but rejected /playback-info with %d", e.code)
+                }
             }
             _events.emit(CastSessionEvent.ConnectionStateChanged(CastConnectionState.Connected))
             pollerJob = scope.launch { pollLoop() }

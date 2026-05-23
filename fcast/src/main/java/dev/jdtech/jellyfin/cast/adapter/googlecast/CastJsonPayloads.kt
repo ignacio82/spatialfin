@@ -11,18 +11,24 @@ import kotlinx.serialization.json.put
 /**
  * JSON payloads carried inside the `payload_utf8` field of [CastMessage]s on each Cast V2
  * namespace. Receivers tolerate unknown fields per the Chromium spec so we deserialize with
- * `ignoreUnknownKeys = true`. Encoder skips defaults to keep frames small.
+ * `ignoreUnknownKeys = true`. Defaults are encoded because Cast transport connection
+ * messages must include `connType = 0`.
  */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 internal val CastJson: Json = Json {
     ignoreUnknownKeys = true
-    encodeDefaults = false
+    encodeDefaults = true
+    explicitNulls = false
     isLenient = false
 }
 
 // --- connection namespace ---
 
 @Serializable
-internal data class ConnectionMessage(val type: String)
+internal data class ConnectionMessage(
+    val type: String,
+    val connType: Int = 0,
+)
 
 // --- heartbeat namespace ---
 
@@ -136,6 +142,12 @@ internal data class SeekRequest(
     val mediaSessionId: Int,
     val currentTime: Double,
     val resumeState: String = "PLAYBACK_START",
+)
+
+@Serializable
+internal data class MediaGetStatusRequest(
+    val type: String = "GET_STATUS",
+    val requestId: Int,
 )
 
 @Serializable
