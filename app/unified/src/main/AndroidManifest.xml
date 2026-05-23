@@ -70,6 +70,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SpatialFin">
 
+        <!-- ARCore optional declaration -->
+        <meta-data
+            android:name="com.google.ar.core"
+            android:value="optional" />
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

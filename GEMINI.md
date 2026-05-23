@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.6 (107)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000107`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.8 (109)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000108`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -150,6 +150,7 @@ Because everything is in one module now, TV/Beam files that reference `R` or `Bu
 - **ABI splits** — `arm64-v8a` and `armeabi-v7a` are split for APK builds, but **disabled when building bundles** to work around AGP 8.9.0 issue [#402800800](https://issuetracker.google.com/issues/402800800).
 - **`XrPlayerActivity` runs in a `:xrplayer` process and self-kills on finish** — works around [#503521336](https://issuetracker.google.com/issues/503521336): `SurfaceEntity.dispose()` leaks per-eye Filament `MaterialInstance`s, so `Session.destroy()` at ON_DESTROY SIGABRTs inside `FMaterial::terminate`. The Activity is process-isolated (manifest `android:process=":xrplayer"`) and `Process.killProcess()` runs in `onPause`/`onStop` whenever `isFinishing` is true, so the lifecycle observer's `Session.destroy()` never fires. `MultitaskPlayerActivity` does not use `SurfaceEntity` and is not isolated. If the bug is fixed upstream, drop both the `:xrplayer` process tag and the `killProcessIfFinishing` helper.
 - **KSP incremental** — Reliable on the current Kotlin 2.3.20 / KSP 2.3.6 pairing; builds run incrementally by default. `-Pksp.incremental=false` is kept as a last-resort escape hatch for Hilt-generated-class staleness, but it is not needed under normal development.
+- **AndroidX XR Dependency Mismatches** — The Jetpack XR stack (`androidx.xr.scenecore`, `androidx.xr.runtime`, `androidx.xr.compose`) expects identical versions across all its artifacts. Sometimes `versionCatalogUpdate` decouples components (like `scenecore`) when an alpha bumps early. If this happens, immersive features (like `SurfaceEntity`) will silently fail or render blank. **Always keep `androidx-xr-scenecore` tied to the shared `version.ref = "androidx-xr"`**.
 
 ### Signing
 
