@@ -122,7 +122,14 @@ fun CompanionScanner(
                                 processImageProxy(scanner, imageProxy, onPayloadFound, json)
                             }
 
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                            val cameraSelector = when {
+                                cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) -> CameraSelector.DEFAULT_BACK_CAMERA
+                                cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) -> CameraSelector.DEFAULT_FRONT_CAMERA
+                                else -> {
+                                    Timber.w("COMPANION: No camera available on device")
+                                    return@addListener
+                                }
+                            }
 
                             cameraProvider.unbindAll()
                             cameraProvider.bindToLifecycle(
