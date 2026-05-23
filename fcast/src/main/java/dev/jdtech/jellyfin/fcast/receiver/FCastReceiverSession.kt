@@ -103,6 +103,7 @@ class FCastReceiverSession(
             }
             FCastMessage.Stop -> router.onStop()
             is FCastMessage.Seek -> router.onSeek(message.payload.time)
+            is FCastMessage.SpatialFinSetTrack -> router.onSetTrack(message.payload.type, message.payload.trackId)
             is FCastMessage.SetVolume -> router.onSetVolume(message.payload.volume)
             is FCastMessage.SetSpeed -> router.onSetSpeed(message.payload.speed)
             is FCastMessage.Ping -> {
@@ -131,6 +132,9 @@ class FCastReceiverSession(
 
     suspend fun pushVolumeUpdate(update: VolumeUpdateMessage) =
         sendInternal(FCastMessage.VolumeUpdate(update))
+
+    suspend fun pushTracksUpdate(update: dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) =
+        sendInternal(FCastMessage.SpatialFinTracksUpdate(update))
 
     suspend fun pushError(message: String) =
         sendInternal(FCastMessage.PlaybackError(PlaybackErrorMessage(message)))

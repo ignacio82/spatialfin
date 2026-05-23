@@ -116,6 +116,11 @@ class FCastReceiverServer(
         for (session in sessions) session.pushPlaybackUpdate(update)
     }
 
+    suspend fun broadcastTracksUpdate(update: dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) {
+        pruneClosedSessions()
+        for (session in sessions) session.pushTracksUpdate(update)
+    }
+
     /** Broadcast a [VolumeUpdateMessage] to every connected sender. */
     suspend fun broadcastVolumeUpdate(update: VolumeUpdateMessage) {
         pruneClosedSessions()

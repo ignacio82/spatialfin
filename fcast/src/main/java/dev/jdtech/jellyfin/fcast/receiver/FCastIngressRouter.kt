@@ -37,6 +37,7 @@ interface FCastIngressRouter {
     fun onSeek(seconds: Double)
     fun onSetVolume(volume: Double)
     fun onSetSpeed(speed: Double)
+    fun onSetTrack(type: Int, trackId: String)
 
     sealed interface IngressResult {
         data object Accepted : IngressResult
@@ -53,5 +54,6 @@ interface FCastIngressRouter {
         override fun onSeek(seconds: Double) = Unit
         override fun onSetVolume(volume: Double) = Unit
         override fun onSetSpeed(speed: Double) = Unit
+        override fun onSetTrack(type: Int, trackId: String) = Unit
     }
 }

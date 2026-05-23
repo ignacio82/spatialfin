@@ -47,6 +47,10 @@ sealed class FCastMessage(val opcode: FCastOpcode) {
     data class SubscribeEvent(val payload: SubscribeEventMessage) : FCastMessage(FCastOpcode.SubscribeEvent)
     data class UnsubscribeEvent(val payload: UnsubscribeEventMessage) : FCastMessage(FCastOpcode.UnsubscribeEvent)
     data class Event(val payload: EventMessage) : FCastMessage(FCastOpcode.Event)
+    
+    // SpatialFin Custom Extensions
+    data class SpatialFinTracksUpdate(val payload: SpatialFinTracksUpdateMessage) : FCastMessage(FCastOpcode.SpatialFinTracksUpdate)
+    data class SpatialFinSetTrack(val payload: SpatialFinSetTrackMessage) : FCastMessage(FCastOpcode.SpatialFinSetTrack)
 }
 
 /**

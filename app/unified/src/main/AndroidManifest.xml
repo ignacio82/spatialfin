@@ -139,6 +139,7 @@
             android:name="dev.spatialfin.fcast.FCastInboundPlayerActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask"
             android:theme="@style/Theme.SpatialFin.FCastInboundPlayer" />
 

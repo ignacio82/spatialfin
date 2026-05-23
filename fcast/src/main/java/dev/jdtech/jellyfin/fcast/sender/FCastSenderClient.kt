@@ -95,6 +95,11 @@ class FCastSenderClient(
     )
     val volumeUpdates: SharedFlow<VolumeUpdateMessage> = _volumeUpdates.asSharedFlow()
 
+    private val _tracksUpdates = MutableSharedFlow<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage>(
+        replay = 1, extraBufferCapacity = 16,
+    )
+    val tracksUpdates: SharedFlow<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage> = _tracksUpdates.asSharedFlow()
+
     private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val errors: SharedFlow<String> = _errors.asSharedFlow()
 
@@ -207,6 +212,8 @@ class FCastSenderClient(
     suspend fun setVolume(volume: Double) =
         sendInternal(FCastMessage.SetVolume(SetVolumeMessage(volume.coerceIn(0.0, 1.0))))
     suspend fun setSpeed(speed: Double) = sendInternal(FCastMessage.SetSpeed(SetSpeedMessage(speed)))
+    suspend fun setTrack(type: Int, trackId: String) =
+        sendInternal(FCastMessage.SpatialFinSetTrack(dev.jdtech.jellyfin.fcast.protocol.SpatialFinSetTrackMessage(type, trackId)))
 
     /**
      * Send a Ping. Captures the wall-clock time of the send so the corresponding Pong (if any)
@@ -262,6 +269,7 @@ class FCastSenderClient(
         when (msg) {
             is FCastMessage.PlaybackUpdate -> _playbackUpdates.emit(msg.payload)
             is FCastMessage.VolumeUpdate -> _volumeUpdates.emit(msg.payload)
+            is FCastMessage.SpatialFinTracksUpdate -> _tracksUpdates.emit(msg.payload)
             is FCastMessage.PlaybackError -> _errors.emit(msg.payload.message)
             is FCastMessage.Version -> {
                 val peer = msg.payload.version

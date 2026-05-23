@@ -48,6 +48,9 @@ open class FCastCastingController {
     private val _remoteState = MutableStateFlow<PlaybackUpdateMessage?>(null)
     val remoteState: StateFlow<PlaybackUpdateMessage?> = _remoteState.asStateFlow()
 
+    private val _tracksState = MutableStateFlow<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage?>(null)
+    val tracksState: StateFlow<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage?> = _tracksState.asStateFlow()
+
     /**
      * Pong observations from the active client, re-emitted here so consumers can subscribe
      * once and survive reconnects. Empty until at least one Ping has round-tripped on the
@@ -115,6 +118,7 @@ open class FCastCastingController {
     suspend fun seek(seconds: Double) = withClient { it.seek(seconds) }
     suspend fun setVolume(volume: Double) = withClient { it.setVolume(volume) }
     suspend fun setSpeed(speed: Double) = withClient { it.setSpeed(speed) }
+    suspend fun setTrack(type: Int, trackId: String) = withClient { it.setTrack(type, trackId) }
     suspend fun ping() = withClient { it.ping() }
 
     /** Send Stop to the receiver and tear down the connection. Idempotent. */
@@ -149,14 +153,22 @@ open class FCastCastingController {
         _status.value = Status.Idle
         _activeReceiver.value = null
         _remoteState.value = null
+        _tracksState.value = null
     }
 
     private suspend fun observe(c: FCastSenderClient) {
-        c.playbackUpdates.collect { update ->
-            _remoteState.value = update
-            // If the remote stops, drop our active flag so the UI can dismiss the casting chrome.
-            if (update.playbackState == PlaybackState.Idle) {
-                _status.value = Status.Idle
+        supervisor.launch {
+            c.playbackUpdates.collect { update ->
+                _remoteState.value = update
+                // If the remote stops, drop our active flag so the UI can dismiss the casting chrome.
+                if (update.playbackState == PlaybackState.Idle) {
+                    _status.value = Status.Idle
+                }
+            }
+        }
+        supervisor.launch {
+            c.tracksUpdates.collect { update ->
+                _tracksState.value = update
             }
         }
     }

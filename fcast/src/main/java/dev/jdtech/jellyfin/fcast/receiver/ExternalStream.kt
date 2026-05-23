@@ -100,6 +100,7 @@ interface ExternalStreamPlayer {
     fun seek(seconds: Double)
     fun setVolume(volume: Double)
     fun setSpeed(speed: Double)
+    fun setTrack(type: Int, trackId: String)
 
     sealed interface PlayResult {
         data object Accepted : PlayResult
@@ -119,6 +120,7 @@ interface ExternalStreamPlayer {
         override fun seek(seconds: Double) = Unit
         override fun setVolume(volume: Double) = Unit
         override fun setSpeed(speed: Double) = Unit
+        override fun setTrack(type: Int, trackId: String) = Unit
     }
 }
 
@@ -146,4 +148,5 @@ class ExternalStreamIngressRouter(
     override fun onSeek(seconds: Double) = player.seek(seconds)
     override fun onSetVolume(volume: Double) = player.setVolume(volume)
     override fun onSetSpeed(speed: Double) = player.setSpeed(speed)
+    override fun onSetTrack(type: Int, trackId: String) = player.setTrack(type, trackId)
 }

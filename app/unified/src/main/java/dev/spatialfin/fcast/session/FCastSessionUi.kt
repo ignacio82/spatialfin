@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -197,6 +198,7 @@ fun FCastGlobalPickerHost(
  *
  * For Full Space, mount this inside an Orbiter (the caller wraps it).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FCastMiniController(
     sessionManager: CastSessionManager,
@@ -224,11 +226,29 @@ fun FCastMiniController(
         activeMediaState != dev.jdtech.jellyfin.cast.CastMediaState.Idle
     }
 
+    val showCinematicRemote = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    if (showCinematicRemote.value) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showCinematicRemote.value = false },
+            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = null,
+            contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0) },
+            containerColor = Color.Transparent,
+        ) {
+            FCastCinematicRemote(
+                sessionManager = sessionManager,
+                onDismiss = { showCinematicRemote.value = false }
+            )
+        }
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 4.dp,
         shape = RoundedCornerShape(16.dp),
+        onClick = { showCinematicRemote.value = true }
     ) {
         androidx.compose.foundation.layout.Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),

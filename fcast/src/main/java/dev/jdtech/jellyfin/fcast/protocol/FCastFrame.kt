@@ -102,6 +102,8 @@ object FCastFrame {
             FCastOpcode.SubscribeEvent -> FCastMessage.SubscribeEvent(FCastJson.decode(text))
             FCastOpcode.UnsubscribeEvent -> FCastMessage.UnsubscribeEvent(FCastJson.decode(text))
             FCastOpcode.Event -> FCastMessage.Event(FCastJson.decode(text))
+            FCastOpcode.SpatialFinTracksUpdate -> FCastMessage.SpatialFinTracksUpdate(FCastJson.decode(text))
+            FCastOpcode.SpatialFinSetTrack -> FCastMessage.SpatialFinSetTrack(FCastJson.decode(text))
         }
     }
 
@@ -135,6 +137,8 @@ object FCastFrame {
         is FCastMessage.SubscribeEvent -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
         is FCastMessage.UnsubscribeEvent -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
         is FCastMessage.Event -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
+        is FCastMessage.SpatialFinTracksUpdate -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
+        is FCastMessage.SpatialFinSetTrack -> FCastJson.encodeToString(message.payload).toByteArray(Charsets.UTF_8)
     }
 
     private fun DataInputStream.readFullyOrEof(buf: ByteArray): Boolean {

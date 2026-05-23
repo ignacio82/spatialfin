@@ -24,6 +24,11 @@ import javax.inject.Inject
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import dev.spatialfin.presentation.theme.SpatialFinTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -89,6 +94,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var splitAvRole: SplitAvRole? = null
     private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
+    
+    private val libassBitmapState = MutableStateFlow<Bitmap?>(null)
+    private val titleState = MutableStateFlow<String?>("FCast Media")
+    private val thumbnailUrlState = MutableStateFlow<String?>(null)
+    private val audioInfoLineState = MutableStateFlow<String?>(null)
+    private val isAudioOnlyState = MutableStateFlow(false)
+    
     /** Passthrough-capable audio codec tokens of the attached chain; set in [logAudioCapabilities]. */
     private var receiverAudioCodecs: List<String> = emptyList()
     private val playerListener = object : Player.Listener {
@@ -118,6 +130,9 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                     volume = volume.toDouble(),
                 )
             )
+        }
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            pushTracksSnapshot()
         }
     }
 
@@ -199,21 +214,57 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             val s = speed.toFloat().coerceIn(0.25f, 4f)
             player?.setPlaybackSpeed(s)
         }.let { Unit }
+        override fun setTrack(type: Int, trackId: String) = runOnUiThread {
+            val p = player ?: return@runOnUiThread
+            val index = trackId.toIntOrNull() ?: return@runOnUiThread
+            if (index < 0 || index >= p.currentTracks.groups.size) return@runOnUiThread
+            val group = p.currentTracks.groups[index]
+            if (group.type != type) return@runOnUiThread
+            p.trackSelectionParameters = p.trackSelectionParameters
+                .buildUpon()
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0))
+                .setTrackTypeDisabled(type, false)
+                .build()
+        }.let { Unit }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Keep the screen from turning off while playing video
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         // Inbound player is always full-bleed video — hide system bars on every form factor
         // so the projected/cast image isn't framed by clocks, network chips, or nav buttons.
         applyImmersiveSystemBars()
 
-        setContentView(R.layout.activity_fcast_inbound_player)
         val exo = buildPlayerWithLibass()
         player = exo
-        findViewById<PlayerView>(R.id.fcast_inbound_player_view).player = exo
         exo.addListener(playerListener)
         startSubtitleRenderLoop()
+
+        setContent {
+            SpatialFinTheme {
+                val libassBitmap by libassBitmapState.collectAsState()
+                val title by titleState.collectAsState()
+                val thumbnailUrl by thumbnailUrlState.collectAsState()
+                val audioInfoLine by audioInfoLineState.collectAsState()
+                val isAudioOnly by isAudioOnlyState.collectAsState()
+
+                FCastReceiverScreen(
+                    player = exo,
+                    title = title,
+                    thumbnailUrl = thumbnailUrl,
+                    audioInfoLine = audioInfoLine,
+                    libassBitmap = libassBitmap,
+                    isAudioOnly = isAudioOnly,
+                    onStop = {
+                        player?.stop()
+                        finish()
+                    }
+                )
+            }
+        }
 
         if (!applyIntent(intent)) finish()
     }
@@ -433,22 +484,19 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     private fun startSubtitleRenderLoop() {
         subtitleRenderJob?.cancel()
         subtitleRenderJob = lifecycleScope.launch {
-            val overlay = findViewById<ImageView>(R.id.fcast_inbound_subtitle_overlay) ?: return@launch
             val r = libassRenderer ?: return@launch
             while (isActive) {
                 val p = player
                 if (p == null || splitAvRole == SplitAvRole.AUDIO) {
-                    if (overlay.visibility != View.GONE) overlay.visibility = View.GONE
+                    libassBitmapState.value = null
                     delay(120L)
                     continue
                 }
                 val result = r.renderFrame(p.currentPosition)
                 if (result.hasContent && result.bitmap != null) {
-                    val bitmap: Bitmap = result.bitmap!!
-                    overlay.setImageBitmap(bitmap)
-                    if (overlay.visibility != View.VISIBLE) overlay.visibility = View.VISIBLE
+                    libassBitmapState.value = result.bitmap
                 } else {
-                    if (overlay.visibility != View.GONE) overlay.visibility = View.GONE
+                    libassBitmapState.value = null
                 }
                 delay(16L) // ~60 fps for karaoke / \move / \fad smoothness
             }
@@ -501,16 +549,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             NORMAL_TICKER_INTERVAL_MS
         }
 
-        val playerView = findViewById<PlayerView>(R.id.fcast_inbound_player_view)
-        playerView.findViewById<TextView>(R.id.fcast_inbound_control_title)?.apply {
-            text = title.orEmpty()
-            visibility = if (title.isNullOrBlank()) View.GONE else View.VISIBLE
-        }
-        val audioOnlyOverlay = findViewById<LinearLayout>(R.id.fcast_inbound_audio_only_overlay)
-        val audioOnlyTitle = findViewById<TextView>(R.id.fcast_inbound_audio_only_title)
-        val audioOnlyStop = findViewById<Button>(R.id.fcast_inbound_audio_only_stop)
-        val audioOnlyAudioInfo = findViewById<TextView>(R.id.fcast_inbound_audio_only_audio_info)
         val exo = player ?: return false
+
+        titleState.value = title
+        thumbnailUrlState.value = newIntent.getStringExtra(EXTRA_THUMBNAIL_URL)
 
         // SpatialFin audio-info extension: render the sender-reported source codec and
         // transcoded flag below the title so the user knows whether the receiver is
@@ -521,31 +563,18 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         } else {
             null
         }
-        val audioInfoLine = formatSourceAudioInfo(sourceAudioCodec, audioTranscoded)
-        if (audioInfoLine != null) {
-            audioOnlyAudioInfo.text = audioInfoLine
-            audioOnlyAudioInfo.visibility = View.VISIBLE
-        } else {
-            audioOnlyAudioInfo.visibility = View.GONE
-        }
+        audioInfoLineState.value = formatSourceAudioInfo(sourceAudioCodec, audioTranscoded)
 
         if (newSplitAvRole == SplitAvRole.AUDIO) {
             exo.trackSelectionParameters = TrackSelectionParameters.Builder()
                 .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
                 .build()
-            audioOnlyOverlay.visibility = View.VISIBLE
-            audioOnlyTitle.text = title.orEmpty()
-            playerView.useController = false
-            audioOnlyStop.setOnClickListener {
-                player?.stop()
-                finish()
-            }
+            isAudioOnlyState.value = true
         } else {
             // Non-split path: clear any previous overlay state (e.g. when an earlier session
             // disabled video tracks for a calibration WAV).
             exo.trackSelectionParameters = TrackSelectionParameters.Builder().build()
-            audioOnlyOverlay.visibility = View.GONE
-            playerView.useController = true
+            isAudioOnlyState.value = false
         }
         Timber.i(
             "FCast inbound: url=%s role=%s ticker=%dms",
@@ -657,6 +686,29 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         )
     }
 
+    private fun pushTracksSnapshot() {
+        val p = player ?: return
+        val audioTracks = mutableListOf<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTrack>()
+        val subtitleTracks = mutableListOf<dev.jdtech.jellyfin.fcast.protocol.SpatialFinTrack>()
+        for (i in p.currentTracks.groups.indices) {
+            val group = p.currentTracks.groups[i]
+            if (!group.isSupported) continue
+            val type = group.type
+            if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue
+            val format = group.getTrackFormat(0)
+            val id = i.toString()
+            val language = format.language
+            val label = format.label ?: language ?: "Track $i"
+            val isSelected = group.isSelected
+            val track = dev.jdtech.jellyfin.fcast.protocol.SpatialFinTrack(id, label, language, isSelected)
+            if (type == C.TRACK_TYPE_AUDIO) audioTracks.add(track)
+            if (type == C.TRACK_TYPE_TEXT) subtitleTracks.add(track)
+        }
+        FCastInboundSession.pushTracksUpdate(
+            dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage(audioTracks, subtitleTracks)
+        )
+    }
+
     /**
      * Build the receiver-side audio-info line from sender-reported metadata. Returns null when
      * neither codec nor transcoded flag is known — caller hides the view in that case so
@@ -730,6 +782,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         const val EXTRA_CONTAINER: String = "fcast.in.container"
         const val EXTRA_START_MS: String = "fcast.in.start_ms"
         const val EXTRA_TITLE: String = "fcast.in.title"
+        const val EXTRA_THUMBNAIL_URL: String = "fcast.in.thumbnail_url"
         const val EXTRA_SPLIT_AV_ROLE: String = "fcast.in.split_av_role"
         const val EXTRA_SPLIT_AV_CADENCE_HZ: String = "fcast.in.split_av_cadence_hz"
         const val EXTRA_SOURCE_AUDIO_CODEC: String = "fcast.in.source_audio_codec"
@@ -759,6 +812,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             container: String?,
             startMs: Long = 0L,
             title: String? = null,
+            thumbnailUrl: String? = null,
             splitAv: SplitAvMetadata? = null,
             sourceAudioCodec: String? = null,
             audioTranscoded: Boolean? = null,
@@ -769,6 +823,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             container?.let { putExtra(EXTRA_CONTAINER, it) }
             putExtra(EXTRA_START_MS, startMs)
             title?.let { putExtra(EXTRA_TITLE, it) }
+            thumbnailUrl?.let { putExtra(EXTRA_THUMBNAIL_URL, it) }
             splitAv?.let {
                 putExtra(EXTRA_SPLIT_AV_ROLE, it.role.name)
                 it.syncCadenceHz?.let { hz -> putExtra(EXTRA_SPLIT_AV_CADENCE_HZ, hz) }

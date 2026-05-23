@@ -29,6 +29,10 @@ enum class FCastOpcode(val code: Int, val minVersion: Int) {
     SubscribeEvent(17, 3),
     UnsubscribeEvent(18, 3),
     Event(19, 3),
+
+    // SpatialFin Custom Extensions
+    SpatialFinTracksUpdate(100, 3),
+    SpatialFinSetTrack(101, 3),
     ;
 
     companion object {

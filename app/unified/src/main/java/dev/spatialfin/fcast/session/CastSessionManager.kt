@@ -94,6 +94,8 @@ class CastSessionManager @Inject constructor(
     /** Live remote playback state from the receiver. Null if no cast is active. */
     val remoteState = controller.remoteState
 
+    val tracksState = controller.tracksState
+
     /**
      * The user-chosen FCast receiver — set when the picker emits an FCast device. Read by the
      * existing FCast-only paths (`SplitAvController.start`, the inline cast button on the Beam
@@ -102,6 +104,12 @@ class CastSessionManager @Inject constructor(
      */
     private val _pickedReceiver = MutableStateFlow<FCastReceiver?>(null)
     val pickedReceiver: StateFlow<FCastReceiver?> = _pickedReceiver.asStateFlow()
+
+    private val _activeItemTitle = MutableStateFlow<String?>(null)
+    val activeItemTitle: StateFlow<String?> = _activeItemTitle.asStateFlow()
+
+    private val _activeItemArtworkUrl = MutableStateFlow<String?>(null)
+    val activeItemArtworkUrl: StateFlow<String?> = _activeItemArtworkUrl.asStateFlow()
 
     /**
      * Protocol-agnostic version of the picked target. Set for *any* receiver the user picks —
@@ -712,6 +720,8 @@ class CastSessionManager @Inject constructor(
         item: SpatialFinItem,
         startPositionMs: Long? = null,
     ): Boolean {
+        _activeItemTitle.value = item.name
+        _activeItemArtworkUrl.value = item.images.primary?.toString() ?: item.images.backdrop?.toString()
         val target = _pickedTarget.value ?: return false
         _activeAudioRoute.value = null
         // Route by protocol. FCast keeps its existing path (controller + Play wire message);
@@ -945,6 +955,14 @@ class CastSessionManager @Inject constructor(
             _activeMediaState.value = dev.jdtech.jellyfin.cast.CastMediaState.Idle
             _activePositionMs.value = 0L
             _activeDurationMs.value = null
+        }
+    }
+
+    suspend fun setTrack(type: Int, trackId: String) {
+        if (activeMediaState.value == dev.jdtech.jellyfin.cast.CastMediaState.Idle) return
+        // We currently only support FCast for track selection
+        if (pickedReceiver.value != null) {
+            controller.setTrack(type, trackId)
         }
     }
 
@@ -1253,6 +1271,8 @@ class CastSessionManager @Inject constructor(
         receiver: FCastReceiver,
         play: PlayMessage,
     ) {
+        _activeItemTitle.value = play.metadata?.title
+        _activeItemArtworkUrl.value = play.metadata?.thumbnailUrl
         pickReceiver(receiver)
         controller.startCast(receiver, play)
     }

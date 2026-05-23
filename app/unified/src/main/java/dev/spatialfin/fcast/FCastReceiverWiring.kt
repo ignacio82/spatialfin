@@ -208,6 +208,7 @@ private class IntentBasedExternalStreamPlayer(
                 container = request.container,
                 startMs = (request.startPositionSeconds * 1000.0).toLong(),
                 title = request.title,
+                thumbnailUrl = request.thumbnailUrl,
                 splitAv = request.splitAv,
                 sourceAudioCodec = request.sourceAudioCodec,
                 audioTranscoded = request.audioTranscoded,
@@ -230,7 +231,19 @@ private class IntentBasedExternalStreamPlayer(
     override fun resumeAt(atReceiverMonotonicMs: Long) =
         FCastInboundSession.resumeAt(atReceiverMonotonicMs)
     override fun stop() = FCastInboundSession.stop()
-    override fun seek(seconds: Double) = FCastInboundSession.seek(seconds)
-    override fun setVolume(volume: Double) = FCastInboundSession.setVolume(volume)
-    override fun setSpeed(speed: Double) = FCastInboundSession.setSpeed(speed)
+    override fun seek(seconds: Double) {
+        FCastInboundSession.seek(seconds)
+    }
+
+    override fun setVolume(volume: Double) {
+        FCastInboundSession.setVolume(volume)
+    }
+
+    override fun setSpeed(speed: Double) {
+        FCastInboundSession.setSpeed(speed)
+    }
+
+    override fun setTrack(type: Int, trackId: String) {
+        FCastInboundSession.setTrack(type, trackId)
+    }
 }

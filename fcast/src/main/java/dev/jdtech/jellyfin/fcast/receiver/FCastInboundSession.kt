@@ -20,6 +20,7 @@ object FCastInboundSession {
     @Volatile private var control: ExternalStreamPlayer? = null
     @Volatile private var playbackBroadcaster: ((PlaybackUpdateMessage) -> Unit)? = null
     @Volatile private var volumeBroadcaster: ((VolumeUpdateMessage) -> Unit)? = null
+    @Volatile private var tracksBroadcaster: ((dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) -> Unit)? = null
 
     /**
      * Latest control messages that arrived **before** an [ExternalStreamPlayer] was bound.
@@ -82,14 +83,17 @@ object FCastInboundSession {
     fun bindBroadcaster(
         playback: (PlaybackUpdateMessage) -> Unit,
         volume: (VolumeUpdateMessage) -> Unit,
+        tracks: (dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) -> Unit = {},
     ) {
         playbackBroadcaster = playback
         volumeBroadcaster = volume
+        tracksBroadcaster = tracks
     }
 
     fun unbindBroadcaster() {
         playbackBroadcaster = null
         volumeBroadcaster = null
+        tracksBroadcaster = null
     }
 
     // Called by IntentBasedExternalStreamPlayer when an FCast frame lands on the router.
@@ -147,6 +151,10 @@ object FCastInboundSession {
         control?.setSpeed(speed)
     }
 
+    fun setTrack(type: Int, trackId: String) {
+        control?.setTrack(type, trackId)
+    }
+
     // Called by the Activity each time the ExoPlayer state moves so connected senders see
     // accurate Play/Pause icons and seek positions.
     fun pushPlaybackUpdate(update: PlaybackUpdateMessage) {
@@ -155,5 +163,9 @@ object FCastInboundSession {
 
     fun pushVolumeUpdate(update: VolumeUpdateMessage) {
         volumeBroadcaster?.invoke(update)
+    }
+
+    fun pushTracksUpdate(update: dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) {
+        tracksBroadcaster?.invoke(update)
     }
 }

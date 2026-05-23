@@ -218,3 +218,23 @@ enum class FCastEventType(val code: Int) {
         fun fromCode(code: Int): FCastEventType? = entries.firstOrNull { it.code == code }
     }
 }
+
+@Serializable
+data class SpatialFinTrack(
+    val id: String,
+    val name: String,
+    val language: String? = null,
+    val isSelected: Boolean = false,
+)
+
+@Serializable
+data class SpatialFinTracksUpdateMessage(
+    val audioTracks: List<SpatialFinTrack> = emptyList(),
+    val subtitleTracks: List<SpatialFinTrack> = emptyList(),
+)
+
+@Serializable
+data class SpatialFinSetTrackMessage(
+    val type: Int, // e.g. 1 for audio, 3 for text
+    val trackId: String,
+)
