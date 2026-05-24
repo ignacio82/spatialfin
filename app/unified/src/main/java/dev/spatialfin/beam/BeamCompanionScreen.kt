@@ -512,6 +512,7 @@ private fun BeamCompanionScanner(
                 PackageManager.PERMISSION_GRANTED,
         )
     }
+    var cameraError by remember { mutableStateOf<String?>(null) }
 
     val launcher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -523,51 +524,69 @@ private fun BeamCompanionScanner(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (hasCameraPermission) {
+        if (hasCameraPermission && cameraError == null) {
             AndroidView(
                 factory = { localContext ->
                     val previewView = PreviewView(localContext)
                     val executor = ContextCompat.getMainExecutor(localContext)
                     cameraProviderFuture.addListener(
                         {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview =
-                                Preview.Builder().build().also {
-                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                            try {
+                                val cameraProvider = cameraProviderFuture.get()
+                                val cameraSelector =
+                                    when {
+                                        cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) ->
+                                            CameraSelector.DEFAULT_BACK_CAMERA
+                                        cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ->
+                                            CameraSelector.DEFAULT_FRONT_CAMERA
+                                        else -> {
+                                            Timber.w("COMPANION: No camera available for QR scanning")
+                                            cameraError = "No camera is available for QR scanning."
+                                            return@addListener
+                                        }
+                                    }
+
+                                val preview =
+                                    Preview.Builder().build().also {
+                                        it.setSurfaceProvider(previewView.surfaceProvider)
+                                    }
+
+                                val resolutionSelector =
+                                    ResolutionSelector.Builder()
+                                        .setResolutionStrategy(
+                                            ResolutionStrategy(
+                                                Size(1920, 1080),
+                                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER,
+                                            ),
+                                        ).build()
+
+                                val imageAnalysis =
+                                    ImageAnalysis.Builder()
+                                        .setResolutionSelector(resolutionSelector)
+                                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                        .build()
+
+                                val options =
+                                    BarcodeScannerOptions.Builder()
+                                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                                        .build()
+                                val scanner = BarcodeScanning.getClient(options)
+                                val analysisExecutor = Executors.newSingleThreadExecutor()
+                                imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                                    processCompanionImageProxy(scanner, imageProxy, onPayloadFound, json)
                                 }
 
-                            val resolutionSelector =
-                                ResolutionSelector.Builder()
-                                    .setResolutionStrategy(
-                                        ResolutionStrategy(
-                                            Size(1920, 1080),
-                                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER,
-                                        ),
-                                    ).build()
-
-                            val imageAnalysis =
-                                ImageAnalysis.Builder()
-                                    .setResolutionSelector(resolutionSelector)
-                                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                    .build()
-
-                            val options =
-                                BarcodeScannerOptions.Builder()
-                                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                                    .build()
-                            val scanner = BarcodeScanning.getClient(options)
-                            val analysisExecutor = Executors.newSingleThreadExecutor()
-                            imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
-                                processCompanionImageProxy(scanner, imageProxy, onPayloadFound, json)
+                                cameraProvider.unbindAll()
+                                cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    cameraSelector,
+                                    preview,
+                                    imageAnalysis,
+                                )
+                            } catch (error: Exception) {
+                                Timber.e(error, "COMPANION: Camera binding failed")
+                                cameraError = "Could not open a camera for QR scanning."
                             }
-
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                preview,
-                                imageAnalysis,
-                            )
                         },
                         executor,
                     )
@@ -575,6 +594,16 @@ private fun BeamCompanionScanner(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+        } else if (cameraError != null) {
+            Column(
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(cameraError!!)
+                Button(onClick = { cameraError = null }) {
+                    Text("Try Camera Again")
+                }
+            }
         } else {
             Column(
                 modifier = Modifier.align(Alignment.Center).padding(16.dp),
