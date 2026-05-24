@@ -243,9 +243,12 @@ class NfsFileClient : NetworkFileClient {
             val res = sendMethod.invoke(client, args) as COMPOUND4res
             val readRes = res.resarray[res.resarray.size - 1].opread.resok4
             val data = readRes.data
-            if (data.remaining() == 0) return -1
-
+            
             val bytesRead = data.remaining()
+            if (bytesRead == 0) {
+                return if (readRes.eof || position >= fileSize) -1 else 0
+            }
+
             data.get(b, off, bytesRead)
             position += bytesRead
             return bytesRead

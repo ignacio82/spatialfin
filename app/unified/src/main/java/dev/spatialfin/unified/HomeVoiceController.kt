@@ -107,6 +107,7 @@ class HomeVoiceController(
         private set
 
     private var activeVoiceJob by mutableStateOf<Job?>(null)
+    private var isDestroyed = false
     private val conversationHistory = mutableListOf<Pair<String, String>>()
 
     /**
@@ -385,6 +386,7 @@ class HomeVoiceController(
         followUpDeadlineMs = 0L
         voiceGestureHint = null
         voiceService.startListening { transcript ->
+            if (isDestroyed) return@startListening
             val job = scope.launch {
                 try {
                     val startedAtMs = System.currentTimeMillis()
@@ -607,6 +609,9 @@ class HomeVoiceController(
      * the Activity.
      */
     fun destroy() {
+        isDestroyed = true
+        activeVoiceJob?.cancel()
+        activeVoiceJob = null
         voiceService.destroy()
         tts.destroy()
         runCatching { commandCoordinator?.destroy() }

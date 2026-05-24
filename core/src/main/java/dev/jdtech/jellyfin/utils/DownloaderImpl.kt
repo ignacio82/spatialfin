@@ -237,7 +237,18 @@ class DownloaderImpl(
             if (task.kind == DownloadTaskKind.PRIMARY) {
                 val itemName = database.getMovieOrNull(task.itemId)?.name
                     ?: database.getEpisodeOrNull(task.itemId)?.name
-                enqueueResumableDownload(task.id, itemTitle = itemName)
+                if (task.requestUrl.isBlank()) {
+                    enqueuePreparationWorker(
+                        taskId = task.id,
+                        itemId = task.itemId,
+                        request = DownloadRequest(
+                            sourceId = task.sourceId,
+                            mode = dev.jdtech.jellyfin.models.DownloadMode.BEST_AVAILABLE
+                        )
+                    )
+                } else {
+                    enqueueResumableDownload(task.id, itemTitle = itemName)
+                }
             }
         }
     }

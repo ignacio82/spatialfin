@@ -104,39 +104,39 @@ the on-device AI mutex). They are the new top of the list.
   AirPlay volume now maps linear slider values to receiver dB
   perceptually (`20*log10(v)`, -30 dB floor, `<=0.001` mute), with
   tests covering command URLs and edge cases.
-- **P1** `app/unified/.../HomeVoiceController.kt:387-442` — `destroy()`
+- ✅ **P1** `app/unified/.../HomeVoiceController.kt:387-442` — `destroy()`
   tears down the LLM/TTS services but never cancels `activeVoiceJob` nor
   no-ops the recognizer callback, so a transcript arriving after destroy
   re-builds LLM services nothing will dispose (leak) and an in-flight
   `assistant.query` races half-torn-down services. Fix: cancel the job
   first; guard the recognizer callback on a destroyed flag.
-- **P1** `data/.../work/ResumableDownloadWorker.kt:142` — `OkHttpClient()`
+- ✅ **P1** `data/.../work/ResumableDownloadWorker.kt:142` — `OkHttpClient()`
   is constructed fresh per `doWork()` (and per retry); each owns a
   dispatcher pool + connection pool that are never shut down. Bulk season
   downloads leak threads/sockets steadily. Fix: inject/share one client.
-- **P1** `data/.../utils/DownloaderImpl.kt:236` /
+- ✅ **P1** `data/.../utils/DownloaderImpl.kt:236` /
   `ResumableDownloadWorker.kt:130` — `resumeDownloadById` enqueues the
   resumable worker directly for a task paused/failed *before* prep filled
   `requestUrl`; `Request.Builder().url("")` (outside the try) throws and
   the worker dies with no `errorMessage`, leaving a stuck, undiagnosable
   task. Fix: re-enqueue prep when `requestUrl.isBlank()`; guard at worker
   entry.
-- **P1** `data/.../network/NetworkStreamProxy.kt:30,49` — the loopback
+- ✅ **P1** `data/.../network/NetworkStreamProxy.kt:30,49` — the loopback
   proxy that serves SMB/NFS files with stored share credentials binds
   `0.0.0.0`, so any LAN device can exfiltrate share content; `stop()` also
   leaks its coroutine scope (accept loop + open SMB/NFS connections keep
   running). Fix: bind `InetAddress.getLoopbackAddress()`; cancel the scope
   on stop; optionally add a per-session token.
-- **P1** `data/.../network/SmbFileClient.kt:62-103` — `openFile` has no
+- ✅ **P1** `data/.../network/SmbFileClient.kt:62-103` — `openFile` has no
   try/finally; any failure after `connect()` (bad share, IPC$ cast,
   missing file, seek error) leaks the SMB connection/session/share/file.
   `NetworkStreamProxy` retries per Range request, so it leaks repeatedly.
   Fix: nested try/catch that closes the chain and rethrows.
-- **P1** `data/.../network/NfsFileClient.kt:233-252` — `read()` returns
+- ✅ **P1** `data/.../network/NfsFileClient.kt:233-252` — `read()` returns
   `-1` on any zero-byte READ without checking the NFSv4 `eof` flag; a
   legitimate server short-read terminates playback mid-file. Fix: inspect
   `opread.resok4.eof`; only EOF on `eof==true || position>=fileSize`.
-- **P1** `player/local/.../SyncPlayCoordinator.kt:94-97,555-611` — the
+- ✅ **P1** `player/local/.../SyncPlayCoordinator.kt:94-97,555-611` — the
   1500 ms echo-suppression window is wall-clock; an async
   `setMediaItems().prepare()` / `seekTo` that completes after it expires
   makes the client report state the server re-broadcasts → a SyncPlay
@@ -404,13 +404,13 @@ Order within the sprint is by blast radius:
 3. ✅ P0 `FCastReceiverServer` session pruning. (`5b80c8f`)
 4. ✅ first-frame audio gate: empty-`Tracks` + background/foreground
    regressions (both stem from `5b4feb6`). (`78defd6`)
-5. P1 `NetworkStreamProxy` loopback bind + scope cancel (security + leak).
-6. P1 `SmbFileClient.openFile` / `NfsFileClient.read` resource + EOF fixes.
+5. ✅ P1 `NetworkStreamProxy` loopback bind + scope cancel (security + leak).
+6. ✅ P1 `SmbFileClient.openFile` / `NfsFileClient.read` resource + EOF fixes.
 7. ✅ P1 split-A/V v4 aligned-start latch + ping-burst estimator poisoning.
    (`f3f9920`)
-8. P1 `HomeVoiceController.destroy()` job cancel + recognizer guard.
-9. P1 `ResumableDownloadWorker` shared OkHttp + blank-URL guard.
-10. P1 SyncPlay echo-suppression window completion-gating.
+8. ✅ P1 `HomeVoiceController.destroy()` job cancel + recognizer guard.
+9. ✅ P1 `ResumableDownloadWorker` shared OkHttp + blank-URL guard.
+10. ✅ P1 SyncPlay echo-suppression window completion-gating.
 11. ✅ P1 GoogleCast LAUNCH `requestId` correlation; AirPlay volume curve.
 
 ## Sprint B — perf foundations + the Compose-stability prerequisite

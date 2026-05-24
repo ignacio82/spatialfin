@@ -19,6 +19,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,7 +80,7 @@ internal class SyncPlayCoordinator(
         private set
     var currentPlaylistItemId: UUID? = null
 
-    private var suppressSyncUntilMs: Long = 0L
+    private val suppressSyncUntilMs = AtomicLong(0L)
     private var isSocketConnected = false
     private var pendingRemoteAudioStreamIndex: Int? = null
     private var pendingRemoteSubtitleStreamIndex: Int? = null
@@ -89,10 +90,10 @@ internal class SyncPlayCoordinator(
 
     fun isActive(): Boolean = activeGroupId != null
 
-    fun shouldSuppressEvents(): Boolean = SystemClock.elapsedRealtime() < suppressSyncUntilMs
+    fun shouldSuppressEvents(): Boolean = SystemClock.elapsedRealtime() < suppressSyncUntilMs.get()
 
     private inline fun applyRemoteSync(action: () -> Unit) {
-        suppressSyncUntilMs = SystemClock.elapsedRealtime() + 1_500L
+        suppressSyncUntilMs.set(SystemClock.elapsedRealtime() + 1_500L)
         action()
     }
 

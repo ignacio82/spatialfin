@@ -43,6 +43,7 @@ constructor(
     private val database: ServerDatabaseDao,
     private val appPreferences: AppPreferences,
     private val contentKeyManager: ContentKeyManager,
+    private val okHttpClient: OkHttpClient,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result =
         withContext(Dispatchers.IO) {
@@ -127,7 +128,12 @@ constructor(
                     return@withContext Result.failure()
                 }
             }
-            val requestBuilder = Request.Builder().url(task.requestUrl)
+            val requestUrl = task.requestUrl
+            if (requestUrl.isBlank()) {
+                markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Missing download URL")
+                return@withContext Result.failure()
+            }
+            val requestBuilder = Request.Builder().url(requestUrl)
             task.accessToken?.takeIf { it.isNotBlank() }?.let {
                 requestBuilder.header("X-Emby-Token", it)
             }
@@ -139,7 +145,7 @@ constructor(
                     }
             }
 
-            val client = OkHttpClient()
+            val client = okHttpClient
             val response =
                 try {
                     Timber.i(

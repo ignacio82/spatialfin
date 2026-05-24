@@ -8,6 +8,7 @@ import java.net.URLDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -20,17 +21,18 @@ class NetworkStreamProxy(
     private val clientFactory: NetworkFileClientFactory,
     private val database: ServerDatabaseDao,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var serverSocket: ServerSocket? = null
     private var port: Int = 0
 
     @Synchronized
     fun start() {
         if (serverSocket != null) return
-        val socket = ServerSocket(0)
+        val socket = ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
         serverSocket = socket
         port = socket.localPort
         Timber.d("NetworkStreamProxy started on port $port")
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope.launch {
             while (!socket.isClosed) {
                 try {
@@ -49,6 +51,7 @@ class NetworkStreamProxy(
     fun stop() {
         try { serverSocket?.close() } catch (_: Exception) {}
         serverSocket = null
+        scope.cancel()
     }
 
     fun getStreamUrl(shareId: String, filePath: String): String {

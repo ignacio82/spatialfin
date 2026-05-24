@@ -68,37 +68,55 @@ class SmbFileClient : NetworkFileClient {
     ): InputStream = withContext(Dispatchers.IO) {
         val target = requireTarget(host, shareName)
         val connection = client.connect(target.host)
-        val authContext = credentials.toAuthContext()
-        val session = connection.authenticate(authContext)
-        val share = session.connectShare(target.shareName) as DiskShare
+        try {
+            val authContext = credentials.toAuthContext()
+            val session = connection.authenticate(authContext)
+            try {
+                val share = session.connectShare(target.shareName) as DiskShare
+                try {
+                    val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
+                    val file = share.openFile(
+                        normalizedPath,
+                        setOf(AccessMask.GENERIC_READ),
+                        null,
+                        setOf(SMB2ShareAccess.FILE_SHARE_READ),
+                        SMB2CreateDisposition.FILE_OPEN,
+                        setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
+                    )
+                    try {
+                        val inputStream = file.inputStream
+                        if (offset > 0) {
+                            skipFully(inputStream, offset)
+                        }
 
-        val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
-        val file = share.openFile(
-            normalizedPath,
-            setOf(AccessMask.GENERIC_READ),
-            null,
-            setOf(SMB2ShareAccess.FILE_SHARE_READ),
-            SMB2CreateDisposition.FILE_OPEN,
-            setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
-        )
-
-        val inputStream = file.inputStream
-        if (offset > 0) {
-            skipFully(inputStream, offset)
-        }
-
-        // Wrap to close resources when stream is closed
-        object : InputStream() {
-            override fun read(): Int = inputStream.read()
-            override fun read(b: ByteArray, off: Int, len: Int): Int = inputStream.read(b, off, len)
-            override fun available(): Int = inputStream.available()
-            override fun close() {
-                try { inputStream.close() } catch (_: Exception) {}
-                try { file.close() } catch (_: Exception) {}
-                try { share.close() } catch (_: Exception) {}
+                        // Wrap to close resources when stream is closed
+                        object : InputStream() {
+                            override fun read(): Int = inputStream.read()
+                            override fun read(b: ByteArray, off: Int, len: Int): Int = inputStream.read(b, off, len)
+                            override fun available(): Int = inputStream.available()
+                            override fun close() {
+                                try { inputStream.close() } catch (_: Exception) {}
+                                try { file.close() } catch (_: Exception) {}
+                                try { share.close() } catch (_: Exception) {}
+                                try { session.close() } catch (_: Exception) {}
+                                try { connection.close() } catch (_: Exception) {}
+                            }
+                        }
+                    } catch (e: Exception) {
+                        try { file.close() } catch (_: Exception) {}
+                        throw e
+                    }
+                } catch (e: Exception) {
+                    try { share.close() } catch (_: Exception) {}
+                    throw e
+                }
+            } catch (e: Exception) {
                 try { session.close() } catch (_: Exception) {}
-                try { connection.close() } catch (_: Exception) {}
+                throw e
             }
+        } catch (e: Exception) {
+            try { connection.close() } catch (_: Exception) {}
+            throw e
         }
     }
 
