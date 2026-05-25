@@ -97,7 +97,6 @@ import androidx.xr.compose.spatial.OrbiterAnchorPoint
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
-import androidx.xr.compose.subspace.ResizePolicy
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.SpatialGltfModel
 import androidx.xr.compose.subspace.SpatialGltfModelSource
@@ -481,6 +480,12 @@ fun SpatialPlayerScreen(
     var voiceSearchLoading by remember { mutableStateOf(false) }
     var voiceSearchError by remember { mutableStateOf<String?>(null) }
     val voiceSearchOpen = activeDialog == "voice_search"
+    val interactiveOverlayVisible =
+        controlsVisible ||
+            isActuallyPaused ||
+            activeDialog != null ||
+            uiState.currentSegment != null ||
+            showNextEpisodePanel
     val latestSyncPlayGroups = androidx.compose.runtime.rememberUpdatedState(syncPlayState.availableGroups)
 
     fun resetAutoHide() {
@@ -1684,7 +1689,13 @@ fun SpatialPlayerScreen(
         movableComponent.value?.size = movableVideoBounds(videoWidth, videoHeight)
     }
 
-    LaunchedEffect(videoRootEntity.value, movableComponent.value, isLocked) {
+    LaunchedEffect(
+        videoRootEntity.value,
+        movableComponent.value,
+        isLocked,
+        interactiveOverlayVisible,
+        moveInProgress,
+    ) {
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
         val hasMovable =
@@ -1696,16 +1707,20 @@ fun SpatialPlayerScreen(
                 Timber.d(it, "Unable to inspect XR screen movable component state")
                 false
             }
+        // Controls and prompts are projected in front of this root. Disable its grab
+        // affordance while those surfaces accept input so button drags cannot move video.
+        val allowMovement =
+            !isLocked && (!interactiveOverlayVisible || moveInProgress)
 
         runCatching {
-            if (isLocked && hasMovable) {
+            if (!allowMovement && hasMovable) {
                 videoRoot.removeComponent(movable)
                 moveInProgress = false
-                Timber.i("XR screen movement locked")
-            } else if (!isLocked && !hasMovable) {
+                Timber.i("XR screen movement disabled while interactive overlay is visible")
+            } else if (allowMovement && !hasMovable) {
                 videoRoot.addComponent(movable)
                 movable.size = movableVideoBounds(videoWidth, videoHeight)
-                Timber.i("XR screen movement unlocked")
+                Timber.i("XR screen movement enabled")
             }
         }.onFailure {
             Timber.w(it, "Unable to update XR screen movement lock state")
@@ -1988,7 +2003,6 @@ fun SpatialPlayerScreen(
                         .width(1800.dp)
                         .height(800.dp)
                         .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-                    resizePolicy = ResizePolicy(),
                 ) {
                     if ((controlsVisible || isActuallyPaused) && !isLocked) {
                         Orbiter(
