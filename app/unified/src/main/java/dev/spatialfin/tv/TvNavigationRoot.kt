@@ -123,6 +123,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.skydoves.compose.stability.runtime.TraceRecomposition
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
 import dev.jdtech.jellyfin.core.presentation.components.FloatingProgressBar
 import dev.jdtech.jellyfin.core.presentation.components.MetadataPill
@@ -165,6 +166,7 @@ val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
+@TraceRecomposition(tag = "tv-shell", threshold = 3)
 fun TvNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
@@ -354,7 +356,7 @@ private fun TvHomeScreen(homeState: HomeState, state: MainState, appPreferences:
         }
         if (homeState.isLoading) item { TvPlaceholderScreen("Loading your room", "Fetching Continue Watching, Next Up, suggestions, and library rails from Jellyfin.") }
         else if (homeState.error != null) {
-            item { TvPlaceholderScreen("Home unavailable", homeState.error?.localizedMessage ?: "Failed to load TV home content.") }
+            item { TvPlaceholderScreen("Home unavailable", homeState.error?.message ?: "Failed to load TV home content.") }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     TvActionTile("Search library", "Jump straight into direct Jellyfin search from the TV.", Icons.AutoMirrored.Rounded.ManageSearch, Modifier.weight(1f), onOpenSearch)

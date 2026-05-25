@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -231,6 +232,11 @@ class UnifiedMainActivity : AppCompatActivity() {
         appLockManager.refreshState()
 
         setContent {
+            LaunchedEffect(Unit) {
+                withFrameNanos { }
+                (application as UnifiedApplication).startDeferredInitialization()
+                scheduleUserDataSync()
+            }
             val lockState by appLockManager.lockState.collectAsStateWithLifecycle()
             if (lockState == AppLockManager.LockState.LOCKED) {
                 AppLockScreen(lockManager = appLockManager)
@@ -324,7 +330,6 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
         }
 
-        scheduleUserDataSync()
     }
 
     override fun onStop() {
@@ -339,10 +344,8 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appLockManager.refreshState()
-        // Catches user-switch / signin / signout that happened during this
-        // composition without an Activity recreate, so the rail's profile
-        // avatar (and other auth-derived state) stays in sync.
-        viewModel.refresh()
+        // Active-session mutations notify ActiveSessionBus, which MainViewModel already
+        // observes. Do not re-query Room and re-emit the full content tree on every resume.
     }
 
     override fun onDestroy() {

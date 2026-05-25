@@ -42,6 +42,8 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.skydoves.compose.stability.runtime.TraceRecomposition
+import kotlinx.collections.immutable.persistentListOf
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyHomeSection
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyHomeSuggestions
@@ -74,6 +76,7 @@ import android.app.Activity
 import timber.log.Timber
 
 @Composable
+@TraceRecomposition(tag = "home", threshold = 3)
 fun HomeScreen(
     appPreferences: AppPreferences,
     onLibraryClick: (library: SpatialFinCollection) -> Unit,
@@ -244,7 +247,10 @@ private fun HomeScreenLayout(
         }
 
         if (state.error != null && showErrorDialog) {
-            ErrorDialog(exception = state.error!!, onDismissRequest = { showErrorDialog = false })
+            ErrorDialog(
+                exception = Exception(state.error?.message ?: "Failed to load home content."),
+                onDismissRequest = { showErrorDialog = false },
+            )
         }
     }
 
@@ -294,8 +300,8 @@ private fun HomeScreenLayoutPreview() {
                     server = dummyServer,
                     suggestionsSection = dummyHomeSuggestions,
                     resumeSection = dummyHomeSection,
-                    views = listOf(dummyHomeView),
-                    error = Exception("Failed to load data"),
+                    views = persistentListOf(dummyHomeView),
+                    error = dev.jdtech.jellyfin.film.presentation.home.HomeLoadError("Failed to load data"),
                 ),
             displayRatings = true,
             needsLanguageSetup = false,

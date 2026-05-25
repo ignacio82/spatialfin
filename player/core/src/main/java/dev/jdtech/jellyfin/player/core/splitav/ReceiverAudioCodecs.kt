@@ -1,4 +1,4 @@
-package dev.spatialfin.fcast
+package dev.jdtech.jellyfin.player.core.splitav
 
 import android.media.AudioFormat
 import androidx.media3.common.util.UnstableApi

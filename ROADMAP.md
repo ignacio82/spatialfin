@@ -163,7 +163,7 @@ tail.
   test-setup artifact — repro against prod `2.7.2-tv` and a clean
   relaunch to isolate before fixing. Relates to the earlier
   `98e873c` "resolve TV settings focus traversal" work.
-- **P3** Split-A/V fold-back re-inits the audio renderer unconditionally
+- ✅ **P3** Split-A/V fold-back re-inits the audio renderer unconditionally
   (`PlayerSplitAvAdapter.onFoldBackToLocal` → `XrPlayerActivity` /
   `BeamPlayerActivity`): re-enabling the disabled `TRACK_TYPE_AUDIO`
   makes ExoPlayer re-select and decode audio with a brief hiccup even
@@ -173,27 +173,24 @@ tail.
   and skip the re-enable churn when the track was already decodable.
   Shipped fold-back in `8cd2b84`.
 
-### Perf / build / infra (re-confirmed open)
+### Perf / build / infra (completed in Sprint B — 2026-05-24)
 
-- **P1** No perf foundation **and no CI to host one**: no
-  baseline-profile module, no `androidx.profileinstaller` dependency, no
-  Macrobenchmark module, no Compose-compiler reports wiring, no `.github/`
-  workflow at all. Highest-leverage perf gap, especially for the
-  2 GB / Mali-G31 TV target. (Roadmap items 14–16 — scoped below; note
-  the missing CI pipeline they depend on.)
-- **P1** Unstable Compose state holders carried through the UI:
-  `player/session/.../voice/PlayerStateSnapshot.kt` (35 fields, ~12 bare
-  `List`, a `List<Pair<…>>`) and `modes/film/.../home/HomeState.kt`
-  (`error: Exception?` + bare `List`s). Cheap to fix independent of CI:
-  `kotlinx.collections.immutable` + a typed error + `@Immutable`.
-- **P2** `UnifiedApplication.onCreate` front-loads main-thread disk I/O
-  (log-file tree, several synchronous `SharedPreferences` reads, LLM warm,
-  FCast wiring) before first frame — compounds the missing baseline
-  profile. Defer non-essential work off-main / post-first-frame.
-- **P2** `UnifiedMainActivity.onResume` fires an unconditional
-  `MainViewModel.check()` (Room queries + a fresh `MainState` emit that
-  ripples the whole `setContent` tree) on *every* resume. Gate on an
-  actual session-version change (`activeSessionBus` already exists).
+- ✅ **P1** Performance and CI foundation: GitHub Actions now assembles the
+  shipped debug flavors, runs the unit-test matrix, and gates debug Compose
+  stability baselines. `:baselineprofile`, `androidx.profileinstaller`, an
+  initial checked-in `baseline-prof.txt`, compiler reports, and a
+  Macrobenchmark harness for startup, shell scroll, and TV player launch
+  are in-tree.
+- ✅ **P1** Stable UI state holders: `PlayerStateSnapshot` and `HomeState`
+  now use immutable collections and `@Immutable`; `HomeState` carries a
+  typed `HomeLoadError` instead of an `Exception`.
+- ✅ **P2** Startup deferral: `UnifiedApplication` leaves only required
+  ingress/bootstrap work synchronous and begins diagnostics, companion,
+  LLM, WorkManager, and cleanup work after the first rendered activity
+  frame, with a two-second non-UI-process fallback.
+- ✅ **P2** Resume churn removed: `UnifiedMainActivity.onResume` no longer
+  re-queries and re-emits the content tree on every resume; actual session
+  mutations already flow through `ActiveSessionBus`.
 
 ### Carried over from the original audit (still open)
 
@@ -415,20 +412,25 @@ Order within the sprint is by blast radius:
 
 ## Sprint B — perf foundations + the Compose-stability prerequisite
 
-12. Stand up a minimal GitHub Actions workflow (assemble + unit tests) —
-    prerequisite for any CI gate.
-13. Add the `androidx.baseline-profile` generator module +
-    `androidx.profileinstaller` dependency; commit `baseline-prof.txt`.
-    ~30% startup / ~40% first-scroll on phone & TV.
-14. Stabilize `PlayerStateSnapshot` / `HomeState`
+12. ✅ Stand up a minimal GitHub Actions workflow (flavored assemble + unit
+    tests) and host the debug stability gate.
+13. ✅ Add the `androidx.baseline-profile` producer module,
+    `androidx.profileinstaller`, and a checked-in seed `baseline-prof.txt`
+    for unified launch/shell code.
+14. ✅ Stabilize `PlayerStateSnapshot` / `HomeState`
     (`kotlinx.collections.immutable` + typed error + `@Immutable`) — cheap,
     unblockable now.
-15. Wire Compose compiler reports + `skydoves/compose-stability-analyzer`
+15. ✅ Wire Compose compiler reports + `skydoves/compose-stability-analyzer`
     `stabilityCheck` gate on the new CI.
-16. `@TraceRecomposition` + Macrobenchmark on home / player / Beam shell;
-    establish before/after numbers.
-17. Defer `UnifiedApplication.onCreate` non-essential work off-main; gate
-    `UnifiedMainActivity.onResume` `refresh()` on a session-version change.
+16. ✅ Add `@TraceRecomposition` to home/shell/player paths and
+    Macrobenchmark/Baseline Profile journeys for startup, shell scroll, and
+    the exported TV player shell. Before/after measurements must be captured
+    on an API 33+ target device; no device numbers are claimed from local
+    source validation.
+17. ✅ Defer non-essential `UnifiedApplication` initialization until after
+    first frame with a service-process fallback; remove unconditional
+    `UnifiedMainActivity.onResume` refresh and rely on `ActiveSessionBus`
+    for real session mutations.
 
 ## Sprint C — feature polish
 
@@ -484,12 +486,3 @@ Order within the sprint is by blast radius:
   and a maintained CAF receiver running libass.wasm. Substantial infra;
   only worth doing if real demand for high-fidelity Chromecast anime subs
   materialises.
-
----
-
-> **Doc-drift note (not a roadmap item, but flagged by the audit):**
-> GEMINI.md:545 claims `UnifiedMainActivity.kt` is "~750 lines"; it is
-> ~1059. The `SpatialPlayerScreen`/`PlayerViewModel` line counts at
-> GEMINI.md:544 are likely stale post-cast. Per the GEMINI self-update
-> mandate these should be corrected in the next commit that touches those
-> files.

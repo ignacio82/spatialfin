@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr.voice.prompt
 import androidx.compose.ui.geometry.Offset
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
+import kotlinx.collections.immutable.persistentListOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,7 +26,7 @@ class ChatPromptsTest {
                 playerState = PlayerStateSnapshot(
                     currentItemTitle = "Alien",
                     productionYear = 1979,
-                    currentGenres = listOf("Horror", "Sci-Fi"),
+                    currentGenres = persistentListOf("Horror", "Sci-Fi"),
                 ),
             ),
         )
@@ -178,7 +179,7 @@ class ChatPromptsTest {
         val sections = characterIdentificationPrompt(
             PromptContext(
                 playerState = PlayerStateSnapshot(
-                    castWithCharacters = listOf("Sigourney Weaver" to "Ripley"),
+                    castWithCharacters = persistentListOf("Sigourney Weaver" to "Ripley"),
                 ),
                 taskInstructions = "Task: identify the character",
             ),

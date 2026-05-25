@@ -12,6 +12,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -88,9 +89,9 @@ class ChatToolRegistryTest {
             playerState = PlayerStateSnapshot(
                 currentItemTitle = "Blade Runner",
                 productionYear = 1982,
-                currentGenres = listOf("Science Fiction", "Thriller"),
-                directors = listOf("Ridley Scott"),
-                castNames = listOf("Harrison Ford", "Rutger Hauer"),
+                currentGenres = persistentListOf("Science Fiction", "Thriller"),
+                directors = persistentListOf("Ridley Scott"),
+                castNames = persistentListOf("Harrison Ford", "Rutger Hauer"),
                 currentOverview = "A blade runner hunts down replicants in dystopian Los Angeles.",
             ),
             engine = engine,

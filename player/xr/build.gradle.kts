@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose.compiler)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.compose.stability.analyzer)
 }
 
 android {
@@ -27,6 +28,11 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
+composeCompiler {
+    reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+    metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+}
+
 dependencies {
     implementation(libs.jellyfin.core)
     implementation(projects.core)
@@ -46,6 +52,8 @@ dependencies {
     // Compose
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.kotlinx.collections.immutable)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.ui)
 

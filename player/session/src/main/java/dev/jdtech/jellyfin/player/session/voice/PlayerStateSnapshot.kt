@@ -1,10 +1,15 @@
 package dev.jdtech.jellyfin.player.session.voice
 
+import androidx.compose.runtime.Immutable
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+
 enum class VoiceScreenContext {
     HOME,
     PLAYER,
 }
 
+@Immutable
 data class PlayerStateSnapshot(
     val screenContext: VoiceScreenContext = VoiceScreenContext.PLAYER,
     val isPlaying: Boolean = false,
@@ -19,17 +24,17 @@ data class PlayerStateSnapshot(
     val currentSegmentType: String? = null,
     val currentChapterName: String? = null,
     val nextEpisodeTitle: String? = null,
-    val currentGenres: List<String> = emptyList(),
+    val currentGenres: ImmutableList<String> = persistentListOf(),
     /** Actors only (directors/writers are in their own fields). */
-    val castNames: List<String> = emptyList(),
-    val directors: List<String> = emptyList(),
-    val writers: List<String> = emptyList(),
+    val castNames: ImmutableList<String> = persistentListOf(),
+    val directors: ImmutableList<String> = persistentListOf(),
+    val writers: ImmutableList<String> = persistentListOf(),
     val productionYear: Int? = null,
     /** Content/age rating string (e.g. "PG-13", "TV-MA"). */
     val officialRating: String? = null,
-    val audioTrackNames: List<String> = emptyList(),
-    val subtitleTrackNames: List<String> = emptyList(),
-    val chapterNames: List<String> = emptyList(),
+    val audioTrackNames: ImmutableList<String> = persistentListOf(),
+    val subtitleTrackNames: ImmutableList<String> = persistentListOf(),
+    val chapterNames: ImmutableList<String> = persistentListOf(),
     val currentAudioTrack: String? = null,
     val currentSubtitleTrack: String? = null,
     val currentAudioLanguageCode: String? = null,
@@ -39,11 +44,11 @@ data class PlayerStateSnapshot(
     val voiceSearchResultsCount: Int = 0,
     val syncPlayActive: Boolean = false,
     val syncPlayGroupName: String? = null,
-    val syncPlayParticipantNames: List<String> = emptyList(),
+    val syncPlayParticipantNames: ImmutableList<String> = persistentListOf(),
     val lastRecommendationQuery: String? = null,
     val lastRecommendationCount: Int = 0,
-    val lastRecommendationTitles: List<String> = emptyList(),
-    val currentRatings: List<String> = emptyList(),
+    val lastRecommendationTitles: ImmutableList<String> = persistentListOf(),
+    val currentRatings: ImmutableList<String> = persistentListOf(),
     val passthroughEnabled: Boolean = false,
     /**
      * Actor→character pairs extracted from Jellyfin's People metadata.
@@ -51,5 +56,5 @@ data class PlayerStateSnapshot(
      * second = character name (e.g. "Joel Miller")
      * Empty when metadata is unavailable.
      */
-    val castWithCharacters: List<Pair<String, String>> = emptyList(),
+    val castWithCharacters: ImmutableList<Pair<String, String>> = persistentListOf(),
 )

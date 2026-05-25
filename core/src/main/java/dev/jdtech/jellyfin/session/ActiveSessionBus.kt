@@ -15,9 +15,8 @@ import kotlinx.coroutines.flow.asSharedFlow
  * When [dev.jdtech.jellyfin.setup.data.SetupRepositoryImpl.setCurrentUser]
  * (or sibling mutators) updates its `userId` / `accessToken` / `baseUrl`
  * in place, ViewModels that already cached state against the *previous*
- * credentials never learn to re-fetch. In-Activity navigation (Users → Home)
- * doesn't fire `Activity.onResume`, so the existing refresh path through
- * [dev.jdtech.jellyfin.viewmodels.MainViewModel.refresh] never runs.
+ * credentials never learn to re-fetch. This bus is the refresh trigger; an
+ * Activity resume alone is not proof that the session changed.
  *
  * Subscribers (MainViewModel, HomeViewModel, MediaViewModel, …) collect
  * [events] in their `init` and re-load their own data when it fires.

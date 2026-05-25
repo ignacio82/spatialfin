@@ -15,11 +15,13 @@ include(":player:tv")
 include(":setup")
 include(":modes:film")
 include(":settings")
+include(":baselineprofile")
 
 pluginManagement {
     repositories {
-        gradlePluginPortal()
         mavenCentral()
+        gradlePluginPortal()
         google()
+        maven { url = uri("https://jitpack.io") }
     }
 }

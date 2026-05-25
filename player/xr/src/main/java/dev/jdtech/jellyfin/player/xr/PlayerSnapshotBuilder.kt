@@ -7,6 +7,8 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.xr.voice.RecommendationContext
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 
 /**
  * Builds the [PlayerStateSnapshot] the voice / chat pipeline feeds into parsing and
@@ -39,25 +41,29 @@ internal fun buildPlayerStateSnapshot(
         currentSegmentType = uiState.currentSegment?.type?.toString(),
         currentChapterName = currentChapterName(uiState, player.currentPosition),
         nextEpisodeTitle = uiState.nextEpisode?.name,
-        currentGenres = uiState.currentGenres,
-        currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" },
+        currentGenres = uiState.currentGenres.toImmutableList(),
+        currentRatings = uiState.currentRatings.map { "${it.type.label}: ${it.value}" }.toImmutableList(),
         castNames = uiState.currentPeople
             .filter { it.type.equals("Actor", ignoreCase = true) }
-            .map { it.name },
+            .map { it.name }
+            .toImmutableList(),
         directors = uiState.currentPeople
             .filter { it.type.equals("Director", ignoreCase = true) }
-            .map { it.name },
+            .map { it.name }
+            .toImmutableList(),
         writers = uiState.currentPeople
             .filter { it.type.equals("Writer", ignoreCase = true) }
-            .map { it.name },
+            .map { it.name }
+            .toImmutableList(),
         castWithCharacters = uiState.currentPeople
             .filter { it.type.equals("Actor", ignoreCase = true) && it.role.isNotBlank() }
-            .map { it.name to it.role },
+            .map { it.name to it.role }
+            .toImmutableList(),
         productionYear = uiState.currentProductionYear,
         officialRating = uiState.currentOfficialRating,
-        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO),
-        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT),
-        chapterNames = uiState.currentChapters.mapNotNull { it.name },
+        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO).toImmutableList(),
+        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT).toImmutableList(),
+        chapterNames = uiState.currentChapters.mapNotNull { it.name }.toImmutableList(),
         currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
         currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
         currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
@@ -67,6 +73,6 @@ internal fun buildPlayerStateSnapshot(
         voiceSearchResultsCount = voiceSearchResults.size,
         lastRecommendationQuery = recommendationContext?.query,
         lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-        lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name } ?: emptyList(),
+        lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name }?.toImmutableList() ?: persistentListOf(),
         passthroughEnabled = passthroughEnabled,
     )

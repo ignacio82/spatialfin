@@ -29,6 +29,8 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -226,8 +228,8 @@ class HomeVoiceController(
             screenContext = VoiceScreenContext.HOME,
             lastRecommendationQuery = recommendationContext?.query,
             lastRecommendationCount = recommendationContext?.items?.size ?: 0,
-            lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name }
-                ?: emptyList(),
+            lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name }?.toImmutableList()
+                ?: persistentListOf(),
         )
     }
 

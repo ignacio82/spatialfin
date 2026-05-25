@@ -78,6 +78,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import coil3.compose.AsyncImage
 import androidx.compose.runtime.CompositionLocalProvider
+import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.foundation.background
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.llm.VoiceCapability
@@ -144,6 +145,7 @@ private val primaryTabs =
 val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
 
 @Composable
+@TraceRecomposition(tag = "beam-shell", threshold = 3)
 fun BeamNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,

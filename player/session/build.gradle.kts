@@ -1,4 +1,7 @@
-plugins { alias(libs.plugins.android.library) }
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.compose.stability.analyzer)
+}
 
 android {
     namespace = "dev.jdtech.jellyfin.player.session"
@@ -27,4 +30,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.timber)
+    implementation(libs.kotlinx.collections.immutable)
+    implementation(libs.androidx.compose.runtime)
 }

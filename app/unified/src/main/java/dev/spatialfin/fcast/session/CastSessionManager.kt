@@ -29,7 +29,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
-import dev.spatialfin.fcast.ReceiverAudioCodecs
+import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.spatialfin.fcast.session.calibration.CalibrationOrchestrator
 import org.jellyfin.sdk.model.api.MediaStreamType
 import javax.inject.Inject

@@ -518,6 +518,7 @@ constructor(
 }
 
 @Composable
+@com.skydoves.compose.stability.runtime.TraceRecomposition(tag = "beam-home", threshold = 3)
 fun BeamHomeScreen(
     contentPadding: PaddingValues,
     onOpenLibrary: (UUID, String, CollectionType) -> Unit,
@@ -554,7 +555,7 @@ fun BeamHomeScreen(
             state.error != null -> item {
                 ErrorCard(
                     title = "Couldn't reach your server",
-                    body = state.error?.localizedMessage ?: "Unknown error",
+                    body = state.error?.message ?: "Failed to load home content.",
                     onRetry = { viewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) },
                 )
             }

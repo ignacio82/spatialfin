@@ -4,6 +4,7 @@ import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import io.mockk.mockk
+import kotlinx.collections.immutable.persistentListOf
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -73,8 +74,8 @@ class SkillClassifierRegressionTest {
         private val playingMovie = PlayerStateSnapshot(
             currentItemTitle = "Blade Runner",
             productionYear = 1982,
-            directors = listOf("Ridley Scott"),
-            castNames = listOf("Harrison Ford"),
+            directors = persistentListOf("Ridley Scott"),
+            castNames = persistentListOf("Harrison Ford"),
         )
 
         // The expected values reflect *actual current classifier behavior*, not

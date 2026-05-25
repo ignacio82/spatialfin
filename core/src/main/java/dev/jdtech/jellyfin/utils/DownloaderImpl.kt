@@ -243,7 +243,7 @@ class DownloaderImpl(
                         itemId = task.itemId,
                         request = DownloadRequest(
                             sourceId = task.sourceId,
-                            mode = dev.jdtech.jellyfin.models.DownloadMode.BEST_AVAILABLE
+                            mode = dev.jdtech.jellyfin.models.DownloadMode.ORIGINAL
                         )
                     )
                 } else {

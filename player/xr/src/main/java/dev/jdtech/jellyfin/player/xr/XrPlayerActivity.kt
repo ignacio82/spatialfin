@@ -38,6 +38,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
+import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcClient
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -77,6 +78,7 @@ class XrPlayerActivity : AppCompatActivity() {
      * over in `:app:unified`; this side just exposes the master surface and mutes audio.
      */
     private var splitAvAdapter: PlayerSplitAvAdapter? = null
+    private var splitAvListener: androidx.media3.common.Player.Listener? = null
     private var splitAvIpcClient: SplitAvBridgeIpcClient? = null
     private var splitAvStateTickerJob: kotlinx.coroutines.Job? = null
 
@@ -324,23 +326,66 @@ class XrPlayerActivity : AppCompatActivity() {
                 postToPlayer = { runOnUiThread(it) },
                 onFoldBackToLocal = {
                     // User asked to fold audio back to the headset (or the receiver ended the
-                    // session). The XR master is already playing the normal capability-aware
-                    // stream — Jellyfin transcodes audio to aac/ac3/eac3 for this device's
-                    // profile (master.m3u8 &AudioCodec=aac,mp3,ac3,eac3), so the audio is
-                    // decodable here; split-A/V only *disabled the audio track* defensively.
-                    // Re-enabling it makes ExoPlayer re-select and decode the audio locally
-                    // — seamless, no reload, video keeps playing. Volume was already restored
-                    // by the setAudioMuted(false) the controller issues just before this.
+                    // session). If the audio track type is currently disabled, re-enable it so ExoPlayer
+                    // re-selects and decodes audio locally. Otherwise, if it was already pre-enabled
+                    // because the source codec is locally decodable, we skip the re-enable track selection
+                    // change entirely to avoid a brief audio hiccup.
                     runOnUiThread {
-                        player.trackSelectionParameters = player.trackSelectionParameters
-                            .buildUpon()
-                            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
-                            .build()
-                        Timber.i("split-A/V fold-back: re-enabled local audio track")
+                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                                .build()
+                            Timber.i("split-A/V fold-back: re-enabled local audio track")
+                        } else {
+                            Timber.i("split-A/V fold-back: audio track already enabled, skipping re-enable track selection change")
+                        }
                     }
                 },
             )
             splitAvAdapter = adapter
+
+            // Listen to tracks changed so we can pre-enable the audio track if the source codec is locally decodable
+            val listener = object : androidx.media3.common.Player.Listener {
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    val audioGroup = tracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+                    val format = audioGroup?.getTrackFormat(0) ?: return
+                    val sourceMime = format.sampleMimeType
+                    val sourceCodec = when (sourceMime) {
+                        "audio/mp4a-latm", "audio/aac" -> "aac"
+                        "audio/mpeg" -> "mp3"
+                        "audio/opus" -> "opus"
+                        "audio/vorbis" -> "vorbis"
+                        "audio/x-flac", "audio/flac" -> "flac"
+                        "audio/alac" -> "alac"
+                        "audio/raw" -> "pcm"
+                        "audio/ac3" -> "ac3"
+                        "audio/eac3" -> "eac3"
+                        "audio/eac3-joc" -> "eac3-joc"
+                        "audio/true-hd" -> "truehd"
+                        "audio/dts", "audio/dts-express" -> "dts"
+                        "audio/dts-hd" -> "dts-hd"
+                        else -> sourceMime?.substringAfter('/')?.lowercase()
+                    }
+                    val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@XrPlayerActivity)
+                    val localPassthrough = ReceiverAudioCodecs.fromCapabilities(localCaps)
+                    val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
+                    if (canDecode) {
+                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
+                            runOnUiThread {
+                                player.trackSelectionParameters = player.trackSelectionParameters
+                                    .buildUpon()
+                                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                                    .build()
+                                Timber.i("split-A/V initial tracks: source codec %s is locally decodable, pre-enabled audio track type", sourceCodec)
+                            }
+                        }
+                    }
+                }
+            }
+            this.splitAvListener = listener
+            player.addListener(listener)
+
             // Disable the audio track type so the audio renderer never tries to init a
             // decoder for codecs the device can't handle (Atmos EAC3-JOC / TrueHD / DTS-HD).
             // Without this, source files with those codecs fail the whole player with
@@ -562,6 +607,10 @@ class XrPlayerActivity : AppCompatActivity() {
         // disconnect() is racing the service. SplitAvVideoBridge.unbind is a no-op here
         // (we never bound directly in this process — IPC client did it indirectly), but
         // keep the call for the local-bridge fallback paths.
+        splitAvListener?.let {
+            viewModel.player.removeListener(it)
+        }
+        splitAvListener = null
         splitAvStateTickerJob?.cancel()
         splitAvStateTickerJob = null
         splitAvIpcClient?.disconnect()

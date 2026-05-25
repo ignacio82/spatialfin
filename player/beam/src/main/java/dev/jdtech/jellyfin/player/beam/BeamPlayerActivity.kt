@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.player.beam
 
 import android.Manifest
+import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
@@ -67,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -118,6 +120,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import kotlinx.collections.immutable.toImmutableList
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 import dev.jdtech.jellyfin.player.session.voice.XrPlayerAction
 import dev.jdtech.jellyfin.player.beam.voice.BeamChatEngine
@@ -530,6 +533,10 @@ class BeamPlayerActivity : AppCompatActivity() {
             viewModel.player.currentPosition,
             viewModel.player.playerError?.errorCodeName,
         )
+        splitAvListener?.let {
+            viewModel.player.removeListener(it)
+        }
+        splitAvListener = null
         splitAvAdapter?.let { adapter ->
             SplitAvVideoBridge.unbind(adapter)
             adapter.release()
@@ -647,22 +654,66 @@ class BeamPlayerActivity : AppCompatActivity() {
                 postToPlayer = { runOnUiThread(it) },
                 onFoldBackToLocal = {
                     // Fold audio back to this phone (user "Stop split-A/V" or receiver-ended).
-                    // Beam plays the normal capability-aware stream (Jellyfin transcodes audio
-                    // to a phone-decodable codec for this device's profile), so split-A/V only
-                    // *disabled the audio track* defensively. Re-enabling it makes ExoPlayer
-                    // re-select and decode audio locally — seamless, no reload, video keeps
-                    // playing. Volume was already restored by the controller's preceding
-                    // setAudioMuted(false). Mirrors XrPlayerActivity.
+                    // If the audio track type is currently disabled, re-enable it so ExoPlayer
+                    // re-selects and decodes audio locally. Otherwise, if it was already pre-enabled
+                    // because the source codec is locally decodable, we skip the re-enable track selection
+                    // change entirely to avoid a brief audio hiccup.
                     runOnUiThread {
-                        player.trackSelectionParameters = player.trackSelectionParameters
-                            .buildUpon()
-                            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
-                            .build()
-                        Timber.i("split-A/V fold-back: re-enabled local audio track")
+                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                                .build()
+                            Timber.i("split-A/V fold-back: re-enabled local audio track")
+                        } else {
+                            Timber.i("split-A/V fold-back: audio track already enabled, skipping re-enable track selection change")
+                        }
                     }
                 },
             )
             splitAvAdapter = adapter
+
+            // Listen to tracks changed so we can pre-enable the audio track if the source codec is locally decodable
+            val listener = object : androidx.media3.common.Player.Listener {
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    val audioGroup = tracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+                    val format = audioGroup?.getTrackFormat(0) ?: return
+                    val sourceMime = format.sampleMimeType
+                    val sourceCodec = when (sourceMime) {
+                        "audio/mp4a-latm", "audio/aac" -> "aac"
+                        "audio/mpeg" -> "mp3"
+                        "audio/opus" -> "opus"
+                        "audio/vorbis" -> "vorbis"
+                        "audio/x-flac", "audio/flac" -> "flac"
+                        "audio/alac" -> "alac"
+                        "audio/raw" -> "pcm"
+                        "audio/ac3" -> "ac3"
+                        "audio/eac3" -> "eac3"
+                        "audio/eac3-joc" -> "eac3-joc"
+                        "audio/true-hd" -> "truehd"
+                        "audio/dts", "audio/dts-express" -> "dts"
+                        "audio/dts-hd" -> "dts-hd"
+                        else -> sourceMime?.substringAfter('/')?.lowercase()
+                    }
+                    val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@BeamPlayerActivity)
+                    val localPassthrough = ReceiverAudioCodecs.fromCapabilities(localCaps)
+                    val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
+                    if (canDecode) {
+                        if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {
+                            runOnUiThread {
+                                player.trackSelectionParameters = player.trackSelectionParameters
+                                    .buildUpon()
+                                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                                    .build()
+                                Timber.i("split-A/V initial tracks: source codec %s is locally decodable, pre-enabled audio track type", sourceCodec)
+                            }
+                        }
+                    }
+                }
+            }
+            this.splitAvListener = listener
+            player.addListener(listener)
+
             // setAudioMuted(true) silences the *output* but the audio track is still selected,
             // so the audio renderer still tries to initialize a decoder. For sources with
             // Atmos / TrueHD / DTS-HD that the Pixel doesn't have an in-process decoder for,
@@ -682,6 +733,7 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     /** Bound only when this Activity is the video master in a split-A/V session. */
     private var splitAvAdapter: PlayerSplitAvAdapter? = null
+    private var splitAvListener: androidx.media3.common.Player.Listener? = null
 
     private fun createIntentForPlayerItem(context: Context, item: PlayerItem): Intent =
         when (item.contentSource) {
@@ -749,6 +801,7 @@ class BeamPlayerActivity : AppCompatActivity() {
 }
 
 @Composable
+@TraceRecomposition(tag = "beam-player", threshold = 3)
 private fun BeamPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,
@@ -1676,15 +1729,15 @@ private fun buildVoiceSnapshot(
         currentEpisodeNumber = uiState.currentEpisodeNumber,
         currentChapterName = currentChapterLabel(uiState.currentChapters, player.currentPosition),
         nextEpisodeTitle = uiState.nextEpisode?.name,
-        currentGenres = uiState.currentGenres,
-        castNames = uiState.currentPeople.filter { it.type.equals("Actor", ignoreCase = true) }.map { it.name },
-        directors = uiState.currentPeople.filter { it.type.equals("Director", ignoreCase = true) }.map { it.name },
-        writers = uiState.currentPeople.filter { it.type.equals("Writer", ignoreCase = true) }.map { it.name },
+        currentGenres = uiState.currentGenres.toImmutableList(),
+        castNames = uiState.currentPeople.filter { it.type.equals("Actor", ignoreCase = true) }.map { it.name }.toImmutableList(),
+        directors = uiState.currentPeople.filter { it.type.equals("Director", ignoreCase = true) }.map { it.name }.toImmutableList(),
+        writers = uiState.currentPeople.filter { it.type.equals("Writer", ignoreCase = true) }.map { it.name }.toImmutableList(),
         productionYear = uiState.currentProductionYear,
         officialRating = uiState.currentOfficialRating,
-        audioTrackNames = audioNames,
-        subtitleTrackNames = subtitleNames,
-        chapterNames = uiState.currentChapters.mapNotNull { it.name },
+        audioTrackNames = audioNames.toImmutableList(),
+        subtitleTrackNames = subtitleNames.toImmutableList(),
+        chapterNames = uiState.currentChapters.mapNotNull { it.name }.toImmutableList(),
         currentAudioTrack = audioGroups.getOrNull(audioGroups.indexOfFirst { it.isSelected }.coerceAtLeast(0))?.let {
             audioNames.getOrNull(audioGroups.indexOf(it))
         },
@@ -1693,8 +1746,8 @@ private fun buildVoiceSnapshot(
         },
         syncPlayActive = syncPlayState.activeGroup != null,
         syncPlayGroupName = syncPlayState.activeGroup?.name,
-        syncPlayParticipantNames = syncPlayState.activeGroup?.participants.orEmpty(),
-        currentRatings = uiState.currentRatings.map { it.value },
+        syncPlayParticipantNames = syncPlayState.activeGroup?.participants.orEmpty().toImmutableList(),
+        currentRatings = uiState.currentRatings.map { it.value }.toImmutableList(),
     )
 }
 

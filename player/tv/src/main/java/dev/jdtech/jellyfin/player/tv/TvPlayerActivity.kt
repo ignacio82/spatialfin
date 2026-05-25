@@ -64,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -467,6 +468,7 @@ class TvPlayerActivity : AppCompatActivity() {
 }
 
 @Composable
+@TraceRecomposition(tag = "tv-player", threshold = 3)
 private fun TvPlayerScreen(
     viewModel: PlayerViewModel,
     libassRenderer: LibassRenderer?,

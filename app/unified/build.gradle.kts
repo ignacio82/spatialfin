@@ -7,6 +7,8 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
     alias(libs.plugins.aboutlibraries.android)
+    alias(libs.plugins.compose.stability.analyzer)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 val localProperties = Properties()
@@ -141,6 +143,17 @@ android {
     }
 }
 
+composeCompiler {
+    reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+    metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+}
+
+baselineProfile {
+    mergeIntoMain = true
+    saveInSrc = true
+    automaticGenerationDuringBuild = false
+}
+
 dependencies {
     // Shared modules
     implementation(project(":core"))
@@ -172,9 +185,11 @@ dependencies {
     implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.work)
     implementation(libs.androidx.hilt.work)
+    implementation(libs.androidx.profileinstaller)
 
     // Compose
     implementation(libs.androidx.compose.foundation)
+    implementation(libs.kotlinx.collections.immutable)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material.icons.extended)
@@ -230,6 +245,7 @@ dependencies {
     implementation(libs.coil.network.cache.control)
     implementation(libs.coil.svg)
     implementation(libs.timber)
+    baselineProfile(project(":baselineprofile"))
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit4)

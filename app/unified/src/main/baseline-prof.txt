@@ -1,0 +1,17 @@
+# Initial checked-in profile for launch and the primary form-factor shells.
+# Regenerate from :baselineprofile on real/managed devices as critical journeys expand.
+HSPLdev/spatialfin/unified/UnifiedApplication;-><init>()V
+HSPLdev/spatialfin/unified/UnifiedApplication;->onCreate()V
+HSPLdev/spatialfin/unified/UnifiedMainActivity;-><init>()V
+HSPLdev/spatialfin/unified/UnifiedMainActivity;->onCreate(Landroid/os/Bundle;)V
+Ldev/spatialfin/unified/DeviceClass;
+Ldev/spatialfin/unified/DeviceClassCapabilities;
+Ldev/spatialfin/beam/BeamNavigationRootKt;
+Ldev/spatialfin/beam/BeamJellyfinScreensKt;
+Ldev/spatialfin/tv/TvNavigationRootKt;
+Ldev/jdtech/jellyfin/presentation/film/HomeScreenKt;
+Ldev/jdtech/jellyfin/film/presentation/home/HomeViewModel;
+Ldev/jdtech/jellyfin/player/beam/BeamPlayerActivity;
+Ldev/jdtech/jellyfin/player/tv/TvPlayerActivity;
+Ldev/jdtech/jellyfin/player/xr/XrPlayerActivity;
+Ldev/jdtech/jellyfin/player/xr/SpatialPlayerScreenKt;

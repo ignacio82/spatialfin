@@ -1,6 +1,6 @@
 package dev.spatialfin.fcast.session
 
-import dev.spatialfin.fcast.ReceiverAudioCodecs
+import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 
 /**
  * Small, testable split-A/V audio routing policy.

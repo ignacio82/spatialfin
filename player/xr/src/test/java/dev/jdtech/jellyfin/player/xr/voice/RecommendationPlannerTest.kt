@@ -8,6 +8,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
+import kotlinx.collections.immutable.persistentListOf
 import java.util.UUID
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.junit.Assert.assertEquals
@@ -47,7 +48,7 @@ class RecommendationPlannerTest {
             RecommendationPlanner.rankCandidates(
                 candidates = listOf(animeShow, englishMovie),
                 sourceWeights = mapOf(englishMovie.id to 3, animeShow.id to 5),
-                playerState = PlayerStateSnapshot(currentGenres = listOf("Sci-Fi")),
+                playerState = PlayerStateSnapshot(currentGenres = persistentListOf("Sci-Fi")),
                 question = "recommend something not anime with english audio",
                 analysis = analysis!!,
                 previousContext = null,

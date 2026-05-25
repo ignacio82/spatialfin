@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.compose.stability.analyzer)
 }
 
 android {
@@ -23,9 +24,12 @@ android {
 
     buildFeatures { compose = true }
 
-    testOptions {
-        unitTests.isIncludeAndroidResources = false
-    }
+    testOptions { unitTests.isIncludeAndroidResources = false }
+}
+
+composeCompiler {
+    reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
+    metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
 }
 
 dependencies {

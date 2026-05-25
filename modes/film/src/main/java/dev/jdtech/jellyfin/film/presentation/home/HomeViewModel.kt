@@ -23,6 +23,8 @@ import dev.jdtech.jellyfin.utils.toView
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,7 +97,7 @@ constructor(
                     loadResumeItems()
                     loadNextUpItems()
                     if (connectionMonitor.shouldUseOfflineRepository()) {
-                        _state.update { it.copy(suggestionsSection = null, views = emptyList()) }
+                        _state.update { it.copy(suggestionsSection = null, views = persistentListOf()) }
                         loadOfflineLibrarySections()
                         _state.emit(_state.value.copy(isLoading = false))
                     } else {
@@ -119,7 +121,7 @@ constructor(
                         if (!connectionMonitor.state.value.serverAccessible) {
                             loadOfflineLibrarySections()
                         } else {
-                            _state.update { it.copy(offlineLibrarySections = emptyList()) }
+                            _state.update { it.copy(offlineLibrarySections = persistentListOf()) }
                         }
                     }
                 } catch (e: Exception) {
@@ -139,7 +141,12 @@ constructor(
                     // doesn't mask the original error.
                     runCatching { loadOfflineLibrarySections() }
                         .onFailure { Timber.w(it, "offline fallback also failed") }
-                    _state.emit(_state.value.copy(error = e, isLoading = false))
+                    _state.emit(
+                        _state.value.copy(
+                            error = HomeLoadError(e.message ?: "Failed to load home content."),
+                            isLoading = false,
+                        )
+                    )
                 }
                 Unit
             }
@@ -150,9 +157,7 @@ constructor(
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
                 _state.emit(
                     _state.value.copy(
-                        error = java.util.concurrent.TimeoutException(
-                            "Server didn't respond. Pull to retry."
-                        ),
+                        error = HomeLoadError("Server didn't respond. Pull to retry."),
                         isLoading = false,
                     )
                 )
@@ -244,7 +249,7 @@ constructor(
                 emptyList()
             }
 
-        _state.emit(_state.value.copy(views = items))
+        _state.emit(_state.value.copy(views = items.toImmutableList()))
     }
 
     private suspend fun loadOfflineLibrarySections() {
@@ -276,7 +281,7 @@ constructor(
                     add(HomeItem.Section(HomeSection(uuidOfflineShows, uiTextOfflineShows, it)))
                 }
         }
-        _state.update { it.copy(offlineLibrarySections = sections) }
+        _state.update { it.copy(offlineLibrarySections = sections.toImmutableList()) }
     }
 
     private fun observeConnectionState() {

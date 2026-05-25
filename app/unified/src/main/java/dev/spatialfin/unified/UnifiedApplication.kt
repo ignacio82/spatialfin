@@ -2,6 +2,8 @@ package dev.spatialfin.unified
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
@@ -16,6 +18,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
+import com.skydoves.compose.stability.runtime.ComposeStabilityAnalyzer
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
@@ -36,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.ExperimentalTime
 import okio.Path.Companion.toOkioPath
 import timber.log.Timber
@@ -54,6 +58,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
     private val deviceClass by lazy { detectDeviceClass() }
     private val capabilities by lazy { DeviceClassCapabilities(deviceClass) }
+    private val deferredStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val deferredStartupStarted = AtomicBoolean(false)
+    private val deferredStartupFallback = Runnable { startDeferredInitialization() }
     private var logFileTree: LogFileTree? = null
     private val preferenceListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -80,36 +87,56 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
+        ComposeStabilityAnalyzer.setEnabled(BuildConfig.DEBUG)
 
-        initializeCompanionLogging()
-        updateLogFileTree(enabled = appPreferences.getValue(appPreferences.loggingEnabled))
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         applyNightMode()
-        reportPendingPlayerLaunch()
-        eagerInitializeLlmIfNeeded()
-        CompanionLiveSyncClient.from(this).start()
-        // Google TV launcher's Watch Next row — Leanback-only surface.
-        if (capabilities.hasLeanback) {
-            watchNextScheduler.schedulePeriodic(this)
-        }
-        DownloadIntegrityWorker.enqueue(WorkManager.getInstance(this))
 
         // FCast: install the receiver router + start the foreground service if the user enabled
         // it. The router is registered even when the service is off so that flipping the pref on
-        // later (without an app restart) wires up correctly the moment the service starts.
+        // later (without an app restart) wires up correctly the moment the service starts. Keep
+        // this synchronous: a process started for inbound receiver traffic needs the router
+        // before any Play frame arrives.
         FCastReceiverWiring.installOnAppStart(
             context = this,
             prefs = appPreferences,
             deviceClass = deviceClass,
         )
 
-        // Debug-only adb-broadcast backdoor for split-A/V iteration. No-op in release.
-        splitAvDebugBridge.installIfDebug(this)
+        // Normally the first rendered activity frame starts deferred work. This fallback keeps
+        // worker/service-only process starts functional when no activity composes a frame.
+        Handler(Looper.getMainLooper()).postDelayed(
+            deferredStartupFallback,
+            DEFERRED_STARTUP_FALLBACK_MS,
+        )
+    }
 
-        // PR 6: drop remembered receivers we haven't seen in 90 days. Calibrated entries are
-        // kept regardless (the user clearly invested in measuring them). Off the main thread
-        // because the store reads/writes SharedPreferences + JSON.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+    /**
+     * Starts housekeeping and optional services that do not contribute to first paint.
+     *
+     * [UnifiedMainActivity] invokes this after its first frame; the fallback in [onCreate]
+     * handles process starts without UI. The atomic gate makes both paths idempotent.
+     */
+    fun startDeferredInitialization() {
+        if (!deferredStartupStarted.compareAndSet(false, true)) return
+        Handler(Looper.getMainLooper()).removeCallbacks(deferredStartupFallback)
+        deferredStartupScope.launch {
+            initializeCompanionLogging()
+            updateLogFileTree(enabled = appPreferences.getValue(appPreferences.loggingEnabled))
+            reportPendingPlayerLaunch()
+            eagerInitializeLlmIfNeeded()
+            CompanionLiveSyncClient.from(this@UnifiedApplication).start()
+            // Google TV launcher's Watch Next row — Leanback-only surface.
+            if (capabilities.hasLeanback) {
+                watchNextScheduler.schedulePeriodic(this@UnifiedApplication)
+            }
+            DownloadIntegrityWorker.enqueue(WorkManager.getInstance(this@UnifiedApplication))
+
+            // Debug-only adb-broadcast backdoor for split-A/V iteration. No-op in release.
+            splitAvDebugBridge.installIfDebug(this@UnifiedApplication)
+
+            // Drop remembered receivers we haven't seen in 90 days. Calibrated entries are
+            // retained because the user invested in measuring them.
             runCatching { rememberedReceiversStore.pruneStale() }
                 .onFailure { Timber.tag("UnifiedApp").w(it, "remembered receiver prune failed") }
         }
@@ -202,6 +229,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
     override fun onTerminate() {
         super.onTerminate()
+        Handler(Looper.getMainLooper()).removeCallbacks(deferredStartupFallback)
         appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
         uninstallLogFileTree()
     }
@@ -242,5 +270,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             }
             .crossfade(enableCrossfade)
             .build()
+    }
+
+    private companion object {
+        const val DEFERRED_STARTUP_FALLBACK_MS = 2_000L
     }
 }

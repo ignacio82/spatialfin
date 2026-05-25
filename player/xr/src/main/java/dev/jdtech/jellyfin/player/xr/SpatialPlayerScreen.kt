@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -232,6 +233,7 @@ private fun Tracks.hasVideoTrack(): Boolean = videoGroupCount() > 0
  *  - Skip SpatialPanel: contextual, right of controls
  */
 @Composable
+@TraceRecomposition(tag = "xr-player", threshold = 3)
 fun SpatialPlayerScreen(
     viewModel: PlayerViewModel,
     session: Session,
