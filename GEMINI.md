@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.12 (113)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000113`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.13 (114)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000114`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -181,8 +181,8 @@ Prebuilt `libass_jni.so` lives in `player/xr/src/main/jniLibs`. To rebuild from 
 `buildSrc/src/main/kotlin/Versions.kt` holds:
 
 ```kotlin
-const val APP_CODE = 113        // monotonically increasing integer
-const val APP_NAME = "2.7.12"   // semver
+const val APP_CODE = 114        // monotonically increasing integer
+const val APP_NAME = "2.7.13"   // semver
 ```
 
 Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Store bundle. Duplicate version codes are a hard reject. `APP_CODE` is the `libre` bundle's versionCode; the `tv` flavor automatically derives `APP_CODE + 1_000_000` (see [Play Track Bundles](#play-track-bundles)), so bumping `APP_CODE` bumps both bundles.
