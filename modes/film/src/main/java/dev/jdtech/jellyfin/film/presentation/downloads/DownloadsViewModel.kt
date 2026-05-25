@@ -11,6 +11,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
@@ -86,7 +87,7 @@ constructor(
             try {
                 _storageUsedBytes.emit(downloader.getStorageUsedBytes())
                 val items = repository.getDownloads()
-                val resumeItems = try { repository.getResumeItems() } catch (_: Exception) { emptyList() }
+                val resumeItems = try { repository.getResumeItems().filter { it.isDownloaded() } } catch (_: Exception) { emptyList() }
                 _continueWatchingItems.emit(resumeItems)
 
                 val sections = mutableListOf<CollectionSection>()
