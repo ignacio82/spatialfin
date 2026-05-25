@@ -97,6 +97,7 @@ import androidx.xr.compose.spatial.OrbiterAnchorPoint
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
+import androidx.xr.compose.subspace.ResizePolicy
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.SpatialGltfModel
 import androidx.xr.compose.subspace.SpatialGltfModelSource
@@ -447,6 +448,7 @@ fun SpatialPlayerScreen(
     // --- Controls UI state ---
     var controlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
+    var controlsInputActive by remember { mutableStateOf(false) }
     var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     // --- Next episode panel state ---
@@ -480,12 +482,6 @@ fun SpatialPlayerScreen(
     var voiceSearchLoading by remember { mutableStateOf(false) }
     var voiceSearchError by remember { mutableStateOf<String?>(null) }
     val voiceSearchOpen = activeDialog == "voice_search"
-    val interactiveOverlayVisible =
-        controlsVisible ||
-            isActuallyPaused ||
-            activeDialog != null ||
-            uiState.currentSegment != null ||
-            showNextEpisodePanel
     val latestSyncPlayGroups = androidx.compose.runtime.rememberUpdatedState(syncPlayState.availableGroups)
 
     fun resetAutoHide() {
@@ -1693,8 +1689,7 @@ fun SpatialPlayerScreen(
         videoRootEntity.value,
         movableComponent.value,
         isLocked,
-        interactiveOverlayVisible,
-        moveInProgress,
+        controlsInputActive,
     ) {
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
@@ -1707,16 +1702,15 @@ fun SpatialPlayerScreen(
                 Timber.d(it, "Unable to inspect XR screen movable component state")
                 false
             }
-        // Controls and prompts are projected in front of this root. Disable its grab
-        // affordance while those surfaces accept input so button drags cannot move video.
-        val allowMovement =
-            !isLocked && (!interactiveOverlayVisible || moveInProgress)
+        // A control press must not be interpreted as a grab on the video root underneath.
+        // Keep movement available while controls are merely displayed.
+        val allowMovement = !isLocked && !controlsInputActive
 
         runCatching {
             if (!allowMovement && hasMovable) {
                 videoRoot.removeComponent(movable)
                 moveInProgress = false
-                Timber.i("XR screen movement disabled while interactive overlay is visible")
+                Timber.i("XR screen movement suspended during control input")
             } else if (allowMovement && !hasMovable) {
                 videoRoot.addComponent(movable)
                 movable.size = movableVideoBounds(videoWidth, videoHeight)
@@ -2003,6 +1997,7 @@ fun SpatialPlayerScreen(
                         .width(1800.dp)
                         .height(800.dp)
                         .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
+                    resizePolicy = ResizePolicy(),
                 ) {
                     if ((controlsVisible || isActuallyPaused) && !isLocked) {
                         Orbiter(
@@ -2048,6 +2043,7 @@ fun SpatialPlayerScreen(
                                 isLocked = isLocked,
                                 spatialAudioAvailable = spatialAudioAvailable,
                                 onLockToggle = { isLocked = !isLocked },
+                                onControlInputActiveChange = { controlsInputActive = it },
                                 onMoveCloser = {
                                     videoPanelScale = (videoPanelScale + 0.08f).coerceAtMost(2.5f)
                                     savePlayerRootScale(viewModel, videoPanelScale)

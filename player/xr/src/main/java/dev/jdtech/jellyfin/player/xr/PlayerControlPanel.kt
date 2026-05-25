@@ -1,5 +1,8 @@
 package dev.jdtech.jellyfin.player.xr
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +25,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,6 +52,7 @@ internal fun ControlPanelUI(
     isLocked: Boolean,
     spatialAudioAvailable: Boolean,
     onLockToggle: () -> Unit,
+    onControlInputActiveChange: (Boolean) -> Unit,
     onMoveCloser: () -> Unit,
     onMoveFurther: () -> Unit,
     onChaptersClick: () -> Unit,
@@ -59,7 +65,19 @@ internal fun ControlPanelUI(
         shape = RoundedCornerShape(48.dp),
         color = Color.Black.copy(alpha = 0.9f),
         tonalElevation = 4.dp,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(onControlInputActiveChange) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    onControlInputActiveChange(true)
+                    try {
+                        waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                    } finally {
+                        onControlInputActiveChange(false)
+                    }
+                }
+            },
     ) {
         Column(modifier = Modifier.padding(60.dp)) {
             Row(
