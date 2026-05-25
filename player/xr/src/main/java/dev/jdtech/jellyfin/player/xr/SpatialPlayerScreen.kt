@@ -185,6 +185,7 @@ interface LlmEntryPoint {
 // MIN/MAX_RESTORABLE_VIDEO_* and XR_PLAYER_POSE_VERSION_VIDEO_CENTER → see PlayerPoseStorage.kt
 private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
 private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
+private const val VIDEO_MOVE_AFFORDANCE_MARGIN_METERS = 0.40f
 private const val VIDEO_MOVE_AFFORDANCE_DEPTH_METERS = 0.01f
 private const val XR_VIDEO_FIRST_FRAME_TIMEOUT_MS = 3_000L
 
@@ -196,8 +197,8 @@ private val PausedMascotPose =
 
 private fun videoMoveAffordanceBounds(videoWidth: Float, videoHeight: Float): FloatSize3d =
     FloatSize3d(
-        width = videoWidth.coerceAtLeast(1f),
-        height = videoHeight.coerceAtLeast(1f),
+        width = (videoWidth + VIDEO_MOVE_AFFORDANCE_MARGIN_METERS * 2f).coerceAtLeast(1f),
+        height = (videoHeight + VIDEO_MOVE_AFFORDANCE_MARGIN_METERS * 2f).coerceAtLeast(1f),
         depth = VIDEO_MOVE_AFFORDANCE_DEPTH_METERS,
     )
 
