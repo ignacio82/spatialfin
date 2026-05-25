@@ -35,7 +35,7 @@ internal fun dev.jdtech.jellyfin.player.xr.ChaptersDialogContent(chapters: kotli
     - onDismiss: STABLE (function type)
 
 @Composable
-internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, player: androidx.media3.common.Player, uiState: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.UiState, isPlaying: kotlin.Boolean, currentPosition: kotlin.Long, duration: kotlin.Long, isLocked: kotlin.Boolean, spatialAudioAvailable: kotlin.Boolean, onLockToggle: kotlin.Function0<kotlin.Unit>, onMoveCloser: kotlin.Function0<kotlin.Unit>, onMoveFurther: kotlin.Function0<kotlin.Unit>, onChaptersClick: kotlin.Function0<kotlin.Unit>, onBackClick: kotlin.Function0<kotlin.Unit>, resetAutoHide: kotlin.Function0<kotlin.Unit>, onFCastClick: kotlin.Function0<kotlin.Unit>, fcastActive: kotlin.Boolean): kotlin.Unit
+internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, player: androidx.media3.common.Player, uiState: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.UiState, isPlaying: kotlin.Boolean, currentPosition: kotlin.Long, duration: kotlin.Long, isLocked: kotlin.Boolean, spatialAudioAvailable: kotlin.Boolean, onLockToggle: kotlin.Function0<kotlin.Unit>, onControlInputActiveChange: kotlin.Function1<kotlin.Boolean, kotlin.Unit>, onMoveCloser: kotlin.Function0<kotlin.Unit>, onMoveFurther: kotlin.Function0<kotlin.Unit>, onChaptersClick: kotlin.Function0<kotlin.Unit>, onBackClick: kotlin.Function0<kotlin.Unit>, resetAutoHide: kotlin.Function0<kotlin.Unit>, onFCastClick: kotlin.Function0<kotlin.Unit>, fcastActive: kotlin.Boolean): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -48,6 +48,7 @@ internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(viewModel: dev.jdtech.
     - isLocked: STABLE (primitive type)
     - spatialAudioAvailable: STABLE (primitive type)
     - onLockToggle: STABLE (function type)
+    - onControlInputActiveChange: STABLE (function type)
     - onMoveCloser: STABLE (function type)
     - onMoveFurther: STABLE (function type)
     - onChaptersClick: STABLE (function type)
