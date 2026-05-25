@@ -1,12 +1,12 @@
 [versions]
-aboutlibraries = "14.2.0"
+aboutlibraries = "14.2.1"
 android-desugar-jdk-libs = "2.1.5"
 android-plugin = "9.2.1"
 androidx-activity = "1.13.0"
 androidx-appcompat = "1.7.1"
-androidx-biometric = "1.4.0-alpha07"
 # 1.5 is required for the Baseline Profile Gradle plugin on AGP 9.x.
 androidx-benchmark = "1.5.0-alpha06"
+androidx-biometric = "1.4.0-alpha07"
 androidx-camera = "1.6.1"
 androidx-compose = "1.11.2"
 # Google froze androidx.compose.material:material-icons-extended at 1.7.8
@@ -20,29 +20,29 @@ androidx-lifecycle = "2.10.0"
 androidx-media3 = "1.10.1"
 androidx-navigation = "2.9.8"
 androidx-paging = "3.5.0"
-androidx-room = "2.8.4"
 androidx-profileinstaller = "1.4.1"
+androidx-room = "2.8.4"
+androidx-test-ext-junit = "1.3.0"
+androidx-test-runner = "1.7.0"
 androidx-tv-foundation = "1.0.0"
 androidx-tv-material3 = "1.1.0"
 androidx-tvprovider = "1.1.0"
-androidx-window = "1.5.1"
 androidx-uiautomator = "2.3.0"
+androidx-window = "1.5.1"
 androidx-work = "2.11.2"
 androidx-xr = "1.0.0-alpha14"
 androidx-xr-compose-material3 = "1.0.0-alpha17"
 bcprov-jdk18on = "1.84"
 coil = "3.4.0"
-hilt = "2.59.2"
 compose-stability-analyzer = "0.7.5"
-androidx-test-ext-junit = "1.3.0"
-androidx-test-runner = "1.7.0"
+hilt = "2.59.2"
 jcifs-ng = "2.1.10"
 jellyfin = "1.8.9"
 jmdns = "3.6.3"
 junit = "4.13.2"
 kotlin = "2.3.21"
+kotlinx-collections-immutable = "0.4.0"
 kotlinx-coroutines = "1.11.0"
-kotlinx-collections-immutable = "0.3.7"
 kotlinx-serialization = "1.11.0"
 ksp = "2.3.8"
 ktfmt = "0.26.0"
@@ -68,8 +68,8 @@ android-desugar-jdk = { module = "com.android.tools:desugar_jdk_libs", version.r
 androidx-activity = { module = "androidx.activity:activity", version.ref = "androidx-activity" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
-androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "androidx-biometric" }
 androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "androidx-benchmark" }
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "androidx-biometric" }
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidx-camera" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "androidx-camera" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
@@ -102,6 +102,8 @@ androidx-paging-compose = { module = "androidx.paging:paging-compose", version.r
 androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "androidx-profileinstaller" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "androidx-room" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "androidx-room" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 androidx-tv-foundation = { module = "androidx.tv:tv-foundation", version.ref = "androidx-tv-foundation" }
 androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "androidx-tv-material3" }
 androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref = "androidx-tvprovider" }
@@ -125,8 +127,8 @@ jellyfin-core = { module = "org.jellyfin.sdk:jellyfin-core", version.ref = "jell
 jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
 junit4 = { module = "junit:junit", version.ref = "junit" }
 kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin" }
-kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinx-collections-immutable" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
@@ -143,8 +145,6 @@ smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 tflite-gpu = { module = "com.google.android.gms:play-services-tflite-gpu", version.ref = "tflite-gpu" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
-androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
-androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 
 [plugins]
 aboutlibraries = { id = "com.mikepenz.aboutlibraries.plugin", version.ref = "aboutlibraries" }
@@ -153,11 +153,11 @@ android-application = { id = "com.android.application", version.ref = "android-p
 android-library = { id = "com.android.library", version.ref = "android-plugin" }
 android-test = { id = "com.android.test", version.ref = "android-plugin" }
 androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidx-benchmark" }
+compose-stability-analyzer = { id = "com.github.skydoves.compose.stability.analyzer", version.ref = "compose-stability-analyzer" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 kotlin-compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
-compose-stability-analyzer = { id = "com.github.skydoves.compose.stability.analyzer", version.ref = "compose-stability-analyzer" }
 version-catalog-update = { id = "nl.littlerobots.version-catalog-update", version.ref = "version-catalog-update" }
