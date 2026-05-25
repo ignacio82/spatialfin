@@ -185,8 +185,7 @@ interface LlmEntryPoint {
 // MIN/MAX_RESTORABLE_VIDEO_* and XR_PLAYER_POSE_VERSION_VIDEO_CENTER → see PlayerPoseStorage.kt
 private const val DEFAULT_VIDEO_WIDTH_METERS = 8.0f
 private const val DEFAULT_VIDEO_HEIGHT_METERS = 4.5f
-private const val VIDEO_MOVE_HANDLE_MARGIN_METERS = 0.35f
-private const val VIDEO_MOVE_HANDLE_DEPTH_METERS = 0.5f
+private const val VIDEO_MOVE_AFFORDANCE_DEPTH_METERS = 0.01f
 private const val XR_VIDEO_FIRST_FRAME_TIMEOUT_MS = 3_000L
 
 private val PausedMascotPose =
@@ -195,11 +194,11 @@ private val PausedMascotPose =
         Quaternion(0f, 0.9914f, 0f, 0.1305f),
     )
 
-private fun movableVideoBounds(videoWidth: Float, videoHeight: Float): FloatSize3d =
+private fun videoMoveAffordanceBounds(videoWidth: Float, videoHeight: Float): FloatSize3d =
     FloatSize3d(
-        width = (videoWidth + VIDEO_MOVE_HANDLE_MARGIN_METERS * 2f).coerceAtLeast(1f),
-        height = (videoHeight + VIDEO_MOVE_HANDLE_MARGIN_METERS * 2f).coerceAtLeast(1f),
-        depth = VIDEO_MOVE_HANDLE_DEPTH_METERS,
+        width = videoWidth.coerceAtLeast(1f),
+        height = videoHeight.coerceAtLeast(1f),
+        depth = VIDEO_MOVE_AFFORDANCE_DEPTH_METERS,
     )
 
 private fun Cue.debugSummary(): String {
@@ -225,8 +224,8 @@ private fun Tracks.hasVideoTrack(): Boolean = videoGroupCount() > 0
  * SpatialPlayerScreen — cinematic immersive XR playback experience.
  *
  * Architecture:
- *  - Entity (SceneCore): high-fidelity video root, user-movable
- *  - SurfaceEntity (SceneCore): high-fidelity video surface mirrored to the root
+ *  - SurfaceEntity (SceneCore): high-fidelity video surface with the native move affordance
+ *  - Entity (SceneCore): logical overlay root mirrored from the translating video surface
  *  - Subtitle SpatialPanel: perspective-scaled, follows video pose via state
  *  - Control SpatialPanel: floats below the video with:
  *      • Orbiter (End): secondary controls (audio / subtitle / speed)
@@ -1210,20 +1209,22 @@ fun SpatialPlayerScreen(
             Vector3(0f, 0f, -1f) // Default forward
         }
         
-        val newVideoPose = Pose(
-            Vector3(viewDirection.x * videoDepth, viewDirection.y * videoDepth, viewDirection.z * videoDepth),
-            currentVideoPose.rotation
-        )
+        val newVideoPose =
+            Pose(
+                Vector3(viewDirection.x * videoDepth, viewDirection.y * videoDepth, viewDirection.z * videoDepth),
+                Quaternion.Identity,
+            )
 
         // UI and subtitles stay projected at uiDepth along the same vector.
-        val newUiPose = Pose(
-            Vector3(
-                viewDirection.x * UI_DEPTH_METERS,
-                viewDirection.y * UI_DEPTH_METERS,
-                viewDirection.z * UI_DEPTH_METERS,
-            ),
-            currentVideoPose.rotation
-        )
+        val newUiPose =
+            Pose(
+                Vector3(
+                    viewDirection.x * UI_DEPTH_METERS,
+                    viewDirection.y * UI_DEPTH_METERS,
+                    viewDirection.z * UI_DEPTH_METERS,
+                ),
+                Quaternion.Identity,
+            )
 
         videoRoot.setPose(newVideoPose)
         videoRoot.setScale(videoPanelScale)
@@ -1304,15 +1305,16 @@ fun SpatialPlayerScreen(
             )
             lastReportedMovePose.value = savedPose
 
+            // Bind the native move affordance to the visible SurfaceEntity so its system glow
+            // follows the video frame, while the surface remains a direct activitySpace child.
             // createCustomMovable gives us full control over the entity pose during a grab.
             // createSystemMovable snaps the entity to the user's hand position (arm's reach
             // ~2m) even when the video is 6m away, causing the jarring "jump to nose" bug.
-            // With a custom movable we preserve the video depth and only allow lateral
-            // repositioning driven by the input-ray direction.
+            // With a custom movable we preserve depth and orientation, allowing translation only.
             var grabDepth = videoDepth // depth locked at the moment the user starts a grab
             val movable = androidx.xr.scenecore.MovableComponent.createCustomMovable(
                 session,
-                true, // scalingEnabled
+                false, // Never let a move gesture change apparent size.
                 ContextCompat.getMainExecutor(context),
                 object : androidx.xr.scenecore.EntityMoveListener {
                     override fun onMoveStart(
@@ -1324,8 +1326,15 @@ fun SpatialPlayerScreen(
                     ) {
                         startupPoseGuardActive = false
                         grabDepth = extractVideoDepth(initialPose, videoDepth)
+                        val translationOnlyPose = Pose(initialPose.translation, Quaternion.Identity)
+                        runCatching {
+                            entity.setPose(translationOnlyPose)
+                            entity.setScale(videoPanelScale)
+                            videoRoot.setPose(translationOnlyPose)
+                            videoRoot.setScale(videoPanelScale)
+                        }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                            lastReportedMovePose.value = initialPose
+                            lastReportedMovePose.value = translationOnlyPose
                             // Do not update videoDepth yet to avoid triggering LaunchedEffect fights
                             moveInProgress = true
                         }
@@ -1333,16 +1342,16 @@ fun SpatialPlayerScreen(
                             revealControls("video-move-start")
                         }
                         syncProjectedOverlayRoots(
-                            initialPose,
+                            translationOnlyPose,
                             videoPanelScale,
                             uiRoot,
                             subtitleRoot,
                             UI_DEPTH_METERS / grabDepth,
                         )
-                        val t = initialPose.translation
+                        val t = translationOnlyPose.translation
                         Timber.i(
-                            "subtitle: move start targetIsVideoRoot=%b targetClass=%s grabDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
-                            entity == videoRoot,
+                            "subtitle: move start targetIsVideoSurface=%b targetClass=%s grabDepth=%.3f actualPos=(%.3f, %.3f, %.3f)",
+                            entity == surfaceEntity,
                             entity.javaClass.simpleName,
                             grabDepth,
                             t.x, t.y, t.z
@@ -1366,11 +1375,12 @@ fun SpatialPlayerScreen(
                             dir.y / dirLen * grabDepth,
                             dir.z / dirLen * grabDepth,
                         )
-                        val depthPreservedPose = androidx.xr.runtime.math.Pose(newPos, currentPose.rotation)
-                        runCatching { entity.setPose(depthPreservedPose) }
+                        val depthPreservedPose = Pose(newPos, Quaternion.Identity)
                         runCatching {
-                            surfaceEntity.setPose(depthPreservedPose)
-                            surfaceEntity.setScale(videoPanelScale)
+                            entity.setPose(depthPreservedPose)
+                            entity.setScale(videoPanelScale)
+                            videoRoot.setPose(depthPreservedPose)
+                            videoRoot.setScale(videoPanelScale)
                         }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                             lastReportedMovePose.value = depthPreservedPose
@@ -1401,12 +1411,17 @@ fun SpatialPlayerScreen(
                     ) {
                         // Use the depth-preserved pose we computed in onMoveUpdate rather than
                         // the system's finalPose (which would still be at hand position).
-                        val savedPose = lastReportedMovePose.value ?: finalPose
+                        val savedPose =
+                            Pose(
+                                (lastReportedMovePose.value ?: finalPose).translation,
+                                Quaternion.Identity,
+                            )
                         val effectiveDepth = extractVideoDepth(savedPose, videoDepth)
-                        runCatching { entity.setPose(savedPose) }
                         runCatching {
-                            surfaceEntity.setPose(savedPose)
-                            surfaceEntity.setScale(videoPanelScale)
+                            entity.setPose(savedPose)
+                            entity.setScale(videoPanelScale)
+                            videoRoot.setPose(savedPose)
+                            videoRoot.setScale(videoPanelScale)
                         }
                         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
                             lastReportedMovePose.value = savedPose
@@ -1431,10 +1446,10 @@ fun SpatialPlayerScreen(
                     }
                 },
             )
-            videoRoot.addComponent(movable)
-            movable.size = movableVideoBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
+            surfaceEntity.addComponent(movable)
+            movable.size = videoMoveAffordanceBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
 
-            // SceneCore can briefly re-home the movable root until the first interaction.
+            // SceneCore can briefly re-home a movable entity until the first interaction.
             // Re-apply the intended launch layout after the movable component attaches so the
             // screen starts in the cinema baseline instead of snapping there on first tap.
             runCatching {
@@ -1682,38 +1697,38 @@ fun SpatialPlayerScreen(
         entity.stereoMode = sceneStereoMode
         entity.setPose(lastReportedMovePose.value ?: savedPlayerPose)
         entity.setScale(videoPanelScale)
-        movableComponent.value?.size = movableVideoBounds(videoWidth, videoHeight)
+        movableComponent.value?.size = videoMoveAffordanceBounds(videoWidth, videoHeight)
     }
 
     LaunchedEffect(
-        videoRootEntity.value,
+        videoEntity.value,
         movableComponent.value,
         isLocked,
         controlsInputActive,
     ) {
-        val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
+        val videoSurface = videoEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
         val hasMovable =
             runCatching {
-                videoRoot
+                videoSurface
                     .getComponentsOfType(androidx.xr.scenecore.MovableComponent::class.java)
                     .any { it === movable }
             }.getOrElse {
                 Timber.d(it, "Unable to inspect XR screen movable component state")
                 false
             }
-        // A control press must not be interpreted as a grab on the video root underneath.
+        // A control press must not be interpreted as a grab on the video surface underneath.
         // Keep movement available while controls are merely displayed.
         val allowMovement = !isLocked && !controlsInputActive
 
         runCatching {
             if (!allowMovement && hasMovable) {
-                videoRoot.removeComponent(movable)
+                videoSurface.removeComponent(movable)
                 moveInProgress = false
                 Timber.i("XR screen movement suspended during control input")
             } else if (allowMovement && !hasMovable) {
-                videoRoot.addComponent(movable)
-                movable.size = movableVideoBounds(videoWidth, videoHeight)
+                videoSurface.addComponent(movable)
+                movable.size = videoMoveAffordanceBounds(videoWidth, videoHeight)
                 Timber.i("XR screen movement enabled")
             }
         }.onFailure {
