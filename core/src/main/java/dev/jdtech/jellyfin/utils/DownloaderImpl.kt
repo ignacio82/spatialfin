@@ -30,6 +30,7 @@ import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.models.toSpatialFinSource
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker
 import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
 import dev.jdtech.jellyfin.work.DownloadPreparationWorker
 import dev.jdtech.jellyfin.work.ResumableDownloadWorker
@@ -123,16 +124,16 @@ class DownloaderImpl(
             }
         }
         
-        if (pendingEpisodeIds.isNotEmpty()) {
+        pendingEpisodeIds.chunked(BulkDownloadResolutionWorker.MAX_ITEM_IDS_PER_REQUEST).forEach { itemIds ->
             val inputBuilder = androidx.work.Data.Builder()
-                .putStringArray(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_ITEM_IDS, pendingEpisodeIds.toTypedArray())
-                .putString(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_MODE, settings.mode.name)
+                .putStringArray(BulkDownloadResolutionWorker.KEY_ITEM_IDS, itemIds.toTypedArray())
+                .putString(BulkDownloadResolutionWorker.KEY_MODE, settings.mode.name)
             settings.videoBitrate?.let {
-                inputBuilder.putInt(dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker.KEY_VIDEO_BITRATE, it)
+                inputBuilder.putInt(BulkDownloadResolutionWorker.KEY_VIDEO_BITRATE, it)
             }
             
-            val workRequest = androidx.work.OneTimeWorkRequestBuilder<dev.jdtech.jellyfin.work.BulkDownloadResolutionWorker>()
-                .setConstraints(androidx.work.Constraints.Builder().setRequiredNetworkType(androidx.work.NetworkType.CONNECTED).build())
+            val workRequest = OneTimeWorkRequestBuilder<BulkDownloadResolutionWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInputData(inputBuilder.build())
                 .build()
                 

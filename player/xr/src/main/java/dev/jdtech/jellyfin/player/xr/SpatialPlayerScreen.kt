@@ -99,6 +99,10 @@ import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.ResizePolicy
 import androidx.xr.compose.subspace.SpatialPanel
+import androidx.xr.compose.subspace.SpatialGltfModel
+import androidx.xr.compose.subspace.SpatialGltfModelSource
+import androidx.xr.compose.subspace.draw.scale
+import androidx.xr.compose.subspace.rememberSpatialGltfModelState
 import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.offset
@@ -111,14 +115,13 @@ import androidx.xr.runtime.math.FloatSize3d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
-import androidx.xr.scenecore.GltfModel
-import androidx.xr.scenecore.GltfModelEntity
 import androidx.xr.scenecore.SpatialCapability
 import androidx.xr.scenecore.SpatialEnvironment
 import androidx.xr.scenecore.SurfaceEntity
-import androidx.xr.scenecore.GroupEntity
+import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.Space
 import androidx.xr.compose.subspace.SceneCoreEntity
+import androidx.xr.compose.unit.Meter
 import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.scenecore.scene
 import androidx.core.content.ContextCompat
@@ -148,7 +151,6 @@ import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import java.nio.file.Paths
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -223,8 +225,8 @@ private fun Tracks.hasVideoTrack(): Boolean = videoGroupCount() > 0
  * SpatialPlayerScreen — cinematic immersive XR playback experience.
  *
  * Architecture:
- *  - GroupEntity (SceneCore): high-fidelity video root, user-movable
- *  - SurfaceEntity (SceneCore): high-fidelity video surface, child of GroupEntity
+ *  - Entity (SceneCore): high-fidelity video root, user-movable
+ *  - SurfaceEntity (SceneCore): high-fidelity video surface mirrored to the root
  *  - Subtitle SpatialPanel: perspective-scaled, follows video pose via state
  *  - Control SpatialPanel: floats below the video with:
  *      • Orbiter (End): secondary controls (audio / subtitle / speed)
@@ -273,12 +275,11 @@ fun SpatialPlayerScreen(
     val savedPlayerPose = remember(viewModel) { loadSavedPlayerRootPose(viewModel) }
     val savedPlayerScale = remember(viewModel) { loadSavedPlayerRootScale(viewModel) }
 
-    val videoRootEntity = remember { mutableStateOf<androidx.xr.scenecore.GroupEntity?>(null) }
-    val uiRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
-    val subtitleRootEntity = remember { mutableStateOf<GroupEntity?>(null) }
+    val videoRootEntity = remember { mutableStateOf<Entity?>(null) }
+    val uiRootEntity = remember { mutableStateOf<Entity?>(null) }
+    val subtitleRootEntity = remember { mutableStateOf<Entity?>(null) }
     val videoEntity = remember { mutableStateOf<SurfaceEntity?>(null) }
-    val mascotEntity = remember { mutableStateOf<GltfModelEntity?>(null) }
-    val mascotModel = remember { mutableStateOf<GltfModel?>(null) }
+    var pausedMascotAvailable by remember { mutableStateOf(false) }
     val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
     val lastReportedMovePose = remember { mutableStateOf<Pose?>(null) }
     var videoDepth by remember(savedPlayerPose) {
@@ -443,6 +444,7 @@ fun SpatialPlayerScreen(
     // --- MCP Bridge integration ---
     var showPausedMascot by remember { mutableStateOf(false) }
     val isActuallyPaused = playbackState == Player.STATE_READY && !isPlaying
+    val pausedMascotVisible = pausedMascotAvailable && isActuallyPaused && showPausedMascot
     // --- Controls UI state ---
     var controlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
@@ -1260,9 +1262,9 @@ fun SpatialPlayerScreen(
         val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS))
         try {
             val activitySpace = session.scene.activitySpace
-            val videoRoot = GroupEntity.create(session, "PlayerVideoRoot", savedPose, activitySpace)
-            val uiRoot = GroupEntity.create(session, "PlayerUiRoot", projectedOverlayPose, activitySpace)
-            val subtitleRoot = GroupEntity.create(session, "PlayerSubtitleRoot", projectedOverlayPose, activitySpace)
+            val videoRoot = Entity.create(session, "PlayerVideoRoot", savedPose, activitySpace)
+            val uiRoot = Entity.create(session, "PlayerUiRoot", projectedOverlayPose, activitySpace)
+            val subtitleRoot = Entity.create(session, "PlayerSubtitleRoot", projectedOverlayPose, activitySpace)
             videoRoot.setScale(videoPanelScale)
             uiRoot.setScale(videoPanelScale)
             subtitleRoot.setScale(videoPanelScale)
@@ -1481,23 +1483,15 @@ fun SpatialPlayerScreen(
                     Timber.i("XR_VIDEO: ExoPlayer video surface cleared")
                 }
                 .onFailure { Timber.w(it, "XR_VIDEO: failed to clear ExoPlayer video surface") }
-            runCatching { videoEntity.value?.dispose() }
-                .onSuccess { Timber.i("XR_VIDEO: SurfaceEntity disposed") }
-                .onFailure { Timber.w(it, "XR_VIDEO: failed to dispose SurfaceEntity") }
+            runCatching { videoEntity.value?.parent = null }
+                .onSuccess { Timber.i("XR_VIDEO: SurfaceEntity detached") }
+                .onFailure { Timber.w(it, "XR_VIDEO: failed to detach SurfaceEntity") }
             videoEntity.value = null
-            // Close the GltfModel BEFORE disposing the GltfModelEntity. Filament tracks
-            // material instances on the model; if the entity is disposed first, Filament
-            // walks its own instance list after the backing data is gone and hits
-            // assertion 'pos != mMaterialInstances.cend()' → SIGABRT.
-            runCatching { mascotModel.value?.close() }
-            mascotModel.value = null
-            runCatching { mascotEntity.value?.dispose() }
-            mascotEntity.value = null
-            runCatching { videoRootEntity.value?.dispose() }
+            runCatching { videoRootEntity.value?.parent = null }
             videoRootEntity.value = null
-            runCatching { uiRootEntity.value?.dispose() }
+            runCatching { uiRootEntity.value?.parent = null }
             uiRootEntity.value = null
-            runCatching { subtitleRootEntity.value?.dispose() }
+            runCatching { subtitleRootEntity.value?.parent = null }
             subtitleRootEntity.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
@@ -1506,38 +1500,15 @@ fun SpatialPlayerScreen(
     }
 
     LaunchedEffect(session, videoRootEntity.value) {
-        videoRootEntity.value ?: return@LaunchedEffect
-        if (mascotEntity.value != null) return@LaunchedEffect
-        if (!session.scene.spatialCapabilities.contains(SpatialCapability.SPATIAL_3D_CONTENT)) {
+        if (videoRootEntity.value == null) return@LaunchedEffect
+        pausedMascotAvailable =
+            session.scene.spatialCapabilities.contains(SpatialCapability.SPATIAL_3D_CONTENT)
+        if (!pausedMascotAvailable) {
             Timber.i("Skipping paused mascot: SPATIAL_3D_CONTENT not available")
-            return@LaunchedEffect
-        }
-        runCatching {
-            val gltfModel = GltfModel.create(session, Paths.get("models", "spatialfin.glb"))
-            mascotModel.value = gltfModel
-            GltfModelEntity.create(
-                session,
-                gltfModel,
-                PausedMascotPose,
-                session.scene.activitySpace,
-            ).also { entity ->
-                entity.setScale(1.35f)
-                entity.setEnabled(false)
-                mascotEntity.value = entity
-                Timber.i("Paused mascot loaded and attached to activity space")
-            }
-        }.onFailure { e ->
-            if (e is CancellationException) throw e
-            Timber.w(e, "Unable to load paused mascot model")
         }
     }
 
-    LaunchedEffect(showPausedMascot, mascotEntity.value) {
-        val mascot = mascotEntity.value ?: return@LaunchedEffect
-        safelyToggleMascotEntity(mascot, showPausedMascot)
-    }
-
-    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, videoEntity.value, mascotEntity.value) {
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, videoEntity.value, pausedMascotAvailable, pausedMascotVisible) {
         while (true) {
             val entities = mutableListOf<EntityInfo>()
             videoRootEntity.value?.let { e ->
@@ -1556,9 +1527,9 @@ fun SpatialPlayerScreen(
                 val p = safeGetEntityPose(e)
                 entities.add(EntityInfo("VideoSurface", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
             }
-            mascotEntity.value?.let { e ->
-                val p = safeGetEntityPose(e)
-                entities.add(EntityInfo("Mascot", e.javaClass.simpleName, p?.translation?.x ?: 0f, p?.translation?.y ?: 0f, p?.translation?.z ?: 0f, 1f, true))
+            if (pausedMascotAvailable) {
+                val p = PausedMascotPose.translation
+                entities.add(EntityInfo("Mascot", "SpatialGltfModel", p.x, p.y, p.z, 1.35f, pausedMascotVisible))
             }
             McpBridge.updateScene(SceneState(entities))
             delay(1000L)
@@ -1826,7 +1797,7 @@ fun SpatialPlayerScreen(
 
     // Enable the subtitle root entity only when there is actual subtitle content.
     // The SpatialPanel must stay alive in composition at all times (to prevent a flash on first
-    // appearance), but a disabled GroupEntity does not participate in SceneCore raycast
+    // appearance), but a disabled Entity does not participate in SceneCore raycast
     // hit-testing.  When disabled, grab gestures pass straight through to the video entity's
     // MovableComponent so the user can move the video even when subtitles are present.
     val hasSubtitleContent = uiState.visualSubtitlesEnabled && libass.hasSubtitleContent
@@ -1835,6 +1806,23 @@ fun SpatialPlayerScreen(
     }
 
     Subspace {
+        if (pausedMascotVisible) {
+            val mascotState = rememberSpatialGltfModelState(
+                source = SpatialGltfModelSource.fromPath(Paths.get("models", "spatialfin.glb")),
+            )
+            SpatialGltfModel(
+                state = mascotState,
+                modifier = SubspaceModifier
+                    .offset(
+                        x = Meter(PausedMascotPose.translation.x).toDp(),
+                        y = Meter(PausedMascotPose.translation.y).toDp(),
+                        z = Meter(PausedMascotPose.translation.z).toDp(),
+                    )
+                    .rotate(PausedMascotPose.rotation)
+                    .scale(1.35f),
+            )
+        }
+
         val subtitleRoot = subtitleRootEntity.value
         if (subtitleRoot != null) {
             SceneCoreEntity(factory = { subtitleRoot }, modifier = SubspaceModifier) {
@@ -2462,20 +2450,3 @@ fun SpatialPlayerScreen(
 //   constrainPoseToDepth, safeGetEntityPose → PlayerGeometry.kt
 // loadSavedPlayerRootPose, loadSavedPlayerRootScale, savePlayerRootPose,
 //   savePlayerRootScale, isRestorableVideoPose, posesApproximatelyEqual → PlayerPoseStorage.kt
-
-private fun safelyToggleMascotEntity(
-    mascot: GltfModelEntity,
-    shouldShow: Boolean,
-) {
-    runCatching {
-        if (shouldShow) {
-            mascot.setEnabled(true)
-            Timber.i("Paused mascot enabled")
-        } else {
-            mascot.setEnabled(false)
-            Timber.d("Paused mascot disabled")
-        }
-    }.onFailure {
-        Timber.d(it, "Skipping paused mascot visibility update for disposed entity")
-    }
-}

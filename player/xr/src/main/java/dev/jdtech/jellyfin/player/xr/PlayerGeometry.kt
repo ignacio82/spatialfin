@@ -3,7 +3,6 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.Entity
-import androidx.xr.scenecore.GroupEntity
 import androidx.xr.scenecore.Space
 import timber.log.Timber
 
@@ -58,8 +57,8 @@ internal fun projectPoseFromOrigin(sourcePose: Pose, depthScale: Float): Pose {
 internal fun syncProjectedOverlayRoots(
     videoPose: Pose,
     videoScale: Float,
-    uiRoot: GroupEntity,
-    subtitleRoot: GroupEntity,
+    uiRoot: Entity,
+    subtitleRoot: Entity,
     depthScale: Float,
 ) {
     val projectedPose = projectPoseFromOrigin(videoPose, depthScale)

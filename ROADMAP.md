@@ -459,14 +459,19 @@ Order within the sprint is by blast radius:
     / AGP 10 watch.
 29. Revisit the ambilight blocker — file/upgrade the upstream Jetpack XR
     issue; ship a degraded 2D "ambient panel glow" fallback meanwhile.
-30. `DownloaderImpl.downloadItems` bulk per-episode source resolution →
-    move into a worker. Metered-network guard on `DownloadPreparationWorker`.
-31. Upgrade Jetpack XR SDK to DP4/Beta once available. Address any breaking API
-    changes resulting from the Kotlin-first architecture overhaul (e.g. removal
-    of legacy Guava/RxJava3 patterns in SceneCore).
-32. Refactor `spatialfin.glb` 3D model rendering in `SpatialPlayerScreen.kt`
-    to use the new native `SpatialGltfModel` composable introduced in DP4
-    instead of the manual `GltfModel.create` / `GltfModelEntity` pipeline.
+30. ✅ `DownloaderImpl.downloadItems` now hands per-item source resolution to
+    `BulkDownloadResolutionWorker`; requests are chunked below WorkManager's
+    input-data limit. `DownloadPreparationWorker` is constrained to unmetered
+    networks unless the mobile-data preference is enabled.
+31. ✅ The project is already on the current Jetpack XR release train verified
+    from the official May 19, 2026 notes (`runtime` / `compose` / `arcore`
+    `1.0.0-alpha14`, `scenecore` `1.0.0-alpha15`, Material3
+    `1.0.0-alpha17`). The player root path now uses the Kotlin-first
+    `Entity.create` and detach-on-teardown API instead of deprecated
+    `GroupEntity.create` / `dispose()`.
+32. ✅ `spatialfin.glb` in `SpatialPlayerScreen.kt` now renders through
+    `SpatialGltfModel`, with the paused-state visibility, pose, scale, and
+    capability gate owned by Compose rather than a manual model/entity lifecycle.
 
 ## Stretch / parking lot
 

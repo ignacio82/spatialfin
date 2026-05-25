@@ -54,6 +54,8 @@ class BulkDownloadResolutionWorker @AssistedInject constructor(
     }
 
     companion object {
+        // UUID strings leave ample margin below WorkManager Data's 10 KB limit.
+        const val MAX_ITEM_IDS_PER_REQUEST = 128
         const val KEY_ITEM_IDS = "item_ids"
         const val KEY_MODE = "mode"
         const val KEY_VIDEO_BITRATE = "video_bitrate"
