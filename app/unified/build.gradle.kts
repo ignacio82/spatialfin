@@ -71,9 +71,9 @@ android {
             resValue("string", "search_authority", "dev.spatialfin.debug.search")
         }
         release {
-            // XR system-extension callbacks are still crashing in optimized builds with
-            // AbstractMethodError inside com.android.extensions.xr.Consumer bridges.
-            // Keep release unminified until the androidx.xr / R8 interaction is resolved.
+            // SceneCore alpha15 still crashes in optimized Galaxy XR builds with
+            // AbstractMethodError in com.android.extensions.xr.function.Consumer
+            // callbacks (verified on SM_I610 on 2026-05-25).
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(

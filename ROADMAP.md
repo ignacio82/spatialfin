@@ -305,8 +305,10 @@ tail.
   **drops `downloadtasks` and all offline userdata** in production. Drop
   destructive fallback (or exclude the download tables) so a missing
   migration fails loudly in CI/QA instead of nuking user downloads.
-- **P1** Release is `isMinifyEnabled = false` — known XR/R8 debt. Needs a
-  dated revisit each Jetpack XR release (item 23).
+- **P1** Release is `isMinifyEnabled = false` — SceneCore documents
+  minified-client support since `1.0.0-alpha03`, but optimized alpha15 builds
+  still crash on Galaxy XR (`SM_I610`) with `AbstractMethodError` as of
+  2026-05-25. Focused callback keep-rule retries did not resolve it (item 27).
 - **P2** No Compose stability reports / `stabilityCheck` CI gate
   (item 15).
 
@@ -452,8 +454,10 @@ Order within the sprint is by blast radius:
 26. Remove `fallbackToDestructiveMigration(dropAllTables = true)` (or
     exclude the download tables) so a missing migration fails loudly
     instead of nuking user downloads.
-27. Re-attempt `isMinifyEnabled = true` against the latest Jetpack XR
-    release; fix or refresh keep rules.
+27. Re-attempt `isMinifyEnabled = true` against a newer Jetpack XR / R8
+    combination; an alpha15 retry on Galaxy XR (`SM_I610`) on 2026-05-25
+    remained blocked by `com.android.extensions.xr.function.Consumer.accept`
+    `AbstractMethodError` at startup.
 28. ~~AGP 9 upgrade~~ ✅ **done by fact** — `libs.versions.toml`
     `android-plugin = "9.2.1"`. Re-scope this slot to AGP 9.x maintenance
     / AGP 10 watch.
