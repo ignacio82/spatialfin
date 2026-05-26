@@ -49,7 +49,7 @@ object PlayMessageBuilder {
             sourceAudioCodec != null || audioTranscoded != null
         ) {
             MetadataObject(
-                type = if (thumbnailUrl != null) METADATA_TYPE_GENERIC else null,
+                type = METADATA_TYPE_GENERIC,
                 title = title,
                 thumbnailUrl = thumbnailUrl,
                 custom = buildAudioCustom(sourceAudioCodec, audioTranscoded),
@@ -100,5 +100,5 @@ object PlayMessageBuilder {
         }
     }
 
-    private const val METADATA_TYPE_GENERIC = 1
+    private const val METADATA_TYPE_GENERIC = 0
 }

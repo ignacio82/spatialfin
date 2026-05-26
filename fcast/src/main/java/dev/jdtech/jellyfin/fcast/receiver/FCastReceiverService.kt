@@ -138,7 +138,7 @@ class FCastReceiverService : Service() {
         val ad = FCastReceiverAdvertiser(applicationContext)
         ad.register(
             instanceName = displayName,
-            port = port,
+            port = newServer.boundPort,
             properties = buildMap {
                 put("appName", "SpatialFin")
                 if (appVersion != null) put("appVersion", appVersion)

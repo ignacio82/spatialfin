@@ -27,7 +27,7 @@ data class PlayMessage(
 data class MetadataObject(
     val type: Int? = null,
     val title: String? = null,
-    val thumbnailUrl: String? = null,
+    @SerialName("image") val thumbnailUrl: String? = null,
     @SerialName("custom") val custom: JsonElement? = null,
 )
 
@@ -159,14 +159,14 @@ data class VersionMessage(val version: Int)
 
 @Serializable
 data class InitialSenderMessage(
-    val displayName: String? = null,
+    @SerialName("friendlyName") val displayName: String? = null,
     val appName: String? = null,
     val appVersion: String? = null,
 )
 
 @Serializable
 data class InitialReceiverMessage(
-    val displayName: String? = null,
+    @SerialName("friendlyName") val displayName: String? = null,
     val appName: String? = null,
     val appVersion: String? = null,
     val playData: PlayMessage? = null,

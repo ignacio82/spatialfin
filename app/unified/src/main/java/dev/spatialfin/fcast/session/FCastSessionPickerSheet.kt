@@ -219,9 +219,24 @@ fun FCastSessionPickerSheet(
             }
 
             if (showFCast) {
-                if (entries.isEmpty() && !isScanning) {
+                val fcastEntries = if (splitAvMode) {
+                    entries.filter { it.receiver.appName?.startsWith("SpatialFin", ignoreCase = true) == true }
+                } else {
+                    entries
+                }
+
+                if (splitAvMode) {
+                    SectionHeader(
+                        title = "FCast (SpatialFin)",
+                        subtitle = "Only SpatialFin receivers support Split A/V.",
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                if (fcastEntries.isEmpty() && !isScanning) {
                     Text(
-                        text = "No receivers found yet. Add one manually below.",
+                        text = if (splitAvMode) "No SpatialFin receivers found. Other receivers are hidden during Split A/V."
+                               else "No receivers found yet. Add one manually below.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -230,7 +245,7 @@ fun FCastSessionPickerSheet(
                     // scroller. Capped at 16 by RememberedReceiversStore so the linear render
                     // cost is negligible.
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        entries.forEach { entry ->
+                        fcastEntries.forEach { entry ->
                             SessionReceiverRow(
                                 entry = entry,
                                 onClick = { onReceiverPicked(entry.receiver) },
@@ -254,7 +269,7 @@ fun FCastSessionPickerSheet(
                 }
             }
 
-            if (showGoogleCast && googleCastReceivers.isNotEmpty()) {
+            if (showGoogleCast && googleCastReceivers.isNotEmpty() && !splitAvMode) {
                 Spacer(Modifier.height(20.dp))
                 SectionHeader(
                     title = "Chromecast",
@@ -274,7 +289,7 @@ fun FCastSessionPickerSheet(
                 }
             }
 
-            if (showAirPlay && airPlayReceivers.isNotEmpty()) {
+            if (showAirPlay && airPlayReceivers.isNotEmpty() && !splitAvMode) {
                 Spacer(Modifier.height(20.dp))
                 SectionHeader(
                     title = "AirPlay",

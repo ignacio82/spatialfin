@@ -153,6 +153,18 @@ class SplitAvController @Inject constructor(
     private var lastBeaconTvIsPlaying: Boolean? = null
 
     /**
+     * Set to true when we programmatically pause the master due to a TV pause.
+     * Tells [mirrorMasterPlayState] to NOT echo the pause back to the TV.
+     */
+    @Volatile private var isMachinePaused: Boolean = false
+
+    /**
+     * Set to true when we programmatically resume the master due to a TV resume.
+     * Tells [mirrorMasterPlayState] to NOT echo the resume back to the TV.
+     */
+    @Volatile private var isMachineResumed: Boolean = false
+
+    /**
      * Begin a split-A/V session. The Play message is augmented with `splitAv.role=AUDIO` so the
      * remote receiver enters audio-only mode. The local video master may bind any time after
      * this returns — the drift loop will idle until it does.
@@ -406,6 +418,21 @@ class SplitAvController @Inject constructor(
         master.isPlaying.collect { playing ->
             if (playing == lastSent) return@collect
             lastSent = playing
+
+            // If the machine paused the master, don't echo the pause back to the TV.
+            if (!playing && isMachinePaused) {
+                Timber.tag(TAG).i("mirror master state: playing=false (machine-initiated) — skipping cascade")
+                isMachinePaused = false
+                return@collect
+            }
+
+            // If the machine resumed the master, don't echo the resume back to the TV.
+            if (playing && isMachineResumed) {
+                Timber.tag(TAG).i("mirror master state: playing=true (machine-initiated) — skipping cascade")
+                isMachineResumed = false
+                return@collect
+            }
+
             if (playing && masterFirstPlayingWallMs == null) {
                 masterFirstPlayingWallMs = clock()
                 Timber.tag(TAG).i("master first playWhenReady=true — warmup grace begins")
@@ -619,9 +646,20 @@ class SplitAvController @Inject constructor(
     ) {
         val now = clock()
         val tvIsPlaying = update.playbackState == PlaybackState.Playing
-        if (tvIsPlaying) hasObservedTvPlaying = true
         val prevTvIsPlaying = lastBeaconTvIsPlaying
+        val alreadyObservedTvPlaying = hasObservedTvPlaying
+        if (tvIsPlaying) hasObservedTvPlaying = true
         lastBeaconTvIsPlaying = tvIsPlaying
+
+        if (alreadyObservedTvPlaying && tvIsPlaying && prevTvIsPlaying == false) {
+            Timber.tag("SplitAvPauseTrace").w(
+                "TV→Playing transition — cascading resume to master. " +
+                    "tvIsPlaying=%b prevTvIsPlaying=%b",
+                tvIsPlaying, prevTvIsPlaying,
+            )
+            isMachineResumed = true
+            master.resumeFromMaster()
+        }
 
         // Receiver finished (user pressed Stop on the Pixel's audio overlay, or its Activity
         // was destroyed). Hand audio back to the local master — unmute it so the user keeps
@@ -781,6 +819,7 @@ class SplitAvController @Inject constructor(
                         tvIsPlaying, prevTvIsPlaying, hasObservedTvPlaying,
                         state.xrPositionMs, state.beaconStreamPositionMs,
                     )
+                    isMachinePaused = true
                     master.pauseFromMaster()
                 }
             }

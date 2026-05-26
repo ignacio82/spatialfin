@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
 /**
@@ -178,6 +180,15 @@ class FCastSenderClient(
             ))
 
             readerJob = scope.launch { readLoop() }
+            
+            // Wait for the receiver's Initial message so play() can query its appName.
+            // If it times out or throws, we proceed anyway for robustness against non-compliant peers.
+            try {
+                withTimeoutOrNull(2000) { _initialReceiver.first() }
+            } catch (e: Exception) {
+                Timber.tag("FCastSender").w(e, "Timeout waiting for Initial message")
+            }
+
             _state.value = State.Connected
         } catch (e: Exception) {
             _state.value = State.Failed
@@ -191,7 +202,21 @@ class FCastSenderClient(
      *  negotiated v3 — keeps the wire byte-identical to v3 for them. */
     private fun negotiatedV4(): Boolean = (_negotiatedVersion.value ?: 0) >= 4
 
-    suspend fun play(payload: PlayMessage) = sendInternal(FCastMessage.Play(payload))
+    suspend fun play(payload: PlayMessage) {
+        val appName = _initialReceiver.replayCache.firstOrNull()?.appName
+        val isSpatialFin = appName?.startsWith("SpatialFin", ignoreCase = true) == true
+        val safePayload = if (isSpatialFin) {
+            payload
+        } else {
+            // Strip metadata entirely for non-SpatialFin receivers.
+            // The Official Receiver has a fatal flaw in its GenericMediaMetadata serializer
+            // where it expects a contextual serializer for `Any` (for the `custom` field)
+            // but does not register one. This causes a SerializationException simply by
+            // instantiating the metadata object, even if `custom` is absent from the JSON.
+            payload.copy(metadata = null)
+        }
+        sendInternal(FCastMessage.Play(safePayload))
+    }
     suspend fun pause() = sendInternal(FCastMessage.Pause)
     suspend fun resume() = sendInternal(FCastMessage.Resume())
 

@@ -407,7 +407,7 @@ class XrPlayerActivity : AppCompatActivity() {
                 while (isActive) {
                     ipc.pushState(
                         positionMs = player.currentPosition.coerceAtLeast(0L),
-                        playing = player.isPlaying,
+                        playing = player.playWhenReady,
                     )
                     delay(50L)
                 }

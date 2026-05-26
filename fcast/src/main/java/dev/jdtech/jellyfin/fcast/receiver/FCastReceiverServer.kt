@@ -60,6 +60,8 @@ class FCastReceiverServer(
     private val _state = MutableStateFlow(State.Stopped)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    val boundPort: Int get() = serverSocket?.localPort ?: 0
+
     val sessionCount: Int get() = sessions.size
 
     /** Bind the listening socket and start accepting senders. Throws on bind failure. */
@@ -68,9 +70,17 @@ class FCastReceiverServer(
         _state.value = State.Starting
         try {
             val socket = withContext(Dispatchers.IO) {
-                ServerSocket().apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(config.port))
+                try {
+                    ServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(config.port))
+                    }
+                } catch (e: java.net.BindException) {
+                    Timber.tag(TAG).w(e, "FCast receiver failed to bind to port %d, falling back to an ephemeral port", config.port)
+                    ServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(0))
+                    }
                 }
             }
             serverSocket = socket
