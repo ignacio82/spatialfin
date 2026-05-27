@@ -35,11 +35,10 @@ internal fun dev.jdtech.jellyfin.player.xr.ChaptersDialogContent(chapters: kotli
     - onDismiss: STABLE (function type)
 
 @Composable
-internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, player: androidx.media3.common.Player, uiState: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.UiState, isPlaying: kotlin.Boolean, currentPosition: kotlin.Long, duration: kotlin.Long, isLocked: kotlin.Boolean, spatialAudioAvailable: kotlin.Boolean, onLockToggle: kotlin.Function0<kotlin.Unit>, onControlInputActiveChange: kotlin.Function1<kotlin.Boolean, kotlin.Unit>, onMoveCloser: kotlin.Function0<kotlin.Unit>, onMoveFurther: kotlin.Function0<kotlin.Unit>, onChaptersClick: kotlin.Function0<kotlin.Unit>, onBackClick: kotlin.Function0<kotlin.Unit>, resetAutoHide: kotlin.Function0<kotlin.Unit>, onFCastClick: kotlin.Function0<kotlin.Unit>, fcastActive: kotlin.Boolean): kotlin.Unit
+internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(player: androidx.media3.common.Player, uiState: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel.UiState, isPlaying: kotlin.Boolean, currentPosition: kotlin.Long, duration: kotlin.Long, isLocked: kotlin.Boolean, spatialAudioAvailable: kotlin.Boolean, onLockToggle: kotlin.Function0<kotlin.Unit>, onControlInputActiveChange: kotlin.Function1<kotlin.Boolean, kotlin.Unit>, onMoveCloser: kotlin.Function0<kotlin.Unit>, onMoveFurther: kotlin.Function0<kotlin.Unit>, onChaptersClick: kotlin.Function0<kotlin.Unit>, onBackClick: kotlin.Function0<kotlin.Unit>, resetAutoHide: kotlin.Function0<kotlin.Unit>, showChaptersButton: kotlin.Boolean, onFCastClick: kotlin.Function0<kotlin.Unit>, fcastActive: kotlin.Boolean): kotlin.Unit
   skippable: false
   restartable: true
   params:
-    - viewModel: UNSTABLE (has mutable properties or unstable members)
     - player: RUNTIME (requires runtime check)
     - uiState: UNSTABLE (has mutable properties or unstable members)
     - isPlaying: STABLE (primitive type)
@@ -54,6 +53,7 @@ internal fun dev.jdtech.jellyfin.player.xr.ControlPanelUI(viewModel: dev.jdtech.
     - onChaptersClick: STABLE (function type)
     - onBackClick: STABLE (function type)
     - resetAutoHide: STABLE (function type)
+    - showChaptersButton: STABLE (primitive type)
     - onFCastClick: STABLE (function type)
     - fcastActive: STABLE (primitive type)
 
@@ -118,7 +118,7 @@ internal fun dev.jdtech.jellyfin.player.xr.SearchResultPoster(item: dev.jdtech.j
     - item: RUNTIME (requires runtime check)
 
 @Composable
-internal fun dev.jdtech.jellyfin.player.xr.SecondaryControlsOrbiter(onAudioClick: kotlin.Function0<kotlin.Unit>, onSubtitleClick: kotlin.Function0<kotlin.Unit>, onSpeedClick: kotlin.Function0<kotlin.Unit>, onQualityClick: kotlin.Function0<kotlin.Unit>, onSyncPlayClick: kotlin.Function0<kotlin.Unit>, onCastCrewClick: kotlin.Function0<kotlin.Unit>, onVoiceClick: kotlin.Function0<kotlin.Unit>, voiceControlEnabled: kotlin.Boolean, voiceAvailable: kotlin.Boolean, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, syncPlayActive: kotlin.Boolean): kotlin.Unit
+internal fun dev.jdtech.jellyfin.player.xr.SecondaryControlsOrbiter(onAudioClick: kotlin.Function0<kotlin.Unit>, onSubtitleClick: kotlin.Function0<kotlin.Unit>, onSpeedClick: kotlin.Function0<kotlin.Unit>, onQualityClick: kotlin.Function0<kotlin.Unit>, onSyncPlayClick: kotlin.Function0<kotlin.Unit>, onCastCrewClick: kotlin.Function0<kotlin.Unit>, onVoiceClick: kotlin.Function0<kotlin.Unit>, voiceControlEnabled: kotlin.Boolean, voiceAvailable: kotlin.Boolean, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, syncPlayActive: kotlin.Boolean, showSyncPlayButton: kotlin.Boolean, showCastCrewButton: kotlin.Boolean): kotlin.Unit
   skippable: true
   restartable: true
   params:
@@ -133,6 +133,8 @@ internal fun dev.jdtech.jellyfin.player.xr.SecondaryControlsOrbiter(onAudioClick
     - voiceAvailable: STABLE (primitive type)
     - voiceState: STABLE (class with no mutable properties)
     - syncPlayActive: STABLE (primitive type)
+    - showSyncPlayButton: STABLE (primitive type)
+    - showCastCrewButton: STABLE (primitive type)
 
 @Composable
 internal fun dev.jdtech.jellyfin.player.xr.SectionHeader(text: kotlin.String): kotlin.Unit
@@ -238,6 +240,23 @@ internal fun dev.jdtech.jellyfin.player.xr.VoiceSearchDialogContent(query: kotli
     - onToggleFavorite: STABLE (function type)
     - onPlayResult: STABLE (function type)
     - onDismiss: STABLE (function type)
+
+@Composable
+internal fun dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerScreen(session: androidx.xr.runtime.Session, player: androidx.media3.exoplayer.ExoPlayer, requestState: kotlinx.coroutines.flow.StateFlow<dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest?>, cuesState: kotlinx.coroutines.flow.StateFlow<kotlin.collections.List<androidx.media3.common.text.Cue>>, libassBitmapState: kotlinx.coroutines.flow.StateFlow<android.graphics.Bitmap?>, libassFrameVersionState: kotlinx.coroutines.flow.StateFlow<kotlin.Int>, libassEnabled: kotlin.Boolean, preferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onSurfaceAttached: kotlin.Function0<kotlin.Unit>, onExit: kotlin.Function0<kotlin.Unit>, onSubtitleResize: kotlin.Function4<kotlin.Int, kotlin.Int, kotlin.Int, kotlin.Int, kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - session: UNSTABLE (has mutable properties or unstable members)
+    - player: RUNTIME (requires runtime check)
+    - requestState: RUNTIME (requires runtime check)
+    - cuesState: RUNTIME (requires runtime check)
+    - libassBitmapState: RUNTIME (requires runtime check)
+    - libassFrameVersionState: RUNTIME (requires runtime check)
+    - libassEnabled: STABLE (primitive type)
+    - preferences: UNSTABLE (has mutable properties or unstable members)
+    - onSurfaceAttached: STABLE (function type)
+    - onExit: STABLE (function type)
+    - onSubtitleResize: STABLE (function type)
 
 @Composable
 internal fun dev.jdtech.jellyfin.player.xr.rememberLibassRenderer(player: androidx.media3.common.Player, currentStereoMode: kotlin.String, libassUsagePref: kotlin.String, libassRenderer: dev.jdtech.jellyfin.player.xr.LibassRenderer?, onCueRecorded: kotlin.Function2<@[ParameterName(name = \): dev.jdtech.jellyfin.player.xr.LibassRendererState
