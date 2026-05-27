@@ -1,25 +1,38 @@
 package dev.jdtech.jellyfin.fcast.receiver
 
+import android.content.Intent
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.splitAv
+import java.net.URI
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Phase 3 contract: a normalized "play this arbitrary URL" request derived from an inbound
- * FCast [PlayMessage]. The app (specifically `:player:local`) implements [ExternalStreamPlayer]
- * and constructs a Media3 `MediaSource` directly, bypassing the Jellyfin item lookup that the
- * existing PlayerViewModel relies on.
- *
- * Why a separate type vs. just passing [PlayMessage] downstream: keeps the FCast wire format from
- * leaking into the player module, gives the player a stable surface that can also be reused by
- * future ingress sources (Cast, AppFunctions, share-sheet hand-offs).
+ * A transient media source supplied by an FCast sender. Inline content is restricted to
+ * adaptive manifests because arbitrary inline payloads cannot be handed to Media3 safely.
  */
+@Serializable
+sealed interface ExternalStreamSource {
+    @Serializable
+    @SerialName("url")
+    data class Url(val url: String) : ExternalStreamSource
+
+    @Serializable
+    @SerialName("inline")
+    data class Inline(val content: String) : ExternalStreamSource
+}
+
+/** Normalized inbound FCast media request, independent of the FCast wire envelope. */
+@Serializable
 data class ExternalStreamRequest(
-    val url: String,
+    val source: ExternalStreamSource,
     val container: String,
     val startPositionSeconds: Double = 0.0,
     val initialVolume: Double? = null,
@@ -27,75 +40,122 @@ data class ExternalStreamRequest(
     val headers: Map<String, String> = emptyMap(),
     val title: String? = null,
     val thumbnailUrl: String? = null,
-    /**
-     * Set when the sender wants this peer to participate in a split-A/V session — typically
-     * with [SplitAvMetadata.role] = `AUDIO`, meaning this device should play audio and let a
-     * paired video master drive sync via PlaybackUpdate beacons. Null for normal full-A/V casts.
-     */
     val splitAv: SplitAvMetadata? = null,
-    /**
-     * SpatialFin extension: the source file's audio codec (Jellyfin `MediaStream.codec`).
-     * Echoed by the receiver in the audio-info overlay so the user sees the original codec
-     * even when the URL is being transcoded. Null on non-SpatialFin senders.
-     */
     val sourceAudioCodec: String? = null,
-    /**
-     * SpatialFin extension: true when the URL is a Jellyfin audio transcode. Lets the receiver
-     * render "transcoded" vs "direct play" below the title.
-     */
     val audioTranscoded: Boolean? = null,
 ) {
     companion object {
         /**
-         * Build a request from an FCast [PlayMessage] when the receiver decides this stream
-         * is *not* a Jellyfin URL and should be played directly. Returns null when the message
-         * lacks a URL — inline DASH manifest content (`PlayMessage.content`) is not supported by
-         * this codepath yet.
+         * Parse exactly one source from a Play message. A malformed request is rejected before
+         * any Activity launch so the connected sender receives an actionable PlaybackError.
          */
-        fun fromPlayMessage(msg: PlayMessage): ExternalStreamRequest? {
-            val url = msg.url ?: return null
+        fun parsePlayMessage(msg: PlayMessage): ParseResult {
+            val url = msg.url?.trim()?.takeIf(String::isNotEmpty)
+            val content = msg.content?.takeIf { it.isNotBlank() }
+            val source = when {
+                url != null && content != null ->
+                    return ParseResult.Invalid("PlayMessage must provide exactly one of url or content, not both")
+                url == null && content == null ->
+                    return ParseResult.Invalid("PlayMessage must provide a nonblank url or content source")
+                url != null -> ExternalStreamSource.Url(url)
+                else -> {
+                    val failure = validateInlineManifest(msg.container, content!!)
+                    if (failure != null) return ParseResult.Invalid(failure)
+                    ExternalStreamSource.Inline(content)
+                }
+            }
             val audioCustom = (msg.metadata?.custom as? JsonObject)
                 ?.get("audio") as? JsonObject
-            val sourceAudioCodec = audioCustom?.get("sourceCodec")
-                ?.jsonPrimitive?.contentOrNull
-            val audioTranscoded = audioCustom?.get("transcoded")
-                ?.jsonPrimitive?.booleanOrNull
-            return ExternalStreamRequest(
-                url = url,
-                container = msg.container,
-                startPositionSeconds = msg.time ?: 0.0,
-                initialVolume = msg.volume,
-                initialSpeed = msg.speed,
-                headers = msg.headers.orEmpty(),
-                title = msg.metadata?.title,
-                thumbnailUrl = msg.metadata?.thumbnailUrl,
-                splitAv = msg.splitAv(),
-                sourceAudioCodec = sourceAudioCodec,
-                audioTranscoded = audioTranscoded,
+            return ParseResult.Valid(
+                ExternalStreamRequest(
+                    source = source,
+                    container = msg.container,
+                    startPositionSeconds = msg.time ?: 0.0,
+                    initialVolume = msg.volume,
+                    initialSpeed = msg.speed,
+                    headers = msg.headers.orEmpty(),
+                    title = msg.metadata?.title,
+                    thumbnailUrl = msg.metadata?.thumbnailUrl,
+                    splitAv = msg.splitAv(),
+                    sourceAudioCodec = audioCustom?.get("sourceCodec")
+                        ?.jsonPrimitive?.contentOrNull,
+                    audioTranscoded = audioCustom?.get("transcoded")
+                        ?.jsonPrimitive?.booleanOrNull,
+                ),
             )
         }
+
+        /** Compatibility helper for consumers that do not need the parsing failure reason. */
+        fun fromPlayMessage(msg: PlayMessage): ExternalStreamRequest? =
+            (parsePlayMessage(msg) as? ParseResult.Valid)?.request
+
+        private fun validateInlineManifest(container: String, content: String): String? {
+            return when (canonicalManifestContainer(container)) {
+                INLINE_DASH -> null
+                INLINE_HLS -> {
+                    val childUris = content.lineSequence()
+                        .map(String::trim)
+                        .filter { it.isNotEmpty() && !it.startsWith("#") }
+                        .plus(
+                            Regex("""URI\s*=\s*"([^"]+)"""")
+                                .findAll(content)
+                                .map { it.groupValues[1] },
+                        )
+                    if (childUris.any { uri -> runCatching { !URI(uri).isAbsolute }.getOrDefault(true) }) {
+                        "Inline HLS manifests require absolute child media URLs"
+                    } else {
+                        null
+                    }
+                }
+                else -> "Unsupported inline content type '$container'; only DASH and HLS manifests are accepted"
+            }
+        }
+
+        private fun canonicalManifestContainer(container: String): String = when (container.trim().lowercase()) {
+            "application/dash+xml", "application/mpd", "application/x-mpegdash" -> INLINE_DASH
+            "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/mpegurl" -> INLINE_HLS
+            else -> container.trim().lowercase()
+        }
+
+        private const val INLINE_DASH = "application/dash+xml"
+        private const val INLINE_HLS = "application/x-mpegurl"
+    }
+
+    sealed interface ParseResult {
+        data class Valid(val request: ExternalStreamRequest) : ParseResult
+        data class Invalid(val reason: String) : ParseResult
     }
 }
 
 /**
- * Implemented by the app to actually play a non-Jellyfin URL. The implementation will live in
- * `:player:local` (likely as `PlayerViewModel.playExternalStream(...)`) once the surgery in
- * Phase 3 lands. Until then, [Rejecting] is the default — sender gets a PlaybackError back.
+ * Shared request intent codec for the flat and immersive inbound players. Requests are held only
+ * by the active launch Intent; neither implementation persists them. In particular, authentication
+ * header values must never be logged.
  */
+object ExternalStreamIntentCodec {
+    const val EXTRA_REQUEST_JSON: String = "fcast.in.request_json"
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+        classDiscriminator = "sourceType"
+    }
+
+    fun putRequest(intent: Intent, request: ExternalStreamRequest): Intent =
+        intent.putExtra(EXTRA_REQUEST_JSON, json.encodeToString(request))
+
+    fun getRequest(intent: Intent): ExternalStreamRequest? =
+        intent.getStringExtra(EXTRA_REQUEST_JSON)?.let { encoded ->
+            runCatching { json.decodeFromString<ExternalStreamRequest>(encoded) }.getOrNull()
+        }
+}
+
+/** Player control surface used by both in-process and cross-process inbound receivers. */
 interface ExternalStreamPlayer {
     fun play(request: ExternalStreamRequest): PlayResult
-
     fun pause()
     fun resume()
-
-    /**
-     * v4 synchronized start: begin playback when the device's monotonic clock
-     * (`SystemClock.elapsedRealtime`) reaches [atReceiverMonotonicMs]. Implementations clamp
-     * (past instant / too far out ⇒ resume now). Defaults to [resume] for players that don't
-     * support scheduled start.
-     */
     fun resumeAt(atReceiverMonotonicMs: Long) = resume()
-
     fun stop()
     fun seek(seconds: Double)
     fun setVolume(volume: Double)
@@ -107,10 +167,6 @@ interface ExternalStreamPlayer {
         data class Rejected(val reason: String) : PlayResult
     }
 
-    /**
-     * Default implementation: rejects every play request with an "unsupported" message.
-     * The receiver service falls back to this when no real player is registered.
-     */
     object Rejecting : ExternalStreamPlayer {
         override fun play(request: ExternalStreamRequest): PlayResult =
             PlayResult.Rejected("External streams are not supported on this device")
@@ -124,20 +180,19 @@ interface ExternalStreamPlayer {
     }
 }
 
-/**
- * Adapter that turns an [ExternalStreamPlayer] into an [FCastIngressRouter]. Use this when the
- * app supports arbitrary-URL playback (Phase 3); use a Jellyfin-resolving router otherwise.
- */
+/** Adapter that turns an [ExternalStreamPlayer] into the receiver server's router. */
 class ExternalStreamIngressRouter(
     private val player: ExternalStreamPlayer,
 ) : FCastIngressRouter {
-
     override fun onPlay(request: PlayMessage): FCastIngressRouter.IngressResult {
-        val external = ExternalStreamRequest.fromPlayMessage(request)
-            ?: return FCastIngressRouter.IngressResult.Rejected("PlayMessage missing url")
-        return when (val r = player.play(external)) {
-            is ExternalStreamPlayer.PlayResult.Accepted -> FCastIngressRouter.IngressResult.Accepted
-            is ExternalStreamPlayer.PlayResult.Rejected -> FCastIngressRouter.IngressResult.Rejected(r.reason)
+        val external = when (val parsed = ExternalStreamRequest.parsePlayMessage(request)) {
+            is ExternalStreamRequest.ParseResult.Invalid ->
+                return FCastIngressRouter.IngressResult.Rejected(parsed.reason)
+            is ExternalStreamRequest.ParseResult.Valid -> parsed.request
+        }
+        return when (val result = player.play(external)) {
+            ExternalStreamPlayer.PlayResult.Accepted -> FCastIngressRouter.IngressResult.Accepted
+            is ExternalStreamPlayer.PlayResult.Rejected -> FCastIngressRouter.IngressResult.Rejected(result.reason)
         }
     }
 

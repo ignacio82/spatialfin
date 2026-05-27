@@ -80,6 +80,18 @@ object FCastInboundSession {
         }
     }
 
+    /**
+     * A new player Activity of a different kind is being launched (flat to immersive or the
+     * reverse). Stop dispatching sender commands to the departing Activity while the new one
+     * binds; seek/resume received during that window use the existing pending-command path.
+     */
+    fun suspendControlForReplacement() {
+        control = null
+        pendingPlayIntent = null
+        pendingSeekSeconds = null
+        pendingResumeAtMs = null
+    }
+
     fun bindBroadcaster(
         playback: (PlaybackUpdateMessage) -> Unit,
         volume: (VolumeUpdateMessage) -> Unit,

@@ -226,6 +226,7 @@ dependencies {
     // an HlsMediaSource and falls back to ProgressiveMediaSource → the .m3u8 hits
     // UnrecognizedInputFormatException → groups=0 → silent. (player/local already has it.)
     implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.exoplayer.dash)
     implementation(libs.androidx.media3.ui)
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
 

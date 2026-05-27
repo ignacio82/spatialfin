@@ -25,10 +25,13 @@ android {
 
 dependencies {
     implementation(projects.data)
+    implementation(projects.fcast)
     implementation(libs.timber)
 
     // Media3
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.dash)
+    implementation(libs.androidx.media3.exoplayer.hls)
 
     // Hilt
     implementation(libs.hilt.android)

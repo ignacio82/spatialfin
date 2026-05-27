@@ -52,6 +52,8 @@ internal fun SecondaryControlsOrbiter(
     voiceAvailable: Boolean,
     voiceState: VoiceState,
     syncPlayActive: Boolean,
+    showSyncPlayButton: Boolean = true,
+    showCastCrewButton: Boolean = true,
 ) {
     Surface(
         shape = RoundedCornerShape(40.dp),
@@ -95,21 +97,25 @@ internal fun SecondaryControlsOrbiter(
                     modifier = Modifier.size(64.dp),
                 )
             }
-            IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_tv),
-                    contentDescription = "SyncPlay",
-                    tint = if (syncPlayActive) Color(0xFF4FC3F7) else Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
+            if (showSyncPlayButton) {
+                IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(100.dp)) {
+                    Icon(
+                        painterResource(CoreR.drawable.ic_tv),
+                        contentDescription = "SyncPlay",
+                        tint = if (syncPlayActive) Color(0xFF4FC3F7) else Color.White,
+                        modifier = Modifier.size(64.dp),
+                    )
+                }
             }
-            IconButton(onClick = onCastCrewClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_user),
-                    contentDescription = "Cast & crew",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
+            if (showCastCrewButton) {
+                IconButton(onClick = onCastCrewClick, modifier = Modifier.size(100.dp)) {
+                    Icon(
+                        painterResource(CoreR.drawable.ic_user),
+                        contentDescription = "Cast & crew",
+                        tint = Color.White,
+                        modifier = Modifier.size(64.dp),
+                    )
+                }
             }
             if (voiceControlEnabled) {
                 IconButton(onClick = onVoiceClick, modifier = Modifier.size(100.dp)) {

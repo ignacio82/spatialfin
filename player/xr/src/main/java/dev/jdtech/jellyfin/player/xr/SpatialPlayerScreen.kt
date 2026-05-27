@@ -2050,7 +2050,6 @@ fun SpatialPlayerScreen(
                             exit = fadeOut(),
                         ) {
                             ControlPanelUI(
-                                viewModel = viewModel,
                                 player = player,
                                 uiState = uiState,
                                 isPlaying = isPlaying,

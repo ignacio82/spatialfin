@@ -723,9 +723,10 @@ class LibassTextRenderer(
         }
 
         // Media3 with experimentalParseSubtitlesDuringExtraction(false) prepends
-        // "Dialogue: Start,End," to the raw Matroska block (which is 8 fields: Layer, Style, Name...).
-        // ass_process_chunk expects exactly 9 fields: ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text.
-        // We must strip "Dialogue: Start,End," decompress if needed, and PREPEND ReadOrder.
+        // "Dialogue: Start,End," to the raw Matroska block. The raw Matroska ASS block
+        // already contains 9 fields: ReadOrder, Layer, Style, Name, MarginL, MarginR,
+        // MarginV, Effect, Text — exactly what ass_process_chunk expects.
+        // We strip "Dialogue: Start,End," and pass the raw block through as-is.
         val payloadBytes: ByteArray
         if (bytes.size >= 9 &&
             bytes[0] == 'D'.code.toByte() && bytes[1] == 'i'.code.toByte() &&
@@ -745,19 +746,12 @@ class LibassTextRenderer(
             if (commaCount < 2) return ByteArray(0)
             
             val rawBlock = bytes.copyOfRange(bodyOffset, bytes.size)
-            val decompressed = zlibDecompressIfNeeded(rawBlock)
-            // Prepend ReadOrder to make it 9 fields
-            val readOrderPrefix = "${srtReadOrder++},".toByteArray(Charsets.UTF_8)
-            payloadBytes = ByteArray(readOrderPrefix.size + decompressed.size)
-            System.arraycopy(readOrderPrefix, 0, payloadBytes, 0, readOrderPrefix.size)
-            System.arraycopy(decompressed, 0, payloadBytes, readOrderPrefix.size, decompressed.size)
+            // Raw MKV block already has ReadOrder — do NOT prepend another one.
+            payloadBytes = zlibDecompressIfNeeded(rawBlock)
         } else {
-            // No "Dialogue:" prefix — raw MKV event block (8 fields).
-            val decompressed = zlibDecompressIfNeeded(bytes)
-            val readOrderPrefix = "${srtReadOrder++},".toByteArray(Charsets.UTF_8)
-            payloadBytes = ByteArray(readOrderPrefix.size + decompressed.size)
-            System.arraycopy(readOrderPrefix, 0, payloadBytes, 0, readOrderPrefix.size)
-            System.arraycopy(decompressed, 0, payloadBytes, readOrderPrefix.size, decompressed.size)
+            // No "Dialogue:" prefix — raw MKV event block (9 fields including ReadOrder).
+            // Do not prepend ReadOrder since it's already there.
+            payloadBytes = zlibDecompressIfNeeded(bytes)
         }
 
         val text = String(payloadBytes, Charsets.UTF_8)

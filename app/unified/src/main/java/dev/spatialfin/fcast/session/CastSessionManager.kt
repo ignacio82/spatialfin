@@ -1236,10 +1236,10 @@ class CastSessionManager @Inject constructor(
     /**
      * The Jellyfin SDK's [JellyfinRepository.getStreamUrl] returns a `/Videos/{id}/stream` URL
      * with no embedded authentication — the SDK normally adds an `X-Emby-Token` header on each
-     * request. FCast receivers play the URL via plain ExoPlayer / HTTP without those headers,
-     * so a stock `getStreamUrl` returns 401 Unauthorized at fetch time and the receiver
-     * silently fails to play. Append the access token as `api_key=` (Jellyfin recognises it
-     * as an alternative to the header) so the URL is self-authenticating end-to-end.
+     * request. Keep SpatialFin's outgoing URL self-authenticating because receiver capabilities
+     * vary by protocol and implementation; FCast now transports headers, but Google Cast,
+     * AirPlay, and older FCast targets cannot be assumed to do so. Append the access token as
+     * `api_key=` (Jellyfin recognises it as an alternative to the header).
      */
     private fun String.withJellyfinAuth(): String {
         val token = repository.getAccessToken().takeIf { !it.isNullOrBlank() } ?: return this

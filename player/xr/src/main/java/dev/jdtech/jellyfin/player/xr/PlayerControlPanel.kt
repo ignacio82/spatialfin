@@ -43,7 +43,6 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
  */
 @Composable
 internal fun ControlPanelUI(
-    viewModel: PlayerViewModel,
     player: Player,
     uiState: PlayerViewModel.UiState,
     isPlaying: Boolean,
@@ -58,6 +57,7 @@ internal fun ControlPanelUI(
     onChaptersClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
+    showChaptersButton: Boolean = true,
     onFCastClick: () -> Unit = {},
     fcastActive: Boolean = false,
 ) {
@@ -233,17 +233,19 @@ internal fun ControlPanelUI(
 
                 if (!isLocked) {
                     Spacer(Modifier.width(64.dp))
-                    TextButton(
-                        onClick = { onChaptersClick() },
-                        modifier = Modifier.height(112.dp),
-                    ) {
-                        Text(
-                            "Chapters",
-                            style = MaterialTheme.typography.displaySmall,
-                            color = Color.White,
-                        )
+                    if (showChaptersButton) {
+                        TextButton(
+                            onClick = { onChaptersClick() },
+                            modifier = Modifier.height(112.dp),
+                        ) {
+                            Text(
+                                "Chapters",
+                                style = MaterialTheme.typography.displaySmall,
+                                color = Color.White,
+                            )
+                        }
+                        Spacer(Modifier.width(32.dp))
                     }
-                    Spacer(Modifier.width(32.dp))
                     IconButton(
                         onClick = { player.seekForward(); resetAutoHide() },
                         modifier = Modifier.size(140.dp),

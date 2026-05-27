@@ -31,9 +31,6 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
@@ -42,7 +39,6 @@ import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.ui.PlayerView
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
@@ -52,7 +48,10 @@ import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
 import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
+import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamIntentCodec
+import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamSource
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
+import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
 import dev.jdtech.jellyfin.player.xr.LibassRenderer
 import dev.jdtech.jellyfin.player.xr.LibassTextRenderer
 import dev.spatialfin.R
@@ -63,15 +62,14 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
- * Minimal 2D ExoPlayer-only Activity that plays an arbitrary HTTP/HLS/DASH URL pushed in via
- * FCast. We deliberately avoid the immersive XR / Beam / TV player Activities here — those
+ * Flat ExoPlayer receiver Activity for an arbitrary progressive or adaptive FCast source. We
+ * deliberately avoid the library-backed Beam / TV player Activities here — those
  * assume a Jellyfin item ID and pull subtitles, recommendations, voice services etc. through
  * `SpatialPlayerScreen`. For an external URL all that machinery is meaningless and the surgery
  * to teach those screens about itemId-less playback is its own change.
  *
- * On Galaxy XR this Activity will appear as a 2D spatial panel by default (the XR shell
- * places non-spatial activities as flat panels). If the user wants Full Space cinema scale,
- * they can flip into Full Space via the existing space-mode toggle.
+ * On Galaxy XR this remains the 2D path when Full Space inbound playback is disabled or the
+ * request is split-A/V audio; ordinary video is routed to `XrFCastInboundPlayerActivity`.
  *
  * Lifecycle bridge: registers an [ExternalStreamPlayer] with [FCastInboundSession] so that
  * inbound FCast Pause/Resume/Seek/SetVolume/SetSpeed frames re-enter the running ExoPlayer,
@@ -95,6 +93,9 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     private var libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? = null
     private var splitAvRole: SplitAvRole? = null
     private var playbackTickerIntervalMs: Long = NORMAL_TICKER_INTERVAL_MS
+    private val mediaPreparer by lazy {
+        ExternalStreamMediaPreparer(this, parseSubtitlesDuringExtraction = false)
+    }
     
     private val libassBitmapState = MutableStateFlow<Bitmap?>(null)
     private val titleState = MutableStateFlow<String?>("FCast Media")
@@ -290,9 +291,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      * stream / the receiver can't resolve the item. Called from [applyIntent] every time a new
      * Play arrives so each cast in a single session gets its own font set.
      */
-    private fun preloadLibassFontsAsync(url: String) {
-        val deferred = libassFontsDeferred ?: CompletableDeferred<List<Pair<String, ByteArray>>>().also {
+    private fun preloadLibassFontsAsync(url: String?) {
+        val deferred = CompletableDeferred<List<Pair<String, ByteArray>>>().also {
             libassFontsDeferred = it
+        }
+        if (url == null) {
+            deferred.complete(emptyList())
+            return
         }
         val itemId = extractJellyfinItemId(url)
         if (itemId == null) {
@@ -458,20 +463,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
 
-        // CRUCIAL: subtitle transcoding off so raw ASS bytes survive to LibassTextRenderer.
-        // With Media3's default `experimentalParseSubtitlesDuringExtraction(true)`, the
-        // extractor converts ASS into `application/x-media3-cues` and libass never sees the
-        // original payload — anime subs render as plain white Arial.
-        val mediaSourceFactory = DefaultMediaSourceFactory(this)
-            .experimentalParseSubtitlesDuringExtraction(false)
-
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
 
         return ExoPlayer.Builder(this, renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(audioAttributes, true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
@@ -518,15 +515,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     }
 
     /**
-     * Read playback parameters from [newIntent] and (re)configure the ExoPlayer + audio-only
-     * overlay accordingly. Returns false if the intent is missing the required URL — caller is
+     * Read the serialized external request from [newIntent] and (re)configure ExoPlayer and the
+     * audio-only overlay accordingly. Returns false if no valid request is present; caller is
      * responsible for finishing in that case (only relevant from [onCreate]; an in-session
      * malformed intent just leaves the previous media playing).
      */
     private fun applyIntent(newIntent: Intent): Boolean {
-        val url = newIntent.getStringExtra(EXTRA_URL)
-        if (url.isNullOrBlank()) {
-            Timber.w("FCastInboundPlayerActivity intent without %s", EXTRA_URL)
+        val request = ExternalStreamIntentCodec.getRequest(newIntent)
+        if (request == null) {
+            Timber.w("FCastInboundPlayerActivity intent without valid external request")
             return false
         }
         // Kick off the embedded-font fetch ASAP — the LibassTextRenderer's font loader closure
@@ -534,14 +531,10 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         // resolves the manifest. That's typically 200ms+ from now, which is enough lead time
         // for a healthy Jellyfin server to round-trip `/MediaSources`. On slow networks the
         // closure still blocks but only the libass renderer thread sees that, never the UI.
-        preloadLibassFontsAsync(url)
-        val container = newIntent.getStringExtra(EXTRA_CONTAINER)
-        val startMs = newIntent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L)
-        val title = newIntent.getStringExtra(EXTRA_TITLE)
-        val newSplitAvRole = newIntent.getStringExtra(EXTRA_SPLIT_AV_ROLE)
-            ?.let { runCatching { SplitAvRole.valueOf(it) }.getOrNull() }
-        val splitAvCadenceHz = newIntent.getIntExtra(EXTRA_SPLIT_AV_CADENCE_HZ, -1)
-            .takeIf { it > 0 }
+        preloadLibassFontsAsync((request.source as? ExternalStreamSource.Url)?.url)
+        val title = request.title
+        val newSplitAvRole = request.splitAv?.role
+        val splitAvCadenceHz = request.splitAv?.syncCadenceHz
         splitAvRole = newSplitAvRole
         playbackTickerIntervalMs = if (newSplitAvRole != null) {
             val hz = splitAvCadenceHz ?: SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ
@@ -553,18 +546,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val exo = player ?: return false
 
         titleState.value = title
-        thumbnailUrlState.value = newIntent.getStringExtra(EXTRA_THUMBNAIL_URL)
+        thumbnailUrlState.value = request.thumbnailUrl
 
         // SpatialFin audio-info extension: render the sender-reported source codec and
         // transcoded flag below the title so the user knows whether the receiver is
         // direct-playing the original audio or playing a JF-rewritten AAC fallback.
-        val sourceAudioCodec = newIntent.getStringExtra(EXTRA_SOURCE_AUDIO_CODEC)
-        val audioTranscoded = if (newIntent.hasExtra(EXTRA_AUDIO_TRANSCODED)) {
-            newIntent.getBooleanExtra(EXTRA_AUDIO_TRANSCODED, false)
-        } else {
-            null
-        }
-        audioInfoLineState.value = formatSourceAudioInfo(sourceAudioCodec, audioTranscoded)
+        audioInfoLineState.value = formatSourceAudioInfo(request.sourceAudioCodec, request.audioTranscoded)
 
         if (newSplitAvRole == SplitAvRole.AUDIO) {
             exo.trackSelectionParameters = TrackSelectionParameters.Builder()
@@ -578,39 +565,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             isAudioOnlyState.value = false
         }
         Timber.i(
-            "FCast inbound: url=%s role=%s ticker=%dms",
-            url, newSplitAvRole?.name ?: "fullAv", playbackTickerIntervalMs,
+            "FCast inbound: source=%s role=%s ticker=%dms",
+            request.source::class.simpleName, newSplitAvRole?.name ?: "fullAv", playbackTickerIntervalMs,
         )
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMediaMetadata(
-                MediaMetadata.Builder().setTitle(title ?: "FCast media").build(),
-            )
-            .apply {
-                // Adaptive-manifest detection must win over the sender's `container` hint and
-                // must use media3's *canonical* MIME constants. The sender guesses HLS as
-                // `application/vnd.apple.mpegurl`, but DefaultMediaSourceFactory only maps the
-                // canonical `application/x-mpegURL` (MimeTypes.APPLICATION_M3U8) to
-                // HlsMediaSource — the vnd-variant falls through to ProgressiveMediaSource,
-                // which then can't parse the playlist (UnrecognizedInputFormatException ⇒
-                // groups=0 ⇒ silent split-A/V audio transcode). Inspect the path (sans query)
-                // so `…/master.m3u8?DeviceId=…` is still recognised.
-                val path = url.substringBefore('?').lowercase()
-                when {
-                    path.endsWith(".m3u8") -> setMimeType(MimeTypes.APPLICATION_M3U8)
-                    path.endsWith(".mpd") -> setMimeType(MimeTypes.APPLICATION_MPD)
-                    !container.isNullOrBlank() -> setMimeType(container)
-                    url.contains(".m3u8", ignoreCase = true) -> setMimeType(MimeTypes.APPLICATION_M3U8)
-                    url.contains(".mpd", ignoreCase = true) -> setMimeType(MimeTypes.APPLICATION_MPD)
-                }
-            }
-            .build()
 
         // Re-tune ExoPlayer to the new media. setMediaItem replaces the queue so the old
         // (calibration) URL stops playing immediately.
-        exo.setMediaItem(mediaItem, startMs)
-        exo.prepare()
+        runCatching { mediaPreparer.replace(exo, request) }
+            .onFailure { Timber.tag(TAG).w(it, "Unable to prepare FCast inbound source") }
+            .getOrElse { return false }
         // Split-A/V startup coordination: when we're the audio receiver, *load* the stream
         // but stay paused. The XR sender is still loading its own (video) master and is
         // multiple seconds behind us at this point. If we start playing now, the sender's
@@ -779,16 +742,6 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     }
 
     companion object {
-        const val EXTRA_URL: String = "fcast.in.url"
-        const val EXTRA_CONTAINER: String = "fcast.in.container"
-        const val EXTRA_START_MS: String = "fcast.in.start_ms"
-        const val EXTRA_TITLE: String = "fcast.in.title"
-        const val EXTRA_THUMBNAIL_URL: String = "fcast.in.thumbnail_url"
-        const val EXTRA_SPLIT_AV_ROLE: String = "fcast.in.split_av_role"
-        const val EXTRA_SPLIT_AV_CADENCE_HZ: String = "fcast.in.split_av_cadence_hz"
-        const val EXTRA_SOURCE_AUDIO_CODEC: String = "fcast.in.source_audio_codec"
-        const val EXTRA_AUDIO_TRANSCODED: String = "fcast.in.audio_transcoded"
-
         /** Upper bound on how long a v4 synchronized-start may defer playback. Beyond this
          *  the receiver resumes immediately — a scheduled start should be a few hundred ms
          *  out, so a larger value means a bad offset estimate; resume-now is the safe floor. */
@@ -809,28 +762,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
         fun createIntent(
             context: Context,
-            url: String,
-            container: String?,
-            startMs: Long = 0L,
-            title: String? = null,
-            thumbnailUrl: String? = null,
-            splitAv: SplitAvMetadata? = null,
-            sourceAudioCodec: String? = null,
-            audioTranscoded: Boolean? = null,
+            request: ExternalStreamRequest,
         ): Intent = Intent(context, FCastInboundPlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(EXTRA_URL, url)
-            container?.let { putExtra(EXTRA_CONTAINER, it) }
-            putExtra(EXTRA_START_MS, startMs)
-            title?.let { putExtra(EXTRA_TITLE, it) }
-            thumbnailUrl?.let { putExtra(EXTRA_THUMBNAIL_URL, it) }
-            splitAv?.let {
-                putExtra(EXTRA_SPLIT_AV_ROLE, it.role.name)
-                it.syncCadenceHz?.let { hz -> putExtra(EXTRA_SPLIT_AV_CADENCE_HZ, hz) }
-            }
-            sourceAudioCodec?.let { putExtra(EXTRA_SOURCE_AUDIO_CODEC, it) }
-            audioTranscoded?.let { putExtra(EXTRA_AUDIO_TRANSCODED, it) }
+            ExternalStreamIntentCodec.putRequest(this, request)
         }
     }
 }

@@ -443,6 +443,11 @@ class SettingsViewModel @Inject constructor(
                                                     options = R.array.cast_audio_fallback_options,
                                                     optionValues = R.array.cast_audio_fallback_values,
                                                 ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_incoming_full_space,
+                                                    descriptionStringRes = R.string.cast_incoming_full_space_summary,
+                                                    backendPreference = appPreferences.fcastReceiverAutopromote,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.settings_subtitles_system_captioning,
                                                     descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,

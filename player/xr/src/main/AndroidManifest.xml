@@ -23,6 +23,24 @@
                 android:name="androidx.xr.full_space_mode"
                 android:value="true" />
         </activity>
+
+        <activity
+            android:name="dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|keyboard|keyboardHidden|navigation"
+            android:autoRemoveFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:process=":xrplayer"
+            android:resizeableActivity="true"
+            android:enableOnBackInvokedCallback="true"
+            android:theme="@style/Theme.SpatialFin.XrPlayer">
+            <property
+                android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+                android:value="XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED" />
+            <meta-data
+                android:name="androidx.xr.full_space_mode"
+                android:value="true" />
+        </activity>
         
         <activity
             android:name="dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity"

@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundSession
 import dev.jdtech.jellyfin.fcast.receiver.FCastIngressRouter
+import dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerActivity
 import dev.jdtech.jellyfin.fcast.protocol.FCAST_DEFAULT_PORT
 import dev.jdtech.jellyfin.fcast.receiver.FCastReceiverService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -20,21 +21,13 @@ import timber.log.Timber
  * Glue between the `:fcast` receiver service and the rest of the app.
  *
  * - Builds an [ExternalStreamPlayer] that turns inbound FCast Play frames into Activity launches.
- * - On XR, when the autopromote pref is on, asks the active home Activity to enter Full Space
- *   before the inbound player Activity starts (best-effort; no-op if SpatialFin isn't foregrounded).
+ * - On XR, routes video into the dedicated Full Space inbound player when the preference allows.
  * - Registers the router with [FCastReceiverService] **before** the service is started.
  * - Starts/stops the foreground receiver service based on the `fcastReceiverEnabled` preference.
  *
  * Idempotent: [installOnAppStart] is safe to call multiple times.
  */
 object FCastReceiverWiring {
-
-    /**
-     * Hook installed by `UnifiedMainActivity` so the receiver can ask the active session to
-     * autopromote into Full Space when an inbound Play arrives. Null when no XR session is alive.
-     */
-    @Volatile
-    var requestEnterFullSpace: (() -> Unit)? = null
 
     fun installOnAppStart(
         context: Context,
@@ -44,9 +37,8 @@ object FCastReceiverWiring {
         // The router handed to the service builds an Activity-launching player.
         val player = IntentBasedExternalStreamPlayer(
             context = context.applicationContext,
-            shouldAutopromoteOnXr = {
-                deviceClass == DeviceClass.XR && prefs.getValue(prefs.fcastReceiverAutopromote)
-            },
+            deviceClass = deviceClass,
+            fullSpaceEnabled = { prefs.getValue(prefs.fcastReceiverAutopromote) },
         )
         val router: FCastIngressRouter = ExternalStreamIngressRouter(player)
         FCastReceiverService.setRouterProvider { router }
@@ -182,37 +174,34 @@ object FCastReceiverWiring {
 }
 
 /**
- * [ExternalStreamPlayer] that translates each FCast frame into an Intent against the simple
- * [FCastInboundPlayerActivity]. Pause/Resume/Stop/Seek are best-effort — the inbound Activity
- * owns its own ExoPlayer instance and we have no direct handle, so the v1 implementation
- * simply rejects those control actions until the Activity exposes a callback channel.
+ * [ExternalStreamPlayer] that translates each FCast frame into a flat or immersive Activity
+ * launch. Control frames route through [FCastInboundSession]; immersive playback registers a
+ * main-process proxy there through `FCastInboundBridgeService`.
  */
 private class IntentBasedExternalStreamPlayer(
     private val context: Context,
-    private val shouldAutopromoteOnXr: () -> Boolean,
+    private val deviceClass: DeviceClass,
+    private val fullSpaceEnabled: () -> Boolean,
 ) : ExternalStreamPlayer {
+    private var currentDestination: InboundPlaybackDestination? = null
 
     override fun play(request: ExternalStreamRequest): ExternalStreamPlayer.PlayResult {
         try {
-            // Best-effort autopromote: tell the active XR session to switch to Full Space
-            // before the new Activity is brought up. If the session isn't alive, this is
-            // a no-op and the inbound player just launches into whatever space is current.
-            if (shouldAutopromoteOnXr()) {
-                runCatching { FCastReceiverWiring.requestEnterFullSpace?.invoke() }
-                    .onFailure { Timber.w(it, "FCast autopromote failed") }
-            }
-
-            val intent = FCastInboundPlayerActivity.createIntent(
-                context = context,
-                url = request.url,
-                container = request.container,
-                startMs = (request.startPositionSeconds * 1000.0).toLong(),
-                title = request.title,
-                thumbnailUrl = request.thumbnailUrl,
-                splitAv = request.splitAv,
-                sourceAudioCodec = request.sourceAudioCodec,
-                audioTranscoded = request.audioTranscoded,
+            val destination = InboundPlaybackRoutingPolicy.select(
+                deviceClass = deviceClass,
+                fullSpaceEnabled = fullSpaceEnabled(),
+                request = request,
             )
+            val intent = when (destination) {
+                InboundPlaybackDestination.FLAT ->
+                    FCastInboundPlayerActivity.createIntent(context, request)
+                InboundPlaybackDestination.IMMERSIVE_XR ->
+                    XrFCastInboundPlayerActivity.createIntent(context, request)
+            }
+            if (currentDestination != null && currentDestination != destination) {
+                FCastInboundSession.suspendControlForReplacement()
+            }
+            currentDestination = destination
             context.startActivity(intent)
             return ExternalStreamPlayer.PlayResult.Accepted
         } catch (e: Exception) {

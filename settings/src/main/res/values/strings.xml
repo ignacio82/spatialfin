@@ -228,6 +228,8 @@
          jargon in the labels; the descriptions explain the trade-off. -->
     <string name="cast_audio_fallback">Cast audio</string>
     <string name="cast_audio_fallback_summary">How SpatialFin picks the audio format sent to your receiver.</string>
+    <string name="cast_incoming_full_space">Play incoming casts in Full Space</string>
+    <string name="cast_incoming_full_space_summary">On XR devices, video received from Grayjay or another FCast sender opens in the immersive theater player.</string>
     <string-array name="cast_audio_fallback_options">
         <item>Best quality (auto-fallback)</item>
         <item>Always direct play (skip transcode)</item>

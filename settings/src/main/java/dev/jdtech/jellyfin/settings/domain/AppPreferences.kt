@@ -119,8 +119,8 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
     val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
     val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
-    // When an inbound FCast Play arrives in Home Space, request Full Space automatically. Off
-    // means stay in the current space and let the user pick.
+    // On XR, route an inbound FCast video Play into the dedicated Full Space receiver player.
+    // Off retains flat inbound playback. Non-XR and split audio receiver playback ignore this.
     val fcastReceiverAutopromote = Preference("pref_fcast_receiver_autopromote", true)
     // Last receiver the user picked from the global cast picker. Stored as "host:port" so the
     // picker can pre-select it on next open. Session-only by intent: we never auto-reconnect on

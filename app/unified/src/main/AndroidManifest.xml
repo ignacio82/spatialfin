@@ -153,6 +153,10 @@
             android:name="dev.spatialfin.fcast.session.SplitAvBridgeService"
             android:exported="false" />
 
+        <service
+            android:name="dev.spatialfin.fcast.FCastInboundBridgeService"
+            android:exported="false" />
+
         <!-- Debug-only launcher Activity for split-A/V iteration via `adb shell am start`.
              The class no-ops on release builds (BuildConfig.DEBUG gate) but the manifest entry
              stays universal — Android does not let a release-only entry coexist with a debug-
