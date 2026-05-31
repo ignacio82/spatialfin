@@ -223,7 +223,8 @@ class PlaylistManager @Inject internal constructor(
                 videoUrl = item.videoUrl,
                 audioUrl = null,
                 videoMimeType = null,
-                audioMimeType = null
+                audioMimeType = null,
+                isLive = item.isLive
             )
             // Add custom field to store pluginId in the PlayerItem? Wait, we can just use intent extras.
             // Actually, we shouldn't resolve here, it might be slow. We'll resolve in `resolveUniversalItem`.
@@ -233,7 +234,7 @@ class PlaylistManager @Inject internal constructor(
 
     suspend fun resolveUniversalItem(playerItem: PlayerItem, pluginId: String): PlayerItem {
         val resolved = try {
-            pluginContentRepository.getVideoUrl(pluginId, playerItem.videoUrl ?: playerItem.mediaSourceUri)
+            pluginContentRepository.getVideoUrl(pluginId, playerItem.videoUrl ?: playerItem.mediaSourceUri, playerItem.isLive)
         } catch (e: Exception) {
             android.util.Log.e("CRITICAL_PLAYLIST", "Exception during URL resolution", e)
             null
@@ -534,6 +535,7 @@ class PlaylistManager @Inject internal constructor(
             },
             seriesName = if (this is SpatialFinEpisode) seriesName else null,
             seriesId = if (this is SpatialFinEpisode) seriesId else null,
+            isLive = if (this is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) this.universalMediaItem.isLive else false
         )
     }
 

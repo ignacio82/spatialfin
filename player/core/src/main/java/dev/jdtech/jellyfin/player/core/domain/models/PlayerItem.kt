@@ -41,4 +41,5 @@ data class PlayerItem(
     val audioUrl: String? = null,
     val videoMimeType: String? = null,
     val audioMimeType: String? = null,
+    val isLive: Boolean = false
 ) : Parcelable

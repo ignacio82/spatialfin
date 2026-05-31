@@ -72,11 +72,13 @@ class PluginContentRepository @Inject constructor(
         )
     }
 
-    suspend fun getVideoUrl(pluginId: String, videoUrl: String): ResolvedVideoUrl? {
+    suspend fun getVideoUrl(pluginId: String, videoUrl: String, isLive: Boolean = false): ResolvedVideoUrl? {
         return try {
             val runtime = pluginClient.runPlugin(pluginId).getOrNull() ?: return null
             runtime.evaluate("globalThis.finalResult = null;")
-            runtime.evaluate(buildResolveScript(json.encodeToString(videoUrl)))
+            
+            val videoUrlJson = json.encodeToString(videoUrl)
+            runtime.evaluate(buildResolveScript(videoUrlJson, isLive))
             val result = awaitResult(runtime)
             runtime.close()
 
@@ -131,22 +133,29 @@ class PluginContentRepository @Inject constructor(
         return "ERROR: Timeout waiting for async result"
     }
 
-    private fun buildResolveScript(videoUrlJson: String): String {
+    private fun buildResolveScript(videoUrlJson: String, isLive: Boolean = false): String {
         return """
             (async function() {
                 try {
                     const videoUrlStr = $videoUrlJson;
-                    console.log("JS_DEBUG: Resolving plugin media URL for: " + videoUrlStr);
+                    const isLiveItem = $isLive;
+                    console.log("JS_DEBUG: Resolving plugin media URL for: " + videoUrlStr + " (isLive=" + isLiveItem + ")");
                     if (typeof source === "undefined" || source === null) {
                         globalThis.finalResult = "ERROR: source is undefined or null";
                         return;
                     }
 
-                    const fn = source.resolveVideoUrl ||
-                        source.getVideoUrl ||
-                        source.getContentDetails ||
-                        source.getVideo ||
-                        source.getVideoDetails;
+                    let fn = null;
+                    if (isLiveItem && source.getLive) {
+                        fn = source.getLive;
+                    } else {
+                        fn = source.resolveVideoUrl ||
+                             source.getVideoUrl ||
+                             source.getContentDetails ||
+                             source.getVideo ||
+                             source.getVideoDetails;
+                    }
+
                     if (typeof fn !== "function") {
                         globalThis.finalResult = "ERROR: No resolver function found";
                         return;
