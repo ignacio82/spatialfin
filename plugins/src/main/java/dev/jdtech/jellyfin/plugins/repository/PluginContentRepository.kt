@@ -161,10 +161,19 @@ class PluginContentRepository @Inject constructor(
                         return;
                     }
 
-                    const promise = fn.call(source, videoUrlStr);
-                    const resolved = promise && typeof promise.then === "function" ? await promise : promise;
-                    const normalized = await normalizeResolvedVideo(resolved);
-                    if (normalized) {
+                    let promise = fn.call(source, videoUrlStr);
+                    let resolved = promise && typeof promise.then === "function" ? await promise : promise;
+                    let normalized = await normalizeResolvedVideo(resolved);
+                    
+                    // Fallback to getLive if the item wasn't marked as live but the video result lacked media streams
+                    if ((!normalized || normalized.url === videoUrlStr || normalized.mimeType === null) && !isLiveItem && typeof source.getLive === "function") {
+                        console.log("JS_DEBUG: Normal resolver didn't yield streams, falling back to getLive");
+                        promise = source.getLive(videoUrlStr);
+                        resolved = promise && typeof promise.then === "function" ? await promise : promise;
+                        normalized = await normalizeResolvedVideo(resolved);
+                    }
+
+                    if (normalized && normalized.url && normalized.url !== videoUrlStr) {
                         globalThis.finalResult = JSON.stringify(normalized);
                     } else {
                         globalThis.finalResult = "ERROR: Resolver result did not include a playable URL";
