@@ -150,6 +150,12 @@ internal val BEAM_SETTINGS_CATEGORIES = listOf(
         "download mobile data roaming network",
     ),
     BeamSettingsCategoryDef(
+        "plugins",
+        "Sources",
+        "Universal source plugins and extensions",
+        "plugin universal source script extension",
+    ),
+    BeamSettingsCategoryDef(
         "security",
         "Security",
         "App lock, biometrics, encryption",
@@ -206,12 +212,12 @@ private fun matchesSearch(category: BeamSettingsCategoryDef, query: String): Boo
         category.subtitle.lowercase().contains(q) ||
         category.keywords.lowercase().contains(q)
 }
-
 @Composable
 fun BeamSettingsScreen(
     contentPadding: PaddingValues,
     appPreferences: AppPreferences,
     onOpenCompanion: () -> Unit,
+    onOpenPlugins: () -> Unit,
 ) {
     var preferredAudioLanguage by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.preferredAudioLanguage).orEmpty())
@@ -380,7 +386,13 @@ fun BeamSettingsScreen(
                 BeamSettingsCategoryCard(
                     title = cat.title,
                     subtitle = cat.subtitle,
-                    onClick = { selectedCategory = cat.key },
+                    onClick = {
+                        if (cat.key == "plugins") {
+                            onOpenPlugins()
+                        } else {
+                            selectedCategory = cat.key
+                        }
+                    },
                 )
             }
         } else if (searchQuery.isNotBlank() && matchingCategories.isEmpty()) {

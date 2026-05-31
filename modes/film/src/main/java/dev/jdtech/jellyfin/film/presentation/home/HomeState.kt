@@ -13,7 +13,9 @@ data class HomeState(
     val suggestionsSection: HomeItem.Suggestions? = null,
     val resumeSection: HomeItem.Section? = null,
     val nextUpSection: HomeItem.Section? = null,
+    val universalPluginSections: ImmutableList<HomeItem.Section> = persistentListOf(),
     val offlineLibrarySections: ImmutableList<HomeItem.Section> = persistentListOf(),
+
     val views: ImmutableList<HomeItem.ViewItem> = persistentListOf(),
     val isOfflineMode: Boolean = false,
     val isConnectionDegraded: Boolean = false,

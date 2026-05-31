@@ -142,8 +142,12 @@ class MultitaskPlayerActivity : ComponentActivity() {
         val itemIdString = intent.extras?.getString("itemId")
         val localMediaId = intent.extras?.getLong("localMediaId")?.takeIf { it > 0L }
         val networkVideoId = intent.extras?.getString("networkVideoId")
+        val universalPluginId = intent.extras?.getString("universalPluginId")
+        val universalItemId = intent.extras?.getString("universalItemId")
+        val universalVideoUrl = intent.extras?.getString("universalVideoUrl")
+        val universalTitle = intent.extras?.getString("universalTitle")
 
-        if (itemIdString == null && localMediaId == null && networkVideoId == null) {
+        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null) {
             finish()
             return
         }
@@ -177,6 +181,13 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 startFromBeginning = startFromBeginning,
                 mediaSourceIndex = mediaSourceIndex,
                 maxBitrate = maxBitrate,
+            )
+        } else if (universalVideoUrl != null && universalItemId != null && universalPluginId != null) {
+            viewModel.initializePlayerForUniversal(
+                pluginId = universalPluginId,
+                itemId = universalItemId,
+                videoUrl = universalVideoUrl,
+                title = universalTitle ?: "External Video"
             )
         }
 

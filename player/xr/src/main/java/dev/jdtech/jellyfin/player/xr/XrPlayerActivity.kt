@@ -140,6 +140,23 @@ class XrPlayerActivity : AppCompatActivity() {
             }
         }
 
+        fun createIntentForUniversalMedia(
+            context: android.content.Context,
+            pluginId: String,
+            itemId: String,
+            videoUrl: String,
+            title: String,
+            stereoMode: String = "mono",
+        ): android.content.Intent {
+            return android.content.Intent(context, XrPlayerActivity::class.java).apply {
+                putExtra("universalPluginId", pluginId)
+                putExtra("universalItemId", itemId)
+                putExtra("universalVideoUrl", videoUrl)
+                putExtra("universalTitle", title)
+                putExtra("stereoMode", stereoMode)
+            }
+        }
+
         fun createIntentForItem(
             context: android.content.Context,
             item: SpatialFinItem,
@@ -180,8 +197,13 @@ class XrPlayerActivity : AppCompatActivity() {
         val itemIdString = extras?.getString("itemId")
         val localMediaId = extras?.getLong("localMediaId")?.takeIf { it > 0L }
         val networkVideoId = extras?.getString("networkVideoId")
-        if (itemIdString == null && localMediaId == null && networkVideoId == null) {
-            Timber.w("Player launch rejected: missing itemId/localMediaId/networkVideoId extras")
+        val universalPluginId = extras?.getString("universalPluginId")
+        val universalItemId = extras?.getString("universalItemId")
+        val universalVideoUrl = extras?.getString("universalVideoUrl")
+        val universalTitle = extras?.getString("universalTitle")
+
+        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null) {
+            Timber.w("Player launch rejected: missing itemId/localMediaId/networkVideoId/universalVideoUrl extras")
             finish()
             return
         }
@@ -281,7 +303,7 @@ class XrPlayerActivity : AppCompatActivity() {
         val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
-                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this, dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )
@@ -491,6 +513,10 @@ class XrPlayerActivity : AppCompatActivity() {
                         itemId = itemId,
                         localMediaId = localMediaId,
                         networkVideoId = networkVideoId,
+                        universalPluginId = universalPluginId,
+                        universalItemId = universalItemId,
+                        universalVideoUrl = universalVideoUrl,
+                        universalTitle = universalTitle,
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,

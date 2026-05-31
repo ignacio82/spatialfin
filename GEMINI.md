@@ -125,8 +125,10 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 | `:core` | Shared UI components, LLM model manager, download workers, sync workers. |
 | `:settings` | DataStore-based preferences (`AppPreferences`), voice telemetry, smart-language settings. |
 | `:setup` | Server onboarding, login, address selection. |
+| `:plugins` | Universal source plugin support (compatible with common formats); clean-room JS engine (`quickjs-kt`) + bridge interfaces (`Http`, `DOMParser`, `Utilities`). |
 
-**All app source lives under `app/unified/src/main/java`.** The former `app/xr/`, `app/tv/`, `app/beam/` trees have been consolidated into `:app:unified` (single source set, no staging task). Package layout inside `src/main/java`:
+**All app source lives under `app/unified/src/main/java`.**
+ The former `app/xr/`, `app/tv/`, `app/beam/` trees have been consolidated into `:app:unified` (single source set, no staging task). Package layout inside `src/main/java`:
 
 - `dev.jdtech.jellyfin.*` — the XR code (film screens, player XR helpers, voice composables).
 - `dev.spatialfin.presentation.theme.*` — shared XR theme / spacings.
@@ -233,7 +235,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | FCast sender (cast out) | `fcast/.../sender/FCastSenderClient.kt`, `FCastCastingController.kt`, `PlayMessageBuilder.kt` | coroutine TCP client + lifecycle wrapper |
 | FCast discovery + advertise | `fcast/.../discovery/FCastDiscovery.kt`, `FCastReceiverAdvertiser.kt` | mDNS browse / register on `_fcast._tcp` |
 | FCast receiver (cast in) | `fcast/.../receiver/FCastReceiverServer.kt`, `FCastReceiverSession.kt`, `FCastReceiverService.kt` | foreground service + per-sender sessions |
-| FCast→player adapters | `fcast/.../receiver/FCastIngressRouter.kt`, `ExternalStream.kt`, `FCastInboundBridgeIpc.kt`; `player/core/.../external/ExternalStreamMediaPreparer.kt` | `ExternalStreamSource.Url` / `Inline` contract and transient request intent codec. Inline DASH (required for Grayjay split-stream casting) and absolute-child inline HLS are supported; malformed or unsupported inline payloads are rejected to the sender. Shared Media3 preparation applies headers to manifest/segment loads and applies initial position, speed, and volume without persisting header values. |
+| FCast→player adapters | `fcast/.../receiver/FCastIngressRouter.kt`, `ExternalStream.kt`, `FCastInboundBridgeIpc.kt`; `player/core/.../external/ExternalStreamMediaPreparer.kt` | `ExternalStreamSource.Url` / `Inline` contract and transient request intent codec. Inline DASH (required for some split-stream casting) and absolute-child inline HLS are supported; malformed or unsupported inline payloads are rejected to the sender. Shared Media3 preparation applies headers to manifest/segment loads and applies initial position, speed, and volume without persisting header values. |
 | FCast inbound flat player Activity | `app/unified/.../fcast/FCastInboundPlayerActivity.kt` | 2D fallback receiver for non-XR, disabled Full Space routing, and split-A/V audio. Uses shared external media preparation plus the existing libass and embedded-font behavior. |
 | FCast inbound immersive player Activity | `player/xr/.../XrFCastInboundPlayerActivity.kt`, `XrFCastInboundPlayerScreen.kt` | Dedicated `:xrplayer` Full Space theater for inbound external video. Owns a direct activity-space `SurfaceEntity`, external-only controls, replacement `Play` intents, and libass/font support. Do not reuse `SpatialPlayerScreen` or add Jellyfin-only recommendations, SyncPlay, favorites, subtitle search, or playback-progress writes to this flow. |
 | FCast inbound routing + XR bridge | `app/unified/.../fcast/FCastReceiverWiring.kt`, `InboundPlaybackRoutingPolicy.kt`, `FCastInboundBridgeService.kt` | XR + `fcastReceiverAutopromote=true` + non-audio video launches the immersive receiver; preference-off, non-XR, and `SplitAvRole.AUDIO` launch flat playback. The main-process bridge proxies FCast sender commands and JSON state updates across the `:xrplayer` boundary while retaining pre-bind seek/resume behavior. |
@@ -247,6 +249,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Preferences | `settings/.../domain/AppPreferences.kt` | DataStore facade |
 | Voice telemetry | `settings/.../voice/VoiceTelemetryStore.kt` | local telemetry |
 | Companion (QR import) | `app/unified/.../UnifiedMainActivity.kt` (sync glue) | one-shot importer |
+| Universal Plugin Engine | `plugins/.../engine/PluginEngine.kt` (+ bridges) | engine + bridges |
 | Smart language ranking | `settings/.../voice/SmartLanguageSettings.kt` + per-series overrides | preference + cache |
 
 ---

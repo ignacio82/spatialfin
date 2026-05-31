@@ -96,4 +96,5 @@ enum class SpatialFinSourceType {
     REMOTE,
     LOCAL,
     NETWORK,
+    UNIVERSAL,
 }

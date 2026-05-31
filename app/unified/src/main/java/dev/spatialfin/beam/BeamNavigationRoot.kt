@@ -31,7 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDownload
-import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lan
@@ -122,6 +122,8 @@ private enum class BeamRoute {
     Network,
     NetworkShare,
     Downloads,
+    Plugins,
+    PluginBrowse,
     Settings,
 }
 
@@ -136,6 +138,7 @@ private val primaryTabs =
         BeamTab(BeamRoute.Home, "Home", Icons.Rounded.Home),
         BeamTab(BeamRoute.Search, "Search", Icons.Rounded.Search),
         BeamTab(BeamRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
+        BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
         BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
         BeamTab(BeamRoute.Users, "Users", Icons.Rounded.People),
         BeamTab(BeamRoute.Local, "Local", Icons.Rounded.Folder),
@@ -202,6 +205,7 @@ fun BeamNavigationRoot(
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
@@ -524,7 +528,25 @@ fun BeamNavigationRoot(
                                 detailBackRoute = BeamRoute.Home
                                 currentRoute = BeamRoute.Detail
                             },
+                            onOpenPluginBrowse = { pluginId ->
+                                selectedPluginId = pluginId
+                                currentRoute = BeamRoute.PluginBrowse
+                            }
                         )
+                    }
+                    currentRoute == BeamRoute.PluginBrowse -> {
+                        val pluginId = selectedPluginId
+                        if (pluginId == null) {
+                            currentRoute = BeamRoute.Home
+                        } else {
+                            dev.jdtech.jellyfin.plugins.ui.PluginBrowseScreen(
+                                pluginId = pluginId,
+                                onBack = { currentRoute = BeamRoute.Home },
+                                onItemClick = { item ->
+                                    navigation.launchItem(item)
+                                }
+                            )
+                        }
                     }
                     currentRoute == BeamRoute.Search -> {
                         BeamSearchScreen(
@@ -738,13 +760,23 @@ fun BeamNavigationRoot(
                 )
                     }
                     currentRoute == BeamRoute.Settings -> {
-                BeamSettingsScreen(
-                    contentPadding = PaddingValues(0.dp),
-                    appPreferences = appPreferences,
-                    onOpenCompanion = { currentRoute = BeamRoute.Companion },
-                )
+                        BeamSettingsScreen(
+                            contentPadding = PaddingValues(0.dp),
+                            appPreferences = appPreferences,
+                            onOpenCompanion = { currentRoute = BeamRoute.Welcome },
+                            onOpenPlugins = { currentRoute = BeamRoute.Plugins },
+                        )
+                    }
+                    currentRoute == BeamRoute.Plugins -> {
+                        dev.jdtech.jellyfin.plugins.ui.PluginSettingsScreen(
+                            onPluginClick = { pluginId ->
+                                selectedPluginId = pluginId
+                                currentRoute = BeamRoute.PluginBrowse
+                            }
+                        )
                     }
                     currentRoute == BeamRoute.NetworkShare -> {
+
                 val shareId = selectedNetworkShareId
                 if (shareId == null) {
                     currentRoute = BeamRoute.Network
@@ -1247,9 +1279,12 @@ private fun BeamSignedInShell(
         BeamRoute.Person,
         BeamRoute.Network,
         BeamRoute.Downloads,
+        BeamRoute.Plugins,
+        BeamRoute.PluginBrowse,
         BeamRoute.Settings,
         BeamRoute.NetworkShare ->
             Unit
+
         BeamRoute.Welcome -> Unit
     }
 }

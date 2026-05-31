@@ -243,6 +243,10 @@ fun SpatialPlayerScreen(
     itemId: UUID?,
     localMediaId: Long?,
     networkVideoId: String? = null,
+    universalPluginId: String? = null,
+    universalItemId: String? = null,
+    universalVideoUrl: String? = null,
+    universalTitle: String? = null,
     itemKind: String,
     startFromBeginning: Boolean,
     mediaSourceIndex: Int? = null,
@@ -1653,6 +1657,14 @@ fun SpatialPlayerScreen(
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
+                    )
+                }
+                universalVideoUrl != null && universalItemId != null && universalPluginId != null -> {
+                    viewModel.initializePlayerForUniversal(
+                        pluginId = universalPluginId,
+                        itemId = universalItemId,
+                        videoUrl = universalVideoUrl,
+                        title = universalTitle ?: "External Video"
                     )
                 }
                 else -> {

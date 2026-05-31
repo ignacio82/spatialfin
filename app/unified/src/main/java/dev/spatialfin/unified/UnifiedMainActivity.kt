@@ -71,6 +71,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
@@ -530,6 +531,18 @@ class UnifiedMainActivity : AppCompatActivity() {
                         return false
                     }
                     return when (item) {
+                        is UniversalSpatialFinItem -> {
+                            context.startActivity(
+                                XrPlayerActivity.createIntentForUniversalMedia(
+                                    context = context,
+                                    pluginId = item.universalMediaItem.pluginId,
+                                    itemId = item.universalMediaItem.id,
+                                    videoUrl = item.universalMediaItem.videoUrl,
+                                    title = item.name
+                                )
+                            )
+                            true
+                        }
                         is SpatialFinMovie -> {
                             navController.navigate(MovieRoute(movieId = item.id.toString()))
                             true

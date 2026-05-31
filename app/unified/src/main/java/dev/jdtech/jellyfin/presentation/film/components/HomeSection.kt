@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,14 +30,23 @@ fun HomeSection(
     itemsPadding: PaddingValues,
     onAction: (HomeAction) -> Unit,
     modifier: Modifier = Modifier,
+    onSeeAll: (() -> Unit)? = null,
 ) {
     Column(modifier = modifier) {
-        Box(modifier = Modifier.fillMaxWidth().height(42.dp).padding(itemsPadding)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(42.dp).padding(itemsPadding),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = section.name.asString(),
-                modifier = Modifier.align(Alignment.CenterStart),
                 style = MaterialTheme.typography.titleMedium,
             )
+            if (onSeeAll != null) {
+                androidx.compose.material3.TextButton(onClick = onSeeAll) {
+                    Text("See All")
+                }
+            }
         }
         Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
         LazyRow(

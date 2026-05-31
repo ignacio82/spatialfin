@@ -210,6 +210,20 @@ class BeamPlayerActivity : AppCompatActivity() {
                 putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
             }
 
+        fun createIntentForUniversalMedia(
+            context: Context,
+            pluginId: String,
+            itemId: String,
+            videoUrl: String,
+            title: String,
+        ): Intent =
+            Intent(context, BeamPlayerActivity::class.java).apply {
+                putExtra("universalPluginId", pluginId)
+                putExtra("universalItemId", itemId)
+                putExtra("universalVideoUrl", videoUrl)
+                putExtra("universalTitle", title)
+            }
+
         fun createIntentForSpatialItem(
             context: Context,
             item: SpatialFinItem,
@@ -316,100 +330,12 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Timber.e("BeamPlayerActivity onCreate started")
         enableEdgeToEdge()
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         applyImmersiveSystemBars()
 
-        val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
-        val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
-        val itemKind = intent.getStringExtra(EXTRA_ITEM_KIND)
-        val localMediaId = intent.getLongExtra(EXTRA_LOCAL_MEDIA_ID, 0L).takeIf { it > 0L }
-        val networkVideoId = intent.getStringExtra(EXTRA_NETWORK_VIDEO_ID)
-        val mediaSourceIndex =
-            if (intent.hasExtra(EXTRA_MEDIA_SOURCE_INDEX)) {
-                intent.getIntExtra(EXTRA_MEDIA_SOURCE_INDEX, -1).takeIf { it >= 0 }
-            } else {
-                null
-            }
-        val maxBitrate =
-            if (intent.hasExtra(EXTRA_MAX_BITRATE)) {
-                intent.getLongExtra(EXTRA_MAX_BITRATE, 0L).takeIf { it > 0L }
-            } else {
-                null
-            }
-        val startPositionMs =
-            if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
-                intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).takeIf { it > 0L }
-            } else {
-                null
-            }
-
-        Timber.i(
-            "BeamPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s intent=%s",
-            itemIdString,
-            itemKind,
-            localMediaId,
-            networkVideoId,
-            startFromBeginning,
-            mediaSourceIndex,
-            maxBitrate,
-            intent.extras,
-        )
-
-        val itemIdUuid = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        // Fetch embedded ASS fonts off the main thread. The libass renderer's font loader
-        // closure is invoked on the Media3 text-renderer thread at track init, so it can
-        // block on this deferred without freezing the UI. Previously this was a
-        // runBlocking(IO) call in onCreate, which triggered a 5+s ANR on video start
-        // because getMediaSources + per-attachment fetches were chained synchronously.
-        val libassFontsDeferred: CompletableDeferred<List<Pair<String, ByteArray>>>? =
-            itemIdUuid?.let { CompletableDeferred() }
-        if (itemIdUuid != null && libassFontsDeferred != null) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val fonts = runCatching { loadLibassFonts(itemIdUuid, maxBitrate) }
-                    .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
-                    .getOrDefault(emptyList())
-                libassFontsDeferred.complete(fonts)
-            }
-        }
-        val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
-            libassFontsDeferred?.let { deferred -> { runBlocking { deferred.await() } } }
-
-        replacePlayerForBeamSubtitles(libassFontLoader)
-
-        when {
-            localMediaId != null -> {
-                viewModel.initializeLocalPlayer(
-                    localMediaId = localMediaId,
-                    startFromBeginning = startFromBeginning,
-                )
-            }
-            !networkVideoId.isNullOrBlank() -> {
-                viewModel.initializeNetworkPlayer(
-                    networkVideoId = networkVideoId,
-                    startFromBeginning = startFromBeginning,
-                )
-            }
-            !itemIdString.isNullOrBlank() && !itemKind.isNullOrBlank() -> {
-                val itemId = runCatching { UUID.fromString(itemIdString) }.getOrNull()
-                if (itemId == null) {
-                    finish()
-                    return
-                }
-                viewModel.initializePlayer(
-                    itemId = itemId,
-                    itemKind = itemKind,
-                    startFromBeginning = startFromBeginning,
-                    mediaSourceIndex = mediaSourceIndex,
-                    maxBitrate = maxBitrate,
-                    startPositionMs = startPositionMs,
-                )
-            }
-            else -> {
-                finish()
-                return
-            }
-        }
+        applyIntent(intent)
 
         updatePipParams()
 
@@ -451,6 +377,120 @@ class BeamPlayerActivity : AppCompatActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyIntent(intent)
+    }
+
+    private fun applyIntent(intent: Intent) {
+        val startFromBeginning = intent.getBooleanExtra(EXTRA_START_FROM_BEGINNING, false)
+        val itemIdString = intent.getStringExtra(EXTRA_ITEM_ID)
+        val itemKind = intent.getStringExtra(EXTRA_ITEM_KIND)
+        val localMediaId = intent.getLongExtra(EXTRA_LOCAL_MEDIA_ID, 0L).takeIf { it > 0L }
+        val networkVideoId = intent.getStringExtra(EXTRA_NETWORK_VIDEO_ID)
+        val mediaSourceIndex =
+            if (intent.hasExtra(EXTRA_MEDIA_SOURCE_INDEX)) {
+                intent.getIntExtra(EXTRA_MEDIA_SOURCE_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val maxBitrate =
+            if (intent.hasExtra(EXTRA_MAX_BITRATE)) {
+                intent.getLongExtra(EXTRA_MAX_BITRATE, 0L).takeIf { it > 0L }
+            } else {
+                null
+            }
+        val startPositionMs =
+            if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
+                intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).takeIf { it > 0L }
+            } else {
+                null
+            }
+        val universalPluginId = intent.getStringExtra("universalPluginId")
+        val universalItemId = intent.getStringExtra("universalItemId")
+        val universalVideoUrl = intent.getStringExtra("universalVideoUrl")
+        val universalTitle = intent.getStringExtra("universalTitle")
+
+        Timber.e(
+            "BeamPlayerActivity applyIntent: universalPluginId=%s universalItemId=%s universalVideoUrl=%s universalTitle=%s",
+            universalPluginId,
+            universalItemId,
+            universalVideoUrl,
+            universalTitle
+        )
+
+        Timber.i(
+            "BeamPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s intent=%s",
+            itemIdString,
+            itemKind,
+            localMediaId,
+            networkVideoId,
+            startFromBeginning,
+            mediaSourceIndex,
+            maxBitrate,
+            intent.extras,
+        )
+
+        val itemIdUuid = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        
+        if (itemIdUuid != null) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val fonts = runCatching { loadLibassFonts(itemIdUuid, maxBitrate) }
+                    .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
+                    .getOrDefault(emptyList())
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    replacePlayerForBeamSubtitles { fonts }
+                }
+            }
+        } else {
+            replacePlayerForBeamSubtitles(null)
+        }
+
+        when {
+            localMediaId != null -> {
+                viewModel.initializeLocalPlayer(
+                    localMediaId = localMediaId,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
+            !networkVideoId.isNullOrBlank() -> {
+                viewModel.initializeNetworkPlayer(
+                    networkVideoId = networkVideoId,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
+            !universalPluginId.isNullOrBlank() && !universalItemId.isNullOrBlank() && !universalVideoUrl.isNullOrBlank() -> {
+                Timber.e("BeamPlayerActivity: Launching Universal Media - plugin=%s id=%s", universalPluginId, universalItemId)
+                viewModel.initializePlayerForUniversal(
+                    pluginId = universalPluginId,
+                    itemId = universalItemId,
+                    videoUrl = universalVideoUrl,
+                    title = universalTitle ?: "Unknown",
+                )
+            }
+            !itemIdString.isNullOrBlank() && !itemKind.isNullOrBlank() -> {
+                val itemId = runCatching { UUID.fromString(itemIdString) }.getOrNull()
+                if (itemId == null) {
+                    finish()
+                    return
+                }
+                viewModel.initializePlayer(
+                    itemId = itemId,
+                    itemKind = itemKind,
+                    startFromBeginning = startFromBeginning,
+                    mediaSourceIndex = mediaSourceIndex,
+                    maxBitrate = maxBitrate,
+                    startPositionMs = startPositionMs,
+                )
+            }
+            else -> {
+                finish()
+                return
+            }
+        }
+    }
+
     /**
      * Picture-in-Picture: MIN_SDK is 31 so we always use S-era `setAutoEnterEnabled`,
      * letting Android transition into PiP automatically when the user swipes home.
@@ -468,7 +508,10 @@ class BeamPlayerActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         mediaSession?.release()
-        mediaSession = MediaSession.Builder(this, viewModel.player).build()
+        mediaSession =
+            MediaSession.Builder(this, viewModel.player)
+                .setId("beam-${System.identityHashCode(this)}")
+                .build()
     }
 
     override fun onResume() {
@@ -611,7 +654,10 @@ class BeamPlayerActivity : AppCompatActivity() {
         // the result was plain white text with no colors/fonts/typesetting on anime subs.
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
-                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(
+                    this,
+                    dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
+                ),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )
@@ -761,6 +807,14 @@ class BeamPlayerActivity : AppCompatActivity() {
                     networkVideoId = item.networkVideoId ?: error("Missing network video id"),
                     startFromBeginning = false,
                 )
+            PlayerContentSource.UNIVERSAL -> {
+                // Fallback for universal sources on Beam
+                Intent(context, BeamPlayerActivity::class.java).apply {
+                    putExtra("itemId", item.itemId.toString())
+                    putExtra("universalVideoUrl", item.mediaSourceUri)
+                    putExtra("universalTitle", item.name)
+                }
+            }
         }
 
     private suspend fun loadLibassFonts(

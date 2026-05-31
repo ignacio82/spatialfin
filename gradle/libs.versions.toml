@@ -39,12 +39,13 @@ hilt = "2.59.2"
 jcifs-ng = "2.1.10"
 jellyfin = "1.8.10"
 jmdns = "3.6.3"
+jsoup = "1.22.2"
 junit = "4.13.2"
 kotlin = "2.3.21"
 kotlinx-collections-immutable = "0.4.0"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
-ksp = "2.3.8"
+ksp = "2.3.9"
 ktfmt = "0.26.0"
 litertlm = "0.12.0"
 material = "1.14.0"
@@ -54,12 +55,14 @@ mlkit-genai = "1.0.0-beta2"
 mockk = "1.14.9"
 nfs4j = "0.27.2"
 okhttp = "5.3.2"
+quickjs-kt = "1.0.5"
 robolectric = "4.16.1"
 smbj = "0.14.0"
 tflite-gpu = "16.5.0"
 timber = "5.0.1"
 turbine = "1.2.1"
 version-catalog-update = "1.1.0"
+zipline = "1.27.0"
 
 [libraries]
 aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
@@ -126,6 +129,7 @@ hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hil
 jcifs-ng = { module = "eu.agno3.jcifs:jcifs-ng", version.ref = "jcifs-ng" }
 jellyfin-core = { module = "org.jellyfin.sdk:jellyfin-core", version.ref = "jellyfin" }
 jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 junit4 = { module = "junit:junit", version.ref = "junit" }
 kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin" }
 kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinx-collections-immutable" }
@@ -141,11 +145,13 @@ mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 mockk-android = { module = "io.mockk:mockk-android", version.ref = "mockk" }
 nfs4j = { module = "org.dcache:nfs4j-basic-client", version.ref = "nfs4j" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+quickjs-kt = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs-kt" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 tflite-gpu = { module = "com.google.android.gms:play-services-tflite-gpu", version.ref = "tflite-gpu" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+zipline = { module = "app.cash.zipline:zipline", version.ref = "zipline" }
 
 [plugins]
 aboutlibraries = { id = "com.mikepenz.aboutlibraries.plugin", version.ref = "aboutlibraries" }
@@ -162,3 +168,4 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 version-catalog-update = { id = "nl.littlerobots.version-catalog-update", version.ref = "version-catalog-update" }
+zipline = { id = "app.cash.zipline", version.ref = "zipline" }

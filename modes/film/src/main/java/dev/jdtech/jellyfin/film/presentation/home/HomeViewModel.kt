@@ -31,8 +31,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+
+import dev.jdtech.jellyfin.plugins.repository.PluginContentRepository
+import dev.jdtech.jellyfin.plugins.model.toSpatialFinItem
 
 @HiltViewModel
 class HomeViewModel
@@ -45,6 +49,7 @@ constructor(
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
     private val watchNextScheduler: WatchNextScheduler,
     private val activeSessionBus: ActiveSessionBus,
+    private val pluginContentRepository: PluginContentRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
@@ -96,6 +101,7 @@ constructor(
 
                     loadResumeItems()
                     loadNextUpItems()
+                    loadUniversalPluginItems()
                     if (connectionMonitor.shouldUseOfflineRepository()) {
                         _state.update { it.copy(suggestionsSection = null, views = persistentListOf()) }
                         loadOfflineLibrarySections()
@@ -351,6 +357,38 @@ constructor(
                 loadData()
             }
             else -> Unit
+        }
+    }
+
+    private suspend fun loadUniversalPluginItems() {
+        withContext(Dispatchers.Default) {
+            try {
+                val pluginContents = pluginContentRepository.getHomeByPlugin()
+                val sections = pluginContents.mapNotNull { content ->
+                    val items = content.items.map { it.toSpatialFinItem() }
+                    items.forEach { item ->
+                        android.util.Log.e("HomeViewModel", "Plugin item: ${item.name} thumb: ${item.images.primary ?: item.images.backdrop}")
+                    }
+                    if (items.isNotEmpty()) {
+                        val pluginId = content.plugin.id ?: "unknown"
+                        HomeItem.Section(
+                            dev.jdtech.jellyfin.models.HomeSection(
+                                id = UUID.nameUUIDFromBytes("universal:$pluginId".toByteArray()),
+                                name = UiText.DynamicString(content.plugin.name ?: "Unknown"),
+                                items = items
+                            )
+                        )
+                    } else null
+                }
+                android.util.Log.e("HomeViewModel", "Added ${sections.size} universal plugin sections")
+                _state.update { 
+                    val newState = it.copy(universalPluginSections = sections.toImmutableList())
+                    android.util.Log.e("HomeViewModel", "State updated with ${newState.universalPluginSections.size} plugin sections")
+                    newState
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "loadUniversalPluginItems failed")
+            }
         }
     }
 

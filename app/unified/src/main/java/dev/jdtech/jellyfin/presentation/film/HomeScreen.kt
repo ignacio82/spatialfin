@@ -86,6 +86,7 @@ fun HomeScreen(
     onReconnectClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
+    onPluginBrowse: (pluginId: String) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -110,6 +111,7 @@ fun HomeScreen(
                 is HomeAction.OnManageServers -> onManageServers()
                 is HomeAction.OnReconnectClick -> onReconnectClick()
                 is HomeAction.OnCloseClick -> (context as? Activity)?.finish()
+                is HomeAction.OnPluginBrowse -> onPluginBrowse(action.pluginId)
                 else -> Unit
             }
             viewModel.onAction(action)
@@ -126,6 +128,7 @@ private fun HomeScreenLayout(
     onLanguageSettingsClick: () -> Unit,
     onAction: (HomeAction) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val safePadding = rememberSafePadding(handleStartInsets = false)
 
@@ -135,7 +138,11 @@ private fun HomeScreenLayout(
     val paddingBottom = safePadding.bottom + MaterialTheme.spacings.default
 
     val itemsPadding = PaddingValues(start = paddingStart, end = paddingEnd)
-    val visibleHomeSections = remember(state) { state.filteredForUniqueHomeItems() }
+    val visibleHomeSections = remember(state) { 
+        val filtered = state.filteredForUniqueHomeItems()
+        android.util.Log.e("HomeScreen", "Visible sections: SUG=${filtered.suggestionsSection != null} RES=${filtered.resumeSection != null} NEXT=${filtered.nextUpSection != null} UNV=${filtered.universalPluginSections.size} OFF=${filtered.offlineLibrarySections.size} VIEW=${filtered.views.size}")
+        filtered
+    }
     val statusCardModel = remember(state) { state.toStatusCardModel() }
     val finishSetupItems =
         buildList {
@@ -241,6 +248,34 @@ private fun HomeScreenLayout(
                         itemsPadding = itemsPadding,
                         onAction = onAction,
                         modifier = Modifier.animateItem(),
+                    )
+                }
+                items(visibleHomeSections.universalPluginSections, key = { it.id }) { section ->
+                    val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                    val pluginId = firstItem?.universalMediaItem?.pluginId
+
+                    HomeSection(
+                        section = section.homeSection,
+                        displayRatings = displayRatings,
+                        itemsPadding = itemsPadding,
+                        onAction = { action ->
+                            if (action is HomeAction.OnItemClick && action.item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
+                                val uItem = action.item as dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                                context.startActivity(
+                                    dev.jdtech.jellyfin.player.xr.XrPlayerActivity.createIntentForUniversalMedia(
+                                        context,
+                                        uItem.universalMediaItem.pluginId,
+                                        uItem.universalMediaItem.id,
+                                        uItem.universalMediaItem.videoUrl,
+                                        uItem.name
+                                    )
+                                )
+                            } else {
+                                onAction(action)
+                            }
+                        },
+                        modifier = Modifier.animateItem(),
+                        onSeeAll = if (pluginId != null) { { onAction(HomeAction.OnPluginBrowse(pluginId)) } } else null
                     )
                 }
             }
@@ -382,6 +417,7 @@ private data class FilteredHomeSections(
     val suggestionsSection: HomeItem.Suggestions?,
     val resumeSection: HomeItem.Section?,
     val nextUpSection: HomeItem.Section?,
+    val universalPluginSections: List<HomeItem.Section>,
     val offlineLibrarySections: List<HomeItem.Section>,
     val views: List<HomeItem.ViewItem>,
 )
@@ -484,6 +520,13 @@ private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
                     ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
             }
 
+    val filteredUniversalPluginSections =
+        universalPluginSections.mapNotNull { section ->
+            section.homeSection.items
+                .takeIf { it.isNotEmpty() }
+                ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
+        }
+
     val filteredOfflineLibrarySections =
         offlineLibrarySections.mapNotNull { section ->
             section.homeSection.items
@@ -504,6 +547,7 @@ private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
         suggestionsSection = filteredSuggestions,
         resumeSection = filteredResume,
         nextUpSection = filteredNextUp,
+        universalPluginSections = filteredUniversalPluginSections,
         offlineLibrarySections = filteredOfflineLibrarySections,
         views = filteredViews,
     )

@@ -15,11 +15,13 @@ import dev.jdtech.jellyfin.models.SpatialFinSources
 import dev.jdtech.jellyfin.models.toSpatialFinItem
 import dev.jdtech.jellyfin.player.core.domain.models.ExternalSubtitle
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerPerson
 import dev.jdtech.jellyfin.player.core.domain.models.TrickplayInfo
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.plugins.repository.PluginContentRepository
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -31,9 +33,14 @@ import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+
 class PlaylistManager @Inject internal constructor(
+    @ApplicationContext private val context: Context,
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
+    private val pluginContentRepository: PluginContentRepository,
 ) {
     private var startItem: SpatialFinItem? = null
     private var items: List<SpatialFinItem> = emptyList()
@@ -140,6 +147,65 @@ class PlaylistManager @Inject internal constructor(
         val playerItem = initialItem.toPlayerItem(mediaSourceIndex, maxBitrate, playbackPosition)
         playerItems.add(playerItem)
 
+        return playerItem
+    }
+
+    suspend fun getInitialItemForUniversal(
+        pluginId: String,
+        itemId: String,
+        videoUrl: String,
+        title: String,
+    ): PlayerItem {
+        android.util.Log.e("CRITICAL_PLAYLIST", "Resolving universal item: $itemId from plugin: $pluginId")
+        android.util.Log.e("CRITICAL_PLAYLIST", "Original URL: $videoUrl")
+        
+        val resolved = try {
+            pluginContentRepository.getVideoUrl(pluginId, videoUrl)
+        } catch (e: Exception) {
+            android.util.Log.e("CRITICAL_PLAYLIST", "Exception during URL resolution", e)
+            null
+        }
+
+        requireNotNull(resolved) {
+            "Could not resolve playable stream for universal item $itemId"
+        }
+        
+        val resolvedUrl = if (resolved?.url?.startsWith("data:application/dash+xml;base64,") == true) {
+            try {
+                val base64 = resolved.url.substringAfter("base64,")
+                val xml = String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
+                val file = java.io.File(context.cacheDir, "universal_manifest.mpd")
+                file.writeText(xml)
+                android.util.Log.e("CRITICAL_PLAYLIST", "Wrote virtual manifest to: ${file.absolutePath}")
+                "file://${file.absolutePath}"
+            } catch (e: Exception) {
+                android.util.Log.e("CRITICAL_PLAYLIST", "Failed to write virtual manifest", e)
+                resolved.url
+            }
+        } else {
+            resolved.url
+        }
+        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved?.mimeType
+        
+        android.util.Log.e("CRITICAL_PLAYLIST", "Final resolved URL: $resolvedUrl, mimeType=$mimeType")
+        
+        val playerItem =
+            PlayerItem(
+                name = title,
+                itemId = UUID.nameUUIDFromBytes(itemId.toByteArray()),
+                mediaSourceUri = resolvedUrl,
+                mediaSourceId = itemId,
+                contentSource = PlayerContentSource.UNIVERSAL,
+                playbackPosition = 0L,
+                mimeType = mimeType,
+                videoUrl = resolved?.videoUrl,
+                audioUrl = resolved?.audioUrl,
+                videoMimeType = resolved?.videoMimeType,
+                audioMimeType = resolved?.audioMimeType
+            )
+        playerItems.clear()
+        playerItems.add(playerItem)
+        currentItemIndex = 0
         return playerItem
     }
 

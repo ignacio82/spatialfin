@@ -16,6 +16,7 @@ include(":setup")
 include(":modes:film")
 include(":settings")
 include(":baselineprofile")
+include(":plugins")
 
 pluginManagement {
     repositories {

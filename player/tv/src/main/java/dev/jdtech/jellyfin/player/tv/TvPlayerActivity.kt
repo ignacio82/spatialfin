@@ -438,7 +438,7 @@ class TvPlayerActivity : AppCompatActivity() {
 
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
-                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this),
+                delegate = androidx.media3.datasource.DefaultDataSource.Factory(this, dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )

@@ -26,6 +26,7 @@ dependencies {
     implementation(projects.core)
     implementation(projects.data)
     implementation(projects.settings)
+    implementation(projects.plugins)
     implementation(libs.timber)
 
     implementation(libs.androidx.compose.foundation)

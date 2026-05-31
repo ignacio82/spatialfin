@@ -39,9 +39,7 @@ class ExternalStreamMediaPreparer(
         val inline = request.source as? ExternalStreamSource.Inline
         val networkFactory = DefaultDataSource.Factory(
             context,
-            DefaultHttpDataSource.Factory()
-                .setAllowCrossProtocolRedirects(true)
-                .setDefaultRequestProperties(request.headers),
+            PluginHttpDataSourceFactory.create(request.headers)
         )
         val dataSourceFactory: DataSource.Factory =
             if (inline != null) {

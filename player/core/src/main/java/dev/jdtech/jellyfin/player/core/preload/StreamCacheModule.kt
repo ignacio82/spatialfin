@@ -31,7 +31,7 @@ object StreamCacheModule {
     @Provides
     @Singleton
     fun provideCacheDataSourceFactory(simpleCache: SimpleCache): CacheDataSource.Factory {
-        val upstreamFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        val upstreamFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
         return CacheDataSource.Factory()
             .setCache(simpleCache)
             .setUpstreamDataSourceFactory(upstreamFactory)

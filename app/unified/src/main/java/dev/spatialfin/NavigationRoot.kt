@@ -71,10 +71,13 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.presentation.film.CollectionScreen
 import dev.jdtech.jellyfin.presentation.film.DownloadsScreen
 import dev.jdtech.jellyfin.presentation.film.EpisodeScreen
 import dev.jdtech.jellyfin.presentation.film.FavoritesScreen
+import dev.jdtech.jellyfin.plugins.ui.PluginSettingsScreen
 import dev.jdtech.jellyfin.presentation.film.HomeScreen
 import dev.jdtech.jellyfin.presentation.film.LibraryScreen
 import dev.jdtech.jellyfin.presentation.film.MediaScreen
@@ -130,6 +133,10 @@ import kotlinx.serialization.Serializable
 @Serializable data object NetworkAddShareRoute
 
 @Serializable data object DownloadsRoute
+
+@Serializable data object UniversalPluginsRoute
+
+@Serializable data class PluginBrowseRoute(val pluginId: String)
 
 @Serializable
 data class LibraryRoute(
@@ -191,6 +198,12 @@ val downloadsTab =
         icon = CoreR.drawable.ic_download,
         route = DownloadsRoute,
     )
+val pluginsTab =
+    TabBarItem(
+        title = CoreR.string.title_plugins,
+        icon = CoreR.drawable.ic_plugins,
+        route = UniversalPluginsRoute,
+    )
 
 @Composable
 fun NavigationRoot(
@@ -230,15 +243,15 @@ fun NavigationRoot(
         when (isOfflineMode) {
             false ->
                 if (hasServers) {
-                    listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab)
+                    listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab, pluginsTab)
                 } else {
-                    listOf(localTab, networkTab)
+                    listOf(localTab, networkTab, pluginsTab)
                 }
             true ->
                 if (hasServers) {
-                    listOf(homeTab, localTab, networkTab, downloadsTab)
+                    listOf(homeTab, localTab, networkTab, downloadsTab, pluginsTab)
                 } else {
-                    listOf(localTab, networkTab)
+                    listOf(localTab, networkTab, pluginsTab)
                 }
         }
     val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
@@ -480,6 +493,24 @@ fun NavigationRoot(
                     prefilledUsername = route.username,
                 )
             }
+
+            composable<UniversalPluginsRoute> {
+                PluginSettingsScreen(
+                    onPluginClick = { pluginId ->
+                        navController.safeNavigate(PluginBrowseRoute(pluginId))
+                    }
+                )
+            }
+            composable<PluginBrowseRoute> { backStackEntry ->
+                val route: PluginBrowseRoute = backStackEntry.toRoute()
+                dev.jdtech.jellyfin.plugins.ui.PluginBrowseScreen(
+                    pluginId = route.pluginId,
+                    onBack = { navController.safePopBackStack() },
+                    onItemClick = { item ->
+                        navigateToItem(navController = navController, item = item)
+                    }
+                )
+            }
             composable<HomeRoute> {
                 HomeScreen(
                     appPreferences = appPreferences,
@@ -519,6 +550,9 @@ fun NavigationRoot(
                     },
                     onItemClick = { item ->
                         navigateToItem(navController = navController, item = item)
+                    },
+                    onPluginBrowse = { pluginId ->
+                        navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId))
                     },
                 )
             }
@@ -764,7 +798,19 @@ private fun navigateHome(navController: NavHostController) {
 }
 
 private fun navigateToItem(navController: NavHostController, item: SpatialFinItem) {
+    val context = navController.context
     when (item) {
+        is UniversalSpatialFinItem -> {
+            context.startActivity(
+                XrPlayerActivity.createIntentForUniversalMedia(
+                    context = context,
+                    pluginId = item.universalMediaItem.pluginId,
+                    itemId = item.universalMediaItem.id,
+                    videoUrl = item.universalMediaItem.videoUrl,
+                    title = item.name
+                )
+            )
+        }
         is SpatialFinBoxSet ->
             navController.safeNavigate(
                 CollectionRoute(collectionId = item.id.toString(), collectionName = item.name)

@@ -4,4 +4,5 @@ enum class PlayerContentSource {
     JELLYFIN,
     LOCAL,
     NETWORK,
+    UNIVERSAL,
 }

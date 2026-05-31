@@ -19,4 +19,6 @@ sealed interface HomeAction {
     data object OnManageServers : HomeAction
 
     data object OnCloseClick : HomeAction
+
+    data class OnPluginBrowse(val pluginId: String) : HomeAction
 }

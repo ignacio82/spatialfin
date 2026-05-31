@@ -60,6 +60,9 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.dash.DashMediaSource
 
 private const val ASSISTANT_SUBTITLE_HISTORY_WINDOW_MS = 20 * 60 * 1_000L
 private const val ASSISTANT_SUBTITLE_HISTORY_MAX_LINES = 400
@@ -593,6 +596,101 @@ constructor(
         }
     }
 
+    fun initializePlayerForUniversal(
+        pluginId: String,
+        itemId: String,
+        videoUrl: String,
+        title: String,
+        autoPlay: Boolean = true,
+    ) {
+        Timber.e("initializePlayerForUniversal: plugin=%s itemId=%s", pluginId, itemId)
+        currentItemKind = "Universal"
+        player.removeListener(this)
+        player.addListener(this)
+
+        viewModelScope.launch {
+            try {
+                Timber.e("Resolving universal media: %s", videoUrl)
+                val startItem =
+                    playlistManager.getInitialItemForUniversal(
+                        pluginId = pluginId,
+                        itemId = itemId,
+                        videoUrl = videoUrl,
+                        title = title,
+                    )
+
+                val isDashManifest = startItem.mediaSourceUri.startsWith("file://") || startItem.mediaSourceUri.contains(".mpd")
+                Timber.e("CRITICAL_LOG: isDashManifest=$isDashManifest")
+                items = mutableListOf(startItem)
+                currentMediaItemIndex = 0
+
+                val exoPlayer = player as? ExoPlayer
+                if (exoPlayer != null && isDashManifest) {
+                    Timber.e("CRITICAL_LOG: Using DashMediaSource for manifest: ${startItem.mediaSourceUri}")
+                    val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
+                    val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
+                    val dashMediaSource = DashMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(startItem.toMediaItem())
+                    exoPlayer.setMediaSource(dashMediaSource)
+                } else if (exoPlayer != null && startItem.videoUrl != null && startItem.audioUrl != null) {
+                    Timber.e("CRITICAL_LOG: Using MergingMediaSource")
+                    Timber.e("CRITICAL_LOG: Video URL: %s", startItem.videoUrl)
+                    Timber.e("CRITICAL_LOG: Audio URL: %s", startItem.audioUrl)
+                    
+                    val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
+                    val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
+                    
+                    val videoMediaItem = MediaItem.Builder()
+                        .setUri(startItem.videoUrl)
+                        .setMimeType(startItem.videoMimeType ?: "video/mp4")
+                        .build()
+                    val audioMediaItem = MediaItem.Builder()
+                        .setUri(startItem.audioUrl)
+                        .setMimeType(startItem.audioMimeType ?: "audio/mp4")
+                        .build()
+                        
+                    val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(videoMediaItem)
+                    val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                        .createMediaSource(audioMediaItem)
+                    val mergingSource = MergingMediaSource(videoSource, audioSource)
+                    
+                    exoPlayer.setMediaSource(mergingSource)
+                } else {
+                    Timber.e("CRITICAL_LOG: Using standard set, isDashManifest=$isDashManifest")
+                    if (exoPlayer != null && startItem.contentSource == PlayerContentSource.UNIVERSAL) {
+                        val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
+                        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
+                        val progressiveSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                            .createMediaSource(startItem.toMediaItem())
+                        exoPlayer.setMediaSource(progressiveSource)
+                    } else {
+                        val mediaItems = listOf(startItem.toMediaItem())
+                        player.setMediaItems(mediaItems, 0, 0L)
+                    }
+                }
+                
+                player.prepare()
+                armStartupWatchdog()
+                if (autoPlay) {
+                    player.play()
+                } else {
+                    player.pause()
+                }
+                _uiState.update {
+                    it.copy(
+                        currentItemTitle = title,
+                        currentItemId = startItem.itemId.toString(),
+                        fileLoaded = true,
+                    )
+                }
+                Timber.e("Player initialized for universal media")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to initialize universal player")
+            }
+        }
+    }
+
     fun changeQuality(itemId: UUID, itemKind: String, newMaxBitrate: Long) {
         val currentPosition = player.currentPosition
         playbackPosition = currentPosition
@@ -828,8 +926,12 @@ constructor(
         // Hint HLS when Jellyfin returned a transcoding master playlist so
         // DefaultMediaSourceFactory dispatches to HlsMediaSource even when the
         // URL's .m3u8 extension is hidden behind query params.
-        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+        if (mimeType != null) {
+            builder.setMimeType(mimeType)
+        } else if (streamUrl.contains(".m3u8", ignoreCase = true)) {
             builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+        } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
+            builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD)
         }
         return builder.build()
     }
@@ -872,6 +974,9 @@ constructor(
                                     durationMs = duration,
                                 )
                             }
+                        }
+                        PlayerContentSource.UNIVERSAL -> {
+                            // No persistent tracking for universal sources yet
                         }
                     }
                 }
@@ -920,6 +1025,9 @@ constructor(
                                     durationMs = player.duration.coerceAtLeast(0L),
                                 )
                             }
+                        }
+                        PlayerContentSource.UNIVERSAL -> {
+                            // No persistent tracking for universal sources yet
                         }
                     }
                 } catch (e: Exception) {
@@ -1222,6 +1330,9 @@ constructor(
                                 )
                             }
                         }
+                        PlayerContentSource.UNIVERSAL -> {
+                            // No persistent tracking for universal sources yet
+                        }
                         null -> Unit
                     }
                 } catch (e: Exception) {
@@ -1358,6 +1469,10 @@ constructor(
     }
 
     private fun triggerAutoDowngrade(reason: String) {
+        if (_uiState.value.currentItemKind == "Universal") {
+            Timber.i("Universal item stalled: %s. Skipping auto-downgrade.", reason)
+            return
+        }
         val nowMs = SystemClock.elapsedRealtime()
         val next = nextLowerAutoStep(effectiveAutoBitrate) ?: return
         effectiveAutoBitrate = next

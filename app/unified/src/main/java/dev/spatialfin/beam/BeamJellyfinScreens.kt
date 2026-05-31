@@ -32,7 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -525,6 +525,7 @@ fun BeamHomeScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    onOpenPluginBrowse: (String) -> Unit,
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -651,6 +652,39 @@ fun BeamHomeScreen(
                                 )
                             }
                         }
+                    }
+                }
+
+                // Universal plugin rows belong after Jellyfin rows.
+                items(state.universalPluginSections) { section ->
+                    val pluginName = section.homeSection.name.asString()
+                    val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                    val pluginId = firstItem?.universalMediaItem?.pluginId
+
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        BeamHomeSectionHeader(
+                            title = pluginName + " (" + section.homeSection.items.size + ")",
+                            actionLabel = "See All",
+                            onAction = if (pluginId != null) { { onOpenPluginBrowse(pluginId) } } else null
+                        )
+                        BeamPosterCarousel(
+                            items = section.homeSection.items,
+                            onItemClick = { item ->
+                                if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
+                                    context.startActivity(
+                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForUniversalMedia(
+                                            context,
+                                            item.universalMediaItem.pluginId,
+                                            item.universalMediaItem.id,
+                                            item.universalMediaItem.videoUrl,
+                                            item.name
+                                        )
+                                    )
+                                } else {
+                                    openServerItem(item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                }
+                            }
+                        )
                     }
                 }
             }

@@ -161,6 +161,7 @@ dependencies {
     implementation(project(":fcast"))
     implementation(project(":settings"))
     implementation(project(":setup"))
+    implementation(project(":plugins"))
     implementation(project(":modes:film"))
     implementation(project(":player:core"))
     implementation(project(":player:local"))
