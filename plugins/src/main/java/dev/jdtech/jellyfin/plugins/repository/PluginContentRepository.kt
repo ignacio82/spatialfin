@@ -47,6 +47,15 @@ class PluginContentRepository @Inject constructor(
         )
     }
 
+    suspend fun getPager(pluginId: String, currentUrl: String): List<UniversalMediaItem> {
+        val urlJson = json.encodeToString(currentUrl)
+        return runPluginListCall(
+            pluginId = pluginId,
+            call = "await (typeof source.getPager === 'function' ? source.getPager($urlJson) : [])",
+            logContext = "pager"
+        )
+    }
+
     suspend fun search(query: String): List<UniversalMediaItem> {
         val plugins = pluginRepository.getInstalledPlugins()
         return plugins.flatMap { plugin ->

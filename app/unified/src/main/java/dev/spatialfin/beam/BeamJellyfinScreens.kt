@@ -3381,7 +3381,10 @@ private fun buildServerItemSubtitle(item: SpatialFinItem): String =
             is SpatialFinBoxSet -> add("Box Set")
             is SpatialFinCollection -> add(item.type.type.replaceFirstChar(Char::titlecase))
             is SpatialFinFolder -> add("Folder")
-            else -> add("Item")
+            is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> {
+                item.universalMediaItem.author?.takeIf { it.isNotBlank() }?.let(::add)
+            }
+            else -> Unit
         }
         item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }?.let(::add)
         buildProgressLabel(item)?.let(::add)
@@ -3397,7 +3400,8 @@ private fun buildPrimaryBadge(item: SpatialFinItem): String =
         is SpatialFinBoxSet -> "Collection"
         is SpatialFinCollection -> item.type.type.replaceFirstChar(Char::titlecase)
         is SpatialFinFolder -> "Folder"
-        else -> "Item"
+        is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> item.universalMediaItem.author?.takeIf { it.isNotBlank() } ?: ""
+        else -> ""
     }
 
 private fun buildPlaybackFraction(item: SpatialFinItem): Float? {
@@ -3450,9 +3454,10 @@ private fun buildServerItemMeta(item: SpatialFinItem): List<String> {
             is SpatialFinBoxSet -> "Box Set"
             is SpatialFinCollection -> item.type.type
             is SpatialFinFolder -> "Folder"
-            else -> "Item"
+            is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> item.universalMediaItem.author
+            else -> null
         }
-    lines += typeLabel
+    typeLabel?.takeIf { it.isNotBlank() }?.let { lines += it }
     when (item) {
         is SpatialFinEpisode -> lines += "${buildEpisodeLabel(item)}${item.seasonName?.takeIf { !it.isNullOrBlank() }?.let { " • $it" } ?: ""}"
         is SpatialFinSeason -> if (item.indexNumber > 0) lines += "Season ${item.indexNumber}"

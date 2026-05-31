@@ -209,6 +209,48 @@ class PlaylistManager @Inject internal constructor(
         return playerItem
     }
 
+    suspend fun loadNextUniversalItems(pluginId: String, currentVideoUrl: String) {
+        val newItems = pluginContentRepository.getPager(pluginId, currentVideoUrl)
+        newItems.forEach { item ->
+            val playerItem = PlayerItem(
+                name = item.title,
+                itemId = UUID.nameUUIDFromBytes(item.id.toByteArray()),
+                mediaSourceUri = item.videoUrl, // We will resolve it later when we play it
+                mediaSourceId = item.id,
+                contentSource = PlayerContentSource.UNIVERSAL,
+                playbackPosition = 0L,
+                mimeType = null,
+                videoUrl = item.videoUrl,
+                audioUrl = null,
+                videoMimeType = null,
+                audioMimeType = null
+            )
+            // Add custom field to store pluginId in the PlayerItem? Wait, we can just use intent extras.
+            // Actually, we shouldn't resolve here, it might be slow. We'll resolve in `resolveUniversalItem`.
+            playerItems.add(playerItem)
+        }
+    }
+
+    suspend fun resolveUniversalItem(playerItem: PlayerItem, pluginId: String): PlayerItem {
+        val resolved = try {
+            pluginContentRepository.getVideoUrl(pluginId, playerItem.videoUrl ?: playerItem.mediaSourceUri)
+        } catch (e: Exception) {
+            android.util.Log.e("CRITICAL_PLAYLIST", "Exception during URL resolution", e)
+            null
+        }
+        val resolvedUrl = resolved?.url ?: playerItem.mediaSourceUri
+        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved?.mimeType
+
+        return playerItem.copy(
+            mediaSourceUri = resolvedUrl,
+            mimeType = mimeType,
+            videoUrl = resolved?.videoUrl,
+            audioUrl = resolved?.audioUrl,
+            videoMimeType = resolved?.videoMimeType,
+            audioMimeType = resolved?.audioMimeType
+        )
+    }
+
     fun getStorySoFarContext(): String? {
         if (items.isEmpty() || currentItemIndex <= 0) return null
 
@@ -247,10 +289,16 @@ class PlaylistManager @Inject internal constructor(
                         }
                     }
                 }
-                else -> null
+                else -> {
+                    if (itemIndex >= 0 && itemIndex < playerItems.size) {
+                        playerItems[itemIndex]
+                    } else {
+                        null
+                    }
+                }
             }
 
-        if (playerItem != null) {
+        if (playerItem != null && !playerItems.contains(playerItem)) {
             playerItems.add(playerItem)
         }
 
@@ -281,10 +329,16 @@ class PlaylistManager @Inject internal constructor(
                         }
                     }
                 }
-                else -> null
+                else -> {
+                    if (itemIndex < playerItems.size) {
+                        playerItems[itemIndex]
+                    } else {
+                        null
+                    }
+                }
             }
 
-        if (playerItem != null) {
+        if (playerItem != null && !playerItems.contains(playerItem)) {
             playerItems.add(playerItem)
         }
 

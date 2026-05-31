@@ -73,6 +73,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -1178,14 +1181,7 @@ private fun BeamPlayerScreen(
         }
 
         Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { controlsVisible = !controlsVisible },
-                    )
+            modifier = Modifier.fillMaxSize()
         ) {
             val context = LocalContext.current
             val playerView =
@@ -1229,6 +1225,42 @@ private fun BeamPlayerScreen(
                     )
                 }
             }
+
+            // Touch interceptor overlay: sits above the player/subtitles but below controls
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(uiState.currentItemKind) {
+                        if (uiState.currentItemKind == "Universal") {
+                            var totalDrag = 0f
+                            var triggered = false
+                            detectDragGestures(
+                                onDragStart = { _ -> 
+                                    totalDrag = 0f 
+                                    triggered = false
+                                },
+                                onDragEnd = { }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                totalDrag += dragAmount.y
+                                if (!triggered) {
+                                    if (totalDrag < -50f) {
+                                        viewModel.skipToNextItem()
+                                        triggered = true
+                                    } else if (totalDrag > 50f) {
+                                        viewModel.skipToPreviousItem()
+                                        triggered = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { controlsVisible = !controlsVisible },
+                    )
+            )
 
             // While the first video frame is still pending (initial buffering /
             // surface attach) show a spinner instead of the misleading Play

@@ -1063,7 +1063,7 @@ private fun Modifier.ultrachromicFocus(focused: Boolean, shape: androidx.compose
 
 private fun tvViewArtwork(view: View): Any? = view.items.firstOrNull()?.let { it.images.backdrop ?: it.images.primary ?: it.images.showBackdrop ?: it.images.showPrimary }
 private fun buildPlaybackFraction(item: SpatialFinItem): Float? { val r = item.runtimeTicks; val p = item.playbackPositionTicks; return if (r > 0 && p > 0) (p.toFloat()/r).coerceIn(0f,1f) else null }
-private fun tvItemLabel(item: SpatialFinItem): String = when(item){is SpatialFinMovie->"Movie";is SpatialFinEpisode->"Episode";is SpatialFinSeason->"Season";is SpatialFinShow->"Series";is SpatialFinCollection->"Library";else->"Item"}
+private fun tvItemLabel(item: SpatialFinItem): String = when(item){is SpatialFinMovie->"Movie";is SpatialFinEpisode->"Episode";is SpatialFinSeason->"Season";is SpatialFinShow->"Series";is SpatialFinCollection->"Library";is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem->item.universalMediaItem.author?.takeIf { it.isNotBlank() }?:"";else->""}
 private fun tvPrimaryArtwork(item: SpatialFinItem): Any? = when(item){is SpatialFinEpisode->item.images.showPrimary?:item.images.primary?:item.images.showBackdrop?:item.images.backdrop;else->item.images.primary?:item.images.showPrimary?:item.images.backdrop?:item.images.showBackdrop}
 private fun tvBackdropArtwork(item: SpatialFinItem): Any? = when(item){is SpatialFinEpisode->item.images.showBackdrop?:item.images.backdrop?:item.images.showPrimary?:item.images.primary;else->item.images.backdrop?:item.images.showBackdrop?:item.images.primary?:item.images.showPrimary}
 private fun tvRuntimeLabel(ticks: Long): String? = ticks.takeIf { it > 0 }?.div(600000000)?.takeIf { it > 0 }?.let { "$it min" }

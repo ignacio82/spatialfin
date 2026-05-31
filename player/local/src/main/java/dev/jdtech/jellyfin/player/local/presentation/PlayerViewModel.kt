@@ -596,6 +596,8 @@ constructor(
         }
     }
 
+    private var currentUniversalPluginId: String? = null
+
     fun initializePlayerForUniversal(
         pluginId: String,
         itemId: String,
@@ -603,6 +605,7 @@ constructor(
         title: String,
         autoPlay: Boolean = true,
     ) {
+        currentUniversalPluginId = pluginId
         Timber.e("initializePlayerForUniversal: plugin=%s itemId=%s", pluginId, itemId)
         currentItemKind = "Universal"
         player.removeListener(this)
@@ -681,6 +684,7 @@ constructor(
                     it.copy(
                         currentItemTitle = title,
                         currentItemId = startItem.itemId.toString(),
+                        currentItemKind = "Universal",
                         fileLoaded = true,
                     )
                 }
@@ -923,15 +927,18 @@ constructor(
             .setUri(streamUrl)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(name).build())
             .setSubtitleConfigurations(mediaSubtitles)
-        // Hint HLS when Jellyfin returned a transcoding master playlist so
-        // DefaultMediaSourceFactory dispatches to HlsMediaSource even when the
-        // URL's .m3u8 extension is hidden behind query params.
-        if (mimeType != null) {
-            builder.setMimeType(mimeType)
-        } else if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+        val normalizedMimeType = when (mimeType?.lowercase()) {
+            "hls", "application/x-mpegurl", "application/vnd.apple.mpegurl" -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+            "dash", "application/dash+xml" -> androidx.media3.common.MimeTypes.APPLICATION_MPD
+            else -> mimeType
+        }
+
+        if (streamUrl.contains(".m3u8", ignoreCase = true) || streamUrl.contains(".m3u", ignoreCase = true)) {
             builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
         } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
             builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD)
+        } else if (normalizedMimeType != null) {
+            builder.setMimeType(normalizedMimeType)
         }
         return builder.build()
     }
@@ -1612,6 +1619,34 @@ constructor(
                 }
             } else {
                 val nextEpisode = _uiState.value.nextEpisode
+
+                if (currentItemKind == "Universal" && currentUniversalPluginId != null) {
+                    val currentItem = currentPlayerItem()
+                    if (currentItem != null) {
+                        try {
+                            playlistManager.loadNextUniversalItems(currentUniversalPluginId!!, currentItem.videoUrl ?: currentItem.mediaSourceUri)
+                            val nextUniversalItem = playlistManager.getNextPlayerItem()
+                            if (nextUniversalItem != null) {
+                                val resolvedItem = playlistManager.resolveUniversalItem(nextUniversalItem, currentUniversalPluginId!!)
+                                player.setMediaItems(listOf(resolvedItem.toMediaItem()), 0, 0L)
+                                player.prepare()
+                                player.play()
+                                playlistManager.currentItemIndex++
+                                _uiState.update {
+                                    it.copy(
+                                        currentItemTitle = resolvedItem.name,
+                                        currentItemId = resolvedItem.itemId.toString(),
+                                        fileLoaded = true,
+                                    )
+                                }
+                                return@launch
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to load next universal items")
+                        }
+                    }
+                }
+
                 if (!player.hasNextMediaItem() && nextEpisode != null) {
                     ensureNextEpisodeQueued(nextEpisode)
                 }
@@ -1652,9 +1687,37 @@ constructor(
                     runCatching { repository.previousSyncPlayItem(playlistItemId) }
                         .onFailure { Timber.w(it, "Failed to request previous SyncPlay item") }
                 }
-            } else if (player.hasPreviousMediaItem()) {
-                player.seekToPreviousMediaItem()
-                player.play()
+            } else {
+                if (currentItemKind == "Universal" && currentUniversalPluginId != null) {
+                    val currentItem = currentPlayerItem()
+                    if (currentItem != null) {
+                        try {
+                            val previousUniversalItem = playlistManager.getPreviousPlayerItem()
+                            if (previousUniversalItem != null) {
+                                val resolvedItem = playlistManager.resolveUniversalItem(previousUniversalItem, currentUniversalPluginId!!)
+                                player.setMediaItems(listOf(resolvedItem.toMediaItem()), 0, 0L)
+                                player.prepare()
+                                player.play()
+                                playlistManager.currentItemIndex--
+                                _uiState.update {
+                                    it.copy(
+                                        currentItemTitle = resolvedItem.name,
+                                        currentItemId = resolvedItem.itemId.toString(),
+                                        fileLoaded = true,
+                                    )
+                                }
+                                return@launch
+                            }
+                        } catch (e: Exception) {
+                            Timber.e(e, "Failed to load previous universal items")
+                        }
+                    }
+                }
+                
+                if (player.hasPreviousMediaItem()) {
+                    player.seekToPreviousMediaItem()
+                    player.play()
+                }
             }
         }
     }
