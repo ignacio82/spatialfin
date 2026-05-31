@@ -11,6 +11,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.QrCode
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Lan
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -50,7 +53,7 @@ class PluginSettingsViewModel @Inject constructor(
         _plugins.value = repository.getInstalledPlugins()
     }
 
-    fun installPlugin(url: String, context: Context) {
+    fun installPlugin(url: String, context: Context, onSuccess: () -> Unit = {}) {
         val trimmedUrl = url.replace(" ", "").trim()
         if (trimmedUrl.isBlank()) {
             Toast.makeText(context, "Enter a plugin manifest URL", Toast.LENGTH_LONG).show()
@@ -63,11 +66,10 @@ class PluginSettingsViewModel @Inject constructor(
             try {
                 val result = repository.installPlugin(trimmedUrl)
                 if (result.isSuccess) {
-                    Timber.e("LOUD PLUGIN LOG: Successfully installed ${result.getOrNull()?.name}")
                     Toast.makeText(context, "Successfully installed: ${result.getOrNull()?.name}", Toast.LENGTH_LONG).show()
+                    onSuccess()
                     refresh()
                 } else {
-                    Timber.e(result.exceptionOrNull(), "LOUD PLUGIN LOG: Installation failed FATALLY")
                     Toast.makeText(context, "Failed: ${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
                 }
             } finally {
@@ -88,6 +90,9 @@ class PluginSettingsViewModel @Inject constructor(
 @Composable
 fun PluginSettingsScreen(
     onPluginClick: (String) -> Unit = {},
+    onJellyfinClick: () -> Unit = {},
+    onLocalClick: () -> Unit = {},
+    onNetworkClick: () -> Unit = {},
     viewModel: PluginSettingsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -122,8 +127,46 @@ fun PluginSettingsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Universal Plugins", style = MaterialTheme.typography.headlineMedium)
+        Text("Sources", style = MaterialTheme.typography.headlineMedium)
         Spacer(modifier = Modifier.height(16.dp))
+
+        Text("Built-in", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+        
+        Card(onClick = onJellyfinClick, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Dns, contentDescription = "Jellyfin", modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Jellyfin", style = MaterialTheme.typography.titleMedium)
+                    Text("Configured server", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        
+        Card(onClick = onLocalClick, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Folder, contentDescription = "Local Storage", modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Local Storage", style = MaterialTheme.typography.titleMedium)
+                    Text("Device storage", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        Card(onClick = onNetworkClick, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Lan, contentDescription = "Network", modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Network (SMB/NFS)", style = MaterialTheme.typography.titleMedium)
+                    Text("Network attached storage", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Plugins", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
         
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -151,9 +194,9 @@ fun PluginSettingsScreen(
                     
                     Button(
                         onClick = { 
-                            android.util.Log.e("CRITICAL_PLUGIN", "INSTALL BUTTON CLICKED IMMEDIATELY")
-                            Toast.makeText(context, "!!! CLICK DETECTED !!!", Toast.LENGTH_LONG).show()
-                            viewModel.installPlugin(installUrl, context) 
+                            viewModel.installPlugin(installUrl, context) {
+                                installUrl = ""
+                            }
                         },
                         modifier = Modifier.height(56.dp).semantics { contentDescription = "InstallButton" }
                     ) {

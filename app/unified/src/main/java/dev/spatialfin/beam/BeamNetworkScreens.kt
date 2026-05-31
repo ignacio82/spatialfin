@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -155,6 +158,7 @@ constructor(
 fun BeamNetworkScreen(
     contentPadding: PaddingValues,
     onShareClick: (String) -> Unit,
+    onAddShareClick: () -> Unit = {},
     onItemClick: (NetworkVideoItem) -> Unit,
     viewModel: BeamNetworkViewModel = hiltViewModel(),
 ) {
@@ -189,7 +193,14 @@ fun BeamNetworkScreen(
             }
             state.shares.isEmpty() -> {
                 item {
-                    BeamEmptyCard("No saved network shares yet. Add-share UI is still pending for Beam.")
+                    BeamEmptyCard("No saved network shares yet.")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = onAddShareClick,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Text("Add Network Share")
+                    }
                 }
             }
             else -> {
@@ -210,11 +221,20 @@ fun BeamNetworkScreen(
                 }
 
                 item {
-                    Text(
-                        text = "Shares",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Shares",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Button(onClick = onAddShareClick) {
+                            Text("Add Share")
+                        }
+                    }
                 }
                 items(state.shares, key = { it.id }) { share ->
                     Card(modifier = Modifier.fillMaxWidth()) {

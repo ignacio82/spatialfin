@@ -198,9 +198,9 @@ val downloadsTab =
         icon = CoreR.drawable.ic_download,
         route = DownloadsRoute,
     )
-val pluginsTab =
+val sourcesTab =
     TabBarItem(
-        title = CoreR.string.title_plugins,
+        title = CoreR.string.title_sources,
         icon = CoreR.drawable.ic_plugins,
         route = UniversalPluginsRoute,
     )
@@ -243,15 +243,15 @@ fun NavigationRoot(
         when (isOfflineMode) {
             false ->
                 if (hasServers) {
-                    listOf(homeTab, mediaTab, localTab, networkTab, downloadsTab, pluginsTab)
+                    listOf(homeTab, mediaTab, downloadsTab, sourcesTab)
                 } else {
-                    listOf(localTab, networkTab, pluginsTab)
+                    listOf(sourcesTab)
                 }
             true ->
                 if (hasServers) {
-                    listOf(homeTab, localTab, networkTab, downloadsTab, pluginsTab)
+                    listOf(homeTab, downloadsTab, sourcesTab)
                 } else {
-                    listOf(localTab, networkTab, pluginsTab)
+                    listOf(sourcesTab)
                 }
         }
     val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
@@ -498,6 +498,15 @@ fun NavigationRoot(
                 PluginSettingsScreen(
                     onPluginClick = { pluginId ->
                         navController.safeNavigate(PluginBrowseRoute(pluginId))
+                    },
+                    onJellyfinClick = {
+                        navController.safeNavigate(ServersRoute)
+                    },
+                    onLocalClick = {
+                        navController.safeNavigate(LocalRoute)
+                    },
+                    onNetworkClick = {
+                        navController.safeNavigate(NetworkRoute)
                     }
                 )
             }

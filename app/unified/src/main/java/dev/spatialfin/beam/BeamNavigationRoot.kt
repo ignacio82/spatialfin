@@ -121,6 +121,7 @@ private enum class BeamRoute {
     Local,
     Network,
     NetworkShare,
+    NetworkAddShare,
     Downloads,
     Plugins,
     PluginBrowse,
@@ -141,8 +142,6 @@ private val primaryTabs =
         BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
         BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
         BeamTab(BeamRoute.Users, "Users", Icons.Rounded.People),
-        BeamTab(BeamRoute.Local, "Local", Icons.Rounded.Folder),
-        BeamTab(BeamRoute.Network, "Network", Icons.Rounded.Lan),
     )
 
 val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
@@ -728,6 +727,9 @@ fun BeamNavigationRoot(
                         selectedNetworkShareId = shareId
                         currentRoute = BeamRoute.NetworkShare
                     },
+                    onAddShareClick = {
+                        currentRoute = BeamRoute.NetworkAddShare
+                    },
                     onItemClick = { item ->
                         context.startActivity(
                             BeamPlayerActivity.createIntentForNetworkMedia(
@@ -772,6 +774,15 @@ fun BeamNavigationRoot(
                             onPluginClick = { pluginId ->
                                 selectedPluginId = pluginId
                                 currentRoute = BeamRoute.PluginBrowse
+                            },
+                            onJellyfinClick = {
+                                currentRoute = BeamRoute.Servers
+                            },
+                            onLocalClick = {
+                                currentRoute = BeamRoute.Local
+                            },
+                            onNetworkClick = {
+                                currentRoute = BeamRoute.Network
                             }
                         )
                     }
@@ -800,6 +811,11 @@ fun BeamNavigationRoot(
                         },
                     )
                 }
+                    }
+                    currentRoute == BeamRoute.NetworkAddShare -> {
+                        dev.jdtech.jellyfin.presentation.network.AddShareScreen(
+                            navigateBack = { currentRoute = BeamRoute.Network }
+                        )
                     }
                     else -> {
                 BeamSignedInShell(
@@ -1282,6 +1298,7 @@ private fun BeamSignedInShell(
         BeamRoute.Plugins,
         BeamRoute.PluginBrowse,
         BeamRoute.Settings,
+        BeamRoute.NetworkAddShare,
         BeamRoute.NetworkShare ->
             Unit
 
