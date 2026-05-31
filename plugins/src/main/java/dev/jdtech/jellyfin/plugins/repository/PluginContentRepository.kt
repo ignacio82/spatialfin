@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,6 +27,7 @@ class PluginContentRepository @Inject constructor(
         ignoreUnknownKeys = true
         explicitNulls = false
     }
+    private val homeCache = ConcurrentHashMap<String, List<UniversalMediaItem>>()
 
     suspend fun getHome(): List<UniversalMediaItem> {
         return getHomeByPlugin().flatMap { it.items }
@@ -40,11 +42,20 @@ class PluginContentRepository @Inject constructor(
     }
 
     suspend fun getPluginHome(pluginId: String): List<UniversalMediaItem> {
-        return runPluginListCall(
+        val items = runPluginListCall(
             pluginId = pluginId,
             call = "await (typeof source.getHome === 'function' ? source.getHome() : (typeof getHome === 'function' ? getHome() : []))",
             logContext = "home"
         )
+        if (items.isNotEmpty()) {
+            homeCache[pluginId] = items
+            return items
+        }
+        return homeCache[pluginId].orEmpty().also { cached ->
+            if (cached.isNotEmpty()) {
+                android.util.Log.e("PluginContent", "Using cached home items for $pluginId after empty plugin response")
+            }
+        }
     }
 
     suspend fun getPager(pluginId: String, currentUrl: String): List<UniversalMediaItem> {

@@ -84,42 +84,61 @@ constructor(
         observeSessionChanges()
     }
 
-    fun loadData() {
+    fun loadData(forceRefresh: Boolean = false) {
         hasLoadedData = true
         Timber.i("Loading data")
         viewModelScope.launch(Dispatchers.Default) {
-            _state.emit(_state.value.copy(isLoading = true, error = null))
+            val serverId = appPreferences.getValue(appPreferences.currentServer)
+            val cached = cachedHome
+            val canUseCache = cached != null && cached.serverId == serverId
+            if (canUseCache) {
+                _state.emit(cached.state.copy(isLoading = false, error = null))
+                if (!forceRefresh && cached.isFresh()) {
+                    Timber.i("Serving fresh cached home")
+                    return@launch
+                }
+            } else {
+                _state.emit(_state.value.copy(isLoading = true, error = null))
+            }
             // Watchdog: a wedged HTTP/2 connection pool can leave SDK calls
             // looping through retries far longer than any single per-request
             // timeout. Cap the entire load so the UI never gets stuck in an
             // endless "Loading your room" state.
             val completed = withTimeoutOrNull(LOAD_TIMEOUT_MS) {
                 try {
-                    appPreferences.getValue(appPreferences.currentServer)?.let { serverId ->
-                        loadServerName(serverId)
-                    }
+                    serverId?.let { loadServerName(it) }
 
                     loadResumeItems()
                     loadNextUpItems()
-                    loadUniversalPluginItems()
                     if (connectionMonitor.shouldUseOfflineRepository()) {
                         _state.update { it.copy(suggestionsSection = null, views = persistentListOf()) }
                         loadOfflineLibrarySections()
                         _state.emit(_state.value.copy(isLoading = false))
+                        cacheCurrentHome(serverId)
                     } else {
                         loadSuggestions()
                         // Resolve the main loading spinner as soon as the above-the-fold
                         // content (resume / next-up / suggestions) is in. loadViews()
                         // does N+1 API calls (one per library for latest media) and was
                         // blocking first paint by 200-500ms on slow TV connections.
+                        // Universal plugins can be much slower, especially signed-in
+                        // web feeds, so they also refresh after first paint.
                         _state.emit(_state.value.copy(isLoading = false))
+                        cacheCurrentHome(serverId)
                         // Publish resume/next-up to Google TV's Watch Next row. No-op
                         // on non-TV devices, so unconditional here is fine. Fire after
                         // the sections are in _state so Watch Next mirrors what the
                         // user just saw on the home screen.
                         watchNextScheduler.syncNow(appContext)
                         try {
+                            loadUniversalPluginItems()
+                            cacheCurrentHome(serverId)
+                        } catch (e: Exception) {
+                            Timber.w(e, "loadUniversalPluginItems failed after first paint")
+                        }
+                        try {
                             loadViews()
+                            cacheCurrentHome(serverId)
                         } catch (e: Exception) {
                             Timber.w(e, "loadViews failed after first paint")
                         }
@@ -129,6 +148,7 @@ constructor(
                         } else {
                             _state.update { it.copy(offlineLibrarySections = persistentListOf()) }
                         }
+                        cacheCurrentHome(serverId)
                     }
                 } catch (e: Exception) {
                     Timber.w(e, "loadData failed; attempting offline fallback")
@@ -147,8 +167,9 @@ constructor(
                     // doesn't mask the original error.
                     runCatching { loadOfflineLibrarySections() }
                         .onFailure { Timber.w(it, "offline fallback also failed") }
+                    val fallback = cachedHome?.takeIf { it.serverId == serverId }?.state
                     _state.emit(
-                        _state.value.copy(
+                        (fallback ?: _state.value).copy(
                             error = HomeLoadError(e.message ?: "Failed to load home content."),
                             isLoading = false,
                         )
@@ -161,8 +182,9 @@ constructor(
                 connectionMonitor.markServerInaccessible()
                 runCatching { loadOfflineLibrarySections() }
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
+                val fallback = cachedHome?.takeIf { it.serverId == serverId }?.state
                 _state.emit(
-                    _state.value.copy(
+                    (fallback ?: _state.value).copy(
                         error = HomeLoadError("Server didn't respond. Pull to retry."),
                         isLoading = false,
                     )
@@ -354,7 +376,7 @@ constructor(
                 } else {
                     connectionMonitor.triggerRefresh()
                 }
-                loadData()
+                loadData(forceRefresh = true)
             }
             else -> Unit
         }
@@ -392,11 +414,30 @@ constructor(
         }
     }
 
+    private fun cacheCurrentHome(serverId: String?) {
+        cachedHome = CachedHome(
+            serverId = serverId,
+            state = _state.value.copy(isLoading = false, error = null),
+            timestampMs = System.currentTimeMillis(),
+        )
+    }
+
     private companion object {
         // Generous upper bound for a full home load (resume + next-up +
         // suggestions + N library "latest" calls). Sized well above any
         // legitimate slow LAN load yet small enough that a wedged HTTP/2
         // pool is unstuck in under two minutes without user intervention.
         const val LOAD_TIMEOUT_MS = 90_000L
+        @Volatile
+        var cachedHome: CachedHome? = null
     }
+}
+
+private data class CachedHome(
+    val serverId: String?,
+    val state: HomeState,
+    val timestampMs: Long,
+) {
+    fun isFresh(): Boolean =
+        System.currentTimeMillis() - timestampMs < 2 * 60 * 1000L
 }

@@ -64,6 +64,9 @@ class PluginClient @Inject constructor(
         val savedSettings = repository.getPluginSettings(pluginId)
 
         return buildJsonObject {
+            savedSettings.forEach { (key, value) ->
+                put(key, JsonPrimitive(value))
+            }
             manifest.settings.forEach { setting ->
                 val key = setting.variable ?: return@forEach
                 val value = savedSettings[key] ?: setting.default

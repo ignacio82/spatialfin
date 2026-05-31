@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.plugins.bridge
 
+import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
@@ -55,8 +56,13 @@ class RealHttpBridge(
         }
 
         normalizeHeaders(headers)
+        if (usePlatformAuth) {
+            platformCookieHeader(url)?.let { cookieHeader ->
+                headers["Cookie"] = cookieHeader
+            }
+        }
 
-        android.util.Log.e("CRITICAL_HTTP", "Request Headers: $headers")
+        android.util.Log.e("CRITICAL_HTTP", "Request Headers: ${headers.redactedForLog()}")
 
         val requestBuilder = Request.Builder()
             .url(url)
@@ -137,6 +143,16 @@ class RealHttpBridge(
             if (contentType != null) headers["Content-Type"] = contentType
         }
     }
+
+    private fun platformCookieHeader(url: String): String? =
+        runCatching {
+            CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+    private fun Map<String, String>.redactedForLog(): Map<String, String> =
+        mapValues { (key, value) ->
+            if (key.equals("Cookie", ignoreCase = true)) "<redacted ${value.length} chars>" else value
+        }
 
     private class InMemoryCookieJar : CookieJar {
         private val cookies = CopyOnWriteArrayList<Cookie>()
