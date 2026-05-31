@@ -157,18 +157,14 @@ class PluginContentRepository @Inject constructor(
                 }
 
                 async function normalizeResolvedVideo(value) {
-                    const direct = normalizeSource(value);
-                    if (direct) return direct;
+                    if (!value) return null;
 
-                    const video = value && (value.video || value);
-                    const videoDirect = normalizeSource(video);
-                    if (videoDirect) return videoDirect;
-
-                    let videoSources = video && video.videoSources;
-                    if (!videoSources && video && typeof video.getVideoSources === "function") {
-                        videoSources = await video.getVideoSources();
-                    } else if (!videoSources && value && typeof value.getVideoSources === "function") {
-                        videoSources = await value.getVideoSources();
+                    const video = value.video || value;
+                    let videoSources = video.videoSources;
+                    if (!videoSources && typeof video.getVideoSources === "function") {
+                        try { videoSources = await video.getVideoSources(); } catch(e) {}
+                    } else if (!videoSources && typeof value.getVideoSources === "function") {
+                        try { videoSources = await value.getVideoSources(); } catch(e) {}
                     }
 
                     if (Array.isArray(videoSources)) {
@@ -178,7 +174,12 @@ class PluginContentRepository @Inject constructor(
                         }
                     }
 
-                    return null;
+                    if (value.video) {
+                        const videoDirect = normalizeSource(value.video);
+                        if (videoDirect) return videoDirect;
+                    }
+
+                    return normalizeSource(value);
                 }
 
                 function normalizeSource(value) {
@@ -187,7 +188,7 @@ class PluginContentRepository @Inject constructor(
                     if (typeof value.url !== "string") return null;
                     return {
                         url: value.url,
-                        mimeType: value.mimeType || value.container || null,
+                        mimeType: value.mimeType || value.container || value.type || null,
                         videoUrl: value.videoUrl || null,
                         audioUrl: value.audioUrl || null,
                         videoMimeType: value.videoMimeType || null,

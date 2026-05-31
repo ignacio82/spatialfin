@@ -661,9 +661,9 @@ constructor(
                     if (exoPlayer != null && startItem.contentSource == PlayerContentSource.UNIVERSAL) {
                         val httpDataSourceFactory = dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()
                         val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(application, httpDataSourceFactory)
-                        val progressiveSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                            .createMediaSource(startItem.toMediaItem())
-                        exoPlayer.setMediaSource(progressiveSource)
+                        val sourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+                        val source = sourceFactory.createMediaSource(startItem.toMediaItem())
+                        exoPlayer.setMediaSource(source)
                     } else {
                         val mediaItems = listOf(startItem.toMediaItem())
                         player.setMediaItems(mediaItems, 0, 0L)
