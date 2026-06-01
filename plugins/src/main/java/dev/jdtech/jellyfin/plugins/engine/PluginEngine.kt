@@ -20,7 +20,7 @@ class PluginEngine @Inject constructor(
     private val domParserBridge: DOMParserBridge,
     private val utilitiesBridge: UtilitiesBridge
 ) {
-    private val jsDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val jsDispatcher = Executors.newFixedThreadPool(8).asCoroutineDispatcher()
 
     suspend fun createRuntime(): PluginRuntime {
         val quickJs = QuickJs.create(jsDispatcher)

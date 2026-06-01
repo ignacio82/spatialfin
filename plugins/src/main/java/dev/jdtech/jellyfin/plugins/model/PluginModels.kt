@@ -18,7 +18,18 @@ data class PluginConfig(
     val scriptPublicKey: String? = null,
     val minEngineVersion: Int = 0,
     val capabilities: List<String> = emptyList(),
+    val homeRows: List<PluginHomeRow> = emptyList(),
     val settings: List<PluginSetting> = emptyList()
+)
+
+@Serializable
+data class PluginHomeRow(
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val type: String? = null,
+    val defaultEnabled: Boolean = true,
+    val options: JsonElement? = null
 )
 
 @Serializable

@@ -86,7 +86,7 @@ fun HomeScreen(
     onReconnectClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
-    onPluginBrowse: (pluginId: String) -> Unit,
+    onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -111,11 +111,12 @@ fun HomeScreen(
                 is HomeAction.OnManageServers -> onManageServers()
                 is HomeAction.OnReconnectClick -> onReconnectClick()
                 is HomeAction.OnCloseClick -> (context as? Activity)?.finish()
-                is HomeAction.OnPluginBrowse -> onPluginBrowse(action.pluginId)
+                is HomeAction.OnPluginBrowse -> onPluginBrowse(action.pluginId, null)
                 else -> Unit
             }
             viewModel.onAction(action)
         },
+        onPluginBrowse = onPluginBrowse,
     )
 }
 
@@ -127,6 +128,7 @@ private fun HomeScreenLayout(
     needsLanguageSetup: Boolean,
     onLanguageSettingsClick: () -> Unit,
     onAction: (HomeAction) -> Unit,
+    onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -253,6 +255,7 @@ private fun HomeScreenLayout(
                 items(visibleHomeSections.universalPluginSections, key = { it.id }) { section ->
                     val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
                     val pluginId = firstItem?.universalMediaItem?.pluginId
+                    val rowId = firstItem?.universalMediaItem?.homeRowId
 
                     HomeSection(
                         section = section.homeSection,
@@ -275,7 +278,7 @@ private fun HomeScreenLayout(
                             }
                         },
                         modifier = Modifier.animateItem(),
-                        onSeeAll = if (pluginId != null) { { onAction(HomeAction.OnPluginBrowse(pluginId)) } } else null
+                        onSeeAll = if (pluginId != null) { { onPluginBrowse(pluginId, rowId) } } else null
                     )
                 }
             }
@@ -342,6 +345,7 @@ private fun HomeScreenLayoutPreview() {
             needsLanguageSetup = false,
             onLanguageSettingsClick = {},
             onAction = {},
+            onPluginBrowse = { _, _ -> },
         )
     }
 }

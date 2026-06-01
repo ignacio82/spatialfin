@@ -525,7 +525,7 @@ fun BeamHomeScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
-    onOpenPluginBrowse: (String) -> Unit,
+    onOpenPluginBrowse: (String, String?) -> Unit,
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -660,12 +660,13 @@ fun BeamHomeScreen(
                     val pluginName = section.homeSection.name.asString()
                     val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
                     val pluginId = firstItem?.universalMediaItem?.pluginId
+                    val rowId = firstItem?.universalMediaItem?.homeRowId
 
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                         BeamHomeSectionHeader(
                             title = pluginName + " (" + section.homeSection.items.size + ")",
                             actionLabel = "See All",
-                            onAction = if (pluginId != null) { { onOpenPluginBrowse(pluginId) } } else null
+                            onAction = if (pluginId != null) { { onOpenPluginBrowse(pluginId, rowId) } } else null
                         )
                         BeamPosterCarousel(
                             items = section.homeSection.items,

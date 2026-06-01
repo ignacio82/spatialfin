@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.film.presentation.home
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,6 +37,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 import dev.jdtech.jellyfin.plugins.repository.PluginContentRepository
+import dev.jdtech.jellyfin.plugins.repository.PluginRepository
 import dev.jdtech.jellyfin.plugins.model.toSpatialFinItem
 
 @HiltViewModel
@@ -50,6 +52,7 @@ constructor(
     private val watchNextScheduler: WatchNextScheduler,
     private val activeSessionBus: ActiveSessionBus,
     private val pluginContentRepository: PluginContentRepository,
+    private val pluginRepository: PluginRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
@@ -77,11 +80,41 @@ constructor(
         UiText.StringResource(FilmR.string.offline_downloaded_shows)
     private var hasLoadedData = false
 
+    private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        when (key) {
+            appPreferences.homeSuggestions.backendName,
+            appPreferences.homeContinueWatching.backendName,
+            appPreferences.homeNextUp.backendName,
+            appPreferences.homeLatest.backendName,
+            appPreferences.displayRatings.backendName,
+            appPreferences.displayExtraInfo.backendName -> {
+                loadData(forceRefresh = true)
+            }
+        }
+    }
+
     init {
         observeConnectionState()
         observeSyncStatus()
         observeRealtimeEvents()
         observeSessionChanges()
+        observePluginSettingsChanges()
+        appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
+    }
+
+    private fun observePluginSettingsChanges() {
+        viewModelScope.launch {
+            pluginRepository.settingsChanges.collect {
+                if (hasLoadedData && !_state.value.isLoading) {
+                    loadData(forceRefresh = true)
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        appPreferences.sharedPreferences.unregisterOnSharedPreferenceChangeListener(preferenceListener)
+        super.onCleared()
     }
 
     fun loadData(forceRefresh: Boolean = false) {
@@ -395,8 +428,8 @@ constructor(
                         val pluginId = content.plugin.id ?: "unknown"
                         HomeItem.Section(
                             dev.jdtech.jellyfin.models.HomeSection(
-                                id = UUID.nameUUIDFromBytes("universal:$pluginId".toByteArray()),
-                                name = UiText.DynamicString(content.plugin.name ?: "Unknown"),
+                                id = UUID.nameUUIDFromBytes("universal:$pluginId:${content.rowId ?: "home"}".toByteArray()),
+                                name = UiText.DynamicString(content.rowName ?: content.plugin.name ?: "Unknown"),
                                 items = items
                             )
                         )

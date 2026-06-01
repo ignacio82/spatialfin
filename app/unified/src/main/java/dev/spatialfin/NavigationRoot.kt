@@ -136,7 +136,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object UniversalPluginsRoute
 
-@Serializable data class PluginBrowseRoute(val pluginId: String)
+@Serializable data class PluginBrowseRoute(val pluginId: String, val rowId: String? = null)
 
 @Serializable
 data class LibraryRoute(
@@ -514,6 +514,7 @@ fun NavigationRoot(
                 val route: PluginBrowseRoute = backStackEntry.toRoute()
                 dev.jdtech.jellyfin.plugins.ui.PluginBrowseScreen(
                     pluginId = route.pluginId,
+                    rowId = route.rowId,
                     onBack = { navController.safePopBackStack() },
                     onItemClick = { item ->
                         navigateToItem(navController = navController, item = item)
@@ -560,8 +561,8 @@ fun NavigationRoot(
                     onItemClick = { item ->
                         navigateToItem(navController = navController, item = item)
                     },
-                    onPluginBrowse = { pluginId ->
-                        navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId))
+                    onPluginBrowse = { pluginId, rowId ->
+                        navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId, rowId = rowId))
                     },
                 )
             }

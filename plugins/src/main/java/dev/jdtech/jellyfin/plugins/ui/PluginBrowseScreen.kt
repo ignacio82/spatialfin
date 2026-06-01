@@ -52,18 +52,20 @@ class PluginBrowseViewModel @Inject constructor(
     private val _state = MutableStateFlow(PluginBrowseState())
     val state = _state.asStateFlow()
 
-    fun load(pluginId: String) {
+    fun load(pluginId: String, rowId: String? = null) {
         val plugin = pluginRepository.getInstalledPlugins().find { it.id == pluginId }
+        val row = rowId?.let { id -> plugin?.homeRows?.find { it.id == id } }
         _state.value = _state.value.copy(
             pluginId = pluginId,
-            pluginName = plugin?.name ?: "Unknown",
+            rowId = rowId,
+            pluginName = row?.name ?: plugin?.name ?: "Unknown",
             settings = plugin?.settings ?: emptyList(),
             settingValues = pluginRepository.getPluginSettings(pluginId)
         )
         
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            val items = contentRepository.getPluginHome(pluginId).map { it.toSpatialFinItem() }
+            val items = contentRepository.getPluginHome(pluginId, rowId).map { it.toSpatialFinItem() }
             _state.value = _state.value.copy(items = items, isLoading = false)
         }
     }
@@ -76,7 +78,7 @@ class PluginBrowseViewModel @Inject constructor(
         val pluginId = _state.value.pluginId ?: return
         val query = _state.value.query.trim()
         if (query.isBlank()) {
-            load(pluginId)
+            load(pluginId, _state.value.rowId)
             return
         }
 
@@ -91,7 +93,7 @@ class PluginBrowseViewModel @Inject constructor(
         val pluginId = _state.value.pluginId ?: return
         pluginRepository.updatePluginSetting(pluginId, key, value)
         _state.value = _state.value.copy(settingValues = pluginRepository.getPluginSettings(pluginId))
-        load(pluginId)
+        load(pluginId, _state.value.rowId)
     }
 
     fun saveAuthSettings(settings: Map<String, String>) {
@@ -100,7 +102,7 @@ class PluginBrowseViewModel @Inject constructor(
             pluginRepository.updatePluginSetting(pluginId, key, value)
         }
         _state.value = _state.value.copy(settingValues = pluginRepository.getPluginSettings(pluginId))
-        load(pluginId)
+        load(pluginId, _state.value.rowId)
     }
 
     fun clearAuthSettings(cookieKey: String, loggedInKey: String) {
@@ -115,6 +117,7 @@ class PluginBrowseViewModel @Inject constructor(
 
 data class PluginBrowseState(
     val pluginId: String? = null,
+    val rowId: String? = null,
     val pluginName: String = "",
     val items: List<SpatialFinItem> = emptyList(),
     val query: String = "",
@@ -126,6 +129,7 @@ data class PluginBrowseState(
 @Composable
 fun PluginBrowseScreen(
     pluginId: String,
+    rowId: String? = null,
     onBack: () -> Unit,
     onItemClick: (SpatialFinItem) -> Unit,
     viewModel: PluginBrowseViewModel = hiltViewModel()
@@ -134,8 +138,8 @@ fun PluginBrowseScreen(
     val context = LocalContext.current
     var authSetting by remember { mutableStateOf<PluginSetting?>(null) }
 
-    LaunchedEffect(pluginId) {
-        viewModel.load(pluginId)
+    LaunchedEffect(pluginId, rowId) {
+        viewModel.load(pluginId, rowId)
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {

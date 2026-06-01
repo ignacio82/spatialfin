@@ -3,11 +3,14 @@ package dev.jdtech.jellyfin.plugins.repository
 import dev.jdtech.jellyfin.plugins.engine.PluginClient
 import dev.jdtech.jellyfin.plugins.engine.PluginRuntime
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
+import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import dev.jdtech.jellyfin.plugins.model.ResolvedVideoUrl
 import dev.jdtech.jellyfin.plugins.model.UniversalMediaItem
 import kotlinx.coroutines.delay
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -15,7 +18,9 @@ import javax.inject.Singleton
 
 data class PluginContent(
     val plugin: PluginConfig,
-    val items: List<UniversalMediaItem>
+    val items: List<UniversalMediaItem>,
+    val rowId: String? = null,
+    val rowName: String? = null
 )
 
 @Singleton
@@ -33,27 +38,43 @@ class PluginContentRepository @Inject constructor(
         return getHomeByPlugin().flatMap { it.items }
     }
 
-    suspend fun getHomeByPlugin(): List<PluginContent> {
+    suspend fun getHomeByPlugin(): List<PluginContent> = coroutineScope {
         val plugins = pluginRepository.getInstalledPlugins()
-        return plugins.mapNotNull { plugin ->
-            val pluginId = plugin.id ?: return@mapNotNull null
-            PluginContent(plugin, getPluginHome(pluginId))
-        }
+        plugins.flatMap { plugin ->
+            val pluginId = plugin.id ?: return@flatMap emptyList()
+            val rows = plugin.homeRows.ifEmpty {
+                listOf(PluginHomeRow(id = "home", name = plugin.name ?: "Home", type = "home"))
+            }
+            rows.map { row ->
+                async {
+                    if (!pluginRepository.isPluginHomeRowEnabled(pluginId, row.id, row.defaultEnabled)) {
+                        null
+                    } else {
+                        val items = getPluginHome(pluginId, row.id)
+                        if (items.isEmpty()) null else PluginContent(plugin, items, row.id, row.name)
+                    }
+                }
+            }
+        }.mapNotNull { it.await() }
     }
 
-    suspend fun getPluginHome(pluginId: String): List<UniversalMediaItem> {
+    suspend fun getPluginHome(pluginId: String, rowId: String? = null): List<UniversalMediaItem> {
+        val manifest = pluginRepository.getInstalledPlugins().find { it.id == pluginId }
+        val row = rowId?.let { id -> manifest?.homeRows?.find { it.id == id } }
+        val rowJson = row?.let { json.encodeToString(it) } ?: "null"
+        val cacheKey = "$pluginId:${rowId ?: "home"}"
         val items = runPluginListCall(
             pluginId = pluginId,
-            call = "await (typeof source.getHome === 'function' ? source.getHome() : (typeof getHome === 'function' ? getHome() : []))",
+            call = "await (typeof source.getHome === 'function' ? source.getHome($rowJson) : (typeof getHome === 'function' ? getHome($rowJson) : []))",
             logContext = "home"
-        )
+        ).map { item -> if (rowId == null || item.homeRowId == rowId) item else item.copy(homeRowId = rowId) }
         if (items.isNotEmpty()) {
-            homeCache[pluginId] = items
+            homeCache[cacheKey] = items
             return items
         }
-        return homeCache[pluginId].orEmpty().also { cached ->
+        return homeCache[cacheKey].orEmpty().also { cached ->
             if (cached.isNotEmpty()) {
-                android.util.Log.e("PluginContent", "Using cached home items for $pluginId after empty plugin response")
+                android.util.Log.e("PluginContent", "Using cached home items for $cacheKey after empty plugin response")
             }
         }
     }

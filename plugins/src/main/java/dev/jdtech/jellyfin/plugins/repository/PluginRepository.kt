@@ -12,6 +12,8 @@ import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +29,9 @@ class PluginRepository @Inject constructor(
         coerceInputValues = true
     }
     private val pluginsDir = File(context.filesDir, "universal_plugins")
+
+    private val _settingsChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val settingsChanges = _settingsChanges.asSharedFlow()
 
     init {
         if (!pluginsDir.exists()) {
@@ -143,7 +148,19 @@ class PluginRepository @Inject constructor(
         val settings = getPluginSettings(pluginId).toMutableMap()
         settings[key] = value
         File(pluginDir, "settings.json").writeText(json.encodeToString(settings))
+        _settingsChanges.tryEmit(Unit)
     }
+
+    fun isPluginHomeRowEnabled(pluginId: String, rowId: String, defaultEnabled: Boolean = true): Boolean {
+        val key = homeRowEnabledKey(rowId)
+        return getPluginSettings(pluginId)[key]?.toBooleanStrictOrNull() ?: defaultEnabled
+    }
+
+    fun updatePluginHomeRowEnabled(pluginId: String, rowId: String, enabled: Boolean) {
+        updatePluginSetting(pluginId, homeRowEnabledKey(rowId), enabled.toString())
+    }
+
+    fun homeRowEnabledKey(rowId: String): String = "homeRow.$rowId.enabled"
 
     private fun downloadString(url: String): String {
         val request = Request.Builder().url(url).build()

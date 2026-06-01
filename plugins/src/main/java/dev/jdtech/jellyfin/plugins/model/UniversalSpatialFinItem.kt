@@ -30,7 +30,7 @@ data class UniversalSpatialFinItem(
 
 fun UniversalMediaItem.toSpatialFinItem(): UniversalSpatialFinItem {
     return UniversalSpatialFinItem(
-        id = UUID.nameUUIDFromBytes(id.toByteArray()),
+        id = UUID.nameUUIDFromBytes("universal:$pluginId:${homeRowId ?: "home"}:$id".toByteArray()),
         name = title,
         overview = description ?: "",
         images = SpatialFinImages(

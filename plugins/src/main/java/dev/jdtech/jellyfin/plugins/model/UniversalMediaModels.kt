@@ -14,7 +14,8 @@ data class UniversalMediaItem(
     val durationMs: Long? = null,
     val viewCount: Long? = null,
     val uploadDate: String? = null,
-    val isLive: Boolean = false
+    val isLive: Boolean = false,
+    val homeRowId: String? = null
 )
 
 @Serializable

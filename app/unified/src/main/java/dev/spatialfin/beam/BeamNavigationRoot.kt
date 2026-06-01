@@ -205,6 +205,7 @@ fun BeamNavigationRoot(
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
     var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var beamBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
@@ -527,8 +528,9 @@ fun BeamNavigationRoot(
                                 detailBackRoute = BeamRoute.Home
                                 currentRoute = BeamRoute.Detail
                             },
-                            onOpenPluginBrowse = { pluginId ->
+                            onOpenPluginBrowse = { pluginId, rowId ->
                                 selectedPluginId = pluginId
+                                selectedPluginRowId = rowId
                                 currentRoute = BeamRoute.PluginBrowse
                             }
                         )
@@ -540,6 +542,7 @@ fun BeamNavigationRoot(
                         } else {
                             dev.jdtech.jellyfin.plugins.ui.PluginBrowseScreen(
                                 pluginId = pluginId,
+                                rowId = selectedPluginRowId,
                                 onBack = { currentRoute = BeamRoute.Home },
                                 onItemClick = { item ->
                                     navigation.launchItem(item)
@@ -773,6 +776,7 @@ fun BeamNavigationRoot(
                         dev.jdtech.jellyfin.plugins.ui.PluginSettingsScreen(
                             onPluginClick = { pluginId ->
                                 selectedPluginId = pluginId
+                                selectedPluginRowId = null
                                 currentRoute = BeamRoute.PluginBrowse
                             },
                             onJellyfinClick = {
