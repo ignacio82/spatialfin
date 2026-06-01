@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpatialFin Plugins | Extend Your Media</title>
+    <meta name="description" content="Learn how to build JavaScript plugins for SpatialFin to bring your favorite media directly into the app.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="images/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="page-glow page-glow-left" aria-hidden="true"></div>
+    <div class="page-glow page-glow-right" aria-hidden="true"></div>
+
+    <header>
+        <div class="nav-container">
+            <a href="index.html" class="logo-link">
+                <img src="images/icon.png" alt="SpatialFin Logo" class="logo">
+                <span class="logo-text">SpatialFin</span>
+            </a>
+            <nav>
+                <a href="index.html#features">Features</a>
+                <a href="smart.html">Smart Playback</a>
+                <a href="companion.html">Companion App</a>
+                <a href="plugins.html">Plugins</a>
+                <a href="index.html#trailer">Trailer</a>
+                <a href="index.html#early-access" class="nav-cta">Join Beta</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero" style="padding-top: 160px; padding-bottom: 60px;">
+            <div class="hero-copy" style="max-width: 800px; margin: 0 auto; text-align: center;">
+                <p class="eyebrow">Extensibility</p>
+                <h1>SpatialFin Plugin System</h1>
+                <p class="hero-lead">
+                    SpatialFin supports standalone JavaScript plugins that let you resolve and stream content from various web sources directly inside the app.
+                </p>
+            </div>
+        </section>
+
+        <section class="container section-shell" style="max-width: 900px; margin: 0 auto; padding-bottom: 80px;">
+            <div class="bento-item" style="padding: 40px; text-align: left; background: var(--surface); border: 1px solid var(--border);">
+                <h2>How Plugins Work</h2>
+                <p style="margin-top: 20px; line-height: 1.6; color: var(--text-secondary);">
+                    Plugins operate on a standalone QuickJS engine, securely resolving media metadata and direct stream URLs. SpatialFin plugins share a common architecture with Grayjay plugins, making it easy to port existing scripts. Note: While some plugins designed for Grayjay might work out of the box, they have not been thoroughly tested.
+                </p>
+                
+                <h3 style="margin-top: 40px; margin-bottom: 16px;">Building a Plugin: PeerTube Example</h3>
+                <p style="line-height: 1.6; color: var(--text-secondary); margin-bottom: 20px;">
+                    A basic plugin requires just two files: a <code>manifest.json</code> and a <code>script.js</code>. Let's look at how you'd build a plugin for PeerTube (a decentralized, federated video network).
+                </p>
+
+                <h4 style="margin-bottom: 12px;">1. The Manifest (manifest.json)</h4>
+                <p style="line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px;">
+                    This file defines the plugin's metadata, ID, and capabilities.
+                </p>
+                <pre style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 14px; margin-bottom: 30px; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1);"><code>{
+  "id": "f04c8f53-2bd1-4c6c-8517-5e3e6f9a0c12",
+  "name": "PeerTube",
+  "author": "Your Name",
+  "description": "A plugin to browse and stream PeerTube videos.",
+  "version": 1,
+  "scriptUrl": "script.js",
+  "minEngineVersion": 1,
+  "capabilities": ["search", "resolveVideoUrl"],
+  "settings": []
+}</code></pre>
+
+                <h4 style="margin-bottom: 12px;">2. The Logic (script.js)</h4>
+                <p style="line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px;">
+                    The script implements the required functions. For PeerTube, you can use the global <code>sepiasearch.org</code> API to discover content, and the origin instance's API to resolve streaming URLs (like HLS or MP4).
+                </p>
+                <pre style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 14px; margin-bottom: 30px; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1);"><code>// 1. Searching for videos
+source.search = async function(query) {
+    const response = http.GET("https://sepiasearch.org/api/v1/search/videos?search=" + encodeURIComponent(query), {});
+    const json = JSON.parse(response.body);
+    
+    return json.data.map(item => ({
+        id: item.uuid,
+        pluginId: "f04c8f53-2bd1-4c6c-8517-5e3e6f9a0c12",
+        title: item.name,
+        author: item.account ? item.account.displayName : "Unknown",
+        description: item.description,
+        thumbnailUrl: item.thumbnailUrl,
+        videoUrl: item.url, // Points to the origin instance
+        durationMs: (item.duration || 0) * 1000
+    }));
+};
+
+// 2. Resolving the stream
+source.resolveVideoUrl = async function(url) {
+    // Parse the host and uuid from the videoUrl
+    const match = url.match(/https?:\/\/([^/]+)\/videos\/(?:watch|embed)\/([^/?]+)/);
+    if (!match) return null;
+    
+    const host = match[1];
+    const uuid = match[2];
+    
+    // Call the origin instance for video details
+    const response = http.GET(`https://${host}/api/v1/videos/${uuid}`, {});
+    const json = JSON.parse(response.body);
+    
+    // Find the HLS playlist (.m3u8)
+    if (json.streamingPlaylists && json.streamingPlaylists.length > 0) {
+        return {
+            url: json.streamingPlaylists[0].playlistUrl,
+            mimeType: "application/x-mpegURL"
+        };
+    }
+    return null; // Fallback logic omitted for brevity
+};</code></pre>
+
+                <h4 style="margin-bottom: 12px;">3. Testing Locally</h4>
+                <p style="line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px;">
+                    Place your <code>manifest.json</code> and <code>script.js</code> in a folder, then serve it locally using Python:
+                </p>
+                <pre style="background: rgba(0,0,0,0.3); padding: 20px; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 14px; margin-bottom: 10px; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1);"><code>python3 -m http.server 8765</code></pre>
+                <p style="line-height: 1.6; color: var(--text-secondary);">
+                    Then, inside the SpatialFin app, go to Settings &gt; Plugins, click "Add Plugin", and enter your local IP address: <code>http://&lt;your-local-ip&gt;:8765/manifest.json</code>.
+                </p>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

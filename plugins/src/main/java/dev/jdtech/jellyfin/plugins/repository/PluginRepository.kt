@@ -2,10 +2,13 @@ package dev.jdtech.jellyfin.plugins.repository
 
 import android.content.Context
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
+import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -161,6 +164,62 @@ class PluginRepository @Inject constructor(
     }
 
     fun homeRowEnabledKey(rowId: String): String = "homeRow.$rowId.enabled"
+
+    fun getPluginHomeRows(plugin: PluginConfig): List<PluginHomeRow> {
+        val pluginId = plugin.id
+        val builtInRows = plugin.homeRows.ifEmpty {
+            listOf(PluginHomeRow(id = "home", name = plugin.name ?: "Home", type = "home"))
+        }
+        if (pluginId == null) return builtInRows
+        return builtInRows + getCustomPluginHomeRows(pluginId)
+    }
+
+    fun getCustomPluginHomeRows(pluginId: String): List<PluginHomeRow> {
+        val raw = getPluginSettings(pluginId)[CUSTOM_HOME_ROWS_KEY].orEmpty()
+        if (raw.isBlank()) return emptyList()
+        return runCatching {
+            json.decodeFromString<List<PluginHomeRow>>(raw)
+        }.getOrElse {
+            android.util.Log.e("PluginRepository", "Failed to parse custom home rows for $pluginId", it)
+            emptyList()
+        }
+    }
+
+    fun addCustomPluginHomeRow(
+        pluginId: String,
+        templateId: String,
+        name: String,
+        options: Map<String, String>
+    ): Boolean {
+        val plugin = getInstalledPlugins().find { it.id == pluginId } ?: return false
+        val template = plugin.homeRowTemplates.find { it.id == templateId } ?: return false
+        val trimmedName = name.trim().ifBlank {
+            val primaryValue = template.fields.firstOrNull()?.id?.let { options[it] }.orEmpty()
+            listOfNotNull(template.namePrefix, primaryValue.ifBlank { template.name }).joinToString("").trim()
+        }
+        val row = PluginHomeRow(
+            id = "custom_${template.id}_${System.currentTimeMillis()}",
+            name = trimmedName,
+            description = template.description,
+            type = template.type,
+            defaultEnabled = true,
+            options = JsonObject(options.mapValues { JsonPrimitive(it.value) })
+        )
+        val rows = getCustomPluginHomeRows(pluginId) + row
+        updatePluginSetting(pluginId, CUSTOM_HOME_ROWS_KEY, json.encodeToString(rows))
+        return true
+    }
+
+    fun deleteCustomPluginHomeRow(pluginId: String, rowId: String) {
+        val rows = getCustomPluginHomeRows(pluginId).filterNot { it.id == rowId }
+        updatePluginSetting(pluginId, CUSTOM_HOME_ROWS_KEY, json.encodeToString(rows))
+    }
+
+    fun isCustomHomeRow(rowId: String): Boolean = rowId.startsWith("custom_")
+
+    companion object {
+        private const val CUSTOM_HOME_ROWS_KEY = "homeRows.custom"
+    }
 
     private fun downloadString(url: String): String {
         val request = Request.Builder().url(url).build()

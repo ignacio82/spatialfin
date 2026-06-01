@@ -1,9 +1,16 @@
 package dev.jdtech.jellyfin.plugins.ui
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.VideoView
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -13,8 +20,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
@@ -29,19 +39,22 @@ import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.plugins.model.ResolvedVideoUrl
+import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.plugins.model.PluginSetting
 import dev.jdtech.jellyfin.plugins.model.toSpatialFinItem
 import dev.jdtech.jellyfin.plugins.repository.PluginContentRepository
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.launch
+import kotlin.math.absoluteValue
 import javax.inject.Inject
 
 @HiltViewModel
@@ -54,10 +67,11 @@ class PluginBrowseViewModel @Inject constructor(
 
     fun load(pluginId: String, rowId: String? = null) {
         val plugin = pluginRepository.getInstalledPlugins().find { it.id == pluginId }
-        val row = rowId?.let { id -> plugin?.homeRows?.find { it.id == id } }
+        val row = rowId?.let { id -> plugin?.let { pluginRepository.getPluginHomeRows(it).find { row -> row.id == id } } }
         _state.value = _state.value.copy(
             pluginId = pluginId,
             rowId = rowId,
+            presentation = row?.presentation ?: plugin?.presentation,
             pluginName = row?.name ?: plugin?.name ?: "Unknown",
             settings = plugin?.settings ?: emptyList(),
             settingValues = pluginRepository.getPluginSettings(pluginId)
@@ -68,6 +82,34 @@ class PluginBrowseViewModel @Inject constructor(
             val items = contentRepository.getPluginHome(pluginId, rowId).map { it.toSpatialFinItem() }
             _state.value = _state.value.copy(items = items, isLoading = false)
         }
+    }
+
+    fun loadMoreIfNeeded(index: Int) {
+        val items = _state.value.items
+        if (_state.value.isLoadingMore || items.isEmpty()) return
+        val prefetchIndex = (items.lastIndex - 2).coerceAtLeast(0)
+        if (index < prefetchIndex) return
+        val lastUniversal = items.lastOrNull() as? UniversalSpatialFinItem ?: return
+        val pluginId = _state.value.pluginId ?: return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoadingMore = true)
+            val more = contentRepository.getPager(pluginId, lastUniversal.universalMediaItem.videoUrl)
+                .map { it.toSpatialFinItem() }
+            val existingIds = _state.value.items.map { it.id }.toSet()
+            val uniqueMore = more.filterNot { it.id in existingIds }
+            _state.value = _state.value.copy(
+                items = _state.value.items + uniqueMore,
+                isLoadingMore = false
+            )
+        }
+    }
+
+    suspend fun resolvePlayable(item: UniversalSpatialFinItem): ResolvedVideoUrl? {
+        return contentRepository.getVideoUrl(
+            pluginId = item.universalMediaItem.pluginId,
+            videoUrl = item.universalMediaItem.videoUrl,
+            isLive = item.universalMediaItem.isLive
+        )
     }
 
     fun setQuery(query: String) {
@@ -119,11 +161,13 @@ data class PluginBrowseState(
     val pluginId: String? = null,
     val rowId: String? = null,
     val pluginName: String = "",
+    val presentation: String? = null,
     val items: List<SpatialFinItem> = emptyList(),
     val query: String = "",
     val settings: List<dev.jdtech.jellyfin.plugins.model.PluginSetting> = emptyList(),
     val settingValues: Map<String, String> = emptyMap(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val isLoadingMore: Boolean = false
 )
 
 @Composable
@@ -135,11 +179,57 @@ fun PluginBrowseScreen(
     viewModel: PluginBrowseViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
     var authSetting by remember { mutableStateOf<PluginSetting?>(null) }
 
     LaunchedEffect(pluginId, rowId) {
         viewModel.load(pluginId, rowId)
+    }
+
+    val verticalFeed = state.presentation == "verticalVideoFeed"
+    BackHandler(enabled = verticalFeed) {
+        // Vertical video feeds use swipe gestures heavily. Use the explicit overlay back button
+        // so an accidental system back gesture does not exit while paging between videos.
+    }
+
+    if (verticalFeed) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            if (state.isLoading) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            } else {
+                VerticalVideoFeed(
+                    items = state.items.filterIsInstance<UniversalSpatialFinItem>(),
+                    isLoadingMore = state.isLoadingMore,
+                    onResolve = viewModel::resolvePlayable,
+                    onPageChanged = viewModel::loadMoreIfNeeded,
+                    onOpen = { item -> onItemClick(item) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Row(
+                modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Text(
+                    text = state.pluginName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        return
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -201,25 +291,7 @@ fun PluginBrowseScreen(
             ) {
                 items(state.items.size) { index ->
                     val item = state.items[index]
-                    PluginItemCard(item = item, onClick = { 
-                        if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
-                            try {
-                                // Assume BeamPlayerActivity is available via classpath even if not explicitly imported
-                                val clazz = Class.forName("dev.jdtech.jellyfin.player.beam.BeamPlayerActivity")
-                                val intent = android.content.Intent(context, clazz).apply {
-                                    putExtra("universalPluginId", item.universalMediaItem.pluginId)
-                                    putExtra("universalItemId", item.universalMediaItem.id)
-                                    putExtra("universalVideoUrl", item.universalMediaItem.videoUrl)
-                                    putExtra("universalTitle", item.name)
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                onItemClick(item)
-                            }
-                        } else {
-                            onItemClick(item) 
-                        }
-                    })
+                    PluginItemCard(item = item, onClick = { onItemClick(item) })
                 }
             }
         }
@@ -239,6 +311,238 @@ fun PluginBrowseScreen(
                 authSetting = null
             }
         )
+    }
+}
+
+@Composable
+private fun VerticalVideoFeed(
+    items: List<UniversalSpatialFinItem>,
+    isLoadingMore: Boolean,
+    onResolve: suspend (UniversalSpatialFinItem) -> ResolvedVideoUrl?,
+    onPageChanged: (Int) -> Unit,
+    onOpen: (UniversalSpatialFinItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (items.isEmpty()) {
+        Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text("No videos")
+        }
+        return
+    }
+
+    var currentPage by remember { mutableIntStateOf(0) }
+    val dragOffset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    LaunchedEffect(items.size, isLoadingMore) {
+        if (!isLoadingMore && currentPage > items.lastIndex) {
+            currentPage = items.lastIndex.coerceAtLeast(0)
+            dragOffset.snapTo(0f)
+        }
+    }
+
+    LaunchedEffect(currentPage, items.size) {
+        onPageChanged(currentPage.coerceAtMost(items.lastIndex))
+    }
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxWidth().background(Color.Black)
+    ) {
+        val pageHeight = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+        val pageCount = items.size + if (isLoadingMore) 1 else 0
+        val canGoPrevious = currentPage > 0
+        val canGoNext = currentPage < pageCount - 1
+
+        fun settleDrag() {
+            val offset = dragOffset.value
+            val threshold = pageHeight * 0.22f
+            scope.launch {
+                when {
+                    offset <= -threshold && canGoNext -> {
+                        dragOffset.animateTo(-pageHeight, tween(durationMillis = 170))
+                        currentPage += 1
+                        dragOffset.snapTo(0f)
+                    }
+                    offset >= threshold && canGoPrevious -> {
+                        dragOffset.animateTo(pageHeight, tween(durationMillis = 170))
+                        currentPage -= 1
+                        dragOffset.snapTo(0f)
+                    }
+                    else -> {
+                        dragOffset.animateTo(0f, tween(durationMillis = 130))
+                    }
+                }
+            }
+        }
+
+        listOf(currentPage - 1, currentPage, currentPage + 1)
+            .filter { it in 0 until pageCount }
+            .forEach { page ->
+                val baseOffset = when {
+                    page < currentPage -> -pageHeight
+                    page > currentPage -> pageHeight
+                    else -> 0f
+                }
+                val pageTranslation = baseOffset + dragOffset.value
+                val pageOffset = (pageTranslation / pageHeight).absoluteValue.coerceIn(0f, 1f)
+                val pageScale = 0.94f + ((1f - pageOffset) * 0.06f)
+                val pageAlpha = 0.62f + ((1f - pageOffset) * 0.38f)
+
+                val pageModifier = Modifier.graphicsLayer {
+                        translationY = pageTranslation
+                        scaleX = pageScale
+                        scaleY = pageScale
+                        alpha = pageAlpha
+                    }
+                if (page in items.indices) {
+                    VerticalVideoPage(
+                        item = items[page],
+                        active = page == currentPage,
+                        onResolve = onResolve,
+                        showLoadingMore = isLoadingMore && page == items.lastIndex,
+                        modifier = pageModifier
+                    )
+                } else {
+                    VerticalFeedLoadingPage(modifier = pageModifier)
+                }
+            }
+
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .pointerInput(pageCount, currentPage, pageHeight) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            scope.launch { dragOffset.stop() }
+                        },
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            val minOffset = if (canGoNext) -pageHeight else 0f
+                            val maxOffset = if (canGoPrevious) pageHeight else 0f
+                            scope.launch {
+                                dragOffset.snapTo(
+                                    (dragOffset.value + dragAmount).coerceIn(minOffset, maxOffset)
+                                )
+                            }
+                        },
+                        onDragEnd = { settleDrag() },
+                        onDragCancel = { settleDrag() }
+                    )
+                }
+        )
+    }
+}
+
+@Composable
+private fun VerticalFeedLoadingPage(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(color = Color.White)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Loading more videos",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.85f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun VerticalVideoPage(
+    item: UniversalSpatialFinItem,
+    active: Boolean,
+    onResolve: suspend (UniversalSpatialFinItem) -> ResolvedVideoUrl?,
+    showLoadingMore: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var resolvedUrl by remember(item.id) { mutableStateOf<String?>(null) }
+    var resolveFailed by remember(item.id) { mutableStateOf(false) }
+
+    LaunchedEffect(item.id, active) {
+        if (active && resolvedUrl == null && !resolveFailed) {
+            val resolved = onResolve(item)
+            resolvedUrl = resolved?.url
+            resolveFailed = resolved?.url.isNullOrBlank()
+        }
+    }
+
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        val videoUrl = resolvedUrl
+        if (videoUrl != null && active) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    VideoView(context).apply {
+                        setOnPreparedListener { player ->
+                            player.isLooping = true
+                            player.start()
+                        }
+                    }
+                },
+                update = { videoView ->
+                    val current = videoView.tag as? String
+                    if (current != videoUrl) {
+                        videoView.tag = videoUrl
+                        videoView.setVideoURI(Uri.parse(videoUrl))
+                    }
+                    if (!videoView.isPlaying) {
+                        videoView.start()
+                    }
+                },
+                onRelease = { videoView ->
+                    videoView.stopPlayback()
+                }
+            )
+        } else {
+            AsyncImage(
+                model = item.images.backdrop ?: item.images.primary,
+                contentDescription = item.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+            if (!resolveFailed) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        }
+
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+            item.universalMediaItem.author?.takeIf { it.isNotBlank() }?.let { author ->
+                Text(text = author, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.9f))
+            }
+            item.overview.takeIf { it.isNotBlank() }?.let { overview ->
+                Text(
+                    text = overview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f),
+                    maxLines = 3
+                )
+            }
+            if (showLoadingMore) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp
+                )
+            }
+        }
     }
 }
 

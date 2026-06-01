@@ -3,7 +3,6 @@ package dev.jdtech.jellyfin.plugins.repository
 import dev.jdtech.jellyfin.plugins.engine.PluginClient
 import dev.jdtech.jellyfin.plugins.engine.PluginRuntime
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
-import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import dev.jdtech.jellyfin.plugins.model.ResolvedVideoUrl
 import dev.jdtech.jellyfin.plugins.model.UniversalMediaItem
 import kotlinx.coroutines.delay
@@ -42,9 +41,7 @@ class PluginContentRepository @Inject constructor(
         val plugins = pluginRepository.getInstalledPlugins()
         plugins.flatMap { plugin ->
             val pluginId = plugin.id ?: return@flatMap emptyList()
-            val rows = plugin.homeRows.ifEmpty {
-                listOf(PluginHomeRow(id = "home", name = plugin.name ?: "Home", type = "home"))
-            }
+            val rows = pluginRepository.getPluginHomeRows(plugin)
             rows.map { row ->
                 async {
                     if (!pluginRepository.isPluginHomeRowEnabled(pluginId, row.id, row.defaultEnabled)) {
@@ -60,7 +57,9 @@ class PluginContentRepository @Inject constructor(
 
     suspend fun getPluginHome(pluginId: String, rowId: String? = null): List<UniversalMediaItem> {
         val manifest = pluginRepository.getInstalledPlugins().find { it.id == pluginId }
-        val row = rowId?.let { id -> manifest?.homeRows?.find { it.id == id } }
+        val row = rowId?.let { id ->
+            manifest?.let { pluginRepository.getPluginHomeRows(it).find { row -> row.id == id } }
+        }
         val rowJson = row?.let { json.encodeToString(it) } ?: "null"
         val cacheKey = "$pluginId:${rowId ?: "home"}"
         val items = runPluginListCall(
@@ -167,7 +166,7 @@ class PluginContentRepository @Inject constructor(
 
     private fun buildResolveScript(videoUrlJson: String, isLive: Boolean = false): String {
         return """
-            (async function() {
+            void (async function() {
                 try {
                     const videoUrlStr = $videoUrlJson;
                     const isLiveItem = $isLive;
@@ -260,7 +259,7 @@ class PluginContentRepository @Inject constructor(
 
     private fun buildContentScript(call: String, pluginId: String): String {
         return """
-            (async function() {
+            void (async function() {
                 try {
                     const res = $call;
                     const items = res.results || res || [];

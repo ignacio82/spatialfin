@@ -18,7 +18,9 @@ data class PluginConfig(
     val scriptPublicKey: String? = null,
     val minEngineVersion: Int = 0,
     val capabilities: List<String> = emptyList(),
+    val presentation: String? = null,
     val homeRows: List<PluginHomeRow> = emptyList(),
+    val homeRowTemplates: List<PluginHomeRowTemplate> = emptyList(),
     val settings: List<PluginSetting> = emptyList()
 )
 
@@ -28,8 +30,29 @@ data class PluginHomeRow(
     val name: String,
     val description: String? = null,
     val type: String? = null,
+    val presentation: String? = null,
     val defaultEnabled: Boolean = true,
     val options: JsonElement? = null
+)
+
+@Serializable
+data class PluginHomeRowTemplate(
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val type: String,
+    val namePrefix: String? = null,
+    val fields: List<PluginHomeRowField> = emptyList()
+)
+
+@Serializable
+data class PluginHomeRowField(
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val type: String = "text",
+    val default: String? = null,
+    val required: Boolean = true
 )
 
 @Serializable

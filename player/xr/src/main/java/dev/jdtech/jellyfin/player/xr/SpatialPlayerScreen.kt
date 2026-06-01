@@ -1617,8 +1617,16 @@ fun SpatialPlayerScreen(
         }
     }
 
-    var playerInitialized by remember { mutableStateOf(false) }
-    LaunchedEffect(player, videoEntity.value) {
+    val playerMediaKey = when {
+        localMediaId != null -> "local:$localMediaId:start=$startFromBeginning"
+        networkVideoId != null -> "network:$networkVideoId:start=$startFromBeginning"
+        itemId != null -> "jellyfin:$itemId:kind=$itemKind:start=$startFromBeginning:source=${mediaSourceIndex ?: -1}:bitrate=${maxBitrate ?: 0L}"
+        universalVideoUrl != null && universalItemId != null && universalPluginId != null ->
+            "universal:$universalPluginId:$universalItemId:$universalVideoUrl"
+        else -> null
+    }
+    var initializedPlayerMediaKey by remember(player) { mutableStateOf<String?>(null) }
+    LaunchedEffect(player, videoEntity.value, playerMediaKey) {
         val entity = videoEntity.value ?: run {
             videoSurfaceBound = false
             return@LaunchedEffect
@@ -1635,8 +1643,13 @@ fun SpatialPlayerScreen(
         player.setVideoSurface(surface)
         videoSurfaceBound = true
         Timber.i("XR_VIDEO: setVideoSurface complete")
-        if (!playerInitialized) {
+        if (playerMediaKey == null) {
+            Timber.w("XR_VIDEO: no media id available after SurfaceEntity creation")
+            return@LaunchedEffect
+        }
+        if (initializedPlayerMediaKey != playerMediaKey) {
             firstVideoFrameRendered = false
+            Timber.i("XR_VIDEO: initializing player media key=%s", playerMediaKey)
             when {
                 localMediaId != null -> {
                     viewModel.initializeLocalPlayer(
@@ -1664,14 +1677,11 @@ fun SpatialPlayerScreen(
                         pluginId = universalPluginId,
                         itemId = universalItemId,
                         videoUrl = universalVideoUrl,
-                        title = universalTitle ?: "External Video"
+                        title = universalTitle ?: "External Video",
                     )
                 }
-                else -> {
-                    Timber.w("XR_VIDEO: no media id available after SurfaceEntity creation")
-                }
             }
-            playerInitialized = true
+            initializedPlayerMediaKey = playerMediaKey
         }
     }
     // Update SurfaceEntity shape when video dimensions or stereo mode changes.

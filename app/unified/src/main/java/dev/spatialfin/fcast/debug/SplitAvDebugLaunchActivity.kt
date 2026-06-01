@@ -29,6 +29,12 @@ import timber.log.Timber
  *   --es item_id <jellyfin-uuid> \
  *   [--ei host_a 192 --ei host_b 168 --ei host_c 1 --ei host_d 102 --ei port 46899] \
  *   [--el start_ms 0]
+ *
+ * adb shell am start -n dev.spatialfin.debug/dev.spatialfin.fcast.debug.SplitAvDebugLaunchActivity \
+ *   --es universal_plugin_id <plugin-id> \
+ *   --es universal_video_url <url> \
+ *   [--es universal_item_id <item-id>] \
+ *   [--es universal_title <title>]
  * ```
  *
  * The Activity finishes itself the moment the cast pipeline accepts the request — `XrPlayerActivity`
@@ -54,6 +60,30 @@ class SplitAvDebugLaunchActivity : ComponentActivity() {
                 return
             }
             val intent = intent
+            val universalPluginId = intent?.getStringExtra(EXTRA_UNIVERSAL_PLUGIN_ID)
+            val universalVideoUrl = intent?.getStringExtra(EXTRA_UNIVERSAL_VIDEO_URL)
+            if (!universalPluginId.isNullOrBlank() && !universalVideoUrl.isNullOrBlank()) {
+                val universalItemId = intent.getStringExtra(EXTRA_UNIVERSAL_ITEM_ID)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "debug-universal"
+                val universalTitle = intent.getStringExtra(EXTRA_UNIVERSAL_TITLE)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Universal debug video"
+                val ok = runCatching {
+                    startActivity(
+                        XrPlayerActivity.createIntentForUniversalMedia(
+                            context = this,
+                            pluginId = universalPluginId,
+                            itemId = universalItemId,
+                            videoUrl = universalVideoUrl,
+                            title = universalTitle,
+                        )
+                    )
+                }.isSuccess
+                Timber.tag(TAG).i("Universal XrPlayerActivity launch ok=%b", ok)
+                return
+            }
+
             val itemIdString = intent?.getStringExtra(EXTRA_ITEM_ID)
             val itemId = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
             if (itemId == null) {
@@ -124,6 +154,10 @@ class SplitAvDebugLaunchActivity : ComponentActivity() {
         const val TAG = "SplitAvDebug"
         const val EXTRA_ITEM_ID = "item_id"
         const val EXTRA_START_MS = "start_ms"
+        const val EXTRA_UNIVERSAL_PLUGIN_ID = "universal_plugin_id"
+        const val EXTRA_UNIVERSAL_ITEM_ID = "universal_item_id"
+        const val EXTRA_UNIVERSAL_VIDEO_URL = "universal_video_url"
+        const val EXTRA_UNIVERSAL_TITLE = "universal_title"
         const val EXTRA_HOST_A = "host_a"
         const val EXTRA_HOST_B = "host_b"
         const val EXTRA_HOST_C = "host_c"

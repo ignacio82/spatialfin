@@ -21,8 +21,8 @@ object PluginModule {
 
     @Provides
     @Singleton
-    fun provideHttpBridge(client: OkHttpClient): HttpBridge {
-        return RealHttpBridge(client)
+    fun provideHttpBridge(@ApplicationContext context: Context, client: OkHttpClient): HttpBridge {
+        return RealHttpBridge(context, client)
     }
 
     @Provides

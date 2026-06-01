@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.QrCode
 import androidx.compose.material.icons.rounded.Dns
@@ -29,6 +30,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
+import dev.jdtech.jellyfin.plugins.model.PluginHomeRowTemplate
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,7 +49,8 @@ data class JellyfinHomeRowUi(
 data class PluginHomeRowUi(
     val pluginId: String,
     val row: PluginHomeRow,
-    val enabled: Boolean
+    val enabled: Boolean,
+    val canDelete: Boolean = false
 )
 
 @HiltViewModel
@@ -102,9 +105,7 @@ class PluginSettingsViewModel @Inject constructor(
         )
         _pluginRows.value = installedPlugins.associate { plugin ->
             val pluginId = plugin.id.orEmpty()
-            val rows = plugin.homeRows.ifEmpty {
-                listOf(PluginHomeRow(id = "home", name = plugin.name ?: "Home", type = "home"))
-            }.map { row ->
+            val rows = repository.getPluginHomeRows(plugin).map { row ->
                 PluginHomeRowUi(
                     pluginId = pluginId,
                     row = row,
@@ -112,7 +113,8 @@ class PluginSettingsViewModel @Inject constructor(
                         row.defaultEnabled
                     } else {
                         repository.isPluginHomeRowEnabled(pluginId, row.id, row.defaultEnabled)
-                    }
+                    },
+                    canDelete = repository.isCustomHomeRow(row.id)
                 )
             }
             pluginId to rows
@@ -134,6 +136,27 @@ class PluginSettingsViewModel @Inject constructor(
     fun updatePluginHomeRow(pluginId: String, rowId: String, enabled: Boolean) {
         if (pluginId.isBlank()) return
         repository.updatePluginHomeRowEnabled(pluginId, rowId, enabled)
+        refresh()
+    }
+
+    fun addCustomPluginHomeRow(
+        pluginId: String,
+        templateId: String,
+        name: String,
+        options: Map<String, String>,
+        context: Context
+    ) {
+        val added = repository.addCustomPluginHomeRow(pluginId, templateId, name, options)
+        Toast.makeText(
+            context,
+            if (added) "Row added" else "Could not add row",
+            Toast.LENGTH_SHORT
+        ).show()
+        refresh()
+    }
+
+    fun deleteCustomPluginHomeRow(pluginId: String, rowId: String) {
+        repository.deleteCustomPluginHomeRow(pluginId, rowId)
         refresh()
     }
 
@@ -193,6 +216,10 @@ fun PluginSettingsScreen(
     val isInstalling by viewModel.isInstalling.collectAsState()
     var installUrl by remember { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
+    var addRowPlugin by remember { mutableStateOf<PluginConfig?>(null) }
+    var addRowTemplate by remember { mutableStateOf<PluginHomeRowTemplate?>(null) }
+    var addRowName by remember { mutableStateOf("") }
+    var addRowFieldValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     if (showScanner) {
         androidx.compose.ui.window.Dialog(
@@ -217,6 +244,88 @@ fun PluginSettingsScreen(
                 }
             }
         }
+    }
+
+    if (addRowPlugin != null && addRowTemplate != null) {
+        val plugin = addRowPlugin
+        val template = addRowTemplate
+        AlertDialog(
+            onDismissRequest = {
+                addRowPlugin = null
+                addRowTemplate = null
+                addRowName = ""
+                addRowFieldValues = emptyMap()
+            },
+            title = { Text("Add ${template?.name ?: "row"}") },
+            text = {
+                Column {
+                    TextField(
+                        value = addRowName,
+                        onValueChange = { addRowName = it },
+                        label = { Text("Row name") },
+                        placeholder = { Text(template?.namePrefix ?: "") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    template?.fields.orEmpty().forEach { field ->
+                        TextField(
+                            value = addRowFieldValues[field.id] ?: field.default.orEmpty(),
+                            onValueChange = { value ->
+                                addRowFieldValues = addRowFieldValues + (field.id to value)
+                            },
+                            label = { Text(field.name) },
+                            supportingText = field.description?.let { description -> { Text(description) } },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val selectedPlugin = plugin ?: return@TextButton
+                        val selectedTemplate = template ?: return@TextButton
+                        val values = selectedTemplate.fields.associate { field ->
+                            field.id to (addRowFieldValues[field.id] ?: field.default.orEmpty()).trim()
+                        }
+                        val missingRequired = selectedTemplate.fields.any { field ->
+                            field.required && values[field.id].isNullOrBlank()
+                        }
+                        if (missingRequired) {
+                            Toast.makeText(context, "Fill in the required fields", Toast.LENGTH_SHORT).show()
+                            return@TextButton
+                        }
+                        viewModel.addCustomPluginHomeRow(
+                            pluginId = selectedPlugin.id ?: return@TextButton,
+                            templateId = selectedTemplate.id,
+                            name = addRowName,
+                            options = values,
+                            context = context
+                        )
+                        addRowPlugin = null
+                        addRowTemplate = null
+                        addRowName = ""
+                        addRowFieldValues = emptyMap()
+                    }
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        addRowPlugin = null
+                        addRowTemplate = null
+                        addRowName = ""
+                        addRowFieldValues = emptyMap()
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     LazyColumn(
@@ -358,6 +467,25 @@ fun PluginSettingsScreen(
                         }
                     }
 
+                    if (plugin.homeRowTemplates.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        plugin.homeRowTemplates.forEach { template ->
+                            OutlinedButton(
+                                onClick = {
+                                    addRowPlugin = plugin
+                                    addRowTemplate = template
+                                    addRowName = ""
+                                    addRowFieldValues = template.fields.associate { it.id to it.default.orEmpty() }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Add ${template.name}")
+                            }
+                        }
+                    }
+
                     if (rows.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         rows.forEach { rowUi ->
@@ -365,8 +493,12 @@ fun PluginSettingsScreen(
                                 title = rowUi.row.name,
                                 description = rowUi.row.description ?: "Show this row on Home.",
                                 checked = rowUi.enabled,
+                                canDelete = rowUi.canDelete,
                                 onCheckedChange = {
                                     viewModel.updatePluginHomeRow(rowUi.pluginId, rowUi.row.id, it)
+                                },
+                                onDelete = {
+                                    viewModel.deleteCustomPluginHomeRow(rowUi.pluginId, rowUi.row.id)
                                 }
                             )
                         }
@@ -382,7 +514,9 @@ private fun SourceRowToggle(
     title: String,
     description: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    canDelete: Boolean = false,
+    onCheckedChange: (Boolean) -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -405,5 +539,14 @@ private fun SourceRowToggle(
                 contentDescription = title
             }
         )
+        if (canDelete && onDelete != null) {
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = "Delete row",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
     }
 }

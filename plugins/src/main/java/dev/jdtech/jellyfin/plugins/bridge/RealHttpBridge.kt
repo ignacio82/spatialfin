@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.plugins.bridge
 
+import android.content.Context
 import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -11,6 +12,7 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttp
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -28,10 +30,16 @@ data class HttpResponse(
 )
 
 class RealHttpBridge(
+    context: Context,
     client: OkHttpClient
 ) : HttpBridge {
 
     private val json = Json { ignoreUnknownKeys = true }
+    init {
+        runCatching { OkHttp.initialize(context.applicationContext) }
+            .onFailure { Timber.w(it, "OkHttp initialization failed for plugin HTTP bridge") }
+    }
+
     private val client =
         runCatching {
             client.newBuilder()
@@ -48,55 +56,56 @@ class RealHttpBridge(
         body: String?,
         usePlatformAuth: Boolean
     ): String {
-        android.util.Log.e("CRITICAL_HTTP", "Plugin Request: $method $url")
-        val headers: MutableMap<String, String> = try {
-            json.decodeFromString<Map<String, String>>(headersJson).toMutableMap()
-        } catch (e: Exception) {
-            mutableMapOf()
-        }
-
-        normalizeHeaders(headers)
-        if (usePlatformAuth) {
-            platformCookieHeader(url)?.let { cookieHeader ->
-                headers["Cookie"] = cookieHeader
+        return try {
+            android.util.Log.e("CRITICAL_HTTP", "Plugin Request: $method $url")
+            val headers: MutableMap<String, String> = try {
+                json.decodeFromString<Map<String, String>>(headersJson).toMutableMap()
+            } catch (e: Exception) {
+                mutableMapOf()
             }
-        }
 
-        android.util.Log.e("CRITICAL_HTTP", "Request Headers: ${headers.redactedForLog()}")
-
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .headers(headers.toHeaders())
-
-        when (method.uppercase()) {
-            "GET" -> requestBuilder.get()
-            "POST" -> {
-                val mediaType = headers["Content-Type"]?.toMediaTypeOrNull()
-                val requestBody = if (body != null && body.startsWith("BASE64:")) {
-                    val bytes = android.util.Base64.decode(body.substring(7), android.util.Base64.NO_WRAP)
-                    okhttp3.RequestBody.create(mediaType, bytes)
-                } else {
-                    (body ?: "").toRequestBody(mediaType)
+            normalizeHeaders(headers)
+            if (usePlatformAuth) {
+                platformCookieHeader(url)?.let { cookieHeader ->
+                    headers["Cookie"] = cookieHeader
                 }
-                requestBuilder.post(requestBody)
             }
-        }
 
-        val response = try {
-            client.newCall(requestBuilder.build()).execute().use { response ->
+            android.util.Log.e("CRITICAL_HTTP", "Request Headers: ${headers.redactedForLog()}")
+
+            val requestBuilder = Request.Builder()
+                .url(url)
+                .headers(headers.toHeaders())
+
+            when (method.uppercase()) {
+                "GET" -> requestBuilder.get()
+                "POST" -> {
+                    val mediaType = headers["Content-Type"]?.toMediaTypeOrNull()
+                    val requestBody = if (body != null && body.startsWith("BASE64:")) {
+                        val bytes = android.util.Base64.decode(body.substring(7), android.util.Base64.NO_WRAP)
+                        okhttp3.RequestBody.create(mediaType, bytes)
+                    } else {
+                        (body ?: "").toRequestBody(mediaType)
+                    }
+                    requestBuilder.post(requestBody)
+                }
+            }
+
+            val response = client.newCall(requestBuilder.build()).execute().use { response ->
+                android.util.Log.e("CRITICAL_HTTP", "Plugin Response headers: ${response.code} for $url")
                 val contentType = response.body?.contentType()
-                var isText =
+                val isText =
                     contentType == null ||
                         contentType.type == "text" ||
                         contentType.subtype.contains("json", ignoreCase = true) ||
                         contentType.subtype.contains("xml", ignoreCase = true)
-                
+
                 val responseBody = if (isText) {
                     response.body?.string()
                 } else {
                     response.body?.bytes()?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
                 }
-                
+
                 if (!response.isSuccessful) {
                     android.util.Log.e("CRITICAL_HTTP", "Plugin Response: ${response.code} for $url Body: ${responseBody?.take(100)}")
                 } else {
@@ -110,18 +119,27 @@ class RealHttpBridge(
                     base64 = !isText
                 )
             }
+            json.encodeToString(response)
         } catch (e: IOException) {
             Timber.e(e, "HTTP request failed: $method $url")
-            HttpResponse(
+            android.util.Log.e("CRITICAL_HTTP", "Plugin request IOException: $method $url", e)
+            json.encodeToString(HttpResponse(
                 isOk = false,
                 code = -1,
                 body = e.message,
                 headers = emptyMap(),
                 base64 = false
-            )
+            ))
+        } catch (e: Throwable) {
+            android.util.Log.e("CRITICAL_HTTP", "Plugin request failed unexpectedly: $method $url", e)
+            json.encodeToString(HttpResponse(
+                isOk = false,
+                code = -1,
+                body = e.message ?: e::class.java.name,
+                headers = emptyMap(),
+                base64 = false
+            ))
         }
-
-        return json.encodeToString(response)
     }
 
     private fun normalizeHeaders(headers: MutableMap<String, String>) {

@@ -68,6 +68,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
     private var xrSession: Session? = null
     private var mediaSession: MediaSession? = null
+    private val mediaSessionId = "xrplayer-${UUID.randomUUID()}"
     private var currentStereoMode: String = "mono"
     private var libassRenderer: LibassRenderer? = null
     private var finishRequested = false
@@ -553,7 +554,9 @@ class XrPlayerActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         mediaSession?.release()
-        mediaSession = MediaSession.Builder(this, viewModel.player).build()
+        mediaSession = MediaSession.Builder(this, viewModel.player)
+            .setId(mediaSessionId)
+            .build()
     }
 
     override fun onResume() {
