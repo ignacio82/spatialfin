@@ -3,6 +3,7 @@ package dev.spatialfin.fcast.session
 import android.content.Context
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -44,6 +45,20 @@ class RememberedReceiversStore @Inject constructor(
         val audioLatencyMs: Int? = null,
         val audioLatencyCalibratedAtMs: Long? = null,
         val supportedAudioCodecs: List<String>? = null,
+        val routes: List<RouteEntry> = emptyList(),
+    )
+
+    @Serializable
+    private data class RouteEntry(
+        val fingerprint: String,
+        val label: String? = null,
+        val baseLatencyMs: Int? = null,
+        val manualVideoOffsetMs: Int = 0,
+        val learnedCodecCorrections: Map<String, Int> = emptyMap(),
+        val calibratedAtMs: Long? = null,
+        val supportedAudioCodecs: List<String>? = null,
+        val maxChannelCount: Int? = null,
+        val lastSeenMs: Long? = null,
     )
 
     suspend fun load(): List<RememberedReceiver> = withContext(Dispatchers.IO) {
@@ -60,6 +75,19 @@ class RememberedReceiversStore @Inject constructor(
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
                     supportedAudioCodecs = it.supportedAudioCodecs,
+                    routes = it.routes.map { route ->
+                        RememberedReceiverRoute(
+                            fingerprint = route.fingerprint,
+                            label = route.label,
+                            baseLatencyMs = route.baseLatencyMs,
+                            manualVideoOffsetMs = route.manualVideoOffsetMs,
+                            learnedCodecCorrections = route.learnedCodecCorrections,
+                            calibratedAtMs = route.calibratedAtMs,
+                            supportedAudioCodecs = route.supportedAudioCodecs,
+                            maxChannelCount = route.maxChannelCount,
+                            lastSeenMs = route.lastSeenMs,
+                        )
+                    },
                 )
             }
     }
@@ -79,6 +107,7 @@ class RememberedReceiversStore @Inject constructor(
                 audioLatencyMs = prior?.audioLatencyMs,
                 audioLatencyCalibratedAtMs = prior?.audioLatencyCalibratedAtMs,
                 supportedAudioCodecs = prior?.supportedAudioCodecs,
+                routes = prior?.routes.orEmpty(),
             )
             saveLocked(existing)
         }
@@ -126,15 +155,30 @@ class RememberedReceiversStore @Inject constructor(
         port: Int,
         audioLatencyMs: Int?,
         calibratedAtMs: Long = System.currentTimeMillis(),
+        route: AudioRouteInfo? = null,
     ) = mutex.withLock {
         val sanitized = audioLatencyMs?.coerceAtLeast(0)
         val existing = load()
         val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
         val updated = existing.map {
             if (it === target) {
+                val routeFingerprint = route?.fingerprint?.takeIf { fp -> fp.isNotBlank() }
                 it.copy(
                     audioLatencyMs = sanitized,
                     audioLatencyCalibratedAtMs = if (sanitized == null) null else calibratedAtMs,
+                    routes = if (routeFingerprint == null) {
+                        it.routes
+                    } else {
+                        it.routes.upsertRoute(
+                            fingerprint = routeFingerprint,
+                            label = route.label,
+                            supportedAudioCodecs = route.supportedAudioCodecs,
+                            maxChannelCount = route.maxChannelCount,
+                            baseLatencyMs = sanitized,
+                            calibratedAtMs = if (sanitized == null) null else calibratedAtMs,
+                            lastSeenMs = calibratedAtMs,
+                        )
+                    },
                 )
             } else it
         }
@@ -157,7 +201,96 @@ class RememberedReceiversStore @Inject constructor(
         val existing = load()
         val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
         val updated = existing.map {
-            if (it === target) it.copy(supportedAudioCodecs = sanitized) else it
+            if (it === target) {
+                it.copy(
+                    supportedAudioCodecs = sanitized,
+                    routes = it.routes.map { route ->
+                        if (route.supportedAudioCodecs.isNullOrEmpty()) {
+                            route.copy(supportedAudioCodecs = sanitized)
+                        } else {
+                            route
+                        }
+                    },
+                )
+            } else it
+        }
+        saveLocked(updated)
+    }
+
+    suspend fun ensureRouteRecord(
+        host: String,
+        port: Int,
+        route: AudioRouteInfo,
+        fallbackBaseLatencyMs: Int?,
+        fallbackManualVideoOffsetMs: Int = 0,
+        fallbackSupportedAudioCodecs: List<String>? = null,
+        seenAtMs: Long = System.currentTimeMillis(),
+    ) = mutex.withLock {
+        val fingerprint = route.fingerprint?.takeIf { it.isNotBlank() } ?: return@withLock
+        val existing = load()
+        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
+        val updated = existing.map {
+            if (it === target) {
+                it.copy(
+                    routes = it.routes.upsertRoute(
+                        fingerprint = fingerprint,
+                        label = route.label,
+                        supportedAudioCodecs = route.supportedAudioCodecs ?: fallbackSupportedAudioCodecs,
+                        maxChannelCount = route.maxChannelCount,
+                        baseLatencyMs = fallbackBaseLatencyMs,
+                        manualVideoOffsetMs = fallbackManualVideoOffsetMs,
+                        lastSeenMs = seenAtMs,
+                    ),
+                )
+            } else it
+        }
+        saveLocked(updated)
+    }
+
+    suspend fun setManualVideoOffset(
+        host: String,
+        port: Int,
+        routeFingerprint: String,
+        offsetMs: Int,
+    ) = mutex.withLock {
+        val sanitized = offsetMs.coerceIn(-200, 200)
+        val existing = load()
+        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
+        val updated = existing.map {
+            if (it === target) {
+                it.copy(
+                    routes = it.routes.upsertRoute(
+                        fingerprint = routeFingerprint,
+                        manualVideoOffsetMs = sanitized,
+                        lastSeenMs = System.currentTimeMillis(),
+                    ),
+                )
+            } else it
+        }
+        saveLocked(updated)
+    }
+
+    suspend fun setLearnedCodecCorrection(
+        host: String,
+        port: Int,
+        routeFingerprint: String,
+        codecKey: String,
+        correctionMs: Int,
+    ) = mutex.withLock {
+        val sanitizedCodec = codecKey.lowercase().trim().takeIf { it.isNotBlank() } ?: return@withLock
+        val sanitizedCorrection = correctionMs.coerceIn(-120, 120)
+        val existing = load()
+        val target = existing.firstOrNull { it.host == host && it.port == port } ?: return@withLock
+        val updated = existing.map {
+            if (it === target) {
+                it.copy(
+                    routes = it.routes.upsertRoute(
+                        fingerprint = routeFingerprint,
+                        learnedCodecCorrections = mapOf(sanitizedCodec to sanitizedCorrection),
+                        lastSeenMs = System.currentTimeMillis(),
+                    ),
+                )
+            } else it
         }
         saveLocked(updated)
     }
@@ -175,9 +308,53 @@ class RememberedReceiversStore @Inject constructor(
                     audioLatencyMs = it.audioLatencyMs,
                     audioLatencyCalibratedAtMs = it.audioLatencyCalibratedAtMs,
                     supportedAudioCodecs = it.supportedAudioCodecs,
+                    routes = it.routes.map { route ->
+                        RouteEntry(
+                            fingerprint = route.fingerprint,
+                            label = route.label,
+                            baseLatencyMs = route.baseLatencyMs,
+                            manualVideoOffsetMs = route.manualVideoOffsetMs,
+                            learnedCodecCorrections = route.learnedCodecCorrections,
+                            calibratedAtMs = route.calibratedAtMs,
+                            supportedAudioCodecs = route.supportedAudioCodecs,
+                            maxChannelCount = route.maxChannelCount,
+                            lastSeenMs = route.lastSeenMs,
+                        )
+                    },
                 )
             }
         prefs.edit { putString(KEY_RECEIVERS, json.encodeToString(capped)) }
+    }
+
+    private fun List<RememberedReceiverRoute>.upsertRoute(
+        fingerprint: String,
+        label: String? = null,
+        baseLatencyMs: Int? = null,
+        manualVideoOffsetMs: Int? = null,
+        learnedCodecCorrections: Map<String, Int> = emptyMap(),
+        calibratedAtMs: Long? = null,
+        supportedAudioCodecs: List<String>? = null,
+        maxChannelCount: Int? = null,
+        lastSeenMs: Long? = null,
+    ): List<RememberedReceiverRoute> {
+        val prior = firstOrNull { it.fingerprint == fingerprint }
+        val sanitizedCorrections = learnedCodecCorrections
+            .mapKeys { it.key.lowercase().trim() }
+            .filterKeys { it.isNotBlank() }
+            .mapValues { it.value.coerceIn(-120, 120) }
+        val merged = RememberedReceiverRoute(
+            fingerprint = fingerprint,
+            label = label ?: prior?.label,
+            baseLatencyMs = baseLatencyMs ?: prior?.baseLatencyMs,
+            manualVideoOffsetMs = manualVideoOffsetMs ?: prior?.manualVideoOffsetMs ?: 0,
+            learnedCodecCorrections = prior?.learnedCodecCorrections.orEmpty() + sanitizedCorrections,
+            calibratedAtMs = calibratedAtMs ?: prior?.calibratedAtMs,
+            supportedAudioCodecs = supportedAudioCodecs ?: prior?.supportedAudioCodecs,
+            maxChannelCount = maxChannelCount ?: prior?.maxChannelCount,
+            lastSeenMs = lastSeenMs ?: prior?.lastSeenMs,
+        )
+        return (filterNot { it.fingerprint == fingerprint } + merged)
+            .sortedByDescending { it.lastSeenMs ?: 0L }
     }
 
     private companion object {
@@ -208,4 +385,17 @@ data class RememberedReceiver(
      * split-A/V can start at best quality immediately for known hardware.
      */
     val supportedAudioCodecs: List<String>? = null,
+    val routes: List<RememberedReceiverRoute> = emptyList(),
+)
+
+data class RememberedReceiverRoute(
+    val fingerprint: String,
+    val label: String? = null,
+    val baseLatencyMs: Int? = null,
+    val manualVideoOffsetMs: Int = 0,
+    val learnedCodecCorrections: Map<String, Int> = emptyMap(),
+    val calibratedAtMs: Long? = null,
+    val supportedAudioCodecs: List<String>? = null,
+    val maxChannelCount: Int? = null,
+    val lastSeenMs: Long? = null,
 )

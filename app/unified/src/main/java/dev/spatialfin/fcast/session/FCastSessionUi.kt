@@ -20,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +41,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Composition-local pointer to the process-singleton [CastSessionManager]. The form-factor root
@@ -322,6 +324,14 @@ fun FCastMiniController(
                 }
             }
             SubtitleFidelityChip(sessionManager)
+            val splitState by sessionManager.splitAvActive.collectAsState()
+            if (splitState != SplitAvController.State.Idle) {
+                SplitAvVideoOffsetControl(
+                    sessionManager = sessionManager,
+                    enabled = controlsEnabled,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -402,6 +412,63 @@ fun FCastMiniController(
                     modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp),
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SplitAvVideoOffsetControl(
+    sessionManager: CastSessionManager,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val offsetMs by sessionManager.manualVideoOffsetMs.collectAsState()
+    androidx.compose.foundation.layout.Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Video offset",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${offsetMs}ms",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.widthIn(min = 52.dp),
+            )
+        }
+        androidx.compose.material3.Slider(
+            value = offsetMs.toFloat(),
+            onValueChange = { raw ->
+                val stepped = (raw / 5f).roundToInt() * 5
+                sessionManager.setManualVideoOffset(stepped)
+            },
+            valueRange = -200f..200f,
+            steps = 79,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = { sessionManager.adjustManualVideoOffset(-10) },
+                enabled = enabled,
+            ) { Text("-10") }
+            TextButton(
+                onClick = { sessionManager.setManualVideoOffset(0) },
+                enabled = enabled,
+            ) { Text("Reset") }
+            TextButton(
+                onClick = { sessionManager.adjustManualVideoOffset(10) },
+                enabled = enabled,
+            ) { Text("+10") }
         }
     }
 }

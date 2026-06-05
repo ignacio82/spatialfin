@@ -1,8 +1,13 @@
 package dev.jdtech.jellyfin.player.core.splitav
 
+import android.media.MediaFormat
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import androidx.media3.common.Format
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -57,6 +62,25 @@ class PlayerSplitAvAdapter(
     private var suppressNextUserSeekEmit: Boolean = false
 
     private var savedVolume: Float = 1f
+
+    @Volatile
+    private var latestVideoTiming: SplitAvVideoTiming? = null
+
+    private val videoFrameMetadataListener = VideoFrameMetadataListener {
+            presentationTimeUs: Long,
+            releaseTimeNs: Long,
+            _: Format,
+            _: MediaFormat?,
+        ->
+        val nowNano = System.nanoTime()
+        val nowElapsedNs = SystemClock.elapsedRealtimeNanos()
+        val releaseElapsedMs = (nowElapsedNs + (releaseTimeNs - nowNano)) / 1_000_000L
+        latestVideoTiming = SplitAvVideoTiming(
+            mediaPositionMs = presentationTimeUs / 1_000L,
+            releaseMonotonicMs = releaseElapsedMs,
+            sampledMonotonicMs = SystemClock.elapsedRealtime(),
+        )
+    }
 
     /**
      * True while the local master is participating in a split-A/V session as the video
@@ -131,6 +155,7 @@ class PlayerSplitAvAdapter(
 
     init {
         player.addListener(listener)
+        (player as? ExoPlayer)?.setVideoFrameMetadataListener(videoFrameMetadataListener)
         _isPlaying.value = player.playWhenReady
         // Bootstrap the cache from whichever thread constructed us (the Activity onCreate runs
         // on main, so this is safe). The poll then keeps it fresh.
@@ -143,10 +168,13 @@ class PlayerSplitAvAdapter(
     /** Detach the listener. Call from the Activity's `onDestroy` after `unbind`. */
     fun release() {
         mainHandler.removeCallbacks(positionPoll)
+        (player as? ExoPlayer)?.clearVideoFrameMetadataListener(videoFrameMetadataListener)
         player.removeListener(listener)
     }
 
     override fun currentPositionMs(): Long = cachedPositionMs
+
+    override fun renderedVideoTiming(): SplitAvVideoTiming? = latestVideoTiming
 
     override fun setPlaybackSpeed(factor: Float) = postToPlayer {
         player.setPlaybackSpeed(factor)

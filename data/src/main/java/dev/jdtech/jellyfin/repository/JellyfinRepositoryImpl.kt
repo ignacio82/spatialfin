@@ -460,13 +460,18 @@ class JellyfinRepositoryImpl(
             sources
         }
 
-    override suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String =
+    override suspend fun getStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        audioStreamIndex: Int?,
+    ): String =
         withContext(Dispatchers.IO) {
             try {
                 jellyfinApi.videosApi.getVideoStreamUrl(
                     itemId,
                     static = true,
                     mediaSourceId = mediaSourceId,
+                    audioStreamIndex = audioStreamIndex,
                 )
             } catch (e: Exception) {
                 Timber.e(e)
@@ -479,6 +484,7 @@ class JellyfinRepositoryImpl(
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
         startPositionMs: Long,
+        audioStreamIndex: Int?,
     ): String =
         withContext(Dispatchers.IO) {
             try {
@@ -499,6 +505,7 @@ class JellyfinRepositoryImpl(
                             startTimeTicks = startPositionMs
                                 .takeIf { it > 0L }
                                 ?.let { it * 10_000L },
+                            audioStreamIndex = audioStreamIndex,
                             maxStreamingBitrate = bitrate,
                             // Force the transcode explicitly instead of relying on the device
                             // profile to reject direct-play: a file with a *secondary*

@@ -3,8 +3,10 @@ package dev.spatialfin.fcast.session.calibration
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
@@ -13,7 +15,9 @@ import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
+import dev.spatialfin.fcast.session.ClockOffsetEstimator
 import dev.spatialfin.fcast.session.RememberedReceiversStore
+import dev.spatialfin.fcast.session.ReceiverAudioClock
 import dev.spatialfin.fcast.session.SplitAvPolicy
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,6 +29,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
@@ -65,6 +70,7 @@ class CalibrationOrchestrator @Inject constructor(
             val audioLatencyMs: Int,
             val samplesUsed: Int,
             val noiseFloor: Double,
+            val audioRoute: AudioRouteInfo? = null,
         ) : Result
 
         data class Failure(val reason: String) : Result
@@ -73,6 +79,7 @@ class CalibrationOrchestrator @Inject constructor(
     private data class TimedBeacon(
         val beacon: PlaybackUpdateMessage,
         val recvWallMs: Long,
+        val recvMonotonicMs: Long,
     )
 
     /**
@@ -113,6 +120,7 @@ class CalibrationOrchestrator @Inject constructor(
         )
         val collectedBeacons = mutableListOf<TimedBeacon>()
         val collectorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val clockOffset = ClockOffsetEstimator()
 
         try {
             val rawUrl = server.start()
@@ -125,9 +133,25 @@ class CalibrationOrchestrator @Inject constructor(
                     .filterNotNull()
                     .collect { update ->
                         synchronized(collectedBeacons) {
-                            collectedBeacons += TimedBeacon(update, System.currentTimeMillis())
+                            collectedBeacons += TimedBeacon(
+                                beacon = update,
+                                recvWallMs = System.currentTimeMillis(),
+                                recvMonotonicMs = SystemClock.elapsedRealtime(),
+                            )
                         }
                     }
+            }
+            collectorScope.launch {
+                castingController.pongs.collect { obs ->
+                    if (obs.hasClockSync) {
+                        clockOffset.record(
+                            t1 = obs.pingSentWallMs,
+                            t2 = obs.receiverRecvMs!!,
+                            t3 = obs.receiverSendMs!!,
+                            t4 = obs.pongReceivedWallMs,
+                        )
+                    }
+                }
             }
 
             val play = PlayMessageBuilder.build(
@@ -145,6 +169,12 @@ class CalibrationOrchestrator @Inject constructor(
             } catch (e: Exception) {
                 Timber.tag(TAG).w(e, "calibration startCast failed")
                 return@coroutineScope Result.Failure("Could not connect to receiver: ${e.message}")
+            }
+            collectorScope.launch {
+                while (isActive && clockOffset.offsetMs() == null) {
+                    runCatching { castingController.ping() }
+                    delay(CLOCK_SYNC_PING_INTERVAL_MS)
+                }
             }
 
             // Explicit Resume — the receiver loads SplitAvRole.AUDIO with `playWhenReady=false`
@@ -216,12 +246,19 @@ class CalibrationOrchestrator @Inject constructor(
                 val sourceOnsetMs = (ChirpGenerator.chirpOnsetsSeconds[i] * 1_000.0).toLong()
                 val captureXrWallMs = capture.captureStartWallMs +
                     (onset.timeSeconds * 1_000.0).toLong()
+                val captureOnsetMonotonicMs = capture.captureStartMonotonicMs +
+                    (onset.timeSeconds * 1_000.0).toLong()
                 val nearest = beaconsSnapshot.minByOrNull {
-                    kotlin.math.abs(it.recvWallMs - captureXrWallMs)
+                    kotlin.math.abs(it.recvMonotonicMs - captureOnsetMonotonicMs)
                 } ?: return@mapIndexedNotNull null
-                val tBeaconMs = ((nearest.beacon.time ?: 0.0) * 1_000.0).toLong()
-                // audioLatencyMs = T_cap - s_i + t_beacon - T_recv_beacon  (network ≈ 0)
-                captureXrWallMs - sourceOnsetMs + tBeaconMs - nearest.recvWallMs
+                latencyFromBeacon(
+                    captureOnsetMonotonicMs = captureOnsetMonotonicMs,
+                    captureOnsetWallMs = captureXrWallMs,
+                    sourceOnsetMs = sourceOnsetMs,
+                    beacon = nearest.beacon,
+                    beaconReceivedWallMs = nearest.recvWallMs,
+                    clockOffsetMs = clockOffset.offsetMs(),
+                )
             }
             if (perChirpLatencies.isEmpty()) {
                 return@coroutineScope Result.Failure("Could not align detected onsets with beacons")
@@ -237,10 +274,13 @@ class CalibrationOrchestrator @Inject constructor(
             }
 
             // Persist on success.
+            val routeForPersist = beaconsSnapshot.asReversed()
+                .firstNotNullOfOrNull { it.beacon.audioRoute }
             rememberedReceiversStore.setAudioLatency(
                 host = receiver.host,
                 port = receiver.port,
                 audioLatencyMs = sanitized,
+                route = routeForPersist,
             )
             Timber.tag(TAG).i(
                 "Calibration: %d ms (%d samples, noiseFloor=%.0f)",
@@ -250,6 +290,7 @@ class CalibrationOrchestrator @Inject constructor(
                 audioLatencyMs = sanitized,
                 samplesUsed = perChirpLatencies.size,
                 noiseFloor = detection.noiseFloor,
+                audioRoute = routeForPersist,
             )
         } finally {
             collectorScope.cancel()
@@ -271,5 +312,36 @@ class CalibrationOrchestrator @Inject constructor(
          */
         const val MIN_PLAUSIBLE_LATENCY_MS: Int = 0
         const val MAX_PLAUSIBLE_LATENCY_MS: Int = 800
+        private const val CLOCK_SYNC_PING_INTERVAL_MS: Long = 150L
+
+        fun latencyFromBeacon(
+            captureOnsetMonotonicMs: Long,
+            captureOnsetWallMs: Long,
+            sourceOnsetMs: Long,
+            beacon: PlaybackUpdateMessage,
+            beaconReceivedWallMs: Long,
+            clockOffsetMs: Long?,
+        ): Long {
+            val receiverAudioClock = ReceiverAudioClock.choose(
+                playbackTimeSeconds = beacon.time,
+                monotonicSampleMs = beacon.monotonicSampleMs,
+                durationSeconds = beacon.duration,
+                audioSinkPositionUs = beacon.audioSinkPositionUs,
+                audioSinkSampleMonotonicMs = beacon.audioSinkSampleMonotonicMs,
+            )
+            val beaconAudioPositionMs = receiverAudioClock?.positionMs ?: 0L
+            val receiverSampleMonotonicMs = receiverAudioClock?.sampleMonotonicMs
+            if (clockOffsetMs != null && receiverSampleMonotonicMs != null) {
+                val mappedReceiverSampleMono = receiverSampleMonotonicMs - clockOffsetMs
+                return captureOnsetMonotonicMs -
+                    sourceOnsetMs +
+                    beaconAudioPositionMs -
+                    mappedReceiverSampleMono
+            }
+            return captureOnsetWallMs -
+                sourceOnsetMs +
+                beaconAudioPositionMs -
+                beaconReceivedWallMs
+        }
     }
 }

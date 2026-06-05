@@ -227,6 +227,52 @@ class DriftEstimatorTest {
     }
 }
 
+class ReceiverAudioClockTest {
+
+    @Test
+    fun `uses audio sink position when it matches the player timeline`() {
+        val sample = ReceiverAudioClock.choose(
+            playbackTimeSeconds = 12.300,
+            monotonicSampleMs = 7_000L,
+            durationSeconds = 100.0,
+            audioSinkPositionUs = 12_250_000L,
+            audioSinkSampleMonotonicMs = 7_050L,
+        )
+
+        assertEquals(12_250L, sample?.positionMs)
+        assertEquals(7_050L, sample?.sampleMonotonicMs)
+        assertTrue(sample?.usedAudioSink == true)
+    }
+
+    @Test
+    fun `falls back to player time when audio sink has a container timestamp epoch`() {
+        val sample = ReceiverAudioClock.choose(
+            playbackTimeSeconds = 2.300,
+            monotonicSampleMs = 7_000L,
+            durationSeconds = 3_600.0,
+            audioSinkPositionUs = 1_000_007_834_989L,
+            audioSinkSampleMonotonicMs = 7_050L,
+        )
+
+        assertEquals(2_300L, sample?.positionMs)
+        assertEquals(7_000L, sample?.sampleMonotonicMs)
+        assertFalse(sample?.usedAudioSink == true)
+    }
+
+    @Test
+    fun `rejects beacons where both positions are outside the item duration`() {
+        val sample = ReceiverAudioClock.choose(
+            playbackTimeSeconds = 1_000_007.0,
+            monotonicSampleMs = 7_000L,
+            durationSeconds = 3_600.0,
+            audioSinkPositionUs = 1_000_007_834_989L,
+            audioSinkSampleMonotonicMs = 7_050L,
+        )
+
+        assertNull(sample)
+    }
+}
+
 class NudgeControllerTest {
 
     @Test
@@ -273,6 +319,45 @@ class NudgeControllerTest {
         c.reset()
         // Fresh integrator: a single small sample → near-neutral output again.
         assertEquals(1.0f, c.update(0L, 0.0, 100L, frozen = false), 1e-3f)
+    }
+}
+
+class LearnedCodecCorrectionTrackerTest {
+
+    @Test
+    fun `negative stable drift increases latency correction`() {
+        val tracker = LearnedCodecCorrectionTracker(minEvidenceSamples = 3)
+        assertNull(tracker.recordStableResidual("audio/eac3", -25L, 0))
+        assertNull(tracker.recordStableResidual("audio/eac3", -25L, 0))
+        val learned = tracker.recordStableResidual("audio/eac3", -25L, 0)
+        assertTrue("negative drift should produce positive correction", learned!! > 0)
+    }
+
+    @Test
+    fun `same-sign evidence is required before update`() {
+        val tracker = LearnedCodecCorrectionTracker(minEvidenceSamples = 3)
+        tracker.recordStableResidual("audio/eac3", -30L, 0)
+        tracker.recordStableResidual("audio/eac3", 30L, 0)
+        assertNull(tracker.recordStableResidual("audio/eac3", 30L, 0))
+        assertTrue(tracker.recordStableResidual("audio/eac3", 30L, 0)!! < 0)
+    }
+
+    @Test
+    fun `learned correction is clamped`() {
+        val tracker = LearnedCodecCorrectionTracker(minEvidenceSamples = 1, alpha = 1.0)
+        assertEquals(
+            LearnedCodecCorrectionTracker.DEFAULT_MAX_ABS_CORRECTION_MS,
+            tracker.recordStableResidual("audio/true-hd", -10_000L, 0),
+        )
+    }
+
+    @Test
+    fun `reject clears pending evidence`() {
+        val tracker = LearnedCodecCorrectionTracker(minEvidenceSamples = 3)
+        tracker.recordStableResidual("audio/eac3", -30L, 0)
+        tracker.recordStableResidual("audio/eac3", -30L, 0)
+        tracker.rejectCurrentEvidence("audio/eac3")
+        assertNull(tracker.recordStableResidual("audio/eac3", -30L, 0))
     }
 }
 
@@ -432,7 +517,15 @@ class SplitAvTraceTest {
 
     @Test
     fun `null rtt and codec serialize empty and parse back to null`() {
-        val t = SplitAvTrace(1L, 0L, 0L, 0.0, null, null, "Hold")
+        val t = SplitAvTrace(
+            atMs = 1L,
+            rawDriftMs = 0L,
+            smoothedDriftMs = 0L,
+            driftRateMsPerSec = 0.0,
+            rttMs = null,
+            codecMime = null,
+            action = "Hold",
+        )
         val p = SplitAvTrace.fromCsvLine(t.toCsvLine())!!
         assertNull(p.rttMs)
         assertNull(p.codecMime)

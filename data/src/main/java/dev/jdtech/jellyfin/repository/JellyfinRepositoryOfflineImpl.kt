@@ -285,7 +285,11 @@ class JellyfinRepositoryOfflineImpl(
             database.getSources(itemId).map { it.toSpatialFinSource(database) }
         }
 
-    override suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String {
+    override suspend fun getStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        audioStreamIndex: Int?,
+    ): String {
         // Downloaded items play from local file URIs through DownloadStorageManager,
         // so this should never be reached offline. If it is, the caller is trying
         // to stream from a server we can't reach — fail loudly instead of returning
@@ -298,6 +302,7 @@ class JellyfinRepositoryOfflineImpl(
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
         startPositionMs: Long,
+        audioStreamIndex: Int?,
     ): String {
         // Split-A/V casts a server stream; it is never initiated for an offline download.
         error("getAudioTranscodeStreamUrl is not available in offline mode (item=$itemId)")

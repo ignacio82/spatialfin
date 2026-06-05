@@ -1,12 +1,14 @@
 package dev.spatialfin.fcast.session
 
 import android.content.Context
+import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.spatialfin.test.SpatialFinTestApplication
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -56,6 +58,7 @@ class RememberedReceiversStoreTest {
         assertNull(loaded[0].audioLatencyMs)
         assertNull(loaded[0].audioLatencyCalibratedAtMs)
         assertNull(loaded[0].supportedAudioCodecs)
+        assertTrue(loaded[0].routes.isEmpty())
     }
 
     @Test fun `setAudioLatency persists and is reflected on next load`() = runTest {
@@ -65,6 +68,60 @@ class RememberedReceiversStoreTest {
         val loaded = store.load().single()
         assertEquals(73, loaded.audioLatencyMs)
         assertNotNull(loaded.audioLatencyCalibratedAtMs)
+    }
+
+    @Test fun `route latency manual offset and learned correction round-trip`() = runTest {
+        val store = newStore()
+        store.upsert(receiver("10.0.0.1"))
+        val route = AudioRouteInfo(
+            fingerprint = "route-1",
+            label = "HDMI",
+            deviceType = "HDMI ARC",
+            supportedAudioCodecs = listOf("eac3", "ac3"),
+            maxChannelCount = 8,
+        )
+        store.setAudioLatency(
+            host = "10.0.0.1",
+            port = 46899,
+            audioLatencyMs = 73,
+            calibratedAtMs = 1234L,
+            route = route,
+        )
+        store.setManualVideoOffset("10.0.0.1", 46899, "route-1", 25)
+        store.setLearnedCodecCorrection("10.0.0.1", 46899, "route-1", "audio/eac3", -15)
+
+        val loaded = store.load().single()
+        assertEquals(73, loaded.audioLatencyMs)
+        val loadedRoute = loaded.routes.single()
+        assertEquals("route-1", loadedRoute.fingerprint)
+        assertEquals("HDMI", loadedRoute.label)
+        assertEquals(73, loadedRoute.baseLatencyMs)
+        assertEquals(25, loadedRoute.manualVideoOffsetMs)
+        assertEquals(mapOf("audio/eac3" to -15), loadedRoute.learnedCodecCorrections)
+        assertEquals(listOf("eac3", "ac3"), loadedRoute.supportedAudioCodecs)
+        assertEquals(8, loadedRoute.maxChannelCount)
+    }
+
+    @Test fun `route changes do not erase previous route records`() = runTest {
+        val store = newStore()
+        store.upsert(receiver("10.0.0.1"))
+        store.ensureRouteRecord(
+            "10.0.0.1",
+            46899,
+            AudioRouteInfo(fingerprint = "route-a", label = "HDMI"),
+            fallbackBaseLatencyMs = 80,
+        )
+        store.ensureRouteRecord(
+            "10.0.0.1",
+            46899,
+            AudioRouteInfo(fingerprint = "route-b", label = "Bluetooth"),
+            fallbackBaseLatencyMs = 120,
+        )
+
+        val routes = store.load().single().routes.associateBy { it.fingerprint }
+        assertEquals(2, routes.size)
+        assertEquals(80, routes["route-a"]?.baseLatencyMs)
+        assertEquals(120, routes["route-b"]?.baseLatencyMs)
     }
 
     @Test fun `setAudioLatency null clears both latency fields`() = runTest {
@@ -147,6 +204,7 @@ class RememberedReceiversStoreTest {
         assertNull(loaded[0].audioLatencyMs)
         assertNull(loaded[0].audioLatencyCalibratedAtMs)
         assertNull(loaded[0].supportedAudioCodecs)
+        assertTrue(loaded[0].routes.isEmpty())
     }
 
     @Test fun `forget removes the entry along with its calibration`() = runTest {

@@ -127,6 +127,30 @@ class FCastFrameTest {
     }
 
     @Test
+    fun `PlaybackUpdate carries optional sink timing readiness and route telemetry`() {
+        val msg = FCastMessage.PlaybackUpdate(
+            PlaybackUpdateMessage(
+                generationTime = 1L,
+                state = 1,
+                time = 12.5,
+                audioSinkPositionUs = 12_345_000L,
+                audioSinkSampleMonotonicMs = 88_000L,
+                audioSinkBufferSizeUs = 90_000L,
+                videoReadyToStart = true,
+                bufferedPositionMs = 14_000L,
+                audioRoute = AudioRouteInfo(
+                    fingerprint = "route-a",
+                    label = "HDMI",
+                    deviceType = "HDMI ARC",
+                    supportedAudioCodecs = listOf("eac3", "ac3"),
+                    maxChannelCount = 8,
+                ),
+            ),
+        )
+        assertEquals(msg, roundTrip(msg))
+    }
+
+    @Test
     fun `unknown opcode raises IOException`() {
         // size = 1, body-less, opcode = 99 (unknown)
         val frame = byteArrayOf(0x01, 0x00, 0x00, 0x00, 99)

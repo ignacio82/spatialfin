@@ -58,6 +58,9 @@ object SplitAvBridgeIpcMessage {
      * Client → service, sent ~20 Hz while playing. Payload:
      *  - long  "positionMs"
      *  - bool  "playing"
+     *  - optional long "videoTimingPositionMs"
+     *  - optional long "videoTimingReleaseMs"
+     *  - optional long "videoTimingSampleMs"
      */
     const val MSG_STATE_UPDATE: Int = 3
 
@@ -112,6 +115,9 @@ object SplitAvBridgeIpcMessage {
     const val KEY_PLAYING: String = "playing"
     const val KEY_MUTED: String = "muted"
     const val KEY_FACTOR: String = "factor"
+    const val KEY_VIDEO_TIMING_POSITION_MS: String = "videoTimingPositionMs"
+    const val KEY_VIDEO_TIMING_RELEASE_MS: String = "videoTimingReleaseMs"
+    const val KEY_VIDEO_TIMING_SAMPLE_MS: String = "videoTimingSampleMs"
 }
 
 /**
@@ -146,6 +152,9 @@ class ProxyVideoMaster(
     private var lastPositionMs: Long = 0L
 
     @Volatile
+    private var lastVideoTiming: SplitAvVideoTiming? = null
+
+    @Volatile
     private var client: Messenger? = null
 
     /** Attach the client Messenger received on MSG_REGISTER. */
@@ -160,8 +169,13 @@ class ProxyVideoMaster(
     }
 
     /** Apply a STATE_UPDATE push from the client. */
-    fun applyStateUpdate(positionMs: Long, playing: Boolean) {
+    fun applyStateUpdate(
+        positionMs: Long,
+        playing: Boolean,
+        videoTiming: SplitAvVideoTiming? = null,
+    ) {
         lastPositionMs = positionMs
+        if (videoTiming != null) lastVideoTiming = videoTiming
         _isPlaying.value = playing
     }
 
@@ -176,6 +190,8 @@ class ProxyVideoMaster(
     }
 
     override fun currentPositionMs(): Long = lastPositionMs
+
+    override fun renderedVideoTiming(): SplitAvVideoTiming? = lastVideoTiming
 
     override fun setPlaybackSpeed(factor: Float) {
         send(SplitAvBridgeIpcMessage.MSG_SET_PLAYBACK_SPEED) {
@@ -299,12 +315,21 @@ class SplitAvBridgeIpcClient(
     }
 
     /** Push the current player state to the service. Cheap; safe to call at 20 Hz. */
-    fun pushState(positionMs: Long, playing: Boolean) {
+    fun pushState(
+        positionMs: Long,
+        playing: Boolean,
+        videoTiming: SplitAvVideoTiming? = null,
+    ) {
         val sm = serviceMessenger ?: return
         val msg = Message.obtain(null, SplitAvBridgeIpcMessage.MSG_STATE_UPDATE)
         msg.data = Bundle().apply {
             putLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS, positionMs)
             putBoolean(SplitAvBridgeIpcMessage.KEY_PLAYING, playing)
+            videoTiming?.let {
+                putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS, it.mediaPositionMs)
+                putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS, it.releaseMonotonicMs)
+                putLong(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS, it.sampledMonotonicMs)
+            }
         }
         try {
             sm.send(msg)

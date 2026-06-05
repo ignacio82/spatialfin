@@ -256,6 +256,154 @@ object AudioLatencyProfile {
         "audio/dts-hd", "audio/dts", "audio/dtsx", "audio/vnd.dts", "audio/vnd.dts.hd" -> 45
         else -> 0 // PCM / AAC / Opus / FLAC ≈ what the calibration chirp already measured
     }
+
+    fun codecKey(mimeType: String?): String =
+        mimeType?.lowercase()?.trim()?.takeIf { it.isNotBlank() } ?: "unknown"
+}
+
+/**
+ * Chooses the receiver playback clock sample the split controller may trust.
+ *
+ * Media3's `AudioSink.getCurrentPositionUs()` is usually on the same media timeline as
+ * `ExoPlayer.currentPosition`, but some direct-play containers expose large presentation-time
+ * epochs through the sink (for example ~1e12 us). Treating that as FCast media time yanks the
+ * XR master to the end of the item. This helper keeps sink timing optional: use it only when it
+ * is plausible against the ordinary playback position and duration, otherwise fall back to the
+ * normal FCast `time` field.
+ */
+object ReceiverAudioClock {
+    data class Sample(
+        val positionMs: Long,
+        val sampleMonotonicMs: Long?,
+        val usedAudioSink: Boolean,
+    )
+
+    fun choose(
+        playbackTimeSeconds: Double?,
+        monotonicSampleMs: Long?,
+        durationSeconds: Double?,
+        audioSinkPositionUs: Long?,
+        audioSinkSampleMonotonicMs: Long?,
+    ): Sample? {
+        val durationMs = secondsToMs(durationSeconds)
+        val fallbackPositionMs = secondsToMs(playbackTimeSeconds)
+            ?.takeIf { isPlausiblePositionMs(it, durationMs) }
+        val sinkPositionMs = audioSinkPositionUs
+            ?.takeIf { it >= 0L }
+            ?.div(1_000L)
+            ?.takeIf { isPlausiblePositionMs(it, durationMs) }
+            ?.takeIf { sinkMs ->
+                fallbackPositionMs == null ||
+                    abs(sinkMs - fallbackPositionMs) <= MAX_AUDIO_SINK_DIVERGENCE_MS
+            }
+
+        if (sinkPositionMs != null) {
+            return Sample(
+                positionMs = sinkPositionMs,
+                sampleMonotonicMs = audioSinkSampleMonotonicMs ?: monotonicSampleMs,
+                usedAudioSink = true,
+            )
+        }
+        return fallbackPositionMs?.let {
+            Sample(
+                positionMs = it,
+                sampleMonotonicMs = monotonicSampleMs,
+                usedAudioSink = false,
+            )
+        }
+    }
+
+    fun isPlausiblePositionMs(positionMs: Long, durationMs: Long?): Boolean {
+        if (positionMs < 0L || positionMs > MAX_REASONABLE_MEDIA_POSITION_MS) return false
+        return durationMs == null || positionMs <= durationMs + DURATION_SLACK_MS
+    }
+
+    private fun secondsToMs(seconds: Double?): Long? {
+        if (seconds == null || !seconds.isFinite()) return null
+        return (seconds * 1_000.0).roundToLong()
+    }
+
+    const val MAX_AUDIO_SINK_DIVERGENCE_MS: Long = 5_000L
+    const val DURATION_SLACK_MS: Long = 60_000L
+    const val MAX_REASONABLE_MEDIA_POSITION_MS: Long = 24L * 60L * 60L * 1_000L
+}
+
+/**
+ * Learns a route+codec latency correction from stable residual drift after the static seed has
+ * been applied. Positive returned values increase effective audio latency; negative values
+ * reduce it. Training is deliberately conservative:
+ *
+ *  - only same-sign residuals above a small floor count as evidence,
+ *  - several stable samples are required before any update,
+ *  - each update is low-pass filtered and clamped.
+ */
+class LearnedCodecCorrectionTracker(
+    private val minEvidenceSamples: Int = DEFAULT_MIN_EVIDENCE_SAMPLES,
+    private val minResidualMs: Int = DEFAULT_MIN_RESIDUAL_MS,
+    private val alpha: Double = DEFAULT_ALPHA,
+    private val maxAbsCorrectionMs: Int = DEFAULT_MAX_ABS_CORRECTION_MS,
+) {
+    private data class Evidence(
+        val sign: Int,
+        val samples: Int,
+        val residualSumMs: Long,
+    )
+
+    private val evidenceByCodec = mutableMapOf<String, Evidence>()
+
+    fun reset() {
+        evidenceByCodec.clear()
+    }
+
+    /**
+     * @return new correction to persist/apply, or null when there is not enough stable
+     * evidence yet.
+     */
+    fun recordStableResidual(
+        codecKey: String,
+        smoothedDriftMs: Long,
+        currentCorrectionMs: Int,
+    ): Int? {
+        if (kotlin.math.abs(smoothedDriftMs) < minResidualMs) {
+            evidenceByCodec.remove(codecKey)
+            return null
+        }
+        val desiredCorrectionDelta = (-smoothedDriftMs).coerceIn(
+            -maxAbsCorrectionMs.toLong(),
+            maxAbsCorrectionMs.toLong(),
+        )
+        val sign = if (desiredCorrectionDelta > 0) 1 else -1
+        val prior = evidenceByCodec[codecKey]
+        val next = if (prior?.sign == sign) {
+            prior.copy(
+                samples = prior.samples + 1,
+                residualSumMs = prior.residualSumMs + desiredCorrectionDelta,
+            )
+        } else {
+            Evidence(sign = sign, samples = 1, residualSumMs = desiredCorrectionDelta)
+        }
+        evidenceByCodec[codecKey] = next
+        if (next.samples < minEvidenceSamples) return null
+
+        val target = (next.residualSumMs.toDouble() / next.samples).roundToLong()
+        val learned = (currentCorrectionMs + alpha * (target - currentCorrectionMs))
+            .roundToLong()
+            .coerceIn(-maxAbsCorrectionMs.toLong(), maxAbsCorrectionMs.toLong())
+            .toInt()
+        evidenceByCodec.remove(codecKey)
+        return learned.takeIf { it != currentCorrectionMs }
+    }
+
+    fun rejectCurrentEvidence(codecKey: String) {
+        evidenceByCodec.remove(codecKey)
+    }
+
+    companion object {
+        const val DEFAULT_MIN_EVIDENCE_SAMPLES: Int = 12
+        const val DEFAULT_MIN_RESIDUAL_MS: Int = 18
+        const val DEFAULT_MAX_ABS_CORRECTION_MS: Int = 120
+        const val DEFAULT_ALPHA: Double = 0.25
+    }
 }
 
 /**

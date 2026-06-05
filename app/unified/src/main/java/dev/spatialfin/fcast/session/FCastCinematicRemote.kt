@@ -64,6 +64,7 @@ fun FCastCinematicRemote(
     val title by sessionManager.activeItemTitle.collectAsState()
     val artworkUrl by sessionManager.activeItemArtworkUrl.collectAsState()
     val audioFormat by sessionManager.activeAudioFormat.collectAsState()
+    val splitState by sessionManager.splitAvActive.collectAsState()
     
     val anyTarget = pickedTarget ?: return
     val scope = rememberCoroutineScope()
@@ -329,6 +330,14 @@ fun FCastCinematicRemote(
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
+
+                if (splitState != SplitAvController.State.Idle) {
+                    SplitAvVideoOffsetControl(
+                        sessionManager = sessionManager,
+                        enabled = controlsEnabled,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // Secondary Utility Row (Volume)
                 Row(

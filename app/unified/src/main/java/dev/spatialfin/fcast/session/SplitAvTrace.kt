@@ -27,16 +27,27 @@ data class SplitAvTrace(
     val rttMs: Int?,
     /** Codec ExoPlayer is decoding on the receiver, or null if not yet probed. */
     val codecMime: String?,
+    val routeFingerprint: String? = null,
+    val manualVideoOffsetMs: Int? = null,
+    val learnedCodecCorrectionMs: Int? = null,
+    val audioSinkPositionUs: Long? = null,
+    val audioSinkBufferSizeUs: Long? = null,
+    val videoTimingPositionMs: Long? = null,
     /** Simple name of the [SplitAvPolicy.DriftAction], or "RejectedOutlier". */
     val action: String,
 ) {
     fun toCsvLine(): String =
         "$atMs,$rawDriftMs,$smoothedDriftMs," +
-            "${"%.3f".format(driftRateMsPerSec)},${rttMs ?: ""},${codecMime ?: ""},$action"
+            "${"%.3f".format(driftRateMsPerSec)},${rttMs ?: ""},${codecMime ?: ""}," +
+            "${routeFingerprint ?: ""},${manualVideoOffsetMs ?: ""}," +
+            "${learnedCodecCorrectionMs ?: ""},${audioSinkPositionUs ?: ""}," +
+            "${audioSinkBufferSizeUs ?: ""},${videoTimingPositionMs ?: ""},$action"
 
     companion object {
         const val CSV_HEADER =
-            "atMs,rawDriftMs,smoothedDriftMs,driftRateMsPerSec,rttMs,codecMime,action"
+            "atMs,rawDriftMs,smoothedDriftMs,driftRateMsPerSec,rttMs,codecMime," +
+                "routeFingerprint,manualVideoOffsetMs,learnedCodecCorrectionMs," +
+                "audioSinkPositionUs,audioSinkBufferSizeUs,videoTimingPositionMs,action"
 
         /** Parse a line produced by [toCsvLine]; null on a malformed/blank/header line. */
         fun fromCsvLine(line: String): SplitAvTrace? {
@@ -45,15 +56,33 @@ data class SplitAvTrace(
             val f = t.split(',')
             if (f.size < 7) return null
             return runCatching {
-                SplitAvTrace(
-                    atMs = f[0].toLong(),
-                    rawDriftMs = f[1].toLong(),
-                    smoothedDriftMs = f[2].toLong(),
-                    driftRateMsPerSec = f[3].toDouble(),
-                    rttMs = f[4].toIntOrNull(),
-                    codecMime = f[5].ifEmpty { null },
-                    action = f[6],
-                )
+                if (f.size >= 13) {
+                    SplitAvTrace(
+                        atMs = f[0].toLong(),
+                        rawDriftMs = f[1].toLong(),
+                        smoothedDriftMs = f[2].toLong(),
+                        driftRateMsPerSec = f[3].toDouble(),
+                        rttMs = f[4].toIntOrNull(),
+                        codecMime = f[5].ifEmpty { null },
+                        routeFingerprint = f[6].ifEmpty { null },
+                        manualVideoOffsetMs = f[7].toIntOrNull(),
+                        learnedCodecCorrectionMs = f[8].toIntOrNull(),
+                        audioSinkPositionUs = f[9].toLongOrNull(),
+                        audioSinkBufferSizeUs = f[10].toLongOrNull(),
+                        videoTimingPositionMs = f[11].toLongOrNull(),
+                        action = f[12],
+                    )
+                } else {
+                    SplitAvTrace(
+                        atMs = f[0].toLong(),
+                        rawDriftMs = f[1].toLong(),
+                        smoothedDriftMs = f[2].toLong(),
+                        driftRateMsPerSec = f[3].toDouble(),
+                        rttMs = f[4].toIntOrNull(),
+                        codecMime = f[5].ifEmpty { null },
+                        action = f[6],
+                    )
+                }
             }.getOrNull()
         }
     }

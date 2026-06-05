@@ -431,6 +431,7 @@ class XrPlayerActivity : AppCompatActivity() {
                     ipc.pushState(
                         positionMs = player.currentPosition.coerceAtLeast(0L),
                         playing = player.playWhenReady,
+                        videoTiming = adapter.renderedVideoTiming(),
                     )
                     delay(50L)
                 }

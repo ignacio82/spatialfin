@@ -201,6 +201,7 @@ private class IntentBasedExternalStreamPlayer(
             if (currentDestination != null && currentDestination != destination) {
                 FCastInboundSession.suspendControlForReplacement()
             }
+            FCastInboundSession.prepareForNewPlayback()
             currentDestination = destination
             context.startActivity(intent)
             return ExternalStreamPlayer.PlayResult.Accepted

@@ -43,6 +43,7 @@ data class ExternalStreamRequest(
     val splitAv: SplitAvMetadata? = null,
     val sourceAudioCodec: String? = null,
     val audioTranscoded: Boolean? = null,
+    val preferredAudioLanguage: String? = null,
 ) {
     companion object {
         /**
@@ -81,6 +82,8 @@ data class ExternalStreamRequest(
                         ?.jsonPrimitive?.contentOrNull,
                     audioTranscoded = audioCustom?.get("transcoded")
                         ?.jsonPrimitive?.booleanOrNull,
+                    preferredAudioLanguage = audioCustom?.get("preferredLanguage")
+                        ?.jsonPrimitive?.contentOrNull,
                 ),
             )
         }

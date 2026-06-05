@@ -67,6 +67,39 @@ data class PlaybackUpdateMessage(
      * beacon that carries this).
      */
     val supportedAudioCodecs: List<String>? = null,
+    /**
+     * SpatialFin sync extension. Receiver-side audio clock position sampled from Media3's
+     * AudioSink (`AudioTrack` clock path), in microseconds. This is a stronger audio-clock
+     * source than ExoPlayer's coarse currentPosition because it reflects the sink Media3 is
+     * actually using to pace audio. Null on older/non-SpatialFin receivers or before the sink
+     * has produced a position sample.
+     */
+    val audioSinkPositionUs: Long? = null,
+    /**
+     * Receiver monotonic clock (`SystemClock.elapsedRealtime`) at the instant
+     * [audioSinkPositionUs] was sampled. Uses the same timebase as v4 Ping/Pong telemetry.
+     */
+    val audioSinkSampleMonotonicMs: Long? = null,
+    /**
+     * Media3 AudioSink buffer size in microseconds, when known. Diagnostic only; callers must
+     * tolerate null.
+     */
+    val audioSinkBufferSizeUs: Long? = null,
+    /**
+     * True when the receiver has loaded enough media to participate in a synchronized
+     * split-A/V start. The name is historical from the split controller perspective: the
+     * receiver is the audio side, but this bit tells the sender that the remote half is ready
+     * for the video-master start rendezvous.
+     */
+    val videoReadyToStart: Boolean? = null,
+    /** Receiver buffered position in milliseconds, if the player exposes one. */
+    val bufferedPositionMs: Long? = null,
+    /**
+     * SpatialFin sync extension describing the receiver's current output route. Persisted by
+     * the sender so calibration and manual offset can follow the actual HDMI/Bluetooth/PCM
+     * route rather than just host:port.
+     */
+    val audioRoute: AudioRouteInfo? = null,
 ) {
     val playbackState: PlaybackState? get() = PlaybackState.fromCode(state)
 }
@@ -126,6 +159,24 @@ data class AudioFormatInfo(
     val bitrateKbps: Int? = null,
     /** Receiver-side pretty-printed label (e.g. `Dolby Atmos · 7.1`); fallback for the UI. */
     val label: String? = null,
+)
+
+/**
+ * SpatialFin-only audio output route telemetry. All fields are optional so older peers and
+ * platforms with limited route visibility remain compatible.
+ */
+@Serializable
+data class AudioRouteInfo(
+    /** Stable-ish fingerprint derived from route type/label/capabilities. */
+    val fingerprint: String? = null,
+    /** Human-readable route label, e.g. HDMI, Bluetooth speaker, or device product name. */
+    val label: String? = null,
+    /** Android AudioDeviceInfo type name when available. */
+    val deviceType: String? = null,
+    /** Receiver-advertised codec tokens this route can render directly. */
+    val supportedAudioCodecs: List<String>? = null,
+    /** Maximum channel count reported by Media3 AudioCapabilities. */
+    val maxChannelCount: Int? = null,
 )
 
 enum class PlaybackState(val code: Int) {

@@ -17,6 +17,7 @@ import dev.jdtech.jellyfin.cast.subtitle.SubtitleWarningTracker
 import dev.jdtech.jellyfin.cast.toCastReceiver
 import dev.jdtech.jellyfin.cast.toFCastReceiver
 import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
+import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.protocol.PlayMessage
 import dev.jdtech.jellyfin.fcast.sender.FCastCastingController
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
@@ -27,6 +28,8 @@ import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSource
+import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
@@ -288,6 +291,13 @@ class CastSessionManager @Inject constructor(
     val activeAudioRoute: StateFlow<SplitAvAudioRouteInfo?> =
         _activeAudioRoute.asStateFlow()
 
+    private val _activeReceiverAudioRoute = MutableStateFlow<AudioRouteInfo?>(null)
+    val activeReceiverAudioRoute: StateFlow<AudioRouteInfo?> =
+        _activeReceiverAudioRoute.asStateFlow()
+
+    private val _manualVideoOffsetMs = MutableStateFlow(0)
+    val manualVideoOffsetMs: StateFlow<Int> = _manualVideoOffsetMs.asStateFlow()
+
     /**
      * Process-scoped set of `host:port` receivers that have reported "not supported" for an
      * audio codec we tried to direct-play. The URL builder reads this to auto-fallback to
@@ -350,6 +360,9 @@ class CastSessionManager @Inject constructor(
 
     @Volatile
     private var recastDone: Boolean = false
+
+    @Volatile
+    private var activeRoutePersistenceKey: String? = null
 
     /**
      * Most-recent latest cached Google Cast results. Surfaced to the picker UI so users can
@@ -474,6 +487,26 @@ class CastSessionManager @Inject constructor(
         _splitAvMode.value = enabled
     }
 
+    fun setManualVideoOffset(offsetMs: Int) {
+        val clamped = offsetMs.coerceIn(-200, 200)
+        _manualVideoOffsetMs.value = clamped
+        splitAvController.setManualVideoOffset(clamped)
+        val receiver = _pickedReceiver.value ?: controller.activeReceiver.value ?: return
+        val routeFingerprint = _activeReceiverAudioRoute.value?.fingerprint ?: return
+        scope.launch {
+            rememberedReceiversStore.setManualVideoOffset(
+                host = receiver.host,
+                port = receiver.port,
+                routeFingerprint = routeFingerprint,
+                offsetMs = clamped,
+            )
+        }
+    }
+
+    fun adjustManualVideoOffset(deltaMs: Int) {
+        setManualVideoOffset(_manualVideoOffsetMs.value + deltaMs)
+    }
+
     fun dismissCalibrationResult() {
         _calibrationState.value = CalibrationState.Idle
     }
@@ -502,7 +535,8 @@ class CastSessionManager @Inject constructor(
 
     private fun refreshAudioLatenciesFrom(receivers: List<RememberedReceiver>) {
         _audioLatencies.value = receivers.mapNotNull { r ->
-            r.audioLatencyMs?.let { "${r.host}:${r.port}" to it }
+            val routeLatency = r.routes.firstOrNull { it.baseLatencyMs != null }?.baseLatencyMs
+            (routeLatency ?: r.audioLatencyMs)?.let { "${r.host}:${r.port}" to it }
         }.toMap()
         receivers.forEach { r ->
             r.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
@@ -1097,6 +1131,40 @@ class CastSessionManager @Inject constructor(
                 }
                 update.time?.let { _activePositionMs.value = (it * 1000.0).toLong() }
                 update.duration?.let { _activeDurationMs.value = (it * 1000.0).toLong() }
+                update.audioRoute?.let { route ->
+                    _activeReceiverAudioRoute.value = route
+                    val rcv = controller.activeReceiver.value ?: return@let
+                    val routeFingerprint = route.fingerprint?.takeIf { it.isNotBlank() } ?: return@let
+                    val routeKey = "${rcv.host}:${rcv.port}:$routeFingerprint"
+                    if (activeRoutePersistenceKey != routeKey) {
+                        activeRoutePersistenceKey = routeKey
+                        val remembered = rememberedReceiversStore.load()
+                            .firstOrNull { it.host == rcv.host && it.port == rcv.port }
+                        val priorRoute = remembered?.routes
+                            ?.firstOrNull { it.fingerprint == routeFingerprint }
+                        val fallbackLatency = priorRoute?.baseLatencyMs ?: remembered?.audioLatencyMs
+                        val fallbackManual = priorRoute?.manualVideoOffsetMs
+                            ?: _manualVideoOffsetMs.value
+                        rememberedReceiversStore.ensureRouteRecord(
+                            host = rcv.host,
+                            port = rcv.port,
+                            route = route,
+                            fallbackBaseLatencyMs = fallbackLatency,
+                            fallbackManualVideoOffsetMs = fallbackManual,
+                            fallbackSupportedAudioCodecs = route.supportedAudioCodecs
+                                ?: remembered?.supportedAudioCodecs,
+                        )
+                        if (_splitAvMode.value) {
+                            _manualVideoOffsetMs.value = fallbackManual.coerceIn(-200, 200)
+                            splitAvController.updateRouteLatencyConfig(
+                                baseLatencyMs = fallbackLatency,
+                                manualVideoOffsetMs = fallbackManual,
+                                learnedCodecCorrections = priorRoute?.learnedCodecCorrections,
+                                routeFingerprint = routeFingerprint,
+                            )
+                        }
+                    }
+                }
                 // SpatialFin → SpatialFin: the receiver populates audioFormat on every beacon
                 // once ExoPlayer's tracks resolve. Latch the latest non-null value — beacons
                 // may transiently omit it during track-change windows, and the mini-controller
@@ -1276,6 +1344,159 @@ class CastSessionManager @Inject constructor(
         val receiverKey: String,
     )
 
+    private data class SplitAvAudioSelection(
+        val source: SpatialFinSource?,
+        val audioStream: SpatialFinMediaStream?,
+        val preferredAudioLanguage: String?,
+    )
+
+    private suspend fun resolveSplitAvAudioSelection(
+        item: SpatialFinItem,
+        sources: List<SpatialFinSource>,
+    ): SplitAvAudioSelection {
+        if (sources.isEmpty()) return SplitAvAudioSelection(null, null, null)
+
+        val genres = when (item) {
+            is SpatialFinMovie -> item.genres
+            is SpatialFinEpisode -> runCatching { repository.getShow(item.seriesId).genres }
+                .getOrDefault(emptyList())
+            else -> emptyList()
+        }
+        val isAnime = isSplitAvAnimeItem(item, genres, sources)
+        val seriesOverride = (item as? SpatialFinEpisode)
+            ?.seriesId
+            ?.toString()
+            ?.let { appPreferences.getSeriesLanguageOverride(it) }
+        val preferredAudioLanguage = seriesOverride?.audioLanguageCode
+            ?: if (isAnime) {
+                appPreferences.getValue(appPreferences.animeAudioLanguage)
+            } else {
+                appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
+                    ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
+            }
+        val source = chooseSplitAvMediaSource(
+            sources = sources,
+            preferredAudioLanguage = preferredAudioLanguage,
+            preferStyledSubtitles = isAnime,
+        ) ?: sources.firstOrNull()
+        val audioStream = source?.let { chooseSplitAvAudioStream(it, preferredAudioLanguage) }
+        Timber.tag(TAG).i(
+            "split-A/V source selection source=%s preferredAudio=%s selectedAudioIndex=%s codec=%s language=%s",
+            source?.name?.ifBlank { source.id } ?: "none",
+            preferredAudioLanguage ?: "default",
+            audioStream?.index?.toString() ?: "default",
+            audioStream?.codec ?: "unknown",
+            audioStream?.language ?: "",
+        )
+        return SplitAvAudioSelection(source, audioStream, preferredAudioLanguage)
+    }
+
+    private fun chooseSplitAvMediaSource(
+        sources: List<SpatialFinSource>,
+        preferredAudioLanguage: String?,
+        preferStyledSubtitles: Boolean,
+    ): SpatialFinSource? =
+        sources.maxByOrNull { source ->
+            var score = 0
+            if (source.type == SpatialFinSourceType.LOCAL) score += 500
+
+            val preferredAudioStream = preferredAudioLanguage?.let { preferred ->
+                source.mediaStreams.firstOrNull { stream ->
+                    stream.type == MediaStreamType.AUDIO &&
+                        splitAvLanguageMatches(stream.language, preferred)
+                }
+            }
+            if (preferredAudioStream != null) {
+                score += 400
+                if (isSplitAvFriendlyAudioCodec(preferredAudioStream.codec)) {
+                    score += 120
+                } else {
+                    score -= 80
+                }
+            }
+
+            if (preferStyledSubtitles && source.mediaStreams.any { stream ->
+                    stream.type == MediaStreamType.SUBTITLE &&
+                        (stream.codec.equals("ass", ignoreCase = true) ||
+                            stream.codec.equals("ssa", ignoreCase = true))
+                }
+            ) {
+                score += 70
+            }
+
+            score += source.mediaStreams.count { it.type == MediaStreamType.AUDIO } * 10
+            score
+        }
+
+    private fun chooseSplitAvAudioStream(
+        source: SpatialFinSource,
+        preferredAudioLanguage: String?,
+    ): SpatialFinMediaStream? {
+        val audioStreams = source.mediaStreams.filter { it.type == MediaStreamType.AUDIO }
+        if (audioStreams.isEmpty()) return null
+        if (preferredAudioLanguage.isNullOrBlank()) return audioStreams.first()
+        return audioStreams.firstOrNull { stream ->
+            splitAvLanguageMatches(stream.language, preferredAudioLanguage) ||
+                splitAvLanguageMatches(stream.title, preferredAudioLanguage) ||
+                splitAvLanguageMatches(stream.displayTitle, preferredAudioLanguage)
+        } ?: audioStreams.first()
+    }
+
+    private fun isSplitAvAnimeItem(
+        item: SpatialFinItem,
+        genres: List<String>,
+        mediaSources: List<SpatialFinSource>,
+    ): Boolean {
+        if (genres.any { it.contains("anime", ignoreCase = true) }) return true
+        val hasJapaneseAudio = mediaSources.any { source ->
+            source.mediaStreams.any { stream ->
+                stream.type == MediaStreamType.AUDIO &&
+                    splitAvLanguageMatches(stream.language, "jpn")
+            }
+        }
+        val hasStyledSubtitles = mediaSources.any { source ->
+            source.mediaStreams.any { stream ->
+                stream.type == MediaStreamType.SUBTITLE &&
+                    (stream.codec.equals("ass", ignoreCase = true) ||
+                        stream.codec.equals("ssa", ignoreCase = true))
+            }
+        }
+        if (hasJapaneseAudio && hasStyledSubtitles) return true
+
+        val titleText = listOf(item.name, item.originalTitle.orEmpty()).joinToString(" ")
+        return titleText.any { char ->
+            char.code in 0x3040..0x30FF || char.code in 0x4E00..0x9FFF
+        }
+    }
+
+    private fun isSplitAvFriendlyAudioCodec(codec: String): Boolean =
+        when (codec.lowercase()) {
+            "aac", "mp4a-latm", "opus", "vorbis", "flac", "mp3" -> true
+            else -> false
+        }
+
+    private fun splitAvLanguageMatches(candidate: String?, preferred: String?): Boolean {
+        val normalizedCandidate = normalizeSplitAvLanguage(candidate) ?: return false
+        val normalizedPreferred = normalizeSplitAvLanguage(preferred) ?: return false
+        return normalizedCandidate == normalizedPreferred
+    }
+
+    private fun normalizeSplitAvLanguage(value: String?): String? {
+        val normalized = value
+            ?.trim()
+            ?.lowercase()
+            ?.replace('_', '-')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return when {
+            normalized == "ja" || normalized == "jpn" || normalized.startsWith("ja-") ||
+                normalized.contains("japanese") -> "jpn"
+            normalized == "en" || normalized == "eng" || normalized.startsWith("en-") ||
+                normalized.contains("english") -> "eng"
+            else -> normalized
+        }
+    }
+
 
     private fun audioCodecDecision(receiver: FCastReceiver): AudioCodecDecision =
         audioCodecDecision(receiver.host, receiver.port)
@@ -1403,6 +1624,9 @@ class CastSessionManager @Inject constructor(
             lastSplitAvRequest = null
             _pendingAudioTranscodeNotice.value = null
             _activeAudioRoute.value = null
+            _activeReceiverAudioRoute.value = null
+            _manualVideoOffsetMs.value = 0
+            activeRoutePersistenceKey = null
         }
         val receiver = _pickedReceiver.value ?: run {
             Timber.tag(TAG).w("castSpatialItemSplitAv: no receiver picked")
@@ -1436,17 +1660,23 @@ class CastSessionManager @Inject constructor(
         return withContext(Dispatchers.IO) {
             try {
                 val sources = repository.getMediaSources(itemId = itemId, includePath = false)
-                val source = sources.firstOrNull() ?: run {
+                val splitAudioSelection = resolveSplitAvAudioSelection(item, sources)
+                val source = splitAudioSelection.source ?: run {
                     Timber.tag(TAG).w("castSpatialItemSplitAv: no media sources for %s", itemId)
                     return@withContext false
                 }
-                val audioCodec = source.mediaStreams
-                    .firstOrNull { it.type == MediaStreamType.AUDIO }?.codec
+                val selectedAudioStream = splitAudioSelection.audioStream
+                val audioCodec = selectedAudioStream?.codec
                 val startMs = (startPositionMs ?: 0L).coerceAtLeast(0L)
                 val recvKey = "${receiver.host}:${receiver.port}"
                 val rememberedReceiver = rememberedReceiversStore.load()
                     .firstOrNull { it.host == receiver.host && it.port == receiver.port }
+                val rememberedRoute = rememberedReceiver?.routes
+                    ?.maxByOrNull { it.lastSeenMs ?: it.calibratedAtMs ?: 0L }
                 rememberedReceiver?.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
+                    receiverAudioCaps[recvKey] = codecs
+                }
+                rememberedRoute?.supportedAudioCodecs?.takeIf { it.isNotEmpty() }?.let { codecs ->
                     receiverAudioCaps[recvKey] = codecs
                 }
                 val audioDecision = audioCodecDecision(receiver)
@@ -1482,7 +1712,11 @@ class CastSessionManager @Inject constructor(
                 var transcoded = false
                 var transcodeTargetCodec: String? = null
                 if (canDirect) {
-                    url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
+                    url = repository.getStreamUrl(
+                        itemId = itemId,
+                        mediaSourceId = source.id,
+                        audioStreamIndex = selectedAudioStream?.index,
+                    ).withJellyfinAuth()
                     mediaStartOffsetMs = 0L
                 } else {
                     // Best codec the chain CAN render (E-AC-3 → AC-3 → AAC). HLS path mirrors
@@ -1496,9 +1730,14 @@ class CastSessionManager @Inject constructor(
                         source.id,
                         targets,
                         startMs,
+                        selectedAudioStream?.index,
                     )
                     if (hls.isBlank()) {
-                        url = repository.getStreamUrl(itemId, source.id).withJellyfinAuth()
+                        url = repository.getStreamUrl(
+                            itemId = itemId,
+                            mediaSourceId = source.id,
+                            audioStreamIndex = selectedAudioStream?.index,
+                        ).withJellyfinAuth()
                         mediaStartOffsetMs = 0L
                         Timber.tag(TAG).w(
                             "split-A/V: transcode URL empty for %s — direct-stream fallback",
@@ -1524,7 +1763,7 @@ class CastSessionManager @Inject constructor(
                 val container = PlayMessageBuilder.guessContainer(url) ?: "video/mp4"
 
                 // 1. Calibrate audio latency if we don't have a cached value for this receiver.
-                var audioLatencyMs = rememberedReceiver?.audioLatencyMs
+                var audioLatencyMs = rememberedRoute?.baseLatencyMs ?: rememberedReceiver?.audioLatencyMs
                 if (audioLatencyMs == null) {
                     _calibrationState.value = CalibrationState.Running(receiver.name)
                     when (val result = calibrationOrchestrator.calibrate(receiver)) {
@@ -1542,6 +1781,9 @@ class CastSessionManager @Inject constructor(
                         }
                     }
                 }
+                val manualVideoOffsetMs = rememberedRoute?.manualVideoOffsetMs ?: 0
+                val learnedCodecCorrections = rememberedRoute?.learnedCodecCorrections.orEmpty()
+                _manualVideoOffsetMs.value = manualVideoOffsetMs.coerceIn(-200, 200)
 
                 val play = PlayMessageBuilder.build(
                     url = url,
@@ -1555,6 +1797,7 @@ class CastSessionManager @Inject constructor(
                     title = title,
                     sourceAudioCodec = audioCodec,
                     audioTranscoded = transcoded,
+                    preferredAudioLanguage = splitAudioSelection.preferredAudioLanguage,
                 )
 
                 // Stash for the self-correcting re-cast only after calibration is done.
@@ -1585,7 +1828,15 @@ class CastSessionManager @Inject constructor(
                 // computed above based on direct-play vs transcoded path. The controller uses
                 // it both to seek-align the receiver on first master-play and to translate
                 // beacon stream-times back to absolute for the drift policy.
-                splitAvController.start(receiver, play, audioLatencyMs, mediaStartOffsetMs)
+                splitAvController.start(
+                    receiver = receiver,
+                    play = play,
+                    audioLatencyMs = audioLatencyMs,
+                    mediaStartOffsetMs = mediaStartOffsetMs,
+                    manualVideoOffsetMs = manualVideoOffsetMs,
+                    learnedCodecCorrections = learnedCodecCorrections,
+                    routeFingerprint = rememberedRoute?.fingerprint,
+                )
 
                 // 3. Launch the local video-master Activity. Drift correction in the controller
                 //    will idle until that Activity binds itself via SplitAvVideoBridge.
@@ -1614,6 +1865,10 @@ class CastSessionManager @Inject constructor(
     }
 
     suspend fun pause() {
+        if (isSplitAvTransportActive()) {
+            splitAvController.pause()
+            return
+        }
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.pause()
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.pause()
@@ -1622,6 +1877,10 @@ class CastSessionManager @Inject constructor(
     }
 
     suspend fun resume() {
+        if (isSplitAvTransportActive()) {
+            splitAvController.resume()
+            return
+        }
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.resume()
             CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.play()
@@ -1630,6 +1889,10 @@ class CastSessionManager @Inject constructor(
     }
 
     suspend fun seek(seconds: Double) {
+        if (isSplitAvTransportActive()) {
+            splitAvController.seekTo((seconds * 1000.0).toLong())
+            return
+        }
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.seek(seconds)
             CastProtocol.GoogleCast, CastProtocol.AirPlay ->
@@ -1638,13 +1901,26 @@ class CastSessionManager @Inject constructor(
         }
     }
 
+    private fun isSplitAvTransportActive(): Boolean =
+        _pickedTarget.value?.protocol == CastProtocol.FCast &&
+            splitAvController.state.value in setOf(
+                SplitAvController.State.Connecting,
+                SplitAvController.State.AwaitingMaster,
+                SplitAvController.State.Playing,
+                SplitAvController.State.Degraded,
+            )
+
     /**
      * Seek by a relative offset, computed against the last known position. Accurate to the
      * most recent state update we got from whichever protocol is active. No-op if we don't
      * have a known position yet (the receiver hasn't pushed its first update).
      */
     suspend fun seekBy(deltaSeconds: Double) {
-        val currentMs = _activePositionMs.value
+        val currentMs = if (isSplitAvTransportActive()) {
+            splitAvController.currentMasterPositionMs() ?: _activePositionMs.value
+        } else {
+            _activePositionMs.value
+        }
         val targetSeconds = (currentMs / 1000.0 + deltaSeconds).coerceAtLeast(0.0)
         seek(targetSeconds)
     }
@@ -1695,6 +1971,9 @@ class CastSessionManager @Inject constructor(
         _subtitleFidelity.value = SubtitleFidelity.None
         _activeAudioFormat.value = null
         _activeAudioRoute.value = null
+        _activeReceiverAudioRoute.value = null
+        _manualVideoOffsetMs.value = 0
+        activeRoutePersistenceKey = null
     }
 
     /**
@@ -1707,6 +1986,8 @@ class CastSessionManager @Inject constructor(
         splitAvController.endFromMaster()
         _activeAudioFormat.value = null
         _activeAudioRoute.value = null
+        _activeReceiverAudioRoute.value = null
+        activeRoutePersistenceKey = null
     }
 
     /** True while a split-A/V session is active (between start and end). */

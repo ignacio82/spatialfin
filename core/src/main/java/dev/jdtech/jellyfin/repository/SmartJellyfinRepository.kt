@@ -238,14 +238,19 @@ constructor(
             offline = { offlineRepository.getMediaSources(itemId, includePath, maxBitrate) },
         )
 
-    override suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String =
-        runOnlineOnly { onlineRepository.getStreamUrl(itemId, mediaSourceId) }
+    override suspend fun getStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        audioStreamIndex: Int?,
+    ): String =
+        runOnlineOnly { onlineRepository.getStreamUrl(itemId, mediaSourceId, audioStreamIndex) }
 
     override suspend fun getAudioTranscodeStreamUrl(
         itemId: UUID,
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
         startPositionMs: Long,
+        audioStreamIndex: Int?,
     ): String =
         runOnlineOnly {
             onlineRepository.getAudioTranscodeStreamUrl(
@@ -253,6 +258,7 @@ constructor(
                 mediaSourceId,
                 allowedAudioCodecs,
                 startPositionMs,
+                audioStreamIndex,
             )
         }
 

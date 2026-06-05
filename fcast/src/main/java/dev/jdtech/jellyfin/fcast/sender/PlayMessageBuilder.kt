@@ -37,6 +37,11 @@ object PlayMessageBuilder {
          * decode something useful.
          */
         audioTranscoded: Boolean? = null,
+        /**
+         * SpatialFin extension: preferred source audio language for receivers that direct-play
+         * multi-audio containers and need to mirror the sender's language policy.
+         */
+        preferredAudioLanguage: String? = null,
     ): PlayMessage = PlayMessage(
         container = container,
         url = url,
@@ -46,13 +51,14 @@ object PlayMessageBuilder {
         headers = headers?.takeIf { it.isNotEmpty() },
         metadata = if (
             title != null || thumbnailUrl != null ||
-            sourceAudioCodec != null || audioTranscoded != null
+            sourceAudioCodec != null || audioTranscoded != null ||
+            preferredAudioLanguage != null
         ) {
             MetadataObject(
                 type = METADATA_TYPE_GENERIC,
                 title = title,
                 thumbnailUrl = thumbnailUrl,
-                custom = buildAudioCustom(sourceAudioCodec, audioTranscoded),
+                custom = buildAudioCustom(sourceAudioCodec, audioTranscoded, preferredAudioLanguage),
             )
         } else {
             null
@@ -68,14 +74,16 @@ object PlayMessageBuilder {
     private fun buildAudioCustom(
         sourceAudioCodec: String?,
         audioTranscoded: Boolean?,
+        preferredAudioLanguage: String?,
     ): JsonObject? {
-        if (sourceAudioCodec == null && audioTranscoded == null) return null
+        if (sourceAudioCodec == null && audioTranscoded == null && preferredAudioLanguage == null) return null
         return buildJsonObject {
             put(
                 "audio",
                 buildJsonObject {
                     sourceAudioCodec?.let { put("sourceCodec", it) }
                     audioTranscoded?.let { put("transcoded", it) }
+                    preferredAudioLanguage?.let { put("preferredLanguage", it) }
                 },
             )
         }

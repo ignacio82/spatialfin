@@ -98,7 +98,11 @@ interface JellyfinRepository {
         maxBitrate: Long? = null
     ): List<SpatialFinSource>
 
-    suspend fun getStreamUrl(itemId: UUID, mediaSourceId: String): String
+    suspend fun getStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String,
+        audioStreamIndex: Int? = null,
+    ): String
 
     /**
      * An HLS stream URL whose audio is server-transcoded to one of [allowedAudioCodecs] while
@@ -118,6 +122,7 @@ interface JellyfinRepository {
         mediaSourceId: String,
         allowedAudioCodecs: List<String>,
         startPositionMs: Long = 0L,
+        audioStreamIndex: Int? = null,
     ): String
 
     suspend fun getMediaAttachment(

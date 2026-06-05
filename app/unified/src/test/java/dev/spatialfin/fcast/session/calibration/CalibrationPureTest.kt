@@ -1,5 +1,6 @@
 package dev.spatialfin.fcast.session.calibration
 
+import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.nio.ByteBuffer
@@ -194,5 +195,79 @@ class CalibrationRouteSelectorTest {
             ),
         )
         assertEquals("100.64.0.2", selected?.hostAddress)
+    }
+}
+
+class CalibrationTimingTest {
+
+    @Test
+    fun `v4 monotonic formula uses receiver audio sink sample mapped by clock offset`() {
+        val latency = CalibrationOrchestrator.latencyFromBeacon(
+            captureOnsetMonotonicMs = 10_500L,
+            captureOnsetWallMs = 999_999L,
+            sourceOnsetMs = 1_000L,
+            beacon = PlaybackUpdateMessage(
+                generationTime = 1L,
+                state = 1,
+                time = 1.2,
+                audioSinkPositionUs = 1_240_000L,
+                audioSinkSampleMonotonicMs = 8_000L,
+            ),
+            beaconReceivedWallMs = 999_000L,
+            clockOffsetMs = 200L,
+        )
+
+        assertEquals(2_940L, latency)
+    }
+
+    @Test
+    fun `v4 calibration ignores implausible audio sink epoch and uses player time`() {
+        val latency = CalibrationOrchestrator.latencyFromBeacon(
+            captureOnsetMonotonicMs = 10_500L,
+            captureOnsetWallMs = 999_999L,
+            sourceOnsetMs = 1_000L,
+            beacon = PlaybackUpdateMessage(
+                generationTime = 1L,
+                state = 1,
+                time = 1.240,
+                duration = 10.0,
+                monotonicSampleMs = 8_100L,
+                audioSinkPositionUs = 1_000_007_834_989L,
+                audioSinkSampleMonotonicMs = 8_000L,
+            ),
+            beaconReceivedWallMs = 999_000L,
+            clockOffsetMs = 200L,
+        )
+
+        assertEquals(2_840L, latency)
+    }
+
+    @Test
+    fun `calibration falls back to legacy wall clock math when v4 telemetry is absent`() {
+        val latency = CalibrationOrchestrator.latencyFromBeacon(
+            captureOnsetMonotonicMs = 10_500L,
+            captureOnsetWallMs = 50_500L,
+            sourceOnsetMs = 1_000L,
+            beacon = PlaybackUpdateMessage(
+                generationTime = 1L,
+                state = 1,
+                time = 1.240,
+            ),
+            beaconReceivedWallMs = 49_000L,
+            clockOffsetMs = null,
+        )
+
+        assertEquals(1_740L, latency)
+    }
+
+    @Test
+    fun `AudioRecord timestamp maps later frame timestamp back to first sample`() {
+        val first = CalibrationCapture.firstSampleMonotonicMs(
+            timestampFramePosition = 4_800L,
+            timestampNanoTime = 1_100_000_000L,
+            sampleRateHz = 48_000,
+        )
+
+        assertEquals(1_000L, first)
     }
 }

@@ -10,6 +10,7 @@ import dev.jdtech.jellyfin.player.core.splitav.ProxyVideoMaster
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcMessage
 import dev.jdtech.jellyfin.cast.CastCapability
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
+import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoTiming
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -83,9 +84,29 @@ class SplitAvBridgeService : Service() {
             }
             SplitAvBridgeIpcMessage.MSG_STATE_UPDATE -> {
                 val data = msg.data ?: return@Handler true
+                val timing =
+                    if (data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS) &&
+                        data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS) &&
+                        data.containsKey(SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS)
+                    ) {
+                        SplitAvVideoTiming(
+                            mediaPositionMs = data.getLong(
+                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_POSITION_MS,
+                            ),
+                            releaseMonotonicMs = data.getLong(
+                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_RELEASE_MS,
+                            ),
+                            sampledMonotonicMs = data.getLong(
+                                SplitAvBridgeIpcMessage.KEY_VIDEO_TIMING_SAMPLE_MS,
+                            ),
+                        )
+                    } else {
+                        null
+                    }
                 proxy.applyStateUpdate(
                     positionMs = data.getLong(SplitAvBridgeIpcMessage.KEY_POSITION_MS),
                     playing = data.getBoolean(SplitAvBridgeIpcMessage.KEY_PLAYING),
+                    videoTiming = timing,
                 )
                 true
             }

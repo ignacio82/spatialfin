@@ -3,7 +3,10 @@ package dev.spatialfin.fcast.session.calibration
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTimestamp
 import android.media.MediaRecorder
+import android.os.Build
+import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -26,6 +29,10 @@ class CalibrationCapture(
         val samples: ShortArray,
         /** Wall-clock time the AudioRecord was started — anchor for onset latency math. */
         val captureStartWallMs: Long,
+        /** Monotonic time of the first captured sample. */
+        val captureStartMonotonicMs: Long,
+        /** True when [captureStartMonotonicMs] came from AudioRecord.getTimestamp. */
+        val usedAudioRecordTimestamp: Boolean,
     )
 
     /**
@@ -53,9 +60,12 @@ class CalibrationCapture(
         }
         val buffer = ShortArray(totalSamples)
         val startMs: Long
+        val startMonotonicMs: Long
+        var firstSampleMonotonicMs: Long? = null
         try {
             record.startRecording()
             startMs = System.currentTimeMillis()
+            startMonotonicMs = SystemClock.elapsedRealtime()
             // Tight read loop — we want every available sample without lossy fallbacks.
             var read = 0
             while (read < totalSamples) {
@@ -66,12 +76,32 @@ class CalibrationCapture(
                     continue
                 }
                 read += n
+                if (firstSampleMonotonicMs == null) {
+                    firstSampleMonotonicMs = readFirstSampleMonotonicMs(record, sampleRateHz)
+                }
             }
         } finally {
             try { record.stop() } catch (_: Exception) {}
             try { record.release() } catch (_: Exception) {}
         }
-        Result(buffer, startMs)
+        Result(
+            samples = buffer,
+            captureStartWallMs = startMs,
+            captureStartMonotonicMs = firstSampleMonotonicMs ?: startMonotonicMs,
+            usedAudioRecordTimestamp = firstSampleMonotonicMs != null,
+        )
+    }
+
+    private fun readFirstSampleMonotonicMs(record: AudioRecord, sampleRateHz: Int): Long? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
+        val ts = AudioTimestamp()
+        val result = record.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC)
+        if (result != AudioRecord.SUCCESS) return null
+        return firstSampleMonotonicMs(
+            timestampFramePosition = ts.framePosition,
+            timestampNanoTime = ts.nanoTime,
+            sampleRateHz = sampleRateHz,
+        )
     }
 
     companion object {
@@ -80,5 +110,14 @@ class CalibrationCapture(
 
         /** Floor on the AudioRecord internal buffer — some devices report tiny min sizes. */
         private const val MIN_BUFFER_BYTES: Int = 8 * 1024
+
+        fun firstSampleMonotonicMs(
+            timestampFramePosition: Long,
+            timestampNanoTime: Long,
+            sampleRateHz: Int,
+        ): Long {
+            val frameOffsetMs = timestampFramePosition * 1_000L / sampleRateHz.coerceAtLeast(1)
+            return (timestampNanoTime / 1_000_000L) - frameOffsetMs
+        }
     }
 }

@@ -41,6 +41,7 @@ object FCastInboundSession {
      */
     @Volatile private var pendingPlayIntent: PendingPlayIntent? = null
     @Volatile private var pendingSeekSeconds: Double? = null
+    @Volatile private var pendingStop: Boolean = false
 
     /** v4 synchronized-start target carried alongside a pending [PendingPlayIntent.Resume].
      *  Non-null ⇒ the queued resume should be a scheduled `resumeAt`, not a resume-now. */
@@ -52,12 +53,18 @@ object FCastInboundSession {
         control = c
         // Snapshot then clear so a redundant onCreate (rare but possible — singleTask + new
         // intent re-binds) can't double-apply the same pending intent.
+        val stop = pendingStop
         val seek = pendingSeekSeconds
         val intent = pendingPlayIntent
         val resumeAt = pendingResumeAtMs
+        pendingStop = false
         pendingSeekSeconds = null
         pendingPlayIntent = null
         pendingResumeAtMs = null
+        if (stop) {
+            c.stop()
+            return
+        }
         // Seek before play-intent: senders send them in that order, and applying a Seek
         // *after* a Resume forces an extra buffer-flush mid-playback.
         if (seek != null) c.seek(seek)
@@ -77,6 +84,7 @@ object FCastInboundSession {
             pendingPlayIntent = null
             pendingSeekSeconds = null
             pendingResumeAtMs = null
+            pendingStop = false
         }
     }
 
@@ -86,7 +94,22 @@ object FCastInboundSession {
      * binds; seek/resume received during that window use the existing pending-command path.
      */
     fun suspendControlForReplacement() {
+        val departing = control
         control = null
+        pendingPlayIntent = null
+        pendingSeekSeconds = null
+        pendingResumeAtMs = null
+        pendingStop = false
+        departing?.stop()
+    }
+
+    /**
+     * A new FCast Play frame is about to launch or retarget the inbound Activity. Drop any
+     * stale pre-bind Stop/Pause/Seek left by a previous session so it cannot immediately stop
+     * or seek the newly-started media.
+     */
+    fun prepareForNewPlayback() {
+        pendingStop = false
         pendingPlayIntent = null
         pendingSeekSeconds = null
         pendingResumeAtMs = null
@@ -140,14 +163,15 @@ object FCastInboundSession {
     }
 
     fun stop() {
-        // Stop arriving pre-bind means the sender wants the whole session torn down. The
-        // Activity is on its way up but will see no further control frames; the simplest
-        // correct behavior is to clear any pending intent and let the Activity self-finish
-        // when its session-stop watchdog fires. We don't try to dispatch a stop to a not-yet-
-        // bound control because it'd race the Activity's own initialization.
         pendingPlayIntent = null
         pendingResumeAtMs = null
-        control?.stop()
+        pendingSeekSeconds = null
+        val c = control
+        if (c != null) {
+            c.stop()
+        } else {
+            pendingStop = true
+        }
     }
 
     fun seek(seconds: Double) {

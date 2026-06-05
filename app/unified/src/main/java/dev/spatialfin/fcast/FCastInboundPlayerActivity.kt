@@ -3,7 +3,10 @@ package dev.spatialfin.fcast
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Bundle
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -33,16 +36,21 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.ui.PlayerView
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackState
 import dev.jdtech.jellyfin.fcast.protocol.PlaybackUpdateMessage
+import dev.jdtech.jellyfin.fcast.protocol.AudioRouteInfo
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvMetadata
 import dev.jdtech.jellyfin.fcast.protocol.SplitAvRole
 import dev.jdtech.jellyfin.fcast.protocol.VolumeUpdateMessage
@@ -55,6 +63,9 @@ import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
 import dev.jdtech.jellyfin.player.xr.LibassRenderer
 import dev.jdtech.jellyfin.player.xr.LibassTextRenderer
 import dev.spatialfin.R
+import dev.spatialfin.fcast.session.ReceiverAudioClock
+import java.security.MessageDigest
+import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -105,6 +116,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     
     /** Passthrough-capable audio codec tokens of the attached chain; set in [logAudioCapabilities]. */
     private var receiverAudioCodecs: List<String> = emptyList()
+    private var receiverAudioRouteInfo: AudioRouteInfo? = null
+    private var preferredAudioLanguage: String? = null
+    private var preferredAudioLanguageApplied = false
+    private var audioSinkPositionOffsetUs: Long? = null
+    @OptIn(UnstableApi::class)
+    private var audioSinkTimingProbe: TimingAudioSink? = null
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) = pushPlaybackSnapshot()
         override fun onPlaybackStateChanged(playbackState: Int) = pushPlaybackSnapshot()
@@ -120,6 +137,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             if (reason == Player.DISCONTINUITY_REASON_SEEK ||
                 reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
                 libassRenderer?.clearCache()
+                audioSinkPositionOffsetUs = null
             }
             pushPlaybackSnapshot()
         }
@@ -134,6 +152,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             )
         }
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            applyPreferredAudioLanguageIfNeeded(tracks)
             pushTracksSnapshot()
         }
     }
@@ -207,6 +226,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             // here on the inbound-FCast path keeps the bitmap clean even if the player coalesces
             // the seek before the listener fires.
             libassRenderer?.clearCache()
+            audioSinkPositionOffsetUs = null
             player?.seekTo((seconds * 1000.0).toLong().coerceAtLeast(0L))
         }.let { Unit }
         override fun setVolume(volume: Double) = runOnUiThread {
@@ -381,6 +401,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         // sender. This is the authoritative input to the sender's split-A/V direct-stream vs
         // transcode decision — see [ReceiverAudioCodecs] / SplitAvController.
         receiverAudioCodecs = ReceiverAudioCodecs.fromCapabilities(caps)
+        receiverAudioRouteInfo = buildAudioRouteInfo(caps, receiverAudioCodecs)
         val encodings = listOf(
             android.media.AudioFormat.ENCODING_PCM_16BIT to "PCM_16BIT",
             android.media.AudioFormat.ENCODING_PCM_FLOAT to "PCM_FLOAT",
@@ -400,6 +421,92 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             "AudioCapabilities: maxChannelCount=%d supports=[%s]",
             caps.maxChannelCount, supported,
         )
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun buildAudioRouteInfo(
+        caps: androidx.media3.exoplayer.audio.AudioCapabilities,
+        codecs: List<String>,
+    ): AudioRouteInfo {
+        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val audioManager = getSystemService(AudioManager::class.java)
+            audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                ?.sortedWith(compareByDescending<AudioDeviceInfo> { it.isLikelyExternalAudioRoute() }
+                    .thenBy { it.type })
+                ?.firstOrNull()
+        } else {
+            null
+        }
+        val deviceType = device?.let { audioDeviceTypeName(it.type) }
+        val deviceLabel = device?.productName?.toString()?.takeIf { it.isNotBlank() }
+        val label = when {
+            !deviceLabel.isNullOrBlank() -> deviceLabel
+            deviceType != null -> deviceType
+            else -> "Android audio output"
+        }
+        val normalizedCodecs = codecs.map { it.lowercase().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val fingerprintSource = listOf(
+            deviceType.orEmpty(),
+            label,
+            caps.maxChannelCount.toString(),
+            normalizedCodecs.sorted().joinToString("|"),
+        ).joinToString("#")
+        return AudioRouteInfo(
+            fingerprint = sha256Short(fingerprintSource),
+            label = label,
+            deviceType = deviceType,
+            supportedAudioCodecs = normalizedCodecs.takeIf { it.isNotEmpty() },
+            maxChannelCount = caps.maxChannelCount,
+        )
+    }
+
+    private fun sha256Short(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        return digest.take(12).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun audioDeviceTypeName(type: Int): String = when (type) {
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "built-in earpiece"
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "built-in speaker"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired headset"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "wired headphones"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
+        AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+        AudioDeviceInfo.TYPE_HDMI_ARC -> "HDMI ARC"
+        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB audio"
+        AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB accessory"
+        AudioDeviceInfo.TYPE_DOCK -> "dock"
+        AudioDeviceInfo.TYPE_FM -> "FM"
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "built-in microphone"
+        AudioDeviceInfo.TYPE_FM_TUNER -> "FM tuner"
+        AudioDeviceInfo.TYPE_TV_TUNER -> "TV tuner"
+        AudioDeviceInfo.TYPE_TELEPHONY -> "telephony"
+        AudioDeviceInfo.TYPE_AUX_LINE -> "aux line"
+        AudioDeviceInfo.TYPE_IP -> "IP audio"
+        AudioDeviceInfo.TYPE_BUS -> "bus audio"
+        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+        AudioDeviceInfo.TYPE_HEARING_AID -> "hearing aid"
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE -> "built-in speaker"
+        AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "remote submix"
+        else -> "audio device $type"
+    }
+
+    private fun AudioDeviceInfo.isLikelyExternalAudioRoute(): Boolean = when (type) {
+        AudioDeviceInfo.TYPE_HDMI,
+        AudioDeviceInfo.TYPE_HDMI_ARC,
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_ACCESSORY,
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_AUX_LINE,
+        -> true
+        else -> false
     }
 
     @OptIn(UnstableApi::class)
@@ -423,6 +530,21 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         libassRenderer = renderer
 
         val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink {
+                val sink = checkNotNull(
+                    super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams,
+                    ),
+                )
+                return TimingAudioSink(sink).also { audioSinkTimingProbe = it }
+            }
+
             override fun buildTextRenderers(
                 context: Context,
                 output: TextOutput,
@@ -536,6 +658,11 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         val newSplitAvRole = request.splitAv?.role
         val splitAvCadenceHz = request.splitAv?.syncCadenceHz
         splitAvRole = newSplitAvRole
+        preferredAudioLanguage = request.preferredAudioLanguage
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        preferredAudioLanguageApplied = false
+        audioSinkPositionOffsetUs = null
         playbackTickerIntervalMs = if (newSplitAvRole != null) {
             val hz = splitAvCadenceHz ?: SplitAvMetadata.DEFAULT_SYNC_CADENCE_HZ
             (1_000L / hz.coerceAtLeast(1)).coerceAtLeast(MIN_TICKER_INTERVAL_MS)
@@ -569,8 +696,13 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             request.source::class.simpleName, newSplitAvRole?.name ?: "fullAv", playbackTickerIntervalMs,
         )
 
-        // Re-tune ExoPlayer to the new media. setMediaItem replaces the queue so the old
-        // (calibration) URL stops playing immediately.
+        // Re-tune ExoPlayer to the new media. Force playWhenReady=false before prepare so a
+        // prior playing split/calibration stream cannot auto-start the replacement before the
+        // sender has issued its coordinated Resume/ResumeAt command.
+        cancelScheduledResume()
+        exo.playWhenReady = false
+        exo.pause()
+        exo.stop()
         runCatching { mediaPreparer.replace(exo, request) }
             .onFailure { Timber.tag(TAG).w(it, "Unable to prepare FCast inbound source") }
             .getOrElse { return false }
@@ -593,6 +725,28 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         return true
     }
 
+    private fun applyPreferredAudioLanguageIfNeeded(tracks: Tracks) {
+        val preferred = preferredAudioLanguage ?: return
+        if (preferredAudioLanguageApplied) return
+        val p = player ?: return
+        val group = tracks.groups.firstOrNull { group ->
+            group.type == C.TRACK_TYPE_AUDIO &&
+                group.isSupported &&
+                (0 until group.length).any { index ->
+                    val format = group.getTrackFormat(index)
+                    languageMatches(format.language, preferred) ||
+                        languageMatches(format.label, preferred)
+                }
+        } ?: return
+        p.trackSelectionParameters = p.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+            .build()
+        preferredAudioLanguageApplied = true
+        Timber.tag(TAG).i("Applied preferred audio language %s to inbound receiver", preferred)
+    }
+
     private fun startPlaybackTicker() {
         playbackTickerJob?.cancel()
         playbackTickerJob = lifecycleScope.launch {
@@ -610,6 +764,15 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
     private fun pushPlaybackSnapshot() {
         val p = player ?: return
+        val playerPositionMs = p.currentPosition.coerceAtLeast(0L)
+        val durationMs = p.duration.takeIf { it > 0L }
+        val audioTiming = normalizeAudioTiming(
+            raw = audioSinkTimingProbe?.snapshot(),
+            playerPositionMs = playerPositionMs,
+            durationMs = durationMs,
+        )
+        val preferredPositionMs = audioTiming?.positionUs?.div(1_000L) ?: playerPositionMs
+        val preferredSampleMs = audioTiming?.sampleMonotonicMs ?: SystemClock.elapsedRealtime()
         // Report user *intent* (playWhenReady), not transient runtime state (isPlaying). A
         // brief buffering moment (chunk fetch, decoder warm-up after a seek) flips isPlaying
         // false but does not change the user's intent to play. In a split-A/V session the
@@ -624,7 +787,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 PlaybackState.Idle
             else -> PlaybackState.Playing
         }
-        val duration = p.duration.takeIf { it > 0L }?.let { it / 1000.0 }
+        val duration = durationMs?.let { it / 1000.0 }
         // Probe the currently-selected ExoPlayer audio track and ship it as a SpatialFin
         // beacon extension. Non-SpatialFin senders ignore the field (kotlinx.serialization
         // `ignoreUnknownKeys = true`); the sender-side StateFlow on CastSessionManager holds
@@ -635,19 +798,69 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             PlaybackUpdateMessage(
                 generationTime = System.currentTimeMillis(),
                 state = state.code,
-                time = p.currentPosition / 1000.0,
+                time = preferredPositionMs / 1000.0,
                 duration = duration,
                 speed = p.playbackParameters.speed.toDouble(),
                 audioFormat = AudioFormatProbe.probe(p),
                 // v4: monotonic stamp of the position sample, in the *same* clock as the
                 // NTP Ping/Pong, so the sender maps this beacon precisely via offset θ.
-                monotonicSampleMs = SystemClock.elapsedRealtime(),
+                monotonicSampleMs = preferredSampleMs,
                 // Authoritative audio-codec capability of this chain → drives the sender's
                 // split-A/V direct-stream vs transcode decision (capability-driven, not a
                 // hardcoded table, so it is correct on any AVR/soundbar/TV).
                 supportedAudioCodecs = receiverAudioCodecs.takeIf { it.isNotEmpty() },
+                audioSinkPositionUs = audioTiming?.positionUs,
+                audioSinkSampleMonotonicMs = audioTiming?.sampleMonotonicMs,
+                audioSinkBufferSizeUs = audioTiming?.bufferSizeUs,
+                videoReadyToStart = if (splitAvRole == SplitAvRole.AUDIO) {
+                    p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_BUFFERING
+                } else {
+                    null
+                },
+                bufferedPositionMs = p.bufferedPosition.takeIf { it >= 0L },
+                audioRoute = receiverAudioRouteInfo,
             )
         )
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun normalizeAudioTiming(
+        raw: TimingAudioSink.Snapshot?,
+        playerPositionMs: Long,
+        durationMs: Long?,
+    ): TimingAudioSink.Snapshot? {
+        if (raw == null || raw.positionUs < 0L) return null
+        val playerPositionUs = playerPositionMs.coerceAtLeast(0L) * 1_000L
+        val existingOffsetUs = audioSinkPositionOffsetUs
+        var normalizedUs = if (existingOffsetUs == null) {
+            val directPositionMs = raw.positionUs / 1_000L
+            val offsetUs =
+                if (
+                    ReceiverAudioClock.isPlausiblePositionMs(directPositionMs, durationMs) &&
+                    abs(directPositionMs - playerPositionMs) <=
+                    ReceiverAudioClock.MAX_AUDIO_SINK_DIVERGENCE_MS
+                ) {
+                    0L
+                } else {
+                    raw.positionUs - playerPositionUs
+                }
+            audioSinkPositionOffsetUs = offsetUs
+            raw.positionUs - offsetUs
+        } else {
+            raw.positionUs - existingOffsetUs
+        }
+
+        val normalizedMs = normalizedUs / 1_000L
+        if (
+            !ReceiverAudioClock.isPlausiblePositionMs(normalizedMs, durationMs) ||
+            abs(normalizedMs - playerPositionMs) >
+            ReceiverAudioClock.MAX_AUDIO_SINK_DIVERGENCE_MS
+        ) {
+            audioSinkPositionOffsetUs = raw.positionUs - playerPositionUs
+            normalizedUs = playerPositionUs
+        }
+
+        return raw.copy(positionUs = normalizedUs.coerceAtLeast(0L))
     }
 
     private fun pushTracksSnapshot() {
@@ -709,6 +922,28 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         else -> codec.uppercase()
     }
 
+    private fun languageMatches(candidate: String?, preferred: String?): Boolean {
+        val normalizedCandidate = normalizeLanguage(candidate) ?: return false
+        val normalizedPreferred = normalizeLanguage(preferred) ?: return false
+        return normalizedCandidate == normalizedPreferred
+    }
+
+    private fun normalizeLanguage(value: String?): String? {
+        val normalized = value
+            ?.trim()
+            ?.lowercase()
+            ?.replace('_', '-')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return when {
+            normalized == "ja" || normalized == "jpn" || normalized.startsWith("ja-") ||
+                normalized.contains("japanese") -> "jpn"
+            normalized == "en" || normalized == "eng" || normalized.startsWith("en-") ||
+                normalized.contains("english") -> "eng"
+            else -> normalized
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         if (splitAvRole == SplitAvRole.AUDIO) {
@@ -739,6 +974,49 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         player = null
         libassRenderer?.destroy()
         libassRenderer = null
+    }
+
+    @OptIn(UnstableApi::class)
+    private class TimingAudioSink(delegate: AudioSink) : ForwardingAudioSink(delegate) {
+        data class Snapshot(
+            val positionUs: Long,
+            val sampleMonotonicMs: Long,
+            val bufferSizeUs: Long?,
+        )
+
+        @Volatile
+        private var latest: Snapshot? = null
+
+        override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
+            val positionUs = super.getCurrentPositionUs(sourceEnded)
+            if (positionUs != AudioSink.CURRENT_POSITION_NOT_SET) {
+                latest = Snapshot(
+                    positionUs = positionUs,
+                    sampleMonotonicMs = SystemClock.elapsedRealtime(),
+                    bufferSizeUs = runCatching { getAudioTrackBufferSizeUs() }
+                        .getOrNull()
+                        ?.takeIf { it > 0L },
+                )
+            }
+            return positionUs
+        }
+
+        fun snapshot(): Snapshot? = latest
+
+        override fun flush() {
+            latest = null
+            super.flush()
+        }
+
+        override fun reset() {
+            latest = null
+            super.reset()
+        }
+
+        override fun release() {
+            latest = null
+            super.release()
+        }
     }
 
     companion object {

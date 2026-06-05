@@ -26,6 +26,13 @@ interface SplitAvVideoMaster {
     /** Current playback position in milliseconds. The controller polls this to compute drift. */
     fun currentPositionMs(): Long
 
+    /**
+     * Latest rendered-frame timing, when the host player exposes it. The controller prefers
+     * this over [currentPositionMs] while it is fresh because it describes what the video
+     * renderer is actually releasing, not just the player's timeline cursor.
+     */
+    fun renderedVideoTiming(): SplitAvVideoTiming? = null
+
     /** True while the player is actively rendering frames at >0× speed. */
     val isPlaying: StateFlow<Boolean>
 
@@ -77,6 +84,15 @@ interface SplitAvVideoMaster {
      */
     fun foldBackToLocal()
 }
+
+data class SplitAvVideoTiming(
+    /** Media position of the rendered video frame, in milliseconds. */
+    val mediaPositionMs: Long,
+    /** Sender/device monotonic clock at which the frame is/was scheduled for release. */
+    val releaseMonotonicMs: Long,
+    /** Sender/device monotonic clock when this timing snapshot was captured. */
+    val sampledMonotonicMs: Long,
+)
 
 /**
  * Process-wide bridge so the controller in `:app:unified` can find whichever player Activity
