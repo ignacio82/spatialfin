@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,11 +81,9 @@ fun BeamServersScreen(
     LaunchedEffect(Unit) {
         viewModel.loadServers()
     }
-    LaunchedEffect(viewModel) {
-        viewModel.events.collectLatest { event ->
-            if (event is ServersEvent.ServerChanged) {
-                onServerSelected()
-            }
+    ObserveAsEvents(viewModel.events) { event ->
+        if (event is ServersEvent.ServerChanged) {
+            onServerSelected()
         }
     }
 
@@ -159,11 +158,9 @@ fun BeamAddServerScreen(
     LaunchedEffect(Unit) {
         viewModel.discoverServers()
     }
-    LaunchedEffect(viewModel) {
-        viewModel.events.collectLatest { event ->
-            if (event is AddServerEvent.Success) {
-                onSuccess()
-            }
+    ObserveAsEvents(viewModel.events) { event ->
+        if (event is AddServerEvent.Success) {
+            onSuccess()
         }
     }
 
@@ -265,11 +262,9 @@ fun BeamUsersScreen(
     LaunchedEffect(Unit) {
         viewModel.loadUsers()
     }
-    LaunchedEffect(viewModel) {
-        viewModel.events.collectLatest { event ->
-            if (event is UsersEvent.NavigateToHome) {
-                onNavigateToHome()
-            }
+    ObserveAsEvents(viewModel.events) { event ->
+        if (event is UsersEvent.NavigateToHome) {
+            onNavigateToHome()
         }
     }
 
@@ -370,11 +365,9 @@ fun BeamLoginScreen(
         viewModel.loadDisclaimer()
         viewModel.loadQuickConnectEnabled()
     }
-    LaunchedEffect(viewModel) {
-        viewModel.events.collectLatest { event ->
-            if (event is LoginEvent.Success) {
-                onSuccess()
-            }
+    ObserveAsEvents(viewModel.events) { event ->
+        if (event is LoginEvent.Success) {
+            onSuccess()
         }
     }
 
@@ -498,6 +491,7 @@ private fun BeamUserCard(
     avatarUri: android.net.Uri? = null,
 ) {
     Card(
+        onClick = onPrimaryClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),

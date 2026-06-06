@@ -813,7 +813,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 audioSinkSampleMonotonicMs = audioTiming?.sampleMonotonicMs,
                 audioSinkBufferSizeUs = audioTiming?.bufferSizeUs,
                 videoReadyToStart = if (splitAvRole == SplitAvRole.AUDIO) {
-                    p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_BUFFERING
+                    p.playbackState == Player.STATE_READY
                 } else {
                     null
                 },
