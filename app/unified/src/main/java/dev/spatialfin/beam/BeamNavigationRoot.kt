@@ -346,11 +346,12 @@ fun BeamNavigationRoot(
         appPreferences.getValue(appPreferences.onboardingCompleted),
     ) {
         if (state.isLoading) {
+            timber.log.Timber.d("[UserSwitch] LaunchedEffect: isLoading=true, skipping. currentRoute=$currentRoute")
             return@LaunchedEffect
         }
 
         val onboardingCompleted = appPreferences.getValue(appPreferences.onboardingCompleted)
-        currentRoute =
+        val newRoute =
             when {
                 !onboardingCompleted -> BeamRoute.Welcome
                 state.hasServers && state.hasCurrentServer && state.hasCurrentUser ->
@@ -359,6 +360,8 @@ fun BeamNavigationRoot(
                 state.hasServers -> BeamRoute.Servers
                 else -> BeamRoute.Local
             }
+        timber.log.Timber.d("[UserSwitch] LaunchedEffect: resolved newRoute=$newRoute, currentRoute=$currentRoute, hasCurrentUser=${state.hasCurrentUser}")
+        currentRoute = newRoute
     }
 
     // When going offline, redirect away from Home/Search (unusable without server).
@@ -834,7 +837,7 @@ fun BeamNavigationRoot(
                         currentRoute = BeamRoute.Login
                     },
                     onNavigateToUsers = { currentRoute = BeamRoute.Users },
-                    onNavigateToHome = { currentRoute = BeamRoute.Home },
+                    onNavigateToHome = { timber.log.Timber.d("[UserSwitch] onNavigateToHome lambda: setting currentRoute from $currentRoute to Home"); currentRoute = BeamRoute.Home },
                     onNavigateToServers = { currentRoute = BeamRoute.Servers },
                     onResetOnboarding = {
                         appPreferences.setValue(appPreferences.onboardingCompleted, false)

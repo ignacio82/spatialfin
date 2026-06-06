@@ -45,6 +45,7 @@ class HomeViewModel
 @Inject
 constructor(
     val repository: JellyfinRepository,
+    val jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi,
     val appPreferences: AppPreferences,
     val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
@@ -122,8 +123,9 @@ constructor(
         Timber.i("Loading data")
         viewModelScope.launch(Dispatchers.Default) {
             val serverId = appPreferences.getValue(appPreferences.currentServer)
+            val currentUserId = jellyfinApi.userId
             val cached = cachedHome
-            val canUseCache = cached != null && cached.serverId == serverId
+            val canUseCache = cached != null && cached.serverId == serverId && cached.userId == currentUserId
             if (canUseCache) {
                 _state.emit(cached.state.copy(isLoading = false, error = null))
                 if (!forceRefresh && cached.isFresh()) {
@@ -200,7 +202,7 @@ constructor(
                     // doesn't mask the original error.
                     runCatching { loadOfflineLibrarySections() }
                         .onFailure { Timber.w(it, "offline fallback also failed") }
-                    val fallback = cachedHome?.takeIf { it.serverId == serverId }?.state
+                    val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
                     _state.emit(
                         (fallback ?: _state.value).copy(
                             error = HomeLoadError(e.message ?: "Failed to load home content."),
@@ -215,7 +217,7 @@ constructor(
                 connectionMonitor.markServerInaccessible()
                 runCatching { loadOfflineLibrarySections() }
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
-                val fallback = cachedHome?.takeIf { it.serverId == serverId }?.state
+                val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
                 _state.emit(
                     (fallback ?: _state.value).copy(
                         error = HomeLoadError("Server didn't respond. Pull to retry."),
@@ -393,11 +395,13 @@ constructor(
 
     private fun observeSessionChanges() {
         viewModelScope.launch {
-            // Active user/server changed under us. Reload only if we've shown
-            // home at least once — otherwise the screen's own LaunchedEffect
-            // will do the first load with the new credentials. Reloading
-            // eagerly here would race onboarding (no userId yet → NPE).
-            activeSessionBus.events.collect { if (hasLoadedData) loadData() }
+            // Active user/server changed under us. Force-refresh so the cache
+            // (keyed by serverId+userId) is always busted on user switch.
+            // Reload only if we've shown home at least once — otherwise the
+            // screen's own LaunchedEffect will do the first load with the new
+            // credentials. Reloading eagerly here would race onboarding
+            // (no userId yet → NPE).
+            activeSessionBus.events.collect { if (hasLoadedData) loadData(forceRefresh = true) }
         }
     }
 
@@ -450,6 +454,7 @@ constructor(
     private fun cacheCurrentHome(serverId: String?) {
         cachedHome = CachedHome(
             serverId = serverId,
+            userId = jellyfinApi.userId,
             state = _state.value.copy(isLoading = false, error = null),
             timestampMs = System.currentTimeMillis(),
         )
@@ -468,6 +473,7 @@ constructor(
 
 private data class CachedHome(
     val serverId: String?,
+    val userId: java.util.UUID? = null,
     val state: HomeState,
     val timestampMs: Long,
 ) {
