@@ -263,7 +263,9 @@ fun BeamUsersScreen(
         viewModel.loadUsers()
     }
     ObserveAsEvents(viewModel.events) { event ->
+        timber.log.Timber.d("[UserSwitch] BeamUsersScreen received event: $event")
         if (event is UsersEvent.NavigateToHome) {
+            timber.log.Timber.d("[UserSwitch] Calling onNavigateToHome()")
             onNavigateToHome()
         }
     }

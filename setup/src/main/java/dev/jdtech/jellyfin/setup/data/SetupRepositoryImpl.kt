@@ -294,8 +294,17 @@ class SetupRepositoryImpl(
     }
 
     override suspend fun setCurrentUser(userId: UUID) {
-        val server = getCurrentServer() ?: return
-        val user = database.getUser(userId) ?: return
+        val server = getCurrentServer()
+        if (server == null) {
+            Timber.d("[UserSwitch] setCurrentUser: getCurrentServer() returned null, aborting")
+            return
+        }
+        val user = database.getUser(userId)
+        if (user == null) {
+            Timber.d("[UserSwitch] setCurrentUser: getUser($userId) returned null, aborting")
+            return
+        }
+        Timber.d("[UserSwitch] setCurrentUser: switching to user ${user.name} (${user.id}) on server ${server.name}")
         server.currentUserId = user.id
         database.update(server)
 
@@ -303,6 +312,7 @@ class SetupRepositoryImpl(
             api.update(accessToken = user.accessToken)
             this.userId = user.id
         }
+        Timber.d("[UserSwitch] setCurrentUser: notifying activeSessionBus")
         activeSessionBus.notifyChanged()
     }
 

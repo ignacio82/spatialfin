@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 @HiltViewModel
 class UsersViewModel @Inject constructor(private val repository: SetupRepository) : ViewModel() {
@@ -60,15 +61,18 @@ class UsersViewModel @Inject constructor(private val repository: SetupRepository
 
     private fun loginAsUser(userId: UUID) {
         viewModelScope.launch {
+            Timber.d("[UserSwitch] loginAsUser: calling setCurrentUser($userId)")
             repository.setCurrentUser(userId)
-
+            Timber.d("[UserSwitch] loginAsUser: setCurrentUser completed, sending NavigateToHome")
             eventsChannel.send(UsersEvent.NavigateToHome)
+            Timber.d("[UserSwitch] loginAsUser: NavigateToHome sent")
         }
     }
 
     fun onAction(action: UsersAction) {
         when (action) {
             is UsersAction.OnUserClick -> {
+                Timber.d("[UserSwitch] onAction: OnUserClick(${action.userId})")
                 loginAsUser(action.userId)
             }
             is UsersAction.OnDeleteUser -> {
