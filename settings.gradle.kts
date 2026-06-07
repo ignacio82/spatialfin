@@ -17,6 +17,7 @@ include(":modes:film")
 include(":settings")
 include(":baselineprofile")
 include(":plugins")
+include(":sendspin")
 
 pluginManagement {
     repositories {

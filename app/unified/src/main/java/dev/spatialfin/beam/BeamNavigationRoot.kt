@@ -57,6 +57,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Dialog
+import dev.jdtech.jellyfin.presentation.settings.MusicAssistantAuthDialog
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.DrawerValue
@@ -162,6 +164,16 @@ fun BeamNavigationRoot(
     val coroutineScope = rememberCoroutineScope()
     var currentRoute by rememberSaveable { mutableStateOf(BeamRoute.Welcome) }
     var voiceQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var showMusicAssistantSettings by remember { mutableStateOf(false) }
+
+    val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
+    val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
+        dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATED -> sendspinState.musicAssistantServerUrl ?: "Configured server"
+        dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATING -> "Authenticating..."
+        dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.INVALID -> "Invalid credentials"
+        dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.ERROR -> "Connection error"
+        else -> "Not configured"
+    }
 
     val voiceController = remember(context) {
         HomeVoiceController(
@@ -785,6 +797,10 @@ fun BeamNavigationRoot(
                             onJellyfinClick = {
                                 currentRoute = BeamRoute.Servers
                             },
+                            onMusicAssistantClick = {
+                                showMusicAssistantSettings = true
+                            },
+                            musicAssistantSubtitle = musicAssistantSubtitle,
                             onLocalClick = {
                                 currentRoute = BeamRoute.Local
                             },
@@ -863,7 +879,13 @@ fun BeamNavigationRoot(
                 },
                 onDismiss = { voiceController.clearRecommendationContext() },
             )
+            if (showMusicAssistantSettings) {
+                Dialog(onDismissRequest = { showMusicAssistantSettings = false }) {
+                    MusicAssistantAuthDialog(onDismiss = { showMusicAssistantSettings = false })
+                }
+            }
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
+            dev.spatialfin.sendspin.SendspinFullscreenPlayer()
 }
 }
 }

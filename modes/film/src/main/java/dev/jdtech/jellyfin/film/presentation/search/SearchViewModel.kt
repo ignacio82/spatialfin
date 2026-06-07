@@ -8,6 +8,7 @@ import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -21,7 +22,8 @@ import timber.log.Timber
 class SearchViewModel @Inject constructor(
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
-    private val seerrApi: SeerrApi
+    private val seerrApi: SeerrApi,
+    private val maRepository: MusicAssistantRepository
 ) :
     ViewModel() {
     private val _state = MutableStateFlow(SearchState())
@@ -46,6 +48,7 @@ class SearchViewModel @Inject constructor(
                             query = trimmedQuery,
                             items = emptyList(),
                             seerrItems = emptyList(),
+                            maItems = null,
                             displayRatings = displayRatings,
                             loading = true,
                             hasSearched = true,
@@ -55,9 +58,11 @@ class SearchViewModel @Inject constructor(
                     
                     val jellyfinSearch = async { repository.getSearchItems(trimmedQuery) }
                     val seerrSearch = async { seerrApi.search(trimmedQuery) }
+                    val maSearch = async { maRepository.search(trimmedQuery) }
 
                     val items = jellyfinSearch.await()
                     val seerrResults = seerrSearch.await()
+                    val maResults = maSearch.await()
                     val filteredSeerrResults = seerrResults?.results?.filter { 
                         it.mediaId != null && it.mediaType != "person" && it.mediaType != "collection"
                     } ?: emptyList()
@@ -73,6 +78,7 @@ class SearchViewModel @Inject constructor(
                             query = trimmedQuery,
                             items = items,
                             seerrItems = filteredSeerrResults,
+                            maItems = maResults,
                             displayRatings = displayRatings,
                             loading = false,
                             hasSearched = true,
@@ -86,6 +92,7 @@ class SearchViewModel @Inject constructor(
                             query = trimmedQuery,
                             items = emptyList(),
                             seerrItems = emptyList(),
+                            maItems = null,
                             displayRatings = displayRatings,
                             loading = false,
                             hasSearched = true,
@@ -125,6 +132,11 @@ class SearchViewModel @Inject constructor(
             }
             is SearchAction.RequestSeerrItem -> {
                 requestSeerrItem(action.item, action.is4k)
+            }
+            is SearchAction.OnMaItemClick -> {
+                viewModelScope.launch {
+                    maRepository.playMedia(action.item)
+                }
             }
             else -> Unit
         }

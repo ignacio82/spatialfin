@@ -300,6 +300,7 @@ fun TvNavigationRoot(
                     }
                 }
             }
+            dev.spatialfin.sendspin.SendspinFullscreenPlayer()
         }
     }
 }

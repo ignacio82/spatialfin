@@ -1,0 +1,136 @@
+package dev.jdtech.jellyfin.data.musicassistant.data.model.server
+
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+
+@Serializable
+data class ServerMediaItem(
+    @SerialName("item_id") val itemId: String,
+    @SerialName("provider") val provider: String,
+    @SerialName("name") val name: String,
+    @SerialName("provider_mappings") val providerMappings: List<ProviderMapping>? = null,
+    @SerialName("metadata") val metadata: ServerMetadata? = null,
+    @SerialName("favorite") val favorite: Boolean? = null,
+    @SerialName("media_type") val mediaType: String,
+    @SerialName("sort_name") val sortName: String? = null,
+    @SerialName("uri") val uri: String? = null,
+    @SerialName("image") val image: ServerMediaItemImage? = null,
+    @SerialName("is_playable") val isPlayable: Boolean? = null,
+    // @SerialName("timestamp_added") val timestampAdded: Long? = null,
+    // @SerialName("timestamp_modified") val timestampModified: Long? = null,
+    // various subtypes
+    // @SerialName("musicbrainz_id") val musicbrainzId: String? = null,
+    // Album
+    @SerialName("version") val version: String? = null,
+    // @SerialName("external_ids") val externalIds: List<List<String>>? = null,
+    @SerialName("position") val position: Long? = null,
+    @SerialName("year") val year: Int? = null,
+    @SerialName("artists") val artists: List<ServerMediaItem>? = null,
+    // @SerialName("album_type") val albumType: AlbumType? = null,
+    // Playlist only
+    // @SerialName("owner") val owner: String? = null,
+    @SerialName("is_editable") val isEditable: Boolean? = null,
+    @SerialName("is_dynamic") val isDynamic: Boolean? = null,
+    // Track only
+    @SerialName("duration") val duration: Double? = null,
+    // @SerialName("isrc") val isrc: String? = null,
+    // album track only
+    @SerialName("album") val album: ServerMediaItem? = null,
+    @SerialName("disc_number") val discNumber: Int? = null,
+    @SerialName("track_number") val trackNumber: Int? = null,
+    // podcast episode only
+    @SerialName("podcast") val podcast: ServerMediaItem? = null,
+    // Audiobook only
+    @SerialName("authors") val authors: List<String>? = null,
+    @SerialName("narrators") val narrators: List<String>? = null,
+    @SerialName("publisher") val publisher: String? = null,
+    // Progress tracking (audiobooks, podcast episodes)
+    // Server sends Boolean for audiobooks and Int 0/1 for podcast episodes
+    @Serializable(with = FlexibleBooleanSerializer::class)
+    @SerialName("fully_played") val fullyPlayed: Boolean? = null,
+    @SerialName("resume_position_ms") val resumePositionMs: Long? = null,
+    // Folder only
+    @SerialName("items") val items: List<ServerMediaItem>? = null,
+)
+
+@Serializable
+data class ServerMetadata(
+    @SerialName("description") val description: String? = null,
+    @SerialName("review") val review: String? = null,
+    @SerialName("explicit") val explicit: Boolean? = null,
+    @SerialName("images") val images: List<ServerMediaItemImage>? = null,
+    @SerialName("genres") val genres: List<String>? = null,
+    @SerialName("mood") val mood: String? = null,
+    @SerialName("style") val style: String? = null,
+    @SerialName("copyright") val copyright: String? = null,
+    @SerialName("lyrics") val lyrics: String? = null,
+    @SerialName("label") val label: String? = null,
+    // @SerialName("links") val links: List<String>? = null,
+    // @SerialName("performers") val performers: List<String>? = null,
+    @SerialName("preview") val preview: String? = null,
+    @SerialName("popularity") val popularity: Int? = null,
+    @SerialName("release_date") val releaseDate: String? = null,
+    // @SerialName("languages") val languages: List<String>? = null,
+    @SerialName("chapters") val chapters: List<ServerMediaItemChapter>? = null,
+    @SerialName("last_refresh") val lastRefresh: Long?,
+)
+
+@Serializable
+data class ServerMediaItemImage(
+    @SerialName("type") val type: String,
+    @SerialName("path") val path: String,
+    @SerialName("provider") val provider: String,
+    @SerialName("remotely_accessible") val remotelyAccessible: Boolean,
+)
+
+@Serializable
+data class ProviderMapping(
+    @SerialName("item_id") val itemId: String,
+//    @SerialName("provider_domain") val providerDomain: String,
+    @SerialName("provider_instance") val providerInstance: String,
+//    @SerialName("available") val available: Boolean,
+//    @SerialName("audio_format") val audioFormat: AudioFormat? = null,
+//    @SerialName("url") val url: String? = null,
+//    @SerialName("details") val details: String?
+)
+
+@Serializable
+data class ServerMediaItemChapter(
+    @SerialName("position") val position: Int,
+    @SerialName("name") val name: String,
+    @SerialName("start") val start: Double,
+    @SerialName("end") val end: Double? = null,
+)
+
+// Server inconsistency: audiobooks send Boolean, podcast episodes send Int 0/1
+private object FlexibleBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("FlexibleBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean =
+        (decoder as? JsonDecoder)?.decodeJsonElement()?.let { element ->
+            (element as? JsonPrimitive)?.let { it.booleanOrNull ?: it.intOrNull?.let { n -> n != 0 } } ?: false
+        } ?: decoder.decodeBoolean()
+
+    override fun serialize(encoder: Encoder, value: Boolean) = encoder.encodeBoolean(value)
+}
+
+@Serializable
+data class AudioFormat(
+    @SerialName("content_type") val contentType: String? = null,
+    @SerialName("codec_type") val codecType: String? = null,
+    @SerialName("sample_rate") val sampleRate: Int? = null,
+    @SerialName("bit_depth") val bitDepth: Int? = null,
+    @SerialName("channels") val channels: Int? = null,
+    @SerialName("output_format_str") val outputFormatStr: String? = null,
+    @SerialName("bit_rate") val bitRate: Int? = null,
+)

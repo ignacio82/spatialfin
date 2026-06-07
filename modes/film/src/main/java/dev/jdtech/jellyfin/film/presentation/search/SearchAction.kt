@@ -9,4 +9,6 @@ sealed interface SearchAction {
     data class OnItemClick(val item: SpatialFinItem) : SearchAction
 
     data class RequestSeerrItem(val item: SeerrSearchResult, val is4k: Boolean = false) : SearchAction
+
+    data class OnMaItemClick(val item: dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem) : SearchAction
 }

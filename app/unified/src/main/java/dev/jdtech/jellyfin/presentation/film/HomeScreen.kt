@@ -234,6 +234,14 @@ private fun HomeScreenLayout(
                         )
                     }
                 }
+                items(visibleHomeSections.musicAssistantSections, key = { it.id }) { section ->
+                    HomeSection(
+                        section = section.homeSection,
+                        itemsPadding = itemsPadding,
+                        onAction = onAction,
+                        modifier = Modifier.animateItem(),
+                    )
+                }
                 items(visibleHomeSections.offlineLibrarySections, key = { it.id }) { section ->
                     HomeSection(
                         section = section.homeSection,
@@ -422,6 +430,7 @@ private data class FilteredHomeSections(
     val resumeSection: HomeItem.Section?,
     val nextUpSection: HomeItem.Section?,
     val universalPluginSections: List<HomeItem.Section>,
+    val musicAssistantSections: List<HomeItem.Section>,
     val offlineLibrarySections: List<HomeItem.Section>,
     val views: List<HomeItem.ViewItem>,
 )
@@ -531,6 +540,13 @@ private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
                 ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
         }
 
+    val filteredMusicAssistantSections =
+        musicAssistantSections.mapNotNull { section ->
+            section.homeSection.items
+                .takeIf { it.isNotEmpty() }
+                ?.let { items -> section.copy(homeSection = section.homeSection.copy(items = items)) }
+        }
+
     val filteredOfflineLibrarySections =
         offlineLibrarySections.mapNotNull { section ->
             section.homeSection.items
@@ -552,6 +568,7 @@ private fun HomeState.filteredForUniqueHomeItems(): FilteredHomeSections {
         resumeSection = filteredResume,
         nextUpSection = filteredNextUp,
         universalPluginSections = filteredUniversalPluginSections,
+        musicAssistantSections = filteredMusicAssistantSections,
         offlineLibrarySections = filteredOfflineLibrarySections,
         views = filteredViews,
     )

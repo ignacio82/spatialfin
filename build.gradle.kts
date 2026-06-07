@@ -18,7 +18,14 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        maven { url = uri("https://download.dcache.org/nexus/repository/public/") }
+        maven {
+            url = uri("https://download.dcache.org/nexus/repository/public/")
+            content {
+                includeGroup("com.sleepycat")
+                includeGroup("org.dcache")
+            }
+        }
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

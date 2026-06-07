@@ -774,8 +774,7 @@ class CastSessionManager @Inject constructor(
             // policy inside castViaAdapter does the right thing for each — neither receiver
             // carries NativeAss, so styled ASS routes to BurnIn or Degraded uniformly.
             CastProtocol.GoogleCast,
-            CastProtocol.AirPlay,
-            -> castViaAdapter(target, item, startPositionMs)
+            CastProtocol.AirPlay -> castViaAdapter(target, item, startPositionMs)
         }
         if (!started && _pendingCastError.value == null) {
             _pendingCastError.value = "Couldn't cast to ${target.name}."
@@ -1895,8 +1894,7 @@ class CastSessionManager @Inject constructor(
         }
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.seek(seconds)
-            CastProtocol.GoogleCast, CastProtocol.AirPlay ->
-                activeCastAdapter?.seek((seconds * 1000.0).toLong())
+            CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.seek((seconds * 1000.0).toLong())
             null -> Unit
         }
     }
@@ -1941,8 +1939,7 @@ class CastSessionManager @Inject constructor(
         _activeVolume.value = clamped.toFloat()
         when (_pickedTarget.value?.protocol) {
             CastProtocol.FCast -> controller.setVolume(clamped)
-            CastProtocol.GoogleCast, CastProtocol.AirPlay ->
-                activeCastAdapter?.setVolume(clamped.toFloat())
+            CastProtocol.GoogleCast, CastProtocol.AirPlay -> activeCastAdapter?.setVolume(clamped.toFloat())
             null -> Unit
         }
     }

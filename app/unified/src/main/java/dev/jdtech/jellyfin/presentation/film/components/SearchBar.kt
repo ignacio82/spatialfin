@@ -181,7 +181,7 @@ fun FilmSearchBar(
                     subtitle = stringResource(FilmR.string.search_prompt_subtitle),
                 )
             }
-            state.hasSearched && visibleItems.isEmpty() && state.seerrItems.isEmpty() -> {
+            state.hasSearched && visibleItems.isEmpty() && state.seerrItems.isEmpty() && state.maItems?.tracks?.isEmpty() != false -> {
                 SearchStatusPanel(
                     title = stringResource(FilmR.string.search_empty_title),
                     subtitle = stringResource(FilmR.string.search_empty_subtitle, state.query),
@@ -230,6 +230,85 @@ fun FilmSearchBar(
                                 },
                                 modifier = Modifier.animateItem(),
                             )
+                        }
+                    }
+
+                    val maItems = state.maItems
+                    if (maItems != null) {
+                        val tracks = maItems.tracks ?: emptyList()
+                        if (tracks.isNotEmpty()) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "Music Assistant Tracks",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(vertical = MaterialTheme.spacings.medium)
+                                )
+                            }
+                            items(items = tracks, key = { "ma_track_${it.itemId}" }) { item ->
+                                MusicAssistantItemCard(
+                                    item = item,
+                                    direction = Direction.VERTICAL,
+                                    onClick = { onAction(SearchAction.OnMaItemClick(it)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        val albums = maItems.albums ?: emptyList()
+                        if (albums.isNotEmpty()) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "Music Assistant Albums",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(vertical = MaterialTheme.spacings.medium)
+                                )
+                            }
+                            items(items = albums, key = { "ma_album_${it.itemId}" }) { item ->
+                                MusicAssistantItemCard(
+                                    item = item,
+                                    direction = Direction.VERTICAL,
+                                    onClick = { onAction(SearchAction.OnMaItemClick(it)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        val artists = maItems.artists ?: emptyList()
+                        if (artists.isNotEmpty()) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "Music Assistant Artists",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(vertical = MaterialTheme.spacings.medium)
+                                )
+                            }
+                            items(items = artists, key = { "ma_artist_${it.itemId}" }) { item ->
+                                MusicAssistantItemCard(
+                                    item = item,
+                                    direction = Direction.VERTICAL,
+                                    onClick = { onAction(SearchAction.OnMaItemClick(it)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
+                        }
+
+                        val playlists = maItems.playlists ?: emptyList()
+                        if (playlists.isNotEmpty()) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "Music Assistant Playlists",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(vertical = MaterialTheme.spacings.medium)
+                                )
+                            }
+                            items(items = playlists, key = { "ma_playlist_${it.itemId}" }) { item ->
+                                MusicAssistantItemCard(
+                                    item = item,
+                                    direction = Direction.VERTICAL,
+                                    onClick = { onAction(SearchAction.OnMaItemClick(it)) },
+                                    modifier = Modifier.animateItem(),
+                                )
+                            }
                         }
                     }
                 }
@@ -316,10 +395,10 @@ private fun SearchSummaryCard(
                         stringResource(FilmR.string.search_error_subtitle)
                     query.isBlank() ->
                         stringResource(FilmR.string.search_prompt_subtitle)
-                    state.hasSearched && (visibleItemsCount > 0 || state.seerrItems.isNotEmpty()) ->
+                    state.hasSearched && (visibleItemsCount > 0 || state.seerrItems.isNotEmpty() || state.maItems != null) ->
                         stringResource(
                             FilmR.string.search_results_subtitle,
-                            visibleItemsCount + state.seerrItems.size,
+                            visibleItemsCount + state.seerrItems.size + (state.maItems?.tracks?.size ?: 0) + (state.maItems?.albums?.size ?: 0) + (state.maItems?.artists?.size ?: 0) + (state.maItems?.playlists?.size ?: 0),
                             state.query,
                         )
                     state.hasSearched ->

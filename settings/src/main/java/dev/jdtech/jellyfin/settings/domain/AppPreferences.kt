@@ -14,6 +14,8 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // Server
     val currentServer = Preference<String?>("pref_current_server", null)
 
+    val sendspinClientId = Preference<String?>("pref_sendspin_client_id", null)
+
     // Language — global fallback
     val preferredAudioLanguage = Preference<String?>("pref_audio_language", null)
     val preferredSubtitleLanguage = Preference<String?>("pref_subtitle_language", null)

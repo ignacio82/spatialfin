@@ -122,6 +122,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 | `:modes:film` | Browse/detail screens for movies/shows/episodes/collections, search. |
 | `:data` | Jellyfin/TMDB/Seerr/OMDB API clients, Room DB, downloads, repositories, network shares (SMB/NFS), mDNS discovery. |
 | `:fcast` | FCast protocol sender + receiver, plus the protocol-agnostic `cast/` abstraction layer that all sender protocols (FCast today; Google Cast / AirPlay in follow-up PRs) implement. Pure-Kotlin codec (`FCastFrame` / `FCastMessage`), `FCastSenderClient`, `FCastCastingController`, mDNS discovery + advertiser, `FCastReceiverServer`, foreground `FCastReceiverService`, `FCastIngressRouter` + `ExternalStreamPlayer` extension points, and the new `cast/` package: `CastProtocol`, `CastReceiver`, `CastCapability`, `CastMedia`, `CastSessionEvent`, `ProtocolAdapter`, `CastAdapterFactory`, `FCastAdapter`. No Jellyfin/Compose/Hilt deps so it stays JVM-testable. |
+| `:sendspin` | SendSpin receiver service backed by `sendspin-jvm` for server-initiated WebSocket handshake, clock sync, buffering, multi-server arbitration, mDNS advertisement, and Android `AudioTrack` PCM rendering. |
 | `:core` | Shared UI components, LLM model manager, download workers, sync workers. |
 | `:settings` | DataStore-based preferences (`AppPreferences`), voice telemetry, smart-language settings. |
 | `:setup` | Server onboarding, login, address selection. |

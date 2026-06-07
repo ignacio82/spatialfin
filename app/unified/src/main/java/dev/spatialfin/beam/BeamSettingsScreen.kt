@@ -1206,6 +1206,8 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
                 onClick = {
                     dev.spatialfin.fcast.FCastReceiverWiring
                         .applyReceiverConfig(context, appPreferences)
+                    dev.spatialfin.sendspin.SendspinReceiverWiring
+                        .applyReceiverConfig(context, appPreferences)
                     dirty = false
                 },
                 enabled = dirty,

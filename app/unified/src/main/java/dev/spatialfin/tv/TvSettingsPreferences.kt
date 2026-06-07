@@ -879,6 +879,7 @@ private fun TvCastPrefs(appPreferences: AppPreferences) {
     androidx.compose.material3.Button(
         onClick = {
             dev.spatialfin.fcast.FCastReceiverWiring.applyReceiverConfig(context, appPreferences)
+            dev.spatialfin.sendspin.SendspinReceiverWiring.applyReceiverConfig(context, appPreferences)
             dirty = false
         },
         enabled = dirty,

@@ -1,8 +1,8 @@
 package dev.jdtech.jellyfin.cast
 
 /**
- * The casting protocol a [CastReceiver] speaks. SpatialFin ships sender support for all values;
- * the receiver side (i.e. SpatialFin advertising itself as a cast target) is FCast-only by design.
+ * The casting protocol a remote [CastReceiver] speaks. This enum models outbound sender support;
+ * inbound receiver services are wired separately by their owning modules.
  *
  * Adding a new protocol means:
  *  1. Add the enum value here.
@@ -16,5 +16,5 @@ package dev.jdtech.jellyfin.cast
 enum class CastProtocol(val displayName: String) {
     FCast("FCast"),
     GoogleCast("Chromecast"),
-    AirPlay("AirPlay"),
+    AirPlay("AirPlay")
 }

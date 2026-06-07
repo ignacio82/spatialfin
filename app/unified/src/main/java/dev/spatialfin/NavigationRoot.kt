@@ -45,8 +45,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.xr.compose.spatial.SpatialDialog
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -92,6 +94,7 @@ import dev.jdtech.jellyfin.presentation.network.NetworkScreen
 import dev.jdtech.jellyfin.presentation.network.NetworkShareScreen
 import dev.jdtech.jellyfin.presentation.network.NetworkVideoScreen
 import dev.jdtech.jellyfin.presentation.settings.AboutScreen
+import dev.jdtech.jellyfin.presentation.settings.MusicAssistantAuthDialog
 import dev.jdtech.jellyfin.presentation.settings.SettingsScreen
 import dev.jdtech.jellyfin.presentation.setup.addresses.ServerAddressesScreen
 import dev.jdtech.jellyfin.presentation.setup.addserver.AddServerScreen
@@ -495,6 +498,17 @@ fun NavigationRoot(
             }
 
             composable<UniversalPluginsRoute> {
+                var showMusicAssistantSettings by remember { mutableStateOf(false) }
+
+                val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
+                val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATED -> sendspinState.musicAssistantServerUrl ?: "Configured server"
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATING -> "Authenticating..."
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.INVALID -> "Invalid credentials"
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.ERROR -> "Connection error"
+                    else -> "Not configured"
+                }
+
                 PluginSettingsScreen(
                     onPluginClick = { pluginId ->
                         navController.safeNavigate(PluginBrowseRoute(pluginId))
@@ -502,6 +516,10 @@ fun NavigationRoot(
                     onJellyfinClick = {
                         navController.safeNavigate(ServersRoute)
                     },
+                    onMusicAssistantClick = {
+                        showMusicAssistantSettings = true
+                    },
+                    musicAssistantSubtitle = musicAssistantSubtitle,
                     onLocalClick = {
                         navController.safeNavigate(LocalRoute)
                     },
@@ -509,6 +527,12 @@ fun NavigationRoot(
                         navController.safeNavigate(NetworkRoute)
                     }
                 )
+
+                if (showMusicAssistantSettings) {
+                    SpatialDialog(onDismissRequest = { showMusicAssistantSettings = false }) {
+                        MusicAssistantAuthDialog(onDismiss = { showMusicAssistantSettings = false })
+                    }
+                }
             }
             composable<PluginBrowseRoute> { backStackEntry ->
                 val route: PluginBrowseRoute = backStackEntry.toRoute()
@@ -788,14 +812,19 @@ fun NavigationRoot(
         }
         if (fcastSession != null) {
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
-            dev.spatialfin.fcast.session.FCastMiniController(
-                sessionManager = fcastSession,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 16.dp, end = 16.dp)
-                    .widthIn(max = 360.dp),
-            )
         }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 16.dp, end = 16.dp)
+                .widthIn(max = 360.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (fcastSession != null) {
+                dev.spatialfin.fcast.session.FCastMiniController(sessionManager = fcastSession)
+            }
+        }
+        dev.spatialfin.sendspin.SendspinFullscreenPlayer()
     }
     }
 }

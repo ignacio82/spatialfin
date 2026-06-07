@@ -24,11 +24,11 @@ jobs:
       run: chmod +x gradlew
 
     - name: Assemble shipped debug variants
-      run: ./gradlew :app:unified:assembleLibreDebug :app:unified:assembleTvDebug
+      run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:assembleLibreDebug :app:unified:assembleTvDebug
 
     - name: Run debug unit tests
       run: |
-        ./gradlew \
+        bash .github/scripts/run-gradle-with-retry.sh \
           :app:unified:testLibreDebugUnitTest \
           :app:unified:testTvDebugUnitTest \
           :core:testLibreDebugUnitTest \
@@ -46,7 +46,7 @@ jobs:
 
     - name: Check Compose stability baselines
       run: |
-        ./gradlew \
+        bash .github/scripts/run-gradle-with-retry.sh \
           :app:unified:libreDebugStabilityCheck \
           :app:unified:tvDebugStabilityCheck \
           :core:libreDebugStabilityCheck \

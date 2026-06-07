@@ -54,6 +54,7 @@ constructor(
     private val activeSessionBus: ActiveSessionBus,
     private val pluginContentRepository: PluginContentRepository,
     private val pluginRepository: PluginRepository,
+    private val musicAssistantRepository: dev.jdtech.jellyfin.film.repository.MusicAssistantRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
@@ -130,6 +131,19 @@ constructor(
                 _state.emit(cached.state.copy(isLoading = false, error = null))
                 if (!forceRefresh && cached.isFresh()) {
                     Timber.i("Serving fresh cached home")
+                    // Still fetch plugins and MA items dynamically in background
+                    try {
+                        loadUniversalPluginItems()
+                        cacheCurrentHome(serverId)
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadUniversalPluginItems failed after first paint (cached)")
+                    }
+                    try {
+                        loadMusicAssistantItems()
+                        cacheCurrentHome(serverId)
+                    } catch (e: Exception) {
+                        Timber.w(e, "loadMusicAssistantItems failed after first paint (cached)")
+                    }
                     return@launch
                 }
             } else {
@@ -170,6 +184,14 @@ constructor(
                             cacheCurrentHome(serverId)
                         } catch (e: Exception) {
                             Timber.w(e, "loadUniversalPluginItems failed after first paint")
+                        }
+                        try {
+                            android.util.Log.e("HomeViewModel", "About to call loadMusicAssistantItems")
+                            loadMusicAssistantItems()
+                            android.util.Log.e("HomeViewModel", "loadMusicAssistantItems returned")
+                            cacheCurrentHome(serverId)
+                        } catch (e: Exception) {
+                            android.util.Log.e("HomeViewModel", "loadMusicAssistantItems failed after first paint", e)
                         }
                         try {
                             loadViews()
@@ -446,7 +468,55 @@ constructor(
                     newState
                 }
             } catch (e: Exception) {
-                Timber.e(e, "loadUniversalPluginItems failed")
+                Timber.e(e, "Error loading plugin contents")
+            }
+        }
+    }
+
+    private suspend fun loadMusicAssistantItems() {
+        android.util.Log.e("HomeViewModel", "loadMusicAssistantItems ENTERED")
+        withContext(Dispatchers.Default) {
+            try {
+                val sections = mutableListOf<HomeItem.Section>()
+                android.util.Log.e("HomeViewModel", "Checking home_ma_recently_played pref")
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_recently_played", true)) {
+                    android.util.Log.e("HomeViewModel", "Calling getRecentlyPlayed")
+                    val recentlyPlayed = musicAssistantRepository.getRecentlyPlayed()
+                    android.util.Log.e("HomeViewModel", "getRecentlyPlayed returned ${recentlyPlayed.size} items")
+                    if (recentlyPlayed.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:recently_played".toByteArray()),
+                                    name = UiText.DynamicString("Recently Played (Music Assistant)"),
+                                    items = recentlyPlayed
+                                )
+                            )
+                        )
+                    }
+                }
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_playlists", true)) {
+                    android.util.Log.e("HomeViewModel", "Calling getPlaylists")
+                    val playlists = musicAssistantRepository.getPlaylists()
+                    android.util.Log.e("HomeViewModel", "getPlaylists returned ${playlists.size} items")
+                    if (playlists.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:playlists".toByteArray()),
+                                    name = UiText.DynamicString("Playlists (Music Assistant)"),
+                                    items = playlists
+                                )
+                            )
+                        )
+                    }
+                }
+                android.util.Log.e("HomeViewModel", "MA sections to add: ${sections.size}")
+                _state.update {
+                    it.copy(musicAssistantSections = sections.toImmutableList())
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("HomeViewModel", "Error loading music assistant items", e)
             }
         }
     }

@@ -154,6 +154,7 @@ class UnifiedMainActivity : AppCompatActivity() {
     private var displayListener: DisplayManager.DisplayListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        dev.spatialfin.unified.MusicAssistantTest.runTest(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

@@ -571,7 +571,7 @@ fun BeamHomeScreen(
                                     launchServerItem(context, fcastSession, scope,featured)
                                 }
                                 BeamSecondaryActionButton(label = "Details") {
-                                    openServerItem(featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                    openServerItem(context, featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
                                 }
                             },
                         )
@@ -588,7 +588,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = filtered,
-                                onItemClick = { openServerItem(it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                             )
                         }
                     }
@@ -604,7 +604,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                                 showProgress = true,
                             )
                         }
@@ -621,7 +621,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                             )
                         }
                     }
@@ -648,7 +648,7 @@ fun BeamHomeScreen(
                             item {
                                 BeamPosterCarousel(
                                     items = viewItems,
-                                    onItemClick = { openServerItem(it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                    onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                                 )
                             }
                         }
@@ -682,8 +682,24 @@ fun BeamHomeScreen(
                                         )
                                     )
                                 } else {
-                                    openServerItem(item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                    openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
                                 }
+                            }
+                        )
+                    }
+                }
+
+                items(state.musicAssistantSections) { section ->
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        BeamHomeSectionHeader(
+                            title = section.homeSection.name.asString(),
+                            actionLabel = null,
+                            onAction = null
+                        )
+                        BeamPosterCarousel(
+                            items = section.homeSection.items,
+                            onItemClick = { item ->
+                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
                             }
                         )
                     }
@@ -886,7 +902,7 @@ fun BeamLibraryScreen(
                 item {
                     BeamPosterGrid(
                         items = state.items,
-                        onItemClick = { openServerItem(it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                        onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                     )
                 }
             }
@@ -1488,7 +1504,7 @@ fun BeamItemDetailScreen(
                                             text = { Text("Open Collection") },
                                             onClick = {
                                                 showOverflow = false
-                                                openServerItem(itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
+                                                openServerItem(context, itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
                                             }
                                         )
                                     }
@@ -2237,7 +2253,7 @@ fun BeamSearchScreen(
                     BeamServerItemCard(
                         item = item,
                         onPlay = { launchServerItem(context, fcastSession, scope,item) },
-                        onOpen = { openServerItem(item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                        onOpen = { openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
                     )
                 }
             }
@@ -3070,6 +3086,7 @@ private fun BeamSecondaryActionButton(
 }
 
 private fun openServerItem(
+    context: Context,
     item: SpatialFinItem,
     onOpenLibrary: (UUID, String, CollectionType) -> Unit,
     onOpenShow: (UUID) -> Unit,
@@ -3081,7 +3098,18 @@ private fun openServerItem(
         is SpatialFinFolder -> onOpenLibrary(item.id, item.name, CollectionType.Folders)
         is SpatialFinShow -> onOpenShow(item.id)
         is SpatialFinSeason -> onOpenSeason(item.id)
-        else -> onOpenItem(item.id)
+        else -> {
+            val maUri = item.originalTitle
+            android.util.Log.e("BeamJellyfinScreens", "openServerItem: else branch, maUri=$maUri, item name=${item.name}")
+            if (!maUri.isNullOrBlank() && maUri.contains("://")) {
+                android.util.Log.e("BeamJellyfinScreens", "Playing MA media: $maUri")
+                dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(context, maUri)
+                android.widget.Toast.makeText(context, "Playing on Sendspin...", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                android.util.Log.e("BeamJellyfinScreens", "Not MA media, calling onOpenItem")
+                onOpenItem(item.id)
+            }
+        }
     }
 }
 
@@ -3317,8 +3345,16 @@ private fun launchServerItem(
             is SpatialFinSeason -> "Season"
             is SpatialFinShow -> "Series"
             is SpatialFinBoxSet -> "BoxSet"
-            else -> null
-        } ?: return
+            else -> {
+                val maUri = item.originalTitle
+                android.util.Log.e("BeamJellyfinScreens", "launchServerItem: else branch, maUri=$maUri")
+                if (!maUri.isNullOrBlank() && maUri.contains("://")) {
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(context, maUri)
+                    android.widget.Toast.makeText(context, "Playing on Sendspin...", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+        }
 
     val intentBuilder: () -> android.content.Intent = {
         BeamPlayerActivity.createIntent(

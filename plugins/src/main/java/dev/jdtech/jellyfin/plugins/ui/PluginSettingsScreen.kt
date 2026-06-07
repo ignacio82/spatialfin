@@ -46,6 +46,13 @@ data class JellyfinHomeRowUi(
     val enabled: Boolean
 )
 
+data class MusicAssistantHomeRowUi(
+    val key: String,
+    val name: String,
+    val description: String,
+    val enabled: Boolean
+)
+
 data class PluginHomeRowUi(
     val pluginId: String,
     val row: PluginHomeRow,
@@ -63,6 +70,9 @@ class PluginSettingsViewModel @Inject constructor(
 
     private val _jellyfinRows = MutableStateFlow<List<JellyfinHomeRowUi>>(emptyList())
     val jellyfinRows = _jellyfinRows.asStateFlow()
+
+    private val _musicAssistantRows = MutableStateFlow<List<MusicAssistantHomeRowUi>>(emptyList())
+    val musicAssistantRows = _musicAssistantRows.asStateFlow()
 
     private val _pluginRows = MutableStateFlow<Map<String, List<PluginHomeRowUi>>>(emptyMap())
     val pluginRows = _pluginRows.asStateFlow()
@@ -103,6 +113,26 @@ class PluginSettingsViewModel @Inject constructor(
                 enabled = sharedPreferences.getBoolean(HOME_LATEST, true)
             )
         )
+        _musicAssistantRows.value = listOf(
+            MusicAssistantHomeRowUi(
+                key = "recentlyPlayed",
+                name = "Recently Played",
+                description = "Resume your recent Music Assistant items.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_RECENTLY_PLAYED, true)
+            ),
+            MusicAssistantHomeRowUi(
+                key = "recommendations",
+                name = "Recommendations",
+                description = "Recommended tracks and albums from Music Assistant.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_RECOMMENDATIONS, true)
+            ),
+            MusicAssistantHomeRowUi(
+                key = "playlists",
+                name = "Playlists",
+                description = "Your favorite Music Assistant playlists.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_PLAYLISTS, true)
+            )
+        )
         _pluginRows.value = installedPlugins.associate { plugin ->
             val pluginId = plugin.id.orEmpty()
             val rows = repository.getPluginHomeRows(plugin).map { row ->
@@ -127,6 +157,17 @@ class PluginSettingsViewModel @Inject constructor(
             "nextUp" -> HOME_NEXT_UP
             "suggestions" -> HOME_SUGGESTIONS
             "latest" -> HOME_LATEST
+            else -> null
+        } ?: return
+        sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
+        refresh()
+    }
+
+    fun updateMusicAssistantHomeRow(key: String, enabled: Boolean) {
+        val preferenceKey = when (key) {
+            "recentlyPlayed" -> HOME_MA_RECENTLY_PLAYED
+            "recommendations" -> HOME_MA_RECOMMENDATIONS
+            "playlists" -> HOME_MA_PLAYLISTS
             else -> null
         } ?: return
         sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
@@ -198,6 +239,9 @@ class PluginSettingsViewModel @Inject constructor(
         private const val HOME_CONTINUE_WATCHING = "home_continue_watching"
         private const val HOME_NEXT_UP = "home_next_up"
         private const val HOME_LATEST = "home_latest"
+        private const val HOME_MA_RECENTLY_PLAYED = "home_ma_recently_played"
+        private const val HOME_MA_RECOMMENDATIONS = "home_ma_recommendations"
+        private const val HOME_MA_PLAYLISTS = "home_ma_playlists"
     }
 }
 
@@ -205,6 +249,8 @@ class PluginSettingsViewModel @Inject constructor(
 fun PluginSettingsScreen(
     onPluginClick: (String) -> Unit = {},
     onJellyfinClick: () -> Unit = {},
+    onMusicAssistantClick: () -> Unit = {},
+    musicAssistantSubtitle: String = "Not configured",
     onLocalClick: () -> Unit = {},
     onNetworkClick: () -> Unit = {},
     viewModel: PluginSettingsViewModel = hiltViewModel()
@@ -212,6 +258,7 @@ fun PluginSettingsScreen(
     val context = LocalContext.current
     val plugins by viewModel.plugins.collectAsState()
     val jellyfinRows by viewModel.jellyfinRows.collectAsState()
+    val musicAssistantRows by viewModel.musicAssistantRows.collectAsState()
     val pluginRows by viewModel.pluginRows.collectAsState()
     val isInstalling by viewModel.isInstalling.collectAsState()
     var installUrl by remember { mutableStateOf("") }
@@ -360,6 +407,31 @@ fun PluginSettingsScreen(
                             description = row.description,
                             checked = row.enabled,
                             onCheckedChange = { viewModel.updateJellyfinHomeRow(row.key, it) }
+                        )
+                    }
+                }
+            }
+            
+            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onMusicAssistantClick),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Dns, contentDescription = "Music Assistant", modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Music Assistant", style = MaterialTheme.typography.titleMedium)
+                            Text(musicAssistantSubtitle, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    musicAssistantRows.forEach { row ->
+                        SourceRowToggle(
+                            title = row.name,
+                            description = row.description,
+                            checked = row.enabled,
+                            onCheckedChange = { viewModel.updateMusicAssistantHomeRow(row.key, it) }
                         )
                     }
                 }

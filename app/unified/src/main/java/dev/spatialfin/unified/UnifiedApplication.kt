@@ -34,6 +34,7 @@ import dev.spatialfin.LogFileTree
 import dev.spatialfin.beam.BeamCompanionLogUploader
 import dev.spatialfin.fcast.FCastReceiverWiring
 import dev.spatialfin.fcast.debug.SplitAvDebugBridge
+import dev.spatialfin.sendspin.SendspinReceiverWiring
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -101,6 +102,11 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             context = this,
             prefs = appPreferences,
             deviceClass = deviceClass,
+        )
+
+        SendspinReceiverWiring.installOnAppStart(
+            context = this,
+            prefs = appPreferences,
         )
 
         // Normally the first rendered activity frame starts deferred work. This fallback keeps
