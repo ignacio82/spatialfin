@@ -58,3 +58,6 @@ fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 androidx/
+
+# Personal planning docs (per-developer scratch, not shipped)
+MA_CLIENT_PLAN.md
