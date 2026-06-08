@@ -157,6 +157,7 @@ fun BeamNavigationRoot(
     llmModelManager: LlmModelManager,
     voiceTelemetryStore: VoiceTelemetryStore,
     fcastSession: dev.spatialfin.fcast.session.CastSessionManager,
+    musicAssistantRepository: dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository,
     onReconnect: () -> Unit = {},
     onFinishApp: () -> Unit = {},
 ) {
@@ -278,6 +279,17 @@ fun BeamNavigationRoot(
                         true
                     }
                 }
+            }
+
+            override fun launchMusic(query: String): Boolean {
+                coroutineScope.launch {
+                    dev.spatialfin.unified.launchMusicAssistantQuery(
+                        context = context,
+                        repository = musicAssistantRepository,
+                        query = query,
+                    )
+                }
+                return true
             }
 
             override fun goHome() { currentRoute = BeamRoute.Home }

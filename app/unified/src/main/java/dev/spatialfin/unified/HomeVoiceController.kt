@@ -45,6 +45,8 @@ import timber.log.Timber
 interface HomeVoiceNavigation {
     /** Try to start playback or open a detail screen for [item]. Returns true on success. */
     fun launchItem(item: SpatialFinItem): Boolean
+    /** Try to start playing music matching the given [query]. Returns true on success. */
+    fun launchMusic(query: String): Boolean
     fun goHome()
     fun goBack()
     fun closeApp()
@@ -306,14 +308,22 @@ class HomeVoiceController(
                     }
                 } ?: "Sorry, I couldn't process that."
                 response.playRequest?.let { play ->
-                    val matched = runCatching { repository.getSearchItems(play.title) }
-                        .getOrDefault(emptyList())
-                        .firstOrNull()
-                    if (matched != null && navigation.launchItem(matched)) {
-                        followUpPending = false
-                        return HomeVoiceActionOutcome("Playing ${matched.name}", response)
+                    if (play.isMusic) {
+                        if (navigation.launchMusic(play.title)) {
+                            followUpPending = false
+                            return HomeVoiceActionOutcome("Playing music for ${play.title}", response)
+                        }
+                        Timber.w("VOICE: play_music title='%s' — failed, falling back to chat reply", play.title)
+                    } else {
+                        val matched = runCatching { repository.getSearchItems(play.title) }
+                            .getOrDefault(emptyList())
+                            .firstOrNull()
+                        if (matched != null && navigation.launchItem(matched)) {
+                            followUpPending = false
+                            return HomeVoiceActionOutcome("Playing ${matched.name}", response)
+                        }
+                        Timber.w("VOICE: play_media title='%s' — no match, falling back to chat reply", play.title)
                     }
-                    Timber.w("VOICE: play_media title='%s' — no match, falling back to chat reply", play.title)
                 }
                 HomeVoiceActionOutcome(feedback, response)
             }

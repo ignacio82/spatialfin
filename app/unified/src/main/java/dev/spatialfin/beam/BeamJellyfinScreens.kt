@@ -3100,13 +3100,10 @@ private fun openServerItem(
         is SpatialFinSeason -> onOpenSeason(item.id)
         else -> {
             val maUri = item.originalTitle
-            android.util.Log.e("BeamJellyfinScreens", "openServerItem: else branch, maUri=$maUri, item name=${item.name}")
             if (!maUri.isNullOrBlank() && maUri.contains("://")) {
-                android.util.Log.e("BeamJellyfinScreens", "Playing MA media: $maUri")
                 dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(context, maUri)
-                android.widget.Toast.makeText(context, "Playing on Sendspin...", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Queuing in Music Assistant…", android.widget.Toast.LENGTH_SHORT).show()
             } else {
-                android.util.Log.e("BeamJellyfinScreens", "Not MA media, calling onOpenItem")
                 onOpenItem(item.id)
             }
         }

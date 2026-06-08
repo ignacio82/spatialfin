@@ -6,4 +6,4 @@ package dev.jdtech.jellyfin.player.xr.voice
  * package (the player session, Home navigation) can handle it without having
  * to reach through an internal class.
  */
-data class PlayMediaRequest(val title: String, val year: Int? = null)
+data class PlayMediaRequest(val title: String, val year: Int? = null, val isMusic: Boolean = false)

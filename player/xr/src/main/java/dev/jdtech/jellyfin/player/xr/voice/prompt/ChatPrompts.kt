@@ -61,6 +61,10 @@ fun chatPrompt(ctx: PromptContext): PromptSections = promptSections {
         "Recent subtitles" to ctx.subtitleContext.takeLast(SUBTITLE_CAP).takeIf { it.isNotBlank() },
         "Audio track" to state.currentAudioTrack,
         "Subtitle track" to state.currentSubtitleTrack,
+        "Music Assistant Active" to if (state.maActive) "Yes" else null,
+        "Current MA Track" to state.maCurrentTrack,
+        "Current MA Artist" to state.maCurrentArtist,
+        "Current MA Album" to state.maCurrentAlbum,
     )
 
     sectionIf(ctx.conversationHistory.isNotEmpty(), header = "Conversation history:") {

@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.data.musicassistant.repository
 import dev.jdtech.jellyfin.data.musicassistant.api.APICommands
 import dev.jdtech.jellyfin.data.musicassistant.api.Request
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.QueueOption
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.SearchResult
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
 import kotlinx.serialization.json.add
@@ -27,21 +28,36 @@ class MusicAssistantRepository(
         return null
     }
 
-    suspend fun playMedia(item: ServerMediaItem) {
-        val payload = buildJsonObject {
-            // Need to specify the queue id, for now let's leave it out or specify the active queue?
-            // "queue_id" is usually required. If we don't have it here, we should fetch it from AppPreferences?
-            put("media_item", buildJsonObject {
-                put("uri", item.uri)
-                put("media_type", item.mediaType)
-                put("item_id", item.itemId)
-                put("provider", item.provider)
-            })
-        }
-        // Let's rely on the SendSpinGroupClient to play?
-        // Let's just use the API command directly.
-        val request = Request(command = APICommands.PLAYER_QUEUES_PLAY_MEDIA, args = payload)
-        serviceClient.sendRequest(request)
+    /**
+     * Queue [item] on the specified MA player/queue.
+     *
+     * The MA server requires a non-null `queue_id`. Callers must resolve this
+     * — for `PlayerType.PROTOCOL` players (SendSpin endpoints) MA does NOT
+     * create a queue, so the id has to come from the wrapping Universal
+     * Player's `protocol_parent_id`. For all other player types pass the
+     * player's own id and the server handles `active_group` / `synced_to`
+     * redirection.
+     *
+     * When you're playing on this device specifically (the SendSpin
+     * receiver), prefer [dev.jdtech.jellyfin.sendspin.receiver
+     * .SendspinReceiverService.playMusicAssistantMedia] — it owns the
+     * receiver identity and protocol-link race handling.
+     */
+    suspend fun playMedia(
+        item: ServerMediaItem,
+        queueOrPlayerId: String,
+        option: QueueOption = QueueOption.PLAY,
+        radioMode: Boolean = false,
+    ) {
+        val uri = item.uri ?: return
+        serviceClient.sendRequest(
+            Request.Library.play(
+                media = listOf(uri),
+                queueOrPlayerId = queueOrPlayerId,
+                option = option,
+                radioMode = radioMode,
+            ),
+        )
     }
 
     suspend fun getLibraryTracks(): List<ServerMediaItem> {

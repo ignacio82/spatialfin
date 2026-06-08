@@ -25,6 +25,7 @@ android {
 dependencies {
     implementation(projects.core)
     implementation(projects.data)
+    implementation(projects.sendspin)
     implementation(projects.settings)
     implementation(projects.plugins)
     implementation(libs.timber)

@@ -127,6 +127,7 @@ internal class ChatToolRegistry(
             "describe_current_item" -> executeDescribeCurrentItem(playerState)
             "web_search" -> if (webSearchAvailable) executeWebSearch(args) else null
             "play_media" -> executePlayMedia(args)
+            "play_music" -> executePlayMusic(args)
             "none" -> null
             else -> {
                 Timber.d("ChatTool: unknown action=%s", action)
@@ -143,7 +144,17 @@ internal class ChatToolRegistry(
         return ResearchNotes(
             body = "",
             debugInfo = "play_media title=$title year=${year ?: "?"}",
-            playRequest = PlayMediaRequest(title = title, year = year),
+            playRequest = PlayMediaRequest(title = title, year = year, isMusic = false),
+        )
+    }
+
+    private fun executePlayMusic(args: Map<String, Any?>): ResearchNotes? {
+        val query = (args["query"] as? String)?.trim().orEmpty()
+        if (query.isBlank()) return null
+        return ResearchNotes(
+            body = "",
+            debugInfo = "play_music query=$query",
+            playRequest = PlayMediaRequest(title = query, isMusic = true),
         )
     }
 
@@ -222,6 +233,7 @@ internal class ChatToolRegistry(
 
             Valid shapes (pick one):
               {"action": "play_media", "title": "<movie or show title>"}
+              {"action": "play_music", "query": "<song, artist, or album name>"}
               {"action": "lookup_title", "title": "<movie or show title>"}
               {"action": "lookup_person", "name": "<person name>"}
               {"action": "describe_current_item"}$webLine
@@ -412,6 +424,8 @@ internal class ChatToolRegistry(
             Decide what single action helps most:
             - If the user asked to play a specific title ("play Dune", "put on The Office"),
               call `research_media` with action="play_media" and the exact title.
+            - If the user asked to play music ("play some jazz", "play Bohemian Rhapsody"),
+              call `research_media` with action="play_music" and the query.
             - If gathering one fact would help answer (movie/show overview, person background,
               details about what's on screen), call it with the matching lookup action.
             - Otherwise (small talk, playback control, already-answered facts) do not call the tool.
@@ -432,6 +446,7 @@ internal class ChatToolRegistry(
             add("describe_current_item")
             if (webSearchEnabled) add("web_search")
             add("play_media")
+            add("play_music")
         }.joinToString(", ") { "\"$it\"" }
         return """
         {
@@ -447,7 +462,7 @@ internal class ChatToolRegistry(
               },
               "title": { "type": "string", "description": "Movie or TV-show title for lookup_title or play_media." },
               "name":  { "type": "string", "description": "Person name for lookup_person." },
-              "query": { "type": "string", "description": "Free-form query string for web_search." },
+              "query": { "type": "string", "description": "Free-form query string for web_search or play_music." },
               "year":  { "type": "integer", "description": "Optional release year disambiguator for play_media." }
             },
             "required": ["action"]

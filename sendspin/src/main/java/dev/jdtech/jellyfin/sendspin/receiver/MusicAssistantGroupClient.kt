@@ -89,13 +89,17 @@ internal class MusicAssistantGroupClient(
         command: String,
         args: JSONObject? = null,
     ): String {
-        val payload = JSONObject().put("command", command)
+        val payload = JSONObject()
+            .put("message_id", java.util.UUID.randomUUID().toString())
+            .put("command", command)
         if (args != null) payload.put("args", args)
+        val payloadStr = payload.toString().replace("\\/", "/")
+        timber.log.Timber.tag("MAGroupClient").d("→ %s %s", command, payloadStr)
         val request =
             Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/api")
                 .addHeader("Authorization", "Bearer $token")
-                .post(payload.toString().toRequestBody(JSON))
+                .post(payloadStr.toRequestBody(JSON))
                 .build()
         httpClient.newCall(request).execute().use { response ->
             val body = response.body.string()
@@ -124,7 +128,9 @@ internal class MusicAssistantGroupClient(
         val args =
             JSONObject()
                 .put("queue_id", queueId)
-                .put("media", mediaUri)
+                .put("media", JSONArray().put(mediaUri))
+                .put("option", "play")
+                .put("radio_mode", false)
         executeApiCommand(baseUrl, token, "player_queues/play_media", args)
     }
 
@@ -134,6 +140,7 @@ internal class MusicAssistantGroupClient(
             id = playerId,
             name = optString("name", playerId),
             type = optString("type", "unknown"),
+            provider = optStringOrNull("provider") ?: "",
             available = optBoolean("available", false),
             enabled = optBoolean("enabled", true),
             hideInUi = optBoolean("hide_in_ui", false),
@@ -141,6 +148,9 @@ internal class MusicAssistantGroupClient(
             playbackState = optStringOrNull("playback_state"),
             syncedTo = optStringOrNull("synced_to"),
             activeGroup = optStringOrNull("active_group"),
+            activeSource = optStringOrNull("active_source"),
+            protocolParentId = optStringOrNull("protocol_parent_id"),
+            linkedOutputProtocols = optStringSet("linked_output_protocols"),
             groupMembers = optStringSet("group_members"),
             canGroupWith = optStringSet("can_group_with"),
             supportedFeatures = optStringSet("supported_features"),
@@ -178,6 +188,7 @@ internal data class MusicAssistantPlayerState(
     val id: String,
     val name: String,
     val type: String,
+    val provider: String,
     val available: Boolean,
     val enabled: Boolean,
     val hideInUi: Boolean,
@@ -185,6 +196,9 @@ internal data class MusicAssistantPlayerState(
     val playbackState: String?,
     val syncedTo: String?,
     val activeGroup: String?,
+    val activeSource: String?,
+    val protocolParentId: String?,
+    val linkedOutputProtocols: Set<String>,
     val groupMembers: Set<String>,
     val canGroupWith: Set<String>,
     val supportedFeatures: Set<String>,

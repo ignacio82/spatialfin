@@ -101,6 +101,7 @@ import dev.spatialfin.unified.applock.AppLockScreen
 import dev.spatialfin.tv.TvNavigationRoot
 import dev.spatialfin.tv.TvTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -131,6 +132,9 @@ class UnifiedMainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var voiceTelemetryStore: VoiceTelemetryStore
+
+    @Inject
+    lateinit var musicAssistantRepository: dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
 
     @Inject
     lateinit var appLockManager: AppLockManager
@@ -272,6 +276,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 llmModelManager = llmModelManager,
                                 voiceTelemetryStore = voiceTelemetryStore,
                                 fcastSession = fcastSession,
+                                musicAssistantRepository = musicAssistantRepository,
                                 onReconnect = viewModel::reconnect,
                                 onFinishApp = ::finishAndKillProcess,
                             )
@@ -586,6 +591,17 @@ class UnifiedMainActivity : AppCompatActivity() {
                     ) { XrPlayerActivity.createIntentForItem(context, item) }
                     if (routed) return true
                     return navigateToItem(item)
+                }
+
+                override fun launchMusic(query: String): Boolean {
+                    voiceCoroutineScope.launch {
+                        launchMusicAssistantQuery(
+                            context = context,
+                            repository = musicAssistantRepository,
+                            query = query,
+                        )
+                    }
+                    return true
                 }
 
                 override fun goHome() {

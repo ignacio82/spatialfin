@@ -139,7 +139,20 @@ class SendspinReceiverService : Service() {
                 .addLast(KotlinJsonAdapterFactory())
                 .build()
         val http = OkHttpClient.Builder().build()
-        musicAssistantClient = MusicAssistantGroupClient(http)
+        // Dedicated client for MA REST: `player_queues/play_media` blocks until
+        // the queue is loaded AND the wrapping universal-player has dispatched
+        // audio to the underlying SendSpin endpoint. First-cast can take 15+ s;
+        // OkHttp's default 10 s read timeout would surface as a misleading
+        // "timeout" toast even though MA actually started playback. Bumping
+        // here, not on the shared client, because SendSpin's WebSocket needs
+        // its own timing profile.
+        val maHttp = http.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(15))
+            .readTimeout(java.time.Duration.ofSeconds(60))
+            .writeTimeout(java.time.Duration.ofSeconds(60))
+            .callTimeout(java.time.Duration.ofSeconds(90))
+            .build()
+        musicAssistantClient = MusicAssistantGroupClient(maHttp)
         receiverClientId = clientId
         val newClient =
             SendSpinClient(
@@ -565,49 +578,195 @@ class SendspinReceiverService : Service() {
     private fun playMusicAssistantMediaAction(mediaUri: String) {
         if (mediaUri.isBlank()) return
         scope.launch {
-            runCatching {
-                val currentState = SendspinReceiverSession.state.value
-                val serverId = currentState.serverId
-                val serverUrl = currentState.musicAssistantServerUrl ?: discoverMusicAssistantServerUrl(serverId)
+            try {
+                val state = SendspinReceiverSession.state.value
+                val serverId = state.serverId
+                val serverUrl = state.musicAssistantServerUrl ?: discoverMusicAssistantServerUrl(serverId)
                 val token = musicAssistantToken(serverId, serverUrl)
                 if (serverUrl.isNullOrBlank() || token.isNullOrBlank()) {
-                    Timber.tag(TAG).w("Cannot play MA media: Missing server URL or token")
-                    android.util.Log.e("SendspinService", "Cannot play MA media: Missing server URL or token")
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        android.widget.Toast.makeText(this@SendspinReceiverService, "MA: Missing URL/Token", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    Timber.tag(TAG).w("MA play_media: no server URL or token (serverId=%s)", serverId)
+                    showToast("Music Assistant: connect a server in settings first")
                     return@launch
                 }
-                
-                val players = requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                val currentPlayer = 
-                    players.firstOrNull { it.id == receiverClientId }
-                        ?: players.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
-                val targetPlayerId = currentPlayer?.activeGroup ?: currentPlayer?.syncedTo ?: currentPlayer?.id ?: receiverClientId
-                
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(this@SendspinReceiverService, "MA queueing on player: $targetPlayerId", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                android.util.Log.e("SendspinService", "MA queueing on player: $targetPlayerId")
 
-                requireNotNull(musicAssistantClient).playMedia(
+                val client = requireNotNull(musicAssistantClient)
+                val target = resolvePlayMediaTarget(client, serverUrl, token, serverId)
+                if (target == null) {
+                    Timber.tag(TAG).w("MA play_media: no usable player available")
+                    showToast("Music Assistant has no available players. Open the MA web UI and enable a player.")
+                    return@launch
+                }
+                rememberPreferredPlayer(serverId, target.id)
+                Timber.tag(TAG).i(
+                    "MA play_media: uri=%s queue_id=%s (player_name=%s type=%s provider=%s)",
+                    mediaUri, target.id, target.name, target.type, target.provider,
+                )
+
+                client.playMedia(
                     baseUrl = serverUrl,
                     token = token,
-                    queueId = targetPlayerId,
+                    queueId = target.id,
                     mediaUri = mediaUri,
                 )
-                android.util.Log.e("SendspinService", "Sent playMedia command to MA for $mediaUri on $targetPlayerId")
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(this@SendspinReceiverService, "Success: sent playMedia", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }.onFailure { error ->
-                Timber.tag(TAG).e(error, "Failed to play Music Assistant media")
-                android.util.Log.e("SendspinService", "Error: ${error.message}", error)
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(this@SendspinReceiverService, "Error: ${error.message}", android.widget.Toast.LENGTH_LONG).show()
-                }
+            } catch (error: Throwable) {
+                Timber.tag(TAG).e(error, "MA play_media failed for uri=%s", mediaUri)
+                val message = (error as? MusicAssistantApiException)?.userMessage()
+                    ?: error.message?.takeIf { it.isNotBlank() }
+                    ?: "Unknown error"
+                showToast("Music Assistant: $message")
             }
         }
+    }
+
+    /**
+     * Pick the player to send `play_media` to, mirroring the official
+     * Music Assistant mobile app's [PlayerData.queueOrPlayerId] resolution.
+     *
+     * The official app never targets a `PlayerType.PROTOCOL` player (MA's
+     * server hides them from `players/all` by default). Instead the user
+     * picks a non-protocol player from the visible list, and the server-side
+     * `play_media` handler uses `player_id` as the queue id (because MA has
+     * already created a queue with that id for every non-protocol player at
+     * register time).
+     *
+     * We follow the same rule but auto-pick on the user's behalf:
+     *   1) Their previously-chosen player (persisted via [rememberPreferredPlayer]).
+     *   2) The Universal-Player wrapper for our SendSpin endpoint, if MA's
+     *      auto-wrapper has fired (via `active_source` / `protocol_parent_id`
+     *      / `linked_output_protocols`). This is the natural "play here" pick.
+     *   3) Any usable Universal-Player wrapper — usually the user's main
+     *      playback target.
+     *   4) Any usable player at all (Sonos, Chromecast, etc.).
+     *
+     * Returns null only if MA literally has no available non-protocol players.
+     * No retry/polling: a missing wrapper is a real config issue, not a race
+     * worth waiting on (the user is already waiting on the play action).
+     */
+    private fun resolvePlayMediaTarget(
+        client: MusicAssistantGroupClient,
+        serverUrl: String,
+        token: String,
+        serverId: String?,
+    ): MusicAssistantPlayerState? {
+        val all = client.fetchPlayers(serverUrl, token)
+
+        val usable = all.filter { player ->
+            !player.type.equals("protocol", ignoreCase = true) &&
+                player.available &&
+                player.enabled &&
+                !player.hideInUi
+        }
+
+        if (usable.isEmpty() && all.isNotEmpty()) {
+            Timber.tag(TAG).d(
+                "MA play_media: %d players returned but none usable (%s)",
+                all.size,
+                all.joinToString { "${it.id}/${it.type}/avail=${it.available}/enabled=${it.enabled}" },
+            )
+        }
+
+        // Step 1: honour the user's persisted choice when it's still usable.
+        preferredPlayerId(serverId)?.let { saved ->
+            usable.firstOrNull { it.id == saved }?.let {
+                Timber.tag(TAG).d("MA play_media: using saved player_id=%s", saved)
+                return it
+            }
+        }
+
+        // Step 2: find the wrapper for our SendSpin endpoint.
+        val ourSendspin = all.firstOrNull { it.id == receiverClientId }
+            ?: all.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
+        val wrapperId = ourSendspin?.let { thisDeviceWrapperId(it, all) }
+        wrapperId?.let { id ->
+            usable.firstOrNull { it.id == id }?.let {
+                Timber.tag(TAG).d("MA play_media: using auto-detected wrapper for this device player_id=%s", id)
+                return it
+            }
+        }
+
+        // Step 3 + 4: prefer a universal_player wrapper, else any usable player.
+        return usable.firstOrNull { it.provider.equals("universal_player", ignoreCase = true) }
+            ?: usable.firstOrNull()
+    }
+
+    /**
+     * Reverse lookup: given our protocol player, find the id of the
+     * Universal-Player wrapper that MA has linked to it (if any).
+     *
+     * - `active_source` is set by MA the moment the wrapper takes over
+     *   playback routing, and is what the official app's PlayerFactory uses
+     *   ([PlayerFactory.create], line 36 of the mobile app).
+     * - `protocol_parent_id` is the convenience reverse pointer some MA
+     *   versions set at link time.
+     * - As a last resort, scan every player and check whether one of them
+     *   lists us in `linked_output_protocols`. That's the authoritative
+     *   forward pointer MA's `UniversalPlayerProvider` writes regardless of
+     *   version.
+     */
+    private fun thisDeviceWrapperId(
+        protocolPlayer: MusicAssistantPlayerState,
+        allPlayers: List<MusicAssistantPlayerState>,
+    ): String? {
+        protocolPlayer.activeSource?.takeIf { it.isNotBlank() && it != protocolPlayer.id }
+            ?.let { return it }
+        protocolPlayer.protocolParentId?.takeIf { it.isNotBlank() }?.let { return it }
+        return allPlayers.firstOrNull { candidate ->
+            candidate.provider.equals("universal_player", ignoreCase = true) &&
+                protocolPlayer.id in candidate.linkedOutputProtocols
+        }?.id
+    }
+
+    private fun preferredPlayerId(serverId: String?): String? {
+        val key = serverId?.takeIf { it.isNotBlank() }?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
+            ?: return null
+        return musicAssistantPrefs().getString(key, null)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun rememberPreferredPlayer(serverId: String?, playerId: String) {
+        val key = serverId?.takeIf { it.isNotBlank() }?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
+            ?: return
+        musicAssistantPrefs().edit().putString(key, playerId).apply()
+    }
+
+    private fun showToast(message: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(
+                this@SendspinReceiverService,
+                message,
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun MusicAssistantApiException.userMessage(): String {
+        // PlayerUnavailableError is the most common server-side rejection for
+        // play_media. Surface its real message instead of "API request failed".
+        val match = Regex("\"([^\"]+Error)\"\\s*,\\s*\"([^\"]+)\"")
+            .find(responseBody)
+        if (match != null) {
+            val kind = match.groupValues[1]
+            val detail = match.groupValues[2]
+            return "$kind: $detail"
+        }
+        return "HTTP $statusCode"
+    }
+
+    /**
+     * Legacy helper retained for the grouping target derivation only.
+     * The play_media path uses [resolvePlayMediaTarget] / [thisDeviceWrapperId].
+     */
+    @Suppress("UNUSED")
+    private fun resolveQueueId(
+        player: MusicAssistantPlayerState,
+        allPlayers: List<MusicAssistantPlayerState>,
+    ): String? {
+        if (!player.type.equals("protocol", ignoreCase = true)) return player.id
+        player.protocolParentId?.takeIf { it.isNotBlank() }?.let { return it }
+        val wrapper = allPlayers.firstOrNull { candidate ->
+            candidate.provider.equals("universal_player", ignoreCase = true) &&
+                player.id in candidate.linkedOutputProtocols
+        }
+        return wrapper?.id
     }
 
     private fun updateMusicAssistantPlayers(
@@ -1190,6 +1349,7 @@ class SendspinReceiverService : Service() {
         private const val PREF_MA_TOKEN_SERVER_PREFIX = "token_server:"
         private const val PREF_MA_TOKEN_URL_PREFIX = "token_url:"
         private const val PREF_MA_URL_SERVER_PREFIX = "url_server:"
+        private const val PREF_MA_PREFERRED_PLAYER_PREFIX = "preferred_player:"
 
         fun start(
             context: Context,

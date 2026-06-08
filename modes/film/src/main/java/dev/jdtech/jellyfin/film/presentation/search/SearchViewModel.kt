@@ -1,12 +1,15 @@
 package dev.jdtech.jellyfin.film.presentation.search
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
 import javax.inject.Inject
@@ -23,7 +26,8 @@ class SearchViewModel @Inject constructor(
     private val repository: JellyfinRepository,
     private val appPreferences: AppPreferences,
     private val seerrApi: SeerrApi,
-    private val maRepository: MusicAssistantRepository
+    private val maRepository: MusicAssistantRepository,
+    @ApplicationContext private val appContext: Context,
 ) :
     ViewModel() {
     private val _state = MutableStateFlow(SearchState())
@@ -134,8 +138,11 @@ class SearchViewModel @Inject constructor(
                 requestSeerrItem(action.item, action.is4k)
             }
             is SearchAction.OnMaItemClick -> {
-                viewModelScope.launch {
-                    maRepository.playMedia(action.item)
+                val uri = action.item.uri
+                if (uri.isNullOrBlank()) {
+                    Timber.w("MA search tap: item has no uri (item_id=%s)", action.item.itemId)
+                } else {
+                    SendspinReceiverService.playMusicAssistantMedia(appContext, uri)
                 }
             }
             else -> Unit

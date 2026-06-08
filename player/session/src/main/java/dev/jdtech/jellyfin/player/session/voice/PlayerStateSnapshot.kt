@@ -57,4 +57,10 @@ data class PlayerStateSnapshot(
      * Empty when metadata is unavailable.
      */
     val castWithCharacters: ImmutableList<Pair<String, String>> = persistentListOf(),
+    
+    // Music Assistant State
+    val maActive: Boolean = false,
+    val maCurrentTrack: String? = null,
+    val maCurrentArtist: String? = null,
+    val maCurrentAlbum: String? = null,
 )
