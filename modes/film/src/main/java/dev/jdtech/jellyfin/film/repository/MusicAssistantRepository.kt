@@ -26,13 +26,11 @@ class MusicAssistantRepository @Inject constructor(
 ) {
     private fun getCredentials(): Pair<String, String>? {
         val prefs = context.getSharedPreferences("sendspin_music_assistant", Context.MODE_PRIVATE)
-        val keys = prefs.all.keys
-        android.util.Log.e("MusicAssistantRepo", "all keys in prefs: $keys")
-        val serverUrl = keys.firstOrNull { it.startsWith("token_url:") }?.removePrefix("token_url:")
-        android.util.Log.e("MusicAssistantRepo", "serverUrl: $serverUrl")
-        if (serverUrl == null) return null
+        val serverUrl = prefs.all.keys
+            .firstOrNull { it.startsWith("token_url:") }
+            ?.removePrefix("token_url:")
+            ?: return null
         val token = prefs.getString("token_url:$serverUrl", "")
-        android.util.Log.e("MusicAssistantRepo", "token isBlank: ${token?.isBlank()}")
         if (token.isNullOrBlank()) return null
         return Pair(serverUrl, token)
     }
@@ -45,8 +43,6 @@ class MusicAssistantRepository @Inject constructor(
         val (serverUrl, token) = getCredentials() ?: return@withContext null
         val payload = JSONObject().put("command", command)
         if (args != null) payload.put("args", args)
-
-        android.util.Log.e("MusicAssistantRepo", "Executing: $command with args: $args")
 
         try {
             val url = URL("${serverUrl.trimEnd('/')}/api")
@@ -64,10 +60,8 @@ class MusicAssistantRepository @Inject constructor(
             }
 
             val responseCode = connection.responseCode
-            android.util.Log.e("MusicAssistantRepo", "response code: $responseCode")
             if (responseCode in 200..299) {
                 val body = connection.inputStream.bufferedReader().use { it.readText() }
-                android.util.Log.e("MusicAssistantRepo", "response body (first 500): ${body.take(500)}")
                 // Response can be a raw JSON array or a JSON object with "result" or "data" array
                 val trimmed = body.trim()
                 if (trimmed.startsWith("[")) {
@@ -78,11 +72,11 @@ class MusicAssistantRepository @Inject constructor(
                 }
             } else {
                 val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                android.util.Log.e("MusicAssistantRepo", "error ($responseCode): $errorBody")
+                Timber.w("MA command %s failed (%d): %s", command, responseCode, errorBody)
                 null
             }
         } catch (e: Exception) {
-            android.util.Log.e("MusicAssistantRepo", "Error executing MA command $command", e)
+            Timber.w(e, "Error executing MA command %s", command)
             null
         }
     }
@@ -126,36 +120,61 @@ class MusicAssistantRepository @Inject constructor(
             val entry = raw.optJSONObject(i) ?: continue
             val nested = entry.optJSONArray("items")
             if (nested != null) {
-                // Folder shape — drain its `items` array into our flat list.
+                // Folder shape — drain its `items` array, keeping only the real
+                // playable leaves. Folders nest folders (e.g. "In progress"
+                // containing audiobook shelves), and those non-playable
+                // placeholders have no artwork and aren't tappable, so they'd
+                // only render as dead tiles in the row.
                 for (j in 0 until nested.length()) {
-                    nested.optJSONObject(j)?.let(flat::put)
+                    nested.optJSONObject(j)?.takeIf { it.isPlayableLeaf() }?.let(flat::put)
                 }
-            } else if (entry.has("item_id") || entry.has("uri") || entry.has("name")) {
-                // Item shape — recognize by the fields parseItem actually reads.
+            } else if (entry.isPlayableLeaf()) {
                 flat.put(entry)
             }
         }
-        return parseItems(flat)
+        // Drop items that still resolve to no artwork — a poster-less tile is
+        // just an empty rectangle in the carousel.
+        return parseItems(flat).filter { it.images.primary != null }
+    }
+
+    /**
+     * A directly playable music item suitable for the recommendations row.
+     * Excludes folders/shelves, non-playable placeholders, and non-music media
+     * (audiobooks, podcasts) — MA's recommendation folders mix those in, and
+     * they typically have no cover art, so they'd render as dead, blank tiles
+     * in a row billed as "Music Assistant".
+     */
+    private fun JSONObject.isPlayableLeaf(): Boolean {
+        if (has("items")) return false
+        if (!optBoolean("is_playable", true)) return false
+        if (optString("media_type") !in MUSIC_MEDIA_TYPES) return false
+        return has("item_id") || has("uri") || has("name")
     }
 
     private fun parseItems(array: JSONArray): List<SpatialFinItem> {
+        // The image proxy needs the server base URL; resolve it once per batch.
+        val serverUrl = getCredentials()?.first
         val items = mutableListOf<SpatialFinItem>()
+        // Dedupe by the resolved id. MA's recommendations feed can surface the
+        // same track across multiple folders, and library feeds can repeat an
+        // item — two SpatialFinItems with the same UUID in one section's
+        // LazyRow crash Compose with a duplicate-key IllegalArgumentException.
+        val seen = HashSet<UUID>()
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
-            val item = parseItem(obj)
-            if (item != null) items.add(item)
+            val item = parseItem(obj, serverUrl) ?: continue
+            if (seen.add(item.id)) items.add(item)
         }
-        android.util.Log.e("MusicAssistantRepo", "Parsed ${items.size} items from ${array.length()} entries")
         return items
     }
 
-    private fun parseItem(obj: JSONObject): SpatialFinItem? {
+    private fun parseItem(obj: JSONObject, serverUrl: String?): SpatialFinItem? {
         val name = obj.optString("name", obj.optString("title", "Unknown"))
         val uriStr = obj.optString("uri", "")
         val id = obj.optString("item_id", uriStr.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString())
 
         // Extract image URL from the metadata.images array or image_url field
-        val image = extractImageUrl(obj)
+        val image = extractImageUrl(obj, serverUrl)
 
         // Extract artist name from artist metadata
         val artistName = extractArtistName(obj)
@@ -179,21 +198,46 @@ class MusicAssistantRepository @Inject constructor(
         }
     }
 
-    private fun extractImageUrl(obj: JSONObject): String? {
+    private fun extractImageUrl(obj: JSONObject, serverUrl: String?): String? {
         // Try metadata.images array first
         val metadata = obj.optJSONObject("metadata")
         val imagesArray = metadata?.optJSONArray("images")
         if (imagesArray != null && imagesArray.length() > 0) {
             val firstImage = imagesArray.optJSONObject(0)
             val path = firstImage?.optString("path")
-            if (!path.isNullOrBlank()) return path
+            if (!path.isNullOrBlank()) {
+                val provider = firstImage.optString("provider", "")
+                val remote = firstImage.optBoolean("remotely_accessible", false)
+                return resolveImageUrl(path, provider, remote, serverUrl)
+            }
         }
-        // Fallback to image or image_url
-        val directImage = obj.optString("image", "")
-        if (directImage.isNotBlank()) return directImage
-        val imageUrl = obj.optString("image_url", "")
-        if (imageUrl.isNotBlank()) return imageUrl
+        // Fallback to image or image_url (already-resolved URLs). Guard with
+        // isNull(): a JSON `null` value makes optString() return the literal
+        // string "null", which would sail past a blank check and render as a
+        // broken (blank) tile.
+        if (!obj.isNull("image")) {
+            val directImage = obj.optString("image", "")
+            if (directImage.isNotBlank()) return directImage
+        }
+        if (!obj.isNull("image_url")) {
+            val imageUrl = obj.optString("image_url", "")
+            if (imageUrl.isNotBlank()) return imageUrl
+        }
         return null
+    }
+
+    /**
+     * Turn an MA image descriptor into a loadable URL. Remotely-accessible
+     * http(s) paths are usable as-is; everything else (local library art,
+     * provider-relative paths) must go through the server's image proxy —
+     * otherwise [path] is not a real URL and the tile renders blank. Mirrors
+     * OkHttpServiceClient.resolveImageUrl used by the search/detail screens.
+     */
+    private fun resolveImageUrl(path: String, provider: String, remotelyAccessible: Boolean, serverUrl: String?): String? {
+        if (remotelyAccessible && path.startsWith("http")) return path
+        val base = serverUrl?.trimEnd('/') ?: return path.takeIf { it.startsWith("http") }
+        val encodedPath = Uri.encode(path)
+        return "$base/imageproxy?path=$encodedPath&provider=$provider"
     }
 
     private fun extractArtistName(obj: JSONObject): String {
@@ -212,5 +256,11 @@ class MusicAssistantRepository @Inject constructor(
         val albumName = album?.optString("name", "")
         if (!albumName.isNullOrBlank()) return albumName
         return ""
+    }
+
+    private companion object {
+        // MA media_type values that belong in a music-focused row. Audiobooks,
+        // podcasts, and folders are intentionally excluded from recommendations.
+        val MUSIC_MEDIA_TYPES = setOf("track", "album", "artist", "playlist", "radio")
     }
 }

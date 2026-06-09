@@ -186,12 +186,10 @@ constructor(
                             Timber.w(e, "loadUniversalPluginItems failed after first paint")
                         }
                         try {
-                            android.util.Log.e("HomeViewModel", "About to call loadMusicAssistantItems")
                             loadMusicAssistantItems()
-                            android.util.Log.e("HomeViewModel", "loadMusicAssistantItems returned")
                             cacheCurrentHome(serverId)
                         } catch (e: Exception) {
-                            android.util.Log.e("HomeViewModel", "loadMusicAssistantItems failed after first paint", e)
+                            Timber.w(e, "loadMusicAssistantItems failed after first paint")
                         }
                         try {
                             loadViews()
@@ -447,9 +445,6 @@ constructor(
                 val pluginContents = pluginContentRepository.getHomeByPlugin()
                 val sections = pluginContents.mapNotNull { content ->
                     val items = content.items.map { it.toSpatialFinItem() }
-                    items.forEach { item ->
-                        android.util.Log.e("HomeViewModel", "Plugin item: ${item.name} thumb: ${item.images.primary ?: item.images.backdrop}")
-                    }
                     if (items.isNotEmpty()) {
                         val pluginId = content.plugin.id ?: "unknown"
                         HomeItem.Section(
@@ -461,11 +456,8 @@ constructor(
                         )
                     } else null
                 }
-                android.util.Log.e("HomeViewModel", "Added ${sections.size} universal plugin sections")
-                _state.update { 
-                    val newState = it.copy(universalPluginSections = sections.toImmutableList())
-                    android.util.Log.e("HomeViewModel", "State updated with ${newState.universalPluginSections.size} plugin sections")
-                    newState
+                _state.update {
+                    it.copy(universalPluginSections = sections.toImmutableList())
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error loading plugin contents")
@@ -474,15 +466,11 @@ constructor(
     }
 
     private suspend fun loadMusicAssistantItems() {
-        android.util.Log.e("HomeViewModel", "loadMusicAssistantItems ENTERED")
         withContext(Dispatchers.Default) {
             try {
                 val sections = mutableListOf<HomeItem.Section>()
-                android.util.Log.e("HomeViewModel", "Checking home_ma_recently_played pref")
                 if (appPreferences.sharedPreferences.getBoolean("home_ma_recently_played", true)) {
-                    android.util.Log.e("HomeViewModel", "Calling getRecentlyPlayed")
                     val recentlyPlayed = musicAssistantRepository.getRecentlyPlayed()
-                    android.util.Log.e("HomeViewModel", "getRecentlyPlayed returned ${recentlyPlayed.size} items")
                     if (recentlyPlayed.isNotEmpty()) {
                         sections.add(
                             HomeItem.Section(
@@ -496,9 +484,7 @@ constructor(
                     }
                 }
                 if (appPreferences.sharedPreferences.getBoolean("home_ma_playlists", true)) {
-                    android.util.Log.e("HomeViewModel", "Calling getPlaylists")
                     val playlists = musicAssistantRepository.getPlaylists()
-                    android.util.Log.e("HomeViewModel", "getPlaylists returned ${playlists.size} items")
                     if (playlists.isNotEmpty()) {
                         sections.add(
                             HomeItem.Section(
@@ -528,12 +514,11 @@ constructor(
                         )
                     }
                 }
-                android.util.Log.e("HomeViewModel", "MA sections to add: ${sections.size}")
                 _state.update {
                     it.copy(musicAssistantSections = sections.toImmutableList())
                 }
             } catch (e: Exception) {
-                android.util.Log.e("HomeViewModel", "Error loading music assistant items", e)
+                Timber.w(e, "Error loading music assistant items")
             }
         }
     }
