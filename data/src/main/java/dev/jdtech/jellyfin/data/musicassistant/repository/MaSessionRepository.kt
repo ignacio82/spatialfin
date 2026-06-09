@@ -18,9 +18,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -64,6 +67,16 @@ class MaSessionRepository(
     private val _selectedPlayerId = MutableStateFlow<String?>(null)
     private val _pendingPlay = MutableStateFlow<PendingPlay?>(null)
     private val _hydrationState = MutableStateFlow(HydrationState.Idle)
+
+    /**
+     * Fires the affected `queue_id` every time the server reports a queue
+     * mutation (add / update / items-updated). The queue panel collects this
+     * to refetch its item list — `MaSession` only carries the *current* item,
+     * not the full ordered list, so reorders/removals of upcoming tracks don't
+     * otherwise surface through [session].
+     */
+    private val _queueEvents = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val queueEvents: SharedFlow<String> = _queueEvents.asSharedFlow()
 
     @OptIn(FlowPreview::class)
     val session: StateFlow<MaSession> = combine(
@@ -204,6 +217,7 @@ class MaSessionRepository(
             is QueueAddedEvent, is QueueUpdatedEvent, is QueueItemsUpdatedEvent -> {
                 val queue = event.data as ServerQueue
                 _queues.update { it + (queue.queueId to queue) }
+                _queueEvents.tryEmit(queue.queueId)
                 maybeClearPendingPlay()
             }
             is QueueTimeUpdatedEvent -> {
@@ -272,6 +286,23 @@ class MaSessionRepository(
             p.activeSource ?: p.currentMedia?.queueId ?: p.playerId
         }
         val activeQueue = activeQueueId?.let { queues[it] }
+
+        // Party plugin: a non-passive source on the selected player whose
+        // id/name marks it as the vote-driven party queue. `defaultSourceId` is
+        // a non-party source we can switch back to when leaving party mode.
+        val partySource = selected?.let { p ->
+            val party = p.sourceList.firstOrNull {
+                !it.passive && (it.id.contains("party", true) || it.name.contains("party", true))
+            } ?: return@let null
+            val fallback = p.sourceList.firstOrNull { it.id != party.id && !it.passive }?.id
+            MaPartySource(
+                id = party.id,
+                name = party.name.ifBlank { "Party" },
+                playerId = p.playerId,
+                active = p.activeSource == party.id,
+                defaultSourceId = fallback,
+            )
+        }
         val nowPlayingFromServer = activeQueue?.currentItem?.mediaItem
             ?.let { item ->
                 NowPlayingTrack(
@@ -324,6 +355,9 @@ class MaSessionRepository(
             playbackPhase = playbackState,
             hydrationState = hydration,
             pendingPlayUri = pending?.uri,
+            activeQueueId = activeQueueId,
+            currentQueueItemId = activeQueue?.currentItem?.queueItemId,
+            partySource = partySource,
         )
     }
 
@@ -366,6 +400,16 @@ data class MaSession(
     val hydrationState: HydrationState,
     /** When non-null, the user just tapped play and MA hasn't echoed yet. */
     val pendingPlayUri: String?,
+    /**
+     * Resolved queue id for the selected player — the target for queue
+     * mutations (move / remove / play-index) and `play_media` enqueue
+     * (next / add). Null when no player is selected or it has no queue.
+     */
+    val activeQueueId: String?,
+    /** `queue_item_id` of the currently-playing item, for highlighting in the queue panel. */
+    val currentQueueItemId: String?,
+    /** The selected player's Party-plugin source, when one exists. Drives the party toggle. */
+    val partySource: MaPartySource?,
 ) {
     companion object {
         val EMPTY = MaSession(
@@ -377,9 +421,25 @@ data class MaSession(
             playbackPhase = PlaybackPhase.Stopped,
             hydrationState = HydrationState.Idle,
             pendingPlayUri = null,
+            activeQueueId = null,
+            currentQueueItemId = null,
+            partySource = null,
         )
     }
 }
+
+/**
+ * The Party-plugin source on a player, plus a [defaultSourceId] to fall back to
+ * when leaving party mode. [active] reflects whether the player is currently on
+ * the party source.
+ */
+data class MaPartySource(
+    val id: String,
+    val name: String,
+    val playerId: String,
+    val active: Boolean,
+    val defaultSourceId: String?,
+)
 
 data class MaPlayerSummary(
     val id: String,

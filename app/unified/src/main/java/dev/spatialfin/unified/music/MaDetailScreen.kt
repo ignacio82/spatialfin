@@ -17,11 +17,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -94,9 +99,17 @@ fun MaDetailScreen(
                 }
                 is MaDetailState.Loaded -> LoadedBody(
                     state = s,
+                    dispatcher = dispatcher,
                     onPlayHeader = { dispatcher?.play(s.header) },
                     onPlayTrack = { dispatcher?.play(it) },
                     onOpenItem = onOpenItem,
+                    onToggleHeaderFavorite = { viewModel.toggleHeaderFavorite() },
+                    onRemovePlaylistTrack = { position ->
+                        viewModel.removePlaylistTrack(s.header.itemId, position)
+                    },
+                    onDeletePlaylist = {
+                        viewModel.deletePlaylist(s.header.itemId, onDeleted = onBack)
+                    },
                 )
             }
 
@@ -117,48 +130,88 @@ fun MaDetailScreen(
 @Composable
 private fun LoadedBody(
     state: MaDetailState.Loaded,
+    dispatcher: dev.spatialfin.unified.MaPlayDispatcher?,
     onPlayHeader: () -> Unit,
     onPlayTrack: (ServerMediaItem) -> Unit,
     onOpenItem: (MaBrowseTarget) -> Unit,
+    onToggleHeaderFavorite: () -> Unit,
+    onRemovePlaylistTrack: (Int) -> Unit,
+    onDeletePlaylist: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 56.dp, bottom = 80.dp),
-    ) {
-        item("header") {
-            Header(state = state, onPlay = onPlayHeader)
-        }
-        if (state.tracks.isNotEmpty()) {
-            item("tracks-label") {
-                SectionLabel(
-                    text = when (state.kind) {
-                        MaDetailViewModel.DetailKind.Album -> "Tracks"
-                        MaDetailViewModel.DetailKind.Artist -> "Top tracks"
-                        MaDetailViewModel.DetailKind.Playlist -> "Tracks"
-                    },
+    // Only editable playlists expose in-list editing (remove track, delete
+    // playlist). MA marks user-owned playlists with is_editable.
+    val playlistEditable = state.kind == MaDetailViewModel.DetailKind.Playlist &&
+        state.header.isEditable == true
+    val selection = rememberMaSelection()
+    Column(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(top = 56.dp, bottom = 16.dp),
+        ) {
+            item("header") {
+                Header(
+                    state = state,
+                    onPlay = onPlayHeader,
+                    onToggleFavorite = onToggleHeaderFavorite,
+                    onDeletePlaylist = if (playlistEditable) onDeletePlaylist else null,
                 )
             }
-            items(state.tracks, key = { it.itemId + "|" + it.provider }) { track ->
-                MaSearchItemRow(
-                    item = track,
-                    onClick = { onPlayTrack(track) },
-                )
+            if (state.tracks.isNotEmpty()) {
+                item("tracks-label") {
+                    SectionLabel(
+                        text = when (state.kind) {
+                            MaDetailViewModel.DetailKind.Album -> "Tracks"
+                            MaDetailViewModel.DetailKind.Artist -> "Top tracks"
+                            MaDetailViewModel.DetailKind.Playlist -> "Tracks"
+                        },
+                    )
+                }
+                itemsIndexed(state.tracks, key = { _, it -> it.itemId + "|" + it.provider }) { index, track ->
+                    val key = track.itemId + "|" + track.provider
+                    MaSearchItemRow(
+                        item = track,
+                        selected = selection.isSelected(key),
+                        onLongClick = { selection.toggle(key, track) },
+                        onClick = {
+                            if (selection.active) selection.toggle(key, track) else onPlayTrack(track)
+                        },
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (playlistEditable) {
+                                    IconButton(onClick = { onRemovePlaylistTrack(index) }) {
+                                        Icon(
+                                            Icons.Filled.RemoveCircleOutline,
+                                            contentDescription = "Remove from playlist",
+                                        )
+                                    }
+                                }
+                                MaTrackMenu(item = track, dispatcher = dispatcher)
+                            }
+                        },
+                    )
+                }
+            }
+            if (state.kind == MaDetailViewModel.DetailKind.Artist && state.albums.isNotEmpty()) {
+                item("albums-label") { SectionLabel(text = "Albums") }
+                items(state.albums, key = { "album|" + it.itemId + "|" + it.provider }) { album ->
+                    MaSearchItemRow(
+                        item = album,
+                        onClick = { onOpenItem(MaBrowseTarget.Album(album)) },
+                    )
+                }
             }
         }
-        if (state.kind == MaDetailViewModel.DetailKind.Artist && state.albums.isNotEmpty()) {
-            item("albums-label") { SectionLabel(text = "Albums") }
-            items(state.albums, key = { "album|" + it.itemId + "|" + it.provider }) { album ->
-                MaSearchItemRow(
-                    item = album,
-                    onClick = { onOpenItem(MaBrowseTarget.Album(album)) },
-                )
-            }
-        }
+        MaSelectionBar(selection = selection, dispatcher = dispatcher)
     }
 }
 
 @Composable
-private fun Header(state: MaDetailState.Loaded, onPlay: () -> Unit) {
+private fun Header(
+    state: MaDetailState.Loaded,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onDeletePlaylist: (() -> Unit)?,
+) {
     val header = state.header
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
@@ -209,16 +262,39 @@ private fun Header(state: MaDetailState.Loaded, onPlay: () -> Unit) {
             )
         }
         Spacer(Modifier.height(16.dp))
-        FilledTonalButton(onClick = onPlay) {
-            Icon(Icons.Filled.PlayArrow, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = when (state.kind) {
-                    MaDetailViewModel.DetailKind.Album,
-                    MaDetailViewModel.DetailKind.Playlist -> "Play all"
-                    MaDetailViewModel.DetailKind.Artist -> "Play top tracks"
-                },
-            )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilledTonalButton(onClick = onPlay) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = when (state.kind) {
+                        MaDetailViewModel.DetailKind.Album,
+                        MaDetailViewModel.DetailKind.Playlist -> "Play all"
+                        MaDetailViewModel.DetailKind.Artist -> "Play top tracks"
+                    },
+                )
+            }
+            val isFavorite = header.favorite == true
+            IconButton(onClick = onToggleFavorite) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                    tint = if (isFavorite) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (onDeletePlaylist != null) {
+                IconButton(onClick = onDeletePlaylist) {
+                    Icon(
+                        Icons.Filled.DeleteOutline,
+                        contentDescription = "Delete playlist",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }

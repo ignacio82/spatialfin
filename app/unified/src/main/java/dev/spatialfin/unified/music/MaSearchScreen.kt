@@ -247,6 +247,10 @@ private fun ResultsView(
         return
     }
     var selectedIndex by remember(tabs) { mutableStateOf(0) }
+    val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+    val selection = rememberMaSelection()
+    // Leaving a tab abandons its selection — keys aren't comparable across tabs.
+    androidx.compose.runtime.LaunchedEffect(selectedIndex) { selection.clear() }
     Column(modifier = Modifier.fillMaxSize()) {
         PrimaryScrollableTabRow(selectedTabIndex = selectedIndex, edgePadding = 0.dp) {
             tabs.forEachIndexed { index, (tab, items) ->
@@ -257,24 +261,48 @@ private fun ResultsView(
                 )
             }
         }
+        MaSelectionBar(selection = selection, dispatcher = dispatcher)
         val (tab, items) = tabs[selectedIndex.coerceIn(0, tabs.lastIndex)]
+        // Multi-select only on leaf-playable rows (where bulk queue/favourite
+        // actions make sense), not on Albums/Artists/Playlists.
+        val selectable = tab == SearchTab.Tracks ||
+            tab == SearchTab.Podcasts ||
+            tab == SearchTab.Radio
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
             contentPadding = PaddingValues(vertical = 8.dp),
         ) {
             items(items, key = { it.itemId + "|" + it.provider }) { item ->
+                val key = item.itemId + "|" + item.provider
                 MaSearchItemRow(
                     item = item,
+                    selected = selectable && selection.isSelected(key),
+                    onLongClick = if (selectable) {
+                        { selection.toggle(key, item) }
+                    } else {
+                        null
+                    },
                     onClick = {
-                        when (tab) {
-                            SearchTab.Tracks -> onPlayTrack(item)
-                            SearchTab.Albums -> onOpenItem(MaBrowseTarget.Album(item))
-                            SearchTab.Artists -> onOpenItem(MaBrowseTarget.Artist(item))
-                            SearchTab.Playlists -> onOpenItem(MaBrowseTarget.Playlist(item))
-                            // Podcasts and Radio fall through to a play action
-                            // for now; podcast detail lands in a later phase.
-                            SearchTab.Podcasts, SearchTab.Radio -> onPlayTrack(item)
+                        // While a selection is active, taps extend it instead of
+                        // playing/navigating.
+                        if (selectable && selection.active) {
+                            selection.toggle(key, item)
+                        } else {
+                            when (tab) {
+                                SearchTab.Tracks -> onPlayTrack(item)
+                                SearchTab.Albums -> onOpenItem(MaBrowseTarget.Album(item))
+                                SearchTab.Artists -> onOpenItem(MaBrowseTarget.Artist(item))
+                                SearchTab.Playlists -> onOpenItem(MaBrowseTarget.Playlist(item))
+                                // Podcasts and Radio fall through to a play
+                                // action; podcast detail lands in a later phase.
+                                SearchTab.Podcasts, SearchTab.Radio -> onPlayTrack(item)
+                            }
                         }
+                    },
+                    trailing = if (selectable) {
+                        { MaTrackMenu(item = item, dispatcher = dispatcher) }
+                    } else {
+                        null
                     },
                 )
             }

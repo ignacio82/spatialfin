@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -26,6 +28,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -36,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -81,8 +85,16 @@ fun MaNowPlayingScreen(
     modifier: Modifier = Modifier,
     onPickPlayer: (() -> Unit)? = null,
     onOpenSearch: (() -> Unit)? = null,
+    onOpenParty: (() -> Unit)? = null,
 ) {
     val state by session.session.collectAsStateWithLifecycle()
+    var showQueue by remember { mutableStateOf(false) }
+
+    if (showQueue) {
+        MaQueuePanel(onBack = { showQueue = false }, modifier = modifier)
+        return
+    }
+
     Surface(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -94,17 +106,36 @@ fun MaNowPlayingScreen(
             ) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
             }
-            if (onOpenSearch != null) {
-                IconButton(
-                    onClick = onOpenSearch,
-                    modifier = Modifier.align(Alignment.TopEnd),
-                ) {
-                    Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
+            Row(
+                modifier = Modifier.align(Alignment.TopEnd),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Always reachable: the Party plugin is configured server-side
+                // (no player "source"), so we can't gate on partySource — the
+                // party screen itself loads the guest QR via `party/url` and
+                // simply omits it when the plugin isn't present.
+                if (onOpenParty != null) {
+                    IconButton(onClick = onOpenParty) {
+                        Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
+                    }
+                }
+                IconButton(onClick = { showQueue = true }) {
+                    Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
+                }
+                if (onOpenSearch != null) {
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
+                    }
                 }
             }
+            val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
             NowPlayingBody(
                 state = state,
                 onPickPlayer = onPickPlayer,
+                onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
+                onPrevious = dispatcher?.let { { it.previous() } },
+                onPlayPause = dispatcher?.let { { it.playPause() } },
+                onNext = dispatcher?.let { { it.next() } },
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -116,6 +147,10 @@ private fun NowPlayingBody(
     state: MaSession,
     modifier: Modifier = Modifier,
     onPickPlayer: (() -> Unit)? = null,
+    onToggleParty: (() -> Unit)? = null,
+    onPrevious: (() -> Unit)? = null,
+    onPlayPause: (() -> Unit)? = null,
+    onNext: (() -> Unit)? = null,
 ) {
     val track = state.nowPlaying
     if (track == null) {
@@ -203,15 +238,15 @@ private fun NowPlayingBody(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             IconButton(
-                onClick = { /* TODO Phase 1 stretch: PlayerCommand.PREVIOUS */ },
-                enabled = state.playbackPhase != PlaybackPhase.Preparing,
+                onClick = { onPrevious?.invoke() },
+                enabled = onPrevious != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(36.dp))
             }
             FilledIconButton(
-                onClick = { /* TODO Phase 1 stretch: PlayerCommand.PLAY_PAUSE */ },
+                onClick = { onPlayPause?.invoke() },
                 modifier = Modifier.size(64.dp),
-                enabled = state.playbackPhase != PlaybackPhase.Preparing,
+                enabled = onPlayPause != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(
                     imageVector = if (state.playbackPhase == PlaybackPhase.Playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -220,8 +255,8 @@ private fun NowPlayingBody(
                 )
             }
             IconButton(
-                onClick = { /* TODO Phase 1 stretch: PlayerCommand.NEXT */ },
-                enabled = state.playbackPhase != PlaybackPhase.Preparing,
+                onClick = { onNext?.invoke() },
+                enabled = onNext != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
             }
@@ -241,6 +276,24 @@ private fun NowPlayingBody(
             },
             colors = AssistChipDefaults.assistChipColors(),
         )
+
+        // Party mode toggle — only when the selected player exposes the MA
+        // Party plugin's source.
+        state.partySource?.let { party ->
+            FilterChip(
+                selected = party.active,
+                onClick = { onToggleParty?.invoke() },
+                enabled = onToggleParty != null,
+                label = { Text(if (party.active) "Party mode on" else "Party mode") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Celebration,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            )
+        }
     }
 }
 

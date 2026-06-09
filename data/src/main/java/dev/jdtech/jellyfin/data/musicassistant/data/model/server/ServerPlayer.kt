@@ -38,7 +38,7 @@ data class ServerPlayer(
     @SerialName("group_members") val groupMembers: Set<String>? = null,
     @SerialName("static_group_members") val staticGroupMembers: Set<String>? = null,
     @SerialName("active_source") val activeSource: String? = null,
-    // @SerialName("source_list") val sourceList: List<PlayerSource>,
+    @SerialName("source_list") val sourceList: List<PlayerSource> = emptyList(),
     @SerialName("active_group") val activeGroup: String? = null,
     @SerialName("synced_to") val syncedTo: String? = null,
     @SerialName("group_volume") val groupVolume: Float? = null,
@@ -83,12 +83,18 @@ data class ServerPlayerMedia(
 //    @SerialName("custom_data") val customData: JsonObject? = null,
 )
 
-// @Serializable
-// data class PlayerSource(
-//    @SerialName("id") val id: String,
-//    @SerialName("name") val name: String,
-//    @SerialName("passive") val passive: Boolean,
-//    @SerialName("can_play_pause") val canPlayPause: Boolean,
-//    @SerialName("can_seek") val canSeek: Boolean,
-//    @SerialName("can_next_previous") val canNextPrevious: Boolean
-// )
+/**
+ * A selectable input source on a player (line-in, AirPlay, a plugin-provided
+ * source like the Party plugin's vote-driven queue, …). `passive` sources can't
+ * be activated by us; the Party source is active (selectable via
+ * `players/cmd/select_source`).
+ */
+@Serializable
+data class PlayerSource(
+    @SerialName("id") val id: String,
+    @SerialName("name") val name: String = "",
+    @SerialName("passive") val passive: Boolean = false,
+    @SerialName("can_play_pause") val canPlayPause: Boolean = false,
+    @SerialName("can_seek") val canSeek: Boolean = false,
+    @SerialName("can_next_previous") val canNextPrevious: Boolean = false,
+)

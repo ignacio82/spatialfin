@@ -31,6 +31,7 @@ fun HomeSection(
     onAction: (HomeAction) -> Unit,
     modifier: Modifier = Modifier,
     onSeeAll: (() -> Unit)? = null,
+    onItemLongClick: ((dev.jdtech.jellyfin.models.SpatialFinItem) -> Unit)? = null,
 ) {
     Column(modifier = modifier) {
         Row(
@@ -59,6 +60,7 @@ fun HomeSection(
                     direction = Direction.HORIZONTAL,
                     displayRatings = displayRatings,
                     onClick = { onAction(HomeAction.OnItemClick(item)) },
+                    onLongClick = onItemLongClick,
                 )
             }
         }

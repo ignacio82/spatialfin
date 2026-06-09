@@ -3,6 +3,7 @@ package dev.spatialfin.unified.music
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.MediaType
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
 import javax.inject.Inject
@@ -37,8 +38,14 @@ class MaDetailViewModel @Inject constructor(
     private val _state: MutableStateFlow<MaDetailState> = MutableStateFlow(MaDetailState.Loading)
     val state: StateFlow<MaDetailState> = _state.asStateFlow()
 
+    // Remembered so playlist edits can re-fetch the list after a mutation.
+    private var lastSeed: ServerMediaItem? = null
+    private var lastKind: DetailKind? = null
+
     /** Fire once when the screen mounts. Idempotent if called multiple times. */
     fun load(seed: ServerMediaItem, kind: DetailKind) {
+        lastSeed = seed
+        lastKind = kind
         _state.value = MaDetailState.Loading
         viewModelScope.launch {
             try {
@@ -86,6 +93,64 @@ class MaDetailViewModel @Inject constructor(
             tracks = tracks,
             albums = emptyList(),
         )
+    }
+
+    /**
+     * Remove the track at [position] (0-based, matching the loaded list order)
+     * from the editable playlist [playlistId]. Optimistically drops it from the
+     * visible list, then reconciles with a refetch.
+     */
+    fun removePlaylistTrack(playlistId: String, position: Int) {
+        val loaded = _state.value as? MaDetailState.Loaded ?: return
+        if (position !in loaded.tracks.indices) return
+        _state.value = loaded.copy(
+            tracks = loaded.tracks.toMutableList().apply { removeAt(position) },
+        )
+        viewModelScope.launch {
+            val ok = repository.removeTracksFromPlaylist(playlistId, listOf(position))
+            if (!ok) {
+                Timber.tag(TAG).w("remove_playlist_tracks failed (playlist=%s pos=%d)", playlistId, position)
+            }
+            // Refetch either way: success confirms, failure restores truth.
+            lastSeed?.let { seed -> lastKind?.let { kind -> reloadInBackground(seed, kind) } }
+        }
+    }
+
+    /** Delete the editable playlist [playlistId], then invoke [onDeleted]. */
+    fun deletePlaylist(playlistId: String, onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            val ok = repository.removeFromLibrary(playlistId, MediaType.PLAYLIST)
+            if (!ok) Timber.tag(TAG).w("delete playlist %s failed", playlistId)
+            onDeleted()
+        }
+    }
+
+    /** Toggle the favourite flag on the header item (album / artist / playlist). */
+    fun toggleHeaderFavorite() {
+        val loaded = _state.value as? MaDetailState.Loaded ?: return
+        val target = !(loaded.header.favorite == true)
+        _state.value = loaded.copy(header = loaded.header.copy(favorite = target))
+        viewModelScope.launch {
+            val result = repository.setFavorite(loaded.header, target)
+            if (result == null) {
+                // Revert on failure.
+                (_state.value as? MaDetailState.Loaded)?.let {
+                    _state.value = it.copy(header = it.header.copy(favorite = !target))
+                }
+            }
+        }
+    }
+
+    private suspend fun reloadInBackground(seed: ServerMediaItem, kind: DetailKind) {
+        try {
+            when (kind) {
+                DetailKind.Album -> loadAlbum(seed)
+                DetailKind.Artist -> loadArtist(seed)
+                DetailKind.Playlist -> loadPlaylist(seed)
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "background reload failed for %s", seed.itemId)
+        }
     }
 
     enum class DetailKind { Album, Artist, Playlist }

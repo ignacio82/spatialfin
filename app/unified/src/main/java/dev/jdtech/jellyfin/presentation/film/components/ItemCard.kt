@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.presentation.film.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun ItemCard(
     item: SpatialFinItem,
     direction: Direction,
@@ -41,6 +43,7 @@ fun ItemCard(
     onDeleteClick: ((SpatialFinItem) -> Unit)? = null,
     displayRatings: Boolean = true,
     modifier: Modifier = Modifier,
+    onLongClick: ((SpatialFinItem) -> Unit)? = null,
 ) {
     val width =
         when (direction) {
@@ -52,7 +55,10 @@ fun ItemCard(
             modifier
                 .width(width.dp)
                 .clip(MaterialTheme.shapes.small)
-                .clickable(onClick = { onClick(item) })
+                .combinedClickable(
+                    onClick = { onClick(item) },
+                    onLongClick = onLongClick?.let { { it(item) } },
+                )
     ) {
         ElevatedCard(shape = MaterialTheme.shapes.small) {
             Box {

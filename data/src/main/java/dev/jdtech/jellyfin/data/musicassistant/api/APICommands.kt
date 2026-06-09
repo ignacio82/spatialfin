@@ -10,6 +10,7 @@ object APICommands {
     const val PLAYERS_CMD_GROUP_VOLUME = "$PLAYERS_CMD/group_volume"
     const val PLAYERS_CMD_GROUP_VOLUME_MUTE = "$PLAYERS_CMD/group_volume_mute"
     const val PLAYERS_CMD_SET_MEMBERS = "$PLAYERS_CMD/set_members"
+    const val PLAYERS_CMD_SELECT_SOURCE = "$PLAYERS_CMD/select_source"
 
     // Player Queue commands
     const val PLAYER_QUEUES_ALL = "player_queues/all"
@@ -69,6 +70,9 @@ object APICommands {
     // Mark commands
     const val MUSIC_MARK_ITEM_PLAYED = "music/mark_item_played"
     const val MUSIC_MARK_ITEM_UNPLAYED = "music/mark_item_unplayed"
+
+    // Party plugin
+    const val PARTY_URL = "party/url"
 
     // Search and recommendations
     const val MUSIC_SEARCH = "music/search"

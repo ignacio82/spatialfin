@@ -178,6 +178,8 @@ fun TvNavigationRoot(
     maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
     onFinishApp: () -> Unit = {},
     initialSearchQuery: String? = null,
+    maDeepLink: kotlinx.coroutines.flow.StateFlow<dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed?>? = null,
+    onMaDeepLinkHandled: () -> Unit = {},
 ) {
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
@@ -361,6 +363,19 @@ fun TvNavigationRoot(
                 }
             }
             var showPickerSheet by remember { mutableStateOf(false) }
+            var showParty by remember { mutableStateOf(false) }
+            // Open the right MA overlay when a queue/party deep link arrives.
+            if (maDeepLink != null) {
+                val pendingDeepLink by maDeepLink.collectAsStateWithLifecycle()
+                LaunchedEffect(pendingDeepLink) {
+                    when (pendingDeepLink) {
+                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
+                        dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
+                        else -> Unit
+                    }
+                    if (pendingDeepLink != null) onMaDeepLinkHandled()
+                }
+            }
             if (showNowPlaying) {
                 BackHandler(onBack = { showNowPlaying = false })
                 dev.spatialfin.unified.music.MaNowPlayingScreen(
@@ -371,6 +386,15 @@ fun TvNavigationRoot(
                         showNowPlaying = false
                         navigate(TvRoute.MaSearch)
                     },
+                    onOpenParty = { showParty = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showParty) {
+                BackHandler(onBack = { showParty = false })
+                dev.spatialfin.unified.music.MaPartyScreen(
+                    session = maSession,
+                    onBack = { showParty = false },
                     modifier = Modifier.fillMaxSize(),
                 )
             }

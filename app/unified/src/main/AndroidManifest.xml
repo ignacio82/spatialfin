@@ -119,6 +119,19 @@
                 <category android:name="android.intent.category.XR_LAUNCHER" />
             </intent-filter>
 
+            <!-- Music Assistant deep links: spatialfin://ma/{play,resume,queue,party} -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="spatialfin" android:host="ma" />
+            </intent-filter>
+
+            <!-- App shortcuts: Resume / Open queue / Party mode -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
             <!-- Launch in Home Space by default; user can switch to Full Space in-app -->
             <property
                 android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"

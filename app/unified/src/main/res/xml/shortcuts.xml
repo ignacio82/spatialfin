@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static app shortcuts for Music Assistant. Each launches via a
+  spatialfin://ma/* deep link (see MaDeepLink). No targetPackage/targetClass:
+  the scheme is unique to this app so the implicit VIEW intent resolves to our
+  own intent-filter on every build variant (debug carries an applicationId
+  suffix, so a hardcoded package would break shortcuts there).
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="ma_resume"
+        android:enabled="true"
+        android:icon="@drawable/fcast_ic_play_filled"
+        android:shortcutShortLabel="@string/shortcut_resume_short"
+        android:shortcutLongLabel="@string/shortcut_resume_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="spatialfin://ma/resume" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="ma_queue"
+        android:enabled="true"
+        android:icon="@drawable/ic_queue"
+        android:shortcutShortLabel="@string/shortcut_queue_short"
+        android:shortcutLongLabel="@string/shortcut_queue_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="spatialfin://ma/queue" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="ma_party"
+        android:enabled="true"
+        android:icon="@drawable/ic_audiotrack"
+        android:shortcutShortLabel="@string/shortcut_party_short"
+        android:shortcutLongLabel="@string/shortcut_party_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="spatialfin://ma/party" />
+    </shortcut>
+</shortcuts>

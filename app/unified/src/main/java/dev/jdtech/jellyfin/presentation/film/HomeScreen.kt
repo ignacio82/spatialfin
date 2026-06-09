@@ -166,6 +166,17 @@ private fun HomeScreenLayout(
     val showServerSelectionSheetState = rememberModalBottomSheetState()
     var showServerSelectionBottomSheet by remember { mutableStateOf(false) }
 
+    // Long-press target for a Music Assistant home card → actions sheet.
+    val maDispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+    var maMenuItem by remember { mutableStateOf<dev.jdtech.jellyfin.models.SpatialFinItem?>(null) }
+    maMenuItem?.let { menuItem ->
+        dev.spatialfin.unified.music.MaCardActionsMenu(
+            item = menuItem,
+            dispatcher = maDispatcher,
+            onDismiss = { maMenuItem = null },
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize().semantics { isTraversalGroup = true }) {
         PullToRefreshBox(isRefreshing = false, onRefresh = { onAction(HomeAction.OnRetryClick) }) {
             LazyColumn(
@@ -240,6 +251,9 @@ private fun HomeScreenLayout(
                         itemsPadding = itemsPadding,
                         onAction = onAction,
                         modifier = Modifier.animateItem(),
+                        // Long-press an MA card → actions (add to playlist/queue,
+                        // play next) instead of only play-on-tap.
+                        onItemLongClick = { maMenuItem = it },
                     )
                 }
                 items(visibleHomeSections.offlineLibrarySections, key = { it.id }) { section ->

@@ -1,7 +1,8 @@
 package dev.spatialfin.unified.music
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,8 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,21 +38,28 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
  * context menu, drag-to-reorder, multi-select check) needs to land in one
  * place.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MaSearchItemRow(
     item: ServerMediaItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trailing: @Composable (() -> Unit)? = null,
+    selected: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.background,
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Artwork(item = item)
+        Artwork(item = item, selected = selected)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -78,29 +88,50 @@ fun MaSearchItemRow(
 }
 
 @Composable
-private fun Artwork(item: ServerMediaItem) {
+private fun Artwork(item: ServerMediaItem, selected: Boolean = false) {
     val shape = RoundedCornerShape(6.dp)
     val artworkUrl = item.preferredArtworkUrl()
-    if (artworkUrl.isNullOrBlank()) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.MusicNote,
+    Box(contentAlignment = Alignment.Center) {
+        if (artworkUrl.isNullOrBlank()) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        } else {
+            AsyncImage(
+                model = artworkUrl,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(48.dp).clip(shape),
             )
         }
-    } else {
-        AsyncImage(
-            model = artworkUrl,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp).clip(shape),
-        )
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onPrimary),
+                )
+            }
+        }
     }
 }
 

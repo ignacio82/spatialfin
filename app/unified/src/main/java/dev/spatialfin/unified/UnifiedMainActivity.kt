@@ -164,6 +164,33 @@ class UnifiedMainActivity : AppCompatActivity() {
     // back to the system so the handheld rotates normally.
     private var displayListener: DisplayManager.DisplayListener? = null
 
+    /**
+     * Pending `spatialfin://ma/...` UI deep link (queue / party). Set from
+     * [onCreate]/[onNewIntent], consumed by the Home Space composable. Play and
+     * Resume are dispatched immediately (no UI needed) and never land here.
+     */
+    private val maUiDeepLink =
+        kotlinx.coroutines.flow.MutableStateFlow<dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed?>(null)
+
+    private fun handleMaDeepLink(intent: Intent?) {
+        when (val parsed = dev.jdtech.jellyfin.deeplink.MaDeepLink.parse(intent?.data)) {
+            is dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Play ->
+                dispatchMusicAssistantPlay(this, maSession, maServiceClient, null, parsed.uri)
+            dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Resume ->
+                MaPlayDispatcher(this, maSession, maServiceClient).playPause()
+            dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue,
+            dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party,
+            -> maUiDeepLink.value = parsed
+            null -> Unit
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleMaDeepLink(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         dev.spatialfin.unified.MusicAssistantTest.runTest(this)
         super.onCreate(savedInstanceState)
@@ -244,6 +271,9 @@ class UnifiedMainActivity : AppCompatActivity() {
 
         appLockManager.refreshState()
 
+        // Music Assistant deep links (app shortcuts / Assistant hand-off).
+        handleMaDeepLink(intent)
+
         setContent {
             LaunchedEffect(Unit) {
                 withFrameNanos { }
@@ -271,6 +301,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                             maServiceClient = maServiceClient,
                             onFinishApp = ::finishAndKillProcess,
                             initialSearchQuery = initialSearchQueryExtra,
+                            maDeepLink = maUiDeepLink,
+                            onMaDeepLinkHandled = { maUiDeepLink.value = null },
                         )
                     }
                 }
@@ -290,6 +322,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 maServiceClient = maServiceClient,
                                 onReconnect = viewModel::reconnect,
                                 onFinishApp = ::finishAndKillProcess,
+                                maDeepLink = maUiDeepLink,
+                                onMaDeepLinkHandled = { maUiDeepLink.value = null },
                             )
                         }
                     }
@@ -836,6 +870,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
             var showNowPlaying by remember { mutableStateOf(false) }
             var showPickerSheet by remember { mutableStateOf(false) }
+            var showParty by remember { mutableStateOf(false) }
             var showMaSearch by remember { mutableStateOf(false) }
             var maDetailSeed by remember {
                 mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
@@ -849,6 +884,16 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
             val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
                 .state.collectAsStateWithLifecycle()
+            // Open the right MA overlay when a queue/party deep link arrives.
+            val pendingDeepLink by maUiDeepLink.collectAsStateWithLifecycle()
+            LaunchedEffect(pendingDeepLink) {
+                when (pendingDeepLink) {
+                    dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Queue -> showNowPlaying = true
+                    dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed.Party -> showParty = true
+                    else -> Unit
+                }
+                if (pendingDeepLink != null) maUiDeepLink.value = null
+            }
             Box(
                 modifier = Modifier
                     .align(androidx.compose.ui.Alignment.BottomCenter)
@@ -873,6 +918,15 @@ class UnifiedMainActivity : AppCompatActivity() {
                         showNowPlaying = false
                         showMaSearch = true
                     },
+                    onOpenParty = { showParty = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showParty) {
+                androidx.activity.compose.BackHandler(onBack = { showParty = false })
+                dev.spatialfin.unified.music.MaPartyScreen(
+                    session = maSession,
+                    onBack = { showParty = false },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1062,6 +1116,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                     }
                 }
                 var showSpatialPicker by remember { mutableStateOf(false) }
+                var showSpatialParty by remember { mutableStateOf(false) }
                 val spatialCtx = androidx.compose.ui.platform.LocalContext.current
                 val spatialDispatcher = remember(spatialCtx) {
                     dev.spatialfin.unified.MaPlayDispatcher(spatialCtx, maSession, maServiceClient)
@@ -1079,6 +1134,18 @@ class UnifiedMainActivity : AppCompatActivity() {
                             session = maSession,
                             onBack = { showSpatialNowPlaying = false },
                             onPickPlayer = { showSpatialPicker = true },
+                            onOpenParty = { showSpatialParty = true },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                if (showSpatialParty) {
+                    androidx.xr.compose.spatial.SpatialDialog(
+                        onDismissRequest = { showSpatialParty = false },
+                    ) {
+                        dev.spatialfin.unified.music.MaPartyScreen(
+                            session = maSession,
+                            onBack = { showSpatialParty = false },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

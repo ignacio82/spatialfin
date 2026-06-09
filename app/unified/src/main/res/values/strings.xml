@@ -35,4 +35,12 @@
     <!-- Sender-side subtitle fidelity -->
     <string name="cast_subtitle_transcoding">Transcoding for subtitle compatibility</string>
     <string name="cast_subtitle_fidelity_degraded">This title uses styled subtitles. %1$s will simplify them.</string>
+
+    <!-- Music Assistant app shortcuts -->
+    <string name="shortcut_resume_short">Resume</string>
+    <string name="shortcut_resume_long">Resume playback</string>
+    <string name="shortcut_queue_short">Queue</string>
+    <string name="shortcut_queue_long">Open the play queue</string>
+    <string name="shortcut_party_short">Party</string>
+    <string name="shortcut_party_long">Open party mode</string>
 </resources>

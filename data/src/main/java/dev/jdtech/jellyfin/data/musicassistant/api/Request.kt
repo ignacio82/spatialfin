@@ -32,6 +32,21 @@ data class Request @OptIn(ExperimentalUuidApi::class) constructor(
             },
         )
 
+        /**
+         * Activate a player source — used to enter (or leave) the Music
+         * Assistant Party plugin's source, which exposes a vote-driven queue.
+         */
+        fun selectSource(
+            playerId: String,
+            sourceId: String,
+        ) = Request(
+            command = APICommands.PLAYERS_CMD_SELECT_SOURCE,
+            args = buildJsonObject {
+                put("player_id", JsonPrimitive(playerId))
+                put("source", JsonPrimitive(sourceId))
+            },
+        )
+
         fun seek(
             queueId: String,
             position: Long,
