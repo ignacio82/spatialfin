@@ -45,6 +45,14 @@ data class SendspinReceiverUiState(
     val serverId: String? = null,
     val playbackState: SendspinReceiverPlaybackState = SendspinReceiverPlaybackState.STOPPED,
     val controlsDismissed: Boolean = false,
+    /**
+     * True once genuine playback has started in THIS session (a real
+     * PLAYING transition, not the server's restore sync after a reconnect).
+     * Lets the receiver UI stay up through a pause/stop — where MA reports the
+     * SendSpin endpoint as STOPPED — while still NOT hijacking the screen on a
+     * cold launch that only replayed last session's stale metadata.
+     */
+    val playbackStarted: Boolean = false,
     val supportedCommands: Set<String> = emptySet(),
     val volume: Int = 100,
     val muted: Boolean = false,
@@ -77,10 +85,16 @@ data class SendspinReceiverUiState(
         get() = albumArtwork?.isNotEmpty() == true || !artworkUrl.isNullOrBlank()
 
     val showControls: Boolean
+        // Surface the receiver UI while playback is live (PLAYING / PAUSED), and
+        // also while STOPPED *if* we've genuinely played this session — so a
+        // pause/stop (which MA reports as STOPPED for a SendSpin endpoint)
+        // doesn't make the controls vanish. A cold launch that only replayed
+        // last session's stale metadata has playbackStarted == false, so it
+        // still won't hijack Home.
         get() =
             connected &&
                 !controlsDismissed &&
-                (playbackState != SendspinReceiverPlaybackState.STOPPED || hasMedia)
+                (playbackState != SendspinReceiverPlaybackState.STOPPED || (playbackStarted && hasMedia))
 
     fun supports(command: String): Boolean = command in supportedCommands
 }

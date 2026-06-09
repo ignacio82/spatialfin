@@ -64,13 +64,16 @@ import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 @Composable
 fun SendspinMiniPlayer(modifier: Modifier = Modifier) {
     val state by SendspinReceiverSession.state.collectAsStateWithLifecycle()
-    // Hide on STOP. Pressing Stop already sets `controlsDismissed = true`, so
-    // without the playbackState gate the mini-player would linger as long as
-    // there's any cached metadata — the user expects Stop to be a clean exit.
+    // Show whenever the user dismissed the fullscreen during an active session,
+    // so they can always tap to restore and resume. Pausing a SendSpin endpoint
+    // reports STOPPED, so gating purely on `playbackState != STOPPED` would hide
+    // the mini-player on pause (no way back). `playbackStarted` stays true
+    // through a pause but is cleared by a genuine Stop, which keeps Stop a clean
+    // exit (mini-player hides).
     val visible = state.connected &&
         state.controlsDismissed &&
         state.hasMedia &&
-        state.playbackState != SendspinReceiverPlaybackState.STOPPED
+        (state.playbackState != SendspinReceiverPlaybackState.STOPPED || state.playbackStarted)
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn() + expandVertically(),

@@ -63,6 +63,15 @@ class SendspinReceiverService : Service() {
     private var smoothedVisualizerLevels: List<Float> = emptyList()
     @Volatile private var lastPlayedServerId: String = ""
 
+    /**
+     * Set true whenever the connection (re)establishes, consumed by the first
+     * playback-state emission that follows. It marks that emission as the
+     * server's restore/catch-up sync rather than a user-initiated cast, so we
+     * don't auto-pop the fullscreen over Home on app launch when the previous
+     * session's playback state is replayed.
+     */
+    @Volatile private var pendingConnectionSync: Boolean = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -230,6 +239,9 @@ class SendspinReceiverService : Service() {
         }
         scope.launch {
             newClient.serverId.collect { id ->
+                // A fresh connection: the next playback-state emission is the
+                // server's restore sync, not a user cast — don't auto-show for it.
+                if (id.isNotBlank()) pendingConnectionSync = true
                 SendspinReceiverSession.update {
                     it.copy(
                         connected = id.isNotBlank(),
@@ -261,15 +273,29 @@ class SendspinReceiverService : Service() {
                 if (playbackState == GroupPlaybackState.PLAYING) {
                     lastPlayedServerId = newClient.serverId.value
                 }
+                // The first emission after a (re)connect is the restore sync;
+                // consume the guard so a replayed PLAYING state doesn't auto-pop
+                // the fullscreen on launch. Subsequent starts auto-show normally.
+                val isConnectionSync = pendingConnectionSync
+                pendingConnectionSync = false
                 SendspinReceiverSession.update {
                     val stopped = playbackState == GroupPlaybackState.STOPPED
                     val startingPlayback =
                         it.playbackState == SendspinReceiverPlaybackState.STOPPED && !stopped
+                    // A genuine play start (not the post-reconnect restore sync)
+                    // marks the session active, so the controls survive a later
+                    // pause/stop instead of vanishing.
+                    val genuineStart = startingPlayback && !isConnectionSync
                     it.copy(
                         playbackState = playbackState.toUiPlaybackState(),
+                        playbackStarted = it.playbackStarted || genuineStart,
                         controlsDismissed =
                             when {
                                 stopped -> it.controlsDismissed
+                                // Restore sync replaying a playing state → keep
+                                // the receiver UI dismissed; user can open it
+                                // from the mini-player if audio is really live.
+                                startingPlayback && isConnectionSync -> true
                                 startingPlayback -> false
                                 else -> it.controlsDismissed
                             },
@@ -306,17 +332,32 @@ class SendspinReceiverService : Service() {
         }
 
         val ad = SendspinReceiverAdvertiser(applicationContext)
-        ad.register(
-            serviceName = clientId,
-            port = newHost.port,
-            properties = mapOf(
-                "path" to "/sendspin",
-                "name" to displayName,
-                "manufacturer" to "SpatialFin",
-                "model" to "Android",
-            ),
-        )
         advertiser = ad
+        val advertiseProps = mapOf(
+            "path" to "/sendspin",
+            "name" to displayName,
+            "manufacturer" to "SpatialFin",
+            "model" to "Android",
+        )
+        // Keep the mDNS advert alive. A single register() right after a restart
+        // can silently no-op (Wi-Fi interface not up yet → no bindable address,
+        // or a jmDNS error), leaving the service running but invisible to MA —
+        // which is exactly how MA "stops seeing" the receiver. Retry until it
+        // registers, then health-check and re-publish if it ever drops, so MA
+        // can always re-discover us without a manual restart.
+        scope.launch {
+            while (true) {
+                // Re-publish if we've never advertised, dropped, OR the device's
+                // LAN IP changed under us (DHCP) — a stale-IP record is as bad as
+                // none for MA's server-initiated connect.
+                if (ad.isActive() && !ad.addressChanged()) {
+                    kotlinx.coroutines.delay(ADVERTISE_HEALTH_INTERVAL_MS)
+                    continue
+                }
+                val ok = ad.register(serviceName = clientId, port = newHost.port, properties = advertiseProps)
+                kotlinx.coroutines.delay(if (ok) ADVERTISE_HEALTH_INTERVAL_MS else ADVERTISE_RETRY_DELAY_MS)
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -602,7 +643,14 @@ class SendspinReceiverService : Service() {
                     )
                     return@launch
                 }
-                rememberPreferredPlayer(serverId, target.id)
+                // Do NOT persist auto-resolved targets. Persisting the result of
+                // [resolvePlayMediaTarget] turned a transient "MA hasn't seen our
+                // SendSpin endpoint yet" fallback (step 3 → any usable player)
+                // into a permanent stickiness: the random player got saved as the
+                // preferred one and every later play short-circuited to it via
+                // step 1, even after MA re-discovered this device. Only an
+                // explicit picker choice ([setPreferredPlayer]) should persist;
+                // auto-detection re-runs each play and self-heals.
                 Timber.tag(TAG).i(
                     "MA play_media: uri=%s queue_id=%s (player_name=%s type=%s provider=%s)",
                     mediaUri, target.id, target.name, target.type, target.provider,
@@ -690,32 +738,39 @@ class SendspinReceiverService : Service() {
                         return wrapper
                     }
                 }
-                // Wrapper not ready yet. Don't fall through to "any player"
-                // when we have a SendSpin endpoint — the user expects audio
-                // here, not elsewhere. Poll briefly for MA's auto-link.
-                if (System.currentTimeMillis() < deadline) {
-                    Timber.tag(TAG).d(
-                        "MA play_media: SendSpin endpoint registered (%s) but wrapper not linked yet — polling (attempt=%d, elapsed=%dms)",
-                        ourSendspin.id, attempt, System.currentTimeMillis() - start,
-                    )
-                    val nextDelay = if (attempt < FAST_POLLS) FAST_POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS
-                    kotlinx.coroutines.delay(nextDelay)
-                    attempt++
-                    continue
-                }
-                Timber.tag(TAG).w(
-                    "MA play_media: SendSpin endpoint %s has no usable wrapper after %dms — refusing to route to another player",
-                    ourSendspin.id, WRAPPER_POLL_TIMEOUT_MS,
+                Timber.tag(TAG).d(
+                    "MA play_media: SendSpin endpoint registered (%s) but wrapper not linked yet (attempt=%d, elapsed=%dms)",
+                    ourSendspin.id, attempt, System.currentTimeMillis() - start,
                 )
-                return null
+            } else {
+                // MA hasn't registered THIS device's SendSpin endpoint yet.
+                // This code only runs inside the receiver service, so this
+                // device IS a SendSpin receiver — the user expects audio HERE.
+                // Never fall through to "any usable player" (that's how a play
+                // silently landed on a random speaker). Poll for our endpoint
+                // to appear, then refuse rather than route elsewhere.
+                Timber.tag(TAG).d(
+                    "MA play_media: this device's SendSpin endpoint not visible in MA yet " +
+                        "(attempt=%d, elapsed=%dms) — polling",
+                    attempt, System.currentTimeMillis() - start,
+                )
             }
 
-            // 3) No SendSpin endpoint at all — pure controller mode. Falling
-            //    through to any usable player is fine because the user
-            //    necessarily picked through some other surface (or will via
-            //    the upcoming picker UI).
-            return usable.firstOrNull { it.provider.equals("universal_player", ignoreCase = true) }
-                ?: usable.firstOrNull()
+            // Neither our wrapper nor our endpoint resolved this pass. Poll
+            // until the deadline, then refuse — we only ever target this
+            // device's wrapper or an explicit picker choice, never a random
+            // player.
+            if (System.currentTimeMillis() < deadline) {
+                val nextDelay = if (attempt < FAST_POLLS) FAST_POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS
+                kotlinx.coroutines.delay(nextDelay)
+                attempt++
+                continue
+            }
+            Timber.tag(TAG).w(
+                "MA play_media: this device has no usable wrapper after %dms — refusing to route to another player",
+                WRAPPER_POLL_TIMEOUT_MS,
+            )
+            return null
         }
     }
 
@@ -750,12 +805,6 @@ class SendspinReceiverService : Service() {
         val key = serverId?.takeIf { it.isNotBlank() }?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
             ?: return null
         return musicAssistantPrefs().getString(key, null)?.takeIf { it.isNotBlank() }
-    }
-
-    private fun rememberPreferredPlayer(serverId: String?, playerId: String) {
-        val key = serverId?.takeIf { it.isNotBlank() }?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
-            ?: return
-        musicAssistantPrefs().edit().putString(key, playerId).apply()
     }
 
     private fun showToast(message: String) {
@@ -1201,6 +1250,10 @@ class SendspinReceiverService : Service() {
                 copy(
                     playbackState = SendspinReceiverPlaybackState.STOPPED,
                     controlsDismissed = true,
+                    // Genuine stop ends the session — clear the active flag so the
+                    // controls/mini-player don't linger (a pause keeps it, because
+                    // pause maps to PAUSED here, not STOP).
+                    playbackStarted = false,
                     visualizerLevels = emptyList(),
                 )
             SendspinControllerCommands.VOLUME -> copy(volume = (volume ?: this.volume).coerceIn(0, 100))
@@ -1347,6 +1400,11 @@ class SendspinReceiverService : Service() {
         private const val FAST_POLLS = 6
         private const val FAST_POLL_INTERVAL_MS = 500L
         private const val SLOW_POLL_INTERVAL_MS = 2_000L
+
+        // mDNS advert self-heal: retry quickly until it publishes, then
+        // re-check periodically and re-publish if it ever drops.
+        private const val ADVERTISE_RETRY_DELAY_MS = 3_000L
+        private const val ADVERTISE_HEALTH_INTERVAL_MS = 30_000L
         private val VISUALIZER_SCALAR_SHAPE =
             listOf(
                 0.18f,
