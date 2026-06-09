@@ -1,0 +1,412 @@
+package dev.jdtech.jellyfin.data.musicassistant.repository
+
+import dev.jdtech.jellyfin.data.musicassistant.api.APICommands
+import dev.jdtech.jellyfin.data.musicassistant.api.Request
+import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.PlayerState
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerPlayer
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueue
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.MediaItemPlayedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.PlayerAddedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.PlayerRemovedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.PlayerUpdatedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueAddedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueItemsUpdatedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueTimeUpdatedEvent
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.QueueUpdatedEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import timber.log.Timber
+
+/**
+ * Live Music Assistant session state, fed by the server's event stream.
+ *
+ * Subscribes to PLAYER_*, QUEUE_*, and MEDIA_ITEM_PLAYED events from
+ * [ServiceClient.events] and reduces them into a single [StateFlow]<[MaSession]>
+ * that every MA UI surface reads from. Mirrors the architecture of the official
+ * mobile app's `MainDataSource` (commonMain/.../data/MainDataSource.kt) so we
+ * stay structurally compatible with future MA event additions.
+ *
+ * Two responsibilities the events alone can't satisfy, both handled here:
+ *
+ *  1. **Cold-start hydration** — events only fire on _changes_, so we seed
+ *     [players] and [queues] with a one-shot `players/all` + `player_queues/all`
+ *     fetch the first time the WebSocket reports ready.
+ *
+ *  2. **Optimistic playback** — `play_media` blocks until MA has loaded the
+ *     queue (frequently several seconds), and the UI needs to show the just-
+ *     tapped track instantly. [reportOptimisticPlay] surfaces a pending track
+ *     hint in [MaSession.pendingPlay] that the mini-player can render
+ *     immediately. The hint clears automatically the moment a real
+ *     QUEUE_UPDATED or PLAYER_UPDATED arrives whose current item matches the
+ *     hinted URI.
+ */
+class MaSessionRepository(
+    private val serviceClient: ServiceClient,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private val _players = MutableStateFlow<Map<String, ServerPlayer>>(emptyMap())
+    private val _queues = MutableStateFlow<Map<String, ServerQueue>>(emptyMap())
+    private val _selectedPlayerId = MutableStateFlow<String?>(null)
+    private val _pendingPlay = MutableStateFlow<PendingPlay?>(null)
+    private val _hydrationState = MutableStateFlow(HydrationState.Idle)
+
+    @OptIn(FlowPreview::class)
+    val session: StateFlow<MaSession> = combine(
+        _players,
+        _queues,
+        _selectedPlayerId,
+        _pendingPlay,
+        _hydrationState,
+    ) { players, queues, selectedId, pending, hydration ->
+        buildSession(players, queues, selectedId, pending, hydration)
+    }
+        // Coalesce rapid bursts (QUEUE_TIME_UPDATED fires up to ~once/s per active
+        // queue, PLAYER_UPDATED can fire several times during state transitions).
+        // The UI doesn't need every intermediate frame.
+        .debounce(SESSION_DEBOUNCE_MS)
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, MaSession.EMPTY)
+
+    init {
+        observe()
+    }
+
+    /**
+     * Hint to the UI that the user just initiated playback of [uri] on
+     * [targetPlayerId]. Call this from the play_media tap handler BEFORE
+     * the RPC returns so the mini-player shows the track instantly.
+     *
+     * The hint is automatically dropped once the real state catches up, or
+     * after [PENDING_PLAY_MAX_AGE_MS] as a safety net.
+     */
+    fun reportOptimisticPlay(
+        uri: String,
+        title: String?,
+        artist: String?,
+        artworkUrl: String?,
+        targetPlayerId: String?,
+    ) {
+        val hint = PendingPlay(
+            uri = uri,
+            title = title,
+            artist = artist,
+            artworkUrl = artworkUrl,
+            targetPlayerId = targetPlayerId,
+            createdAtMs = System.currentTimeMillis(),
+        )
+        _pendingPlay.value = hint
+        targetPlayerId?.takeIf { it.isNotBlank() }?.let { _selectedPlayerId.value = it }
+    }
+
+    /**
+     * Persist the user's preferred playback target across surfaces. Independent
+     * of [reportOptimisticPlay] for use by an explicit picker.
+     */
+    fun setSelectedPlayer(playerId: String?) {
+        _selectedPlayerId.value = playerId
+    }
+
+    private fun observe() {
+        scope.launch {
+            // Hydrate as soon as the socket reports ready, AND every time it
+            // re-becomes ready after a reconnect (otherwise events that fired
+            // during the outage are missed forever).
+            serviceClient.isReadyForCommands.collect { ready ->
+                if (ready) hydrate()
+                else _hydrationState.value = HydrationState.Idle
+            }
+        }
+        scope.launch {
+            serviceClient.events.collect { event ->
+                try {
+                    handle(event)
+                } catch (e: Exception) {
+                    Timber.tag(TAG).w(e, "event handler threw")
+                }
+            }
+        }
+        scope.launch {
+            // Drop stale optimistic hints — guards against a play_media that
+            // truly never lands a queue update.
+            _pendingPlay
+                .filter { it != null }
+                .collect { hint ->
+                    val ageGuard = PENDING_PLAY_MAX_AGE_MS - (System.currentTimeMillis() - hint!!.createdAtMs)
+                    if (ageGuard > 0) kotlinx.coroutines.delay(ageGuard)
+                    _pendingPlay.update { current -> if (current === hint) null else current }
+                }
+        }
+    }
+
+    private suspend fun hydrate() {
+        if (_hydrationState.value == HydrationState.InFlight) return
+        _hydrationState.value = HydrationState.InFlight
+        try {
+            // Wait for auth to settle before issuing RPCs — server responds 401
+            // until the auth handshake completes.
+            serviceClient.isReadyForCommands.filter { it }.first()
+
+            val players = fetchPlayers()
+            if (players != null) {
+                _players.value = players.associateBy { it.playerId }
+            }
+            val queues = fetchQueues()
+            if (queues != null) {
+                _queues.value = queues.associateBy { it.queueId }
+            }
+            _hydrationState.value = HydrationState.Loaded
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "initial hydration failed")
+            _hydrationState.value = HydrationState.Error
+        }
+    }
+
+    private suspend fun fetchPlayers(): List<ServerPlayer>? = runCatching {
+        serviceClient
+            .sendRequest(Request(command = APICommands.PLAYERS_ALL))
+            .getOrThrow()
+            .resultAs<List<ServerPlayer>>()
+    }.onFailure { Timber.tag(TAG).w(it, "players/all failed") }.getOrNull()
+
+    private suspend fun fetchQueues(): List<ServerQueue>? = runCatching {
+        serviceClient
+            .sendRequest(Request(command = APICommands.PLAYER_QUEUES_ALL))
+            .getOrThrow()
+            .resultAs<List<ServerQueue>>()
+    }.onFailure { Timber.tag(TAG).w(it, "player_queues/all failed") }.getOrNull()
+
+    private fun handle(event: dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.Event<out Any>) {
+        when (event) {
+            is PlayerAddedEvent, is PlayerUpdatedEvent -> {
+                val player = event.data as ServerPlayer
+                _players.update { it + (player.playerId to player) }
+                maybeClearPendingPlay()
+            }
+            is PlayerRemovedEvent -> {
+                val id = event.objectId ?: return
+                _players.update { it - id }
+            }
+            is QueueAddedEvent, is QueueUpdatedEvent, is QueueItemsUpdatedEvent -> {
+                val queue = event.data as ServerQueue
+                _queues.update { it + (queue.queueId to queue) }
+                maybeClearPendingPlay()
+            }
+            is QueueTimeUpdatedEvent -> {
+                // Server hands us only the elapsed seconds on the queue's
+                // objectId. Patch our cached ServerQueue in place so the UI
+                // scrubber re-derives without a full queue refetch.
+                val queueId = event.objectId ?: return
+                val elapsed = event.data
+                _queues.update { current ->
+                    val existing = current[queueId] ?: return@update current
+                    current + (queueId to existing.copy(
+                        elapsedTime = elapsed,
+                        elapsedTimeLastUpdated = System.currentTimeMillis() / 1000.0,
+                    ))
+                }
+            }
+            is MediaItemPlayedEvent -> {
+                // Best handled by the QUEUE_UPDATED that follows, but the
+                // event arriving at all is a strong "playback just started"
+                // signal — clear pending hint defensively.
+                maybeClearPendingPlay()
+            }
+            else -> Unit
+        }
+    }
+
+    private fun maybeClearPendingPlay() {
+        val hint = _pendingPlay.value ?: return
+        val target = _players.value.findById(hint.targetPlayerId)
+        val activeQueueId = target?.activeSource
+            ?: target?.currentMedia?.queueId
+            ?: hint.targetPlayerId
+            ?: return
+        val activeQueue = _queues.value[activeQueueId]
+        val currentUri = activeQueue?.currentItem?.mediaItem?.uri
+            ?: target?.currentMedia?.uri
+        if (currentUri != null && currentUri == hint.uri) {
+            _pendingPlay.value = null
+        }
+    }
+
+    private fun Map<String, ServerPlayer>.findById(id: String?): ServerPlayer? =
+        if (id == null) null else this[id]
+
+    private fun buildSession(
+        players: Map<String, ServerPlayer>,
+        queues: Map<String, ServerQueue>,
+        selectedId: String?,
+        pending: PendingPlay?,
+        hydration: HydrationState,
+    ): MaSession {
+        // Visible-player filter mirrors the official app's PlayerFactory:
+        // available && enabled && !hidden && !hide_in_ui.
+        val visiblePlayers = players.values
+            .filter { p ->
+                p.available && p.enabled && p.hidden != true && p.hideInUi != true
+            }
+            .sortedBy { it.displayName.lowercase() }
+
+        val selected = players.findById(selectedId)
+            ?.takeIf { it.available && it.enabled }
+            ?: players.findById(pending?.targetPlayerId)
+            ?: visiblePlayers.firstOrNull()
+
+        val activeQueueId = selected?.let { p ->
+            p.activeSource ?: p.currentMedia?.queueId ?: p.playerId
+        }
+        val activeQueue = activeQueueId?.let { queues[it] }
+        val nowPlayingFromServer = activeQueue?.currentItem?.mediaItem
+            ?.let { item ->
+                NowPlayingTrack(
+                    uri = item.uri ?: "",
+                    title = item.name,
+                    artist = item.artists?.firstOrNull()?.name ?: activeQueue.currentItem.mediaItem.album?.name,
+                    artworkUrl = item.image?.path
+                        ?: item.metadata?.images?.firstOrNull()?.path,
+                    durationMs = (item.duration ?: activeQueue.currentItem.duration)
+                        ?.let { (it * 1000.0).toLong() },
+                )
+            }
+            ?: selected?.currentMedia?.let { media ->
+                NowPlayingTrack(
+                    uri = media.uri ?: "",
+                    title = media.title,
+                    artist = media.artist ?: media.album,
+                    artworkUrl = media.imageUrl,
+                    durationMs = media.duration?.let { (it * 1000.0).toLong() },
+                )
+            }
+
+        // If MA hasn't echoed yet, the optimistic hint stands in.
+        val nowPlaying = nowPlayingFromServer
+            ?: pending?.let {
+                NowPlayingTrack(
+                    uri = it.uri,
+                    title = it.title,
+                    artist = it.artist,
+                    artworkUrl = it.artworkUrl,
+                    durationMs = null,
+                )
+            }
+
+        val playbackState = when {
+            pending != null && nowPlayingFromServer == null -> PlaybackPhase.Preparing
+            selected?.state == PlayerState.PLAYING -> PlaybackPhase.Playing
+            selected?.state == PlayerState.PAUSED -> PlaybackPhase.Paused
+            selected?.announcementInProgress == true -> PlaybackPhase.Playing
+            nowPlaying != null -> PlaybackPhase.Idle
+            else -> PlaybackPhase.Stopped
+        }
+
+        return MaSession(
+            visiblePlayers = visiblePlayers.map { it.summary() },
+            selectedPlayer = selected?.summary(),
+            nowPlaying = nowPlaying,
+            elapsedMs = activeQueue?.elapsedTime?.let { (it * 1000.0).toLong() },
+            elapsedAsOfEpochMs = activeQueue?.elapsedTimeLastUpdated?.let { (it * 1000.0).toLong() },
+            playbackPhase = playbackState,
+            hydrationState = hydration,
+            pendingPlayUri = pending?.uri,
+        )
+    }
+
+    private fun ServerPlayer.summary(): MaPlayerSummary = MaPlayerSummary(
+        id = playerId,
+        name = displayName.ifBlank { playerId },
+        provider = provider,
+        isPlaying = state == PlayerState.PLAYING,
+    )
+
+    private data class PendingPlay(
+        val uri: String,
+        val title: String?,
+        val artist: String?,
+        val artworkUrl: String?,
+        val targetPlayerId: String?,
+        val createdAtMs: Long,
+    )
+
+    private companion object {
+        const val TAG = "MaSession"
+        const val SESSION_DEBOUNCE_MS = 50L
+        const val PENDING_PLAY_MAX_AGE_MS = 30_000L
+    }
+}
+
+/** UI-facing playback snapshot derived from the live MA event stream. */
+data class MaSession(
+    val visiblePlayers: List<MaPlayerSummary>,
+    val selectedPlayer: MaPlayerSummary?,
+    val nowPlaying: NowPlayingTrack?,
+    val elapsedMs: Long?,
+    /**
+     * Server-side wall-clock (epoch ms) when [elapsedMs] was sampled. Clients
+     * extrapolate `elapsedMs + (now - elapsedAsOfEpochMs)` for a smooth scrubber
+     * without burning RPCs per second.
+     */
+    val elapsedAsOfEpochMs: Long?,
+    val playbackPhase: PlaybackPhase,
+    val hydrationState: HydrationState,
+    /** When non-null, the user just tapped play and MA hasn't echoed yet. */
+    val pendingPlayUri: String?,
+) {
+    companion object {
+        val EMPTY = MaSession(
+            visiblePlayers = emptyList(),
+            selectedPlayer = null,
+            nowPlaying = null,
+            elapsedMs = null,
+            elapsedAsOfEpochMs = null,
+            playbackPhase = PlaybackPhase.Stopped,
+            hydrationState = HydrationState.Idle,
+            pendingPlayUri = null,
+        )
+    }
+}
+
+data class MaPlayerSummary(
+    val id: String,
+    val name: String,
+    val provider: String,
+    val isPlaying: Boolean,
+)
+
+data class NowPlayingTrack(
+    val uri: String,
+    val title: String?,
+    val artist: String?,
+    val artworkUrl: String?,
+    val durationMs: Long?,
+)
+
+enum class PlaybackPhase {
+    /** Track loaded, waiting to play. */
+    Idle,
+
+    /** User just tapped play, MA loading queue + dispatching audio. */
+    Preparing,
+    Playing,
+    Paused,
+
+    /** No track loaded at all. */
+    Stopped,
+}
+
+enum class HydrationState { Idle, InFlight, Loaded, Error }

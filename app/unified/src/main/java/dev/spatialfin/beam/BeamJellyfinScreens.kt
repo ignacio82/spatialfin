@@ -531,6 +531,7 @@ fun BeamHomeScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val maPlayDispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -571,7 +572,7 @@ fun BeamHomeScreen(
                                     launchServerItem(context, fcastSession, scope,featured)
                                 }
                                 BeamSecondaryActionButton(label = "Details") {
-                                    openServerItem(context, featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                    openServerItem(context, featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
                                 }
                             },
                         )
@@ -588,7 +589,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = filtered,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
                             )
                         }
                     }
@@ -604,7 +605,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
                                 showProgress = true,
                             )
                         }
@@ -621,7 +622,7 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
                             )
                         }
                     }
@@ -648,7 +649,7 @@ fun BeamHomeScreen(
                             item {
                                 BeamPosterCarousel(
                                     items = viewItems,
-                                    onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                                    onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
                                 )
                             }
                         }
@@ -682,7 +683,7 @@ fun BeamHomeScreen(
                                         )
                                     )
                                 } else {
-                                    openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                    openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
                                 }
                             }
                         )
@@ -699,7 +700,7 @@ fun BeamHomeScreen(
                         BeamPosterCarousel(
                             items = section.homeSection.items,
                             onItemClick = { item ->
-                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
+                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
                             }
                         )
                     }
@@ -3092,6 +3093,7 @@ private fun openServerItem(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    maPlayDispatcher: dev.spatialfin.unified.MaPlayDispatcher? = null,
 ) {
     when (item) {
         is SpatialFinCollection -> onOpenLibrary(item.id, item.name, item.type)
@@ -3101,7 +3103,15 @@ private fun openServerItem(
         else -> {
             val maUri = item.originalTitle
             if (!maUri.isNullOrBlank() && maUri.contains("://")) {
-                dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(context, maUri)
+                val artwork = item.images.primary?.toString()
+                if (maPlayDispatcher != null) {
+                    maPlayDispatcher.playUri(maUri, title = item.name, artworkUrl = artwork)
+                } else {
+                    // Fallback for callers that didn't thread the dispatcher;
+                    // the receiver service still works, just no optimistic UI.
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
+                        .playMusicAssistantMedia(context, maUri)
+                }
                 android.widget.Toast.makeText(context, "Queuing in Music Assistant…", android.widget.Toast.LENGTH_SHORT).show()
             } else {
                 onOpenItem(item.id)

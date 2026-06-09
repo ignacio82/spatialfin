@@ -17,6 +17,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.ui.draw.alpha
@@ -135,6 +136,12 @@ class UnifiedMainActivity : AppCompatActivity() {
 
     @Inject
     lateinit var musicAssistantRepository: dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
+
+    @Inject
+    lateinit var maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
+
+    @Inject
+    lateinit var maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 
     @Inject
     lateinit var appLockManager: AppLockManager
@@ -260,6 +267,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                         TvNavigationRoot(
                             state = state,
                             appPreferences = appPreferences,
+                            maSession = maSession,
+                            maServiceClient = maServiceClient,
                             onFinishApp = ::finishAndKillProcess,
                             initialSearchQuery = initialSearchQueryExtra,
                         )
@@ -277,6 +286,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 voiceTelemetryStore = voiceTelemetryStore,
                                 fcastSession = fcastSession,
                                 musicAssistantRepository = musicAssistantRepository,
+                                maSession = maSession,
+                                maServiceClient = maServiceClient,
                                 onReconnect = viewModel::reconnect,
                                 onFinishApp = ::finishAndKillProcess,
                             )
@@ -598,6 +609,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                         launchMusicAssistantQuery(
                             context = context,
                             repository = musicAssistantRepository,
+                            session = maSession,
+                            serviceClient = maServiceClient,
                             query = query,
                         )
                     }
@@ -821,6 +834,45 @@ class UnifiedMainActivity : AppCompatActivity() {
                     }
                 }
             }
+            var showNowPlaying by remember { mutableStateOf(false) }
+            var showPickerSheet by remember { mutableStateOf(false) }
+            val xrContext = androidx.compose.ui.platform.LocalContext.current
+            val dispatcher = remember(xrContext) {
+                dev.spatialfin.unified.MaPlayDispatcher(xrContext, maSession, maServiceClient)
+            }
+            val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+                .state.collectAsStateWithLifecycle()
+            Box(
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            ) {
+                androidx.compose.foundation.layout.Column {
+                    dev.spatialfin.sendspin.SendspinMiniPlayer()
+                    dev.spatialfin.unified.music.MaMiniPlayer(
+                        session = maSession,
+                        onExpand = { showNowPlaying = true },
+                    )
+                }
+            }
+            if (showNowPlaying) {
+                androidx.activity.compose.BackHandler(onBack = { showNowPlaying = false })
+                dev.spatialfin.unified.music.MaNowPlayingScreen(
+                    session = maSession,
+                    onBack = { showNowPlaying = false },
+                    onPickPlayer = { showPickerSheet = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showPickerSheet) {
+                dev.spatialfin.unified.music.MaPlayerPickerSheet(
+                    session = maSession,
+                    dispatcher = dispatcher,
+                    serverId = sendspinState.serverId,
+                    onDismiss = { showPickerSheet = false },
+                )
+            }
         }
     }
 
@@ -936,6 +988,60 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 )
                             }
                         }
+                    }
+                }
+                // MA mini-player floats below the spatial panel as an Orbiter,
+                // so the user can browse and see what's playing without the
+                // panel having to grow to fit it.
+                var showSpatialNowPlaying by remember { mutableStateOf(false) }
+                androidx.xr.compose.spatial.Orbiter(
+                    anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.Bottom,
+                    offset = androidx.xr.compose.unit.DpVolumeOffset(
+                        x = 0.dp,
+                        y = 32.dp,
+                        z = androidx.xr.compose.spatial.OrbiterDefaults.Elevation,
+                    ),
+                ) {
+                    androidx.compose.foundation.layout.Column {
+                        dev.spatialfin.sendspin.SendspinMiniPlayer()
+                        dev.spatialfin.unified.music.MaMiniPlayer(
+                            session = maSession,
+                            onExpand = { showSpatialNowPlaying = true },
+                        )
+                    }
+                }
+                var showSpatialPicker by remember { mutableStateOf(false) }
+                val spatialCtx = androidx.compose.ui.platform.LocalContext.current
+                val spatialDispatcher = remember(spatialCtx) {
+                    dev.spatialfin.unified.MaPlayDispatcher(spatialCtx, maSession, maServiceClient)
+                }
+                val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+                    .state.collectAsStateWithLifecycle()
+                if (showSpatialNowPlaying) {
+                    // Pushes the parent panel back by SpatialDialog's default
+                    // 125 dp depth — Now Playing reads as a peer surface, not
+                    // a layer trapped behind the browser.
+                    androidx.xr.compose.spatial.SpatialDialog(
+                        onDismissRequest = { showSpatialNowPlaying = false },
+                    ) {
+                        dev.spatialfin.unified.music.MaNowPlayingScreen(
+                            session = maSession,
+                            onBack = { showSpatialNowPlaying = false },
+                            onPickPlayer = { showSpatialPicker = true },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                if (showSpatialPicker) {
+                    androidx.xr.compose.spatial.SpatialDialog(
+                        onDismissRequest = { showSpatialPicker = false },
+                    ) {
+                        dev.spatialfin.unified.music.MaPlayerPickerSheet(
+                            session = maSession,
+                            dispatcher = spatialDispatcher,
+                            serverId = sendspinState.serverId,
+                            onDismiss = { showSpatialPicker = false },
+                        )
                     }
                 }
             }

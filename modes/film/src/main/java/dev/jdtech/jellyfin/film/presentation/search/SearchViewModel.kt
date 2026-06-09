@@ -8,6 +8,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
+import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
+import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -27,6 +29,8 @@ class SearchViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val seerrApi: SeerrApi,
     private val maRepository: MusicAssistantRepository,
+    private val maSession: MaSessionRepository,
+    private val maServiceClient: ServiceClient,
     @ApplicationContext private val appContext: Context,
 ) :
     ViewModel() {
@@ -138,10 +142,20 @@ class SearchViewModel @Inject constructor(
                 requestSeerrItem(action.item, action.is4k)
             }
             is SearchAction.OnMaItemClick -> {
-                val uri = action.item.uri
+                val item = action.item
+                val uri = item.uri
                 if (uri.isNullOrBlank()) {
-                    Timber.w("MA search tap: item has no uri (item_id=%s)", action.item.itemId)
+                    Timber.w("MA search tap: item has no uri (item_id=%s)", item.itemId)
                 } else {
+                    val artwork = (item.image?.path ?: item.metadata?.images?.firstOrNull()?.path)
+                        ?.let(maServiceClient::rebaseServerImageUrl)
+                    maSession.reportOptimisticPlay(
+                        uri = uri,
+                        title = item.name,
+                        artist = item.artists?.firstOrNull()?.name ?: item.album?.name,
+                        artworkUrl = artwork,
+                        targetPlayerId = null,
+                    )
                     SendspinReceiverService.playMusicAssistantMedia(appContext, uri)
                 }
             }

@@ -97,6 +97,16 @@ object SendspinReceiverSession {
         _state.update { it.copy(controlsDismissed = true) }
     }
 
+    /**
+     * Re-show the SendSpin fullscreen. The fullscreen and the mini-player are
+     * gated on `controlsDismissed`: tapping the mini-player calls this so the
+     * full UI returns. Without this, "X" was a one-way trip — closing the
+     * fullscreen left the user with no playback controls.
+     */
+    fun restoreControls() {
+        _state.update { it.copy(controlsDismissed = false) }
+    }
+
     internal fun reset() {
         _state.value = SendspinReceiverUiState()
     }

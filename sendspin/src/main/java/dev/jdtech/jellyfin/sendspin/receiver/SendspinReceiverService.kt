@@ -592,8 +592,14 @@ class SendspinReceiverService : Service() {
                 val client = requireNotNull(musicAssistantClient)
                 val target = resolvePlayMediaTarget(client, serverUrl, token, serverId)
                 if (target == null) {
-                    Timber.tag(TAG).w("MA play_media: no usable player available")
-                    showToast("Music Assistant has no available players. Open the MA web UI and enable a player.")
+                    Timber.tag(TAG).w("MA play_media: no usable target")
+                    // Tell the user *why* we refused to play. The most common
+                    // case after a fresh receiver registration is that MA's
+                    // 15 s auto-wrap timer hasn't fired yet.
+                    showToast(
+                        "Music Assistant is still linking this device. " +
+                            "Wait ~15 s after the SendSpin receiver appears, then retry.",
+                    )
                     return@launch
                 }
                 rememberPreferredPlayer(serverId, target.id)
@@ -619,74 +625,98 @@ class SendspinReceiverService : Service() {
     }
 
     /**
-     * Pick the player to send `play_media` to, mirroring the official
-     * Music Assistant mobile app's [PlayerData.queueOrPlayerId] resolution.
+     * Pick the player to send `play_media` to.
      *
-     * The official app never targets a `PlayerType.PROTOCOL` player (MA's
-     * server hides them from `players/all` by default). Instead the user
-     * picks a non-protocol player from the visible list, and the server-side
-     * `play_media` handler uses `player_id` as the queue id (because MA has
-     * already created a queue with that id for every non-protocol player at
-     * register time).
+     * **Hard rule:** when this device has a SendSpin endpoint registered with
+     * MA, we ALWAYS play through its Universal-Player wrapper — never through
+     * a sibling wrapper for someone else's device. A previous version of this
+     * resolver fell back to "any usable universal_player" if our wrapper
+     * wasn't ready yet, which silently routed playback to whichever room MA
+     * happened to list first. Bad UX, and on a multi-room MA install
+     * (20+ players) it's a privacy bug too.
      *
-     * We follow the same rule but auto-pick on the user's behalf:
-     *   1) Their previously-chosen player (persisted via [rememberPreferredPlayer]).
-     *   2) The Universal-Player wrapper for our SendSpin endpoint, if MA's
-     *      auto-wrapper has fired (via `active_source` / `protocol_parent_id`
-     *      / `linked_output_protocols`). This is the natural "play here" pick.
-     *   3) Any usable Universal-Player wrapper — usually the user's main
-     *      playback target.
-     *   4) Any usable player at all (Sonos, Chromecast, etc.).
-     *
-     * Returns null only if MA literally has no available non-protocol players.
-     * No retry/polling: a missing wrapper is a real config issue, not a race
-     * worth waiting on (the user is already waiting on the play action).
+     * Order, with no implicit cross-device fallback:
+     *   1) The user's previously-chosen player (per server), if still usable.
+     *   2) Our SendSpin endpoint's Universal-Player wrapper, found via
+     *      `active_source` / `protocol_parent_id` / `linked_output_protocols`.
+     *      Polls briefly so MA's 15 s auto-link timer can catch up — but
+     *      ONLY if we have a SendSpin endpoint to wrap.
+     *   3) If our SendSpin endpoint exists but the wrapper never appears:
+     *      return null with a clear error. Do NOT pick a different player.
+     *   4) If we have NO SendSpin endpoint at all (pure-controller use,
+     *      receiver not started): fall back to any usable universal_player,
+     *      then any usable player. That's the only case where picking
+     *      something else is appropriate.
      */
-    private fun resolvePlayMediaTarget(
+    private suspend fun resolvePlayMediaTarget(
         client: MusicAssistantGroupClient,
         serverUrl: String,
         token: String,
         serverId: String?,
     ): MusicAssistantPlayerState? {
-        val all = client.fetchPlayers(serverUrl, token)
+        val start = System.currentTimeMillis()
+        val deadline = start + WRAPPER_POLL_TIMEOUT_MS
+        var attempt = 0
 
-        val usable = all.filter { player ->
-            !player.type.equals("protocol", ignoreCase = true) &&
-                player.available &&
-                player.enabled &&
-                !player.hideInUi
-        }
-
-        if (usable.isEmpty() && all.isNotEmpty()) {
-            Timber.tag(TAG).d(
-                "MA play_media: %d players returned but none usable (%s)",
-                all.size,
-                all.joinToString { "${it.id}/${it.type}/avail=${it.available}/enabled=${it.enabled}" },
-            )
-        }
-
-        // Step 1: honour the user's persisted choice when it's still usable.
-        preferredPlayerId(serverId)?.let { saved ->
-            usable.firstOrNull { it.id == saved }?.let {
-                Timber.tag(TAG).d("MA play_media: using saved player_id=%s", saved)
-                return it
+        while (true) {
+            val all = client.fetchPlayers(serverUrl, token)
+            val usable = all.filter { player ->
+                !player.type.equals("protocol", ignoreCase = true) &&
+                    player.available &&
+                    player.enabled &&
+                    !player.hideInUi
             }
-        }
 
-        // Step 2: find the wrapper for our SendSpin endpoint.
-        val ourSendspin = all.firstOrNull { it.id == receiverClientId }
-            ?: all.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
-        val wrapperId = ourSendspin?.let { thisDeviceWrapperId(it, all) }
-        wrapperId?.let { id ->
-            usable.firstOrNull { it.id == id }?.let {
-                Timber.tag(TAG).d("MA play_media: using auto-detected wrapper for this device player_id=%s", id)
-                return it
+            // 1) Saved choice — covers explicit picker selections too.
+            preferredPlayerId(serverId)?.let { saved ->
+                usable.firstOrNull { it.id == saved }?.let {
+                    Timber.tag(TAG).d("MA play_media: using saved player_id=%s", saved)
+                    return it
+                }
             }
-        }
 
-        // Step 3 + 4: prefer a universal_player wrapper, else any usable player.
-        return usable.firstOrNull { it.provider.equals("universal_player", ignoreCase = true) }
-            ?: usable.firstOrNull()
+            // 2) Find our SendSpin endpoint's wrapper.
+            val ourSendspin = all.firstOrNull { it.id == receiverClientId }
+                ?: all.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
+            if (ourSendspin != null) {
+                val wrapperId = thisDeviceWrapperId(ourSendspin, all)
+                if (wrapperId != null) {
+                    val wrapper = usable.firstOrNull { it.id == wrapperId }
+                    if (wrapper != null) {
+                        Timber.tag(TAG).d(
+                            "MA play_media: using auto-detected wrapper for this device player_id=%s (attempt=%d)",
+                            wrapperId, attempt,
+                        )
+                        return wrapper
+                    }
+                }
+                // Wrapper not ready yet. Don't fall through to "any player"
+                // when we have a SendSpin endpoint — the user expects audio
+                // here, not elsewhere. Poll briefly for MA's auto-link.
+                if (System.currentTimeMillis() < deadline) {
+                    Timber.tag(TAG).d(
+                        "MA play_media: SendSpin endpoint registered (%s) but wrapper not linked yet — polling (attempt=%d, elapsed=%dms)",
+                        ourSendspin.id, attempt, System.currentTimeMillis() - start,
+                    )
+                    val nextDelay = if (attempt < FAST_POLLS) FAST_POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS
+                    kotlinx.coroutines.delay(nextDelay)
+                    attempt++
+                    continue
+                }
+                Timber.tag(TAG).w(
+                    "MA play_media: SendSpin endpoint %s has no usable wrapper after %dms — refusing to route to another player",
+                    ourSendspin.id, WRAPPER_POLL_TIMEOUT_MS,
+                )
+                return null
+            }
+
+            // 3) No SendSpin endpoint at all — pure controller mode. Falling
+            //    through to any usable player is fine because the user
+            //    necessarily picked through some other surface (or will via
+            //    the upcoming picker UI).
+            return usable.firstOrNull { it.provider.equals("universal_player", ignoreCase = true) }
+                ?: usable.firstOrNull()
+        }
     }
 
     /**
@@ -1308,6 +1338,15 @@ class SendspinReceiverService : Service() {
         private const val VISUALIZER_ATTACK_SMOOTHING = 0.42f
         private const val VISUALIZER_RELEASE_SMOOTHING = 0.18f
         private const val MIN_VISUALIZER_LEVEL = 0.08f
+        // MA's PlayerController fires `_create_or_update_universal_player` ~15 s
+        // after a fresh SendSpin endpoint registers. We give it 20 s before we
+        // give up and tell the user to retry — long enough to cover the timer
+        // even with slight scheduler jitter, short enough that a real
+        // configuration problem surfaces quickly.
+        private const val WRAPPER_POLL_TIMEOUT_MS = 20_000L
+        private const val FAST_POLLS = 6
+        private const val FAST_POLL_INTERVAL_MS = 500L
+        private const val SLOW_POLL_INTERVAL_MS = 2_000L
         private val VISUALIZER_SCALAR_SHAPE =
             listOf(
                 0.18f,
@@ -1462,6 +1501,24 @@ class SendspinReceiverService : Service() {
                 putExtra(EXTRA_MUSIC_ASSISTANT_MEDIA_URI, mediaUri)
             }
             context.startService(intent)
+        }
+
+        /**
+         * Static prefs writer used by the player picker. Persists into the
+         * same SharedPreferences file the resolver reads from, so the next
+         * `play_media` call honours the choice without restarting the service.
+         *
+         * Pass [playerId] = null to clear (revert to auto-detection).
+         */
+        fun setPreferredPlayer(context: Context, serverId: String?, playerId: String?) {
+            val key = serverId?.takeIf { it.isNotBlank() }
+                ?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
+                ?: return
+            val editor = context
+                .getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
+                .edit()
+            if (playerId.isNullOrBlank()) editor.remove(key) else editor.putString(key, playerId)
+            editor.apply()
         }
     }
 }

@@ -3,6 +3,7 @@ package dev.spatialfin.beam
 import dev.spatialfin.R
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -158,6 +159,8 @@ fun BeamNavigationRoot(
     voiceTelemetryStore: VoiceTelemetryStore,
     fcastSession: dev.spatialfin.fcast.session.CastSessionManager,
     musicAssistantRepository: dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository,
+    maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
+    maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
     onReconnect: () -> Unit = {},
     onFinishApp: () -> Unit = {},
 ) {
@@ -166,6 +169,10 @@ fun BeamNavigationRoot(
     var currentRoute by rememberSaveable { mutableStateOf(BeamRoute.Welcome) }
     var voiceQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var showMusicAssistantSettings by remember { mutableStateOf(false) }
+    val maPlayDispatcher = remember(context, maSession, maServiceClient) {
+        dev.spatialfin.unified.MaPlayDispatcher(context, maSession, maServiceClient)
+    }
+    var showNowPlaying by rememberSaveable { mutableStateOf(false) }
 
     val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
     val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
@@ -286,6 +293,8 @@ fun BeamNavigationRoot(
                     dev.spatialfin.unified.launchMusicAssistantQuery(
                         context = context,
                         repository = musicAssistantRepository,
+                        session = maSession,
+                        serviceClient = maServiceClient,
                         query = query,
                     )
                 }
@@ -423,6 +432,7 @@ fun BeamNavigationRoot(
         LocalBeamBackground provides { beamBackgroundUrl = it },
         LocalBeamWidth provides beamWidth,
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
+        dev.spatialfin.unified.LocalMaPlayDispatcher provides maPlayDispatcher,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {
             CinematicBackdrop(
@@ -455,6 +465,19 @@ fun BeamNavigationRoot(
                         dev.spatialfin.fcast.session.FCastMiniController(
                             sessionManager = fcastSession,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                        // When SendSpin is actively receiving (we're the
+                        // audio output for someone else's cast), its mini-player
+                        // owns the slot — it has the live PCM-side metadata
+                        // and the right transport command surface. Otherwise
+                        // fall through to the MA controller mini-player.
+                        dev.spatialfin.sendspin.SendspinMiniPlayer(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                        dev.spatialfin.unified.music.MaMiniPlayer(
+                            session = maSession,
+                            onExpand = { showNowPlaying = true },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
                         if (useBottomNav) {
                             BeamBottomNavigationRow(
@@ -898,6 +921,24 @@ fun BeamNavigationRoot(
             }
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
             dev.spatialfin.sendspin.SendspinFullscreenPlayer()
+            var showPlayerPicker by remember { mutableStateOf(false) }
+            if (showNowPlaying) {
+                BackHandler(onBack = { showNowPlaying = false })
+                dev.spatialfin.unified.music.MaNowPlayingScreen(
+                    session = maSession,
+                    onBack = { showNowPlaying = false },
+                    onPickPlayer = { showPlayerPicker = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showPlayerPicker) {
+                dev.spatialfin.unified.music.MaPlayerPickerSheet(
+                    session = maSession,
+                    dispatcher = maPlayDispatcher,
+                    serverId = sendspinState.serverId,
+                    onDismiss = { showPlayerPicker = false },
+                )
+            }
 }
 }
 }

@@ -170,6 +170,8 @@ val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
 fun TvNavigationRoot(
     state: MainState,
     appPreferences: AppPreferences,
+    maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
+    maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient,
     onFinishApp: () -> Unit = {},
     initialSearchQuery: String? = null,
 ) {
@@ -301,6 +303,51 @@ fun TvNavigationRoot(
                 }
             }
             dev.spatialfin.sendspin.SendspinFullscreenPlayer()
+            var showNowPlaying by remember { mutableStateOf(false) }
+            // Bottom-of-screen MA mini-player. D-pad reaches it after the
+            // last focusable row in the active screen.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            ) {
+                Column {
+                    dev.spatialfin.sendspin.SendspinMiniPlayer()
+                    dev.spatialfin.unified.music.MaMiniPlayer(
+                        session = maSession,
+                        onExpand = { showNowPlaying = true },
+                    )
+                }
+            }
+            var showPickerSheet by remember { mutableStateOf(false) }
+            if (showNowPlaying) {
+                BackHandler(onBack = { showNowPlaying = false })
+                dev.spatialfin.unified.music.MaNowPlayingScreen(
+                    session = maSession,
+                    onBack = { showNowPlaying = false },
+                    onPickPlayer = { showPickerSheet = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (showPickerSheet) {
+                val tvContext = androidx.compose.ui.platform.LocalContext.current
+                val dispatcher = remember(tvContext, maSession, maServiceClient) {
+                    dev.spatialfin.unified.MaPlayDispatcher(
+                        context = tvContext,
+                        session = maSession,
+                        serviceClient = maServiceClient,
+                    )
+                }
+                val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+                    .state.collectAsStateWithLifecycle()
+                dev.spatialfin.unified.music.MaPlayerPickerSheet(
+                    session = maSession,
+                    dispatcher = dispatcher,
+                    serverId = sendspinState.serverId,
+                    onDismiss = { showPickerSheet = false },
+                )
+            }
         }
     }
 }

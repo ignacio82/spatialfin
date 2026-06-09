@@ -1,7 +1,10 @@
 package dev.spatialfin.unified
 
 import android.content.Context
+import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.SearchResult
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
+import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import timber.log.Timber
@@ -11,23 +14,18 @@ import timber.log.Timber
  * common library media types and dispatches the first hit to play on this
  * device's SendSpin receiver.
  *
- * We deliberately route through [SendspinReceiverService.playMusicAssistantMedia]
- * instead of the WebSocket [MusicAssistantRepository.playMedia] because that
- * service owns the protocol-link race handling: SendSpin endpoints register
- * with MA as `PlayerType.PROTOCOL` players, which never get their own queue —
- * MA wraps them in a Universal Player that owns the queue, and the wrapper
- * id only becomes available a fraction of a second after `players/register`.
- * The service polls until the wrapper appears, then sends `play_media` against
- * the wrapper id. Calling the WebSocket repo with the raw `ServerMediaItem`
- * would hit `PlayerUnavailableError` until that race resolves.
- *
- * The WebSocket repo is still the right call when targeting an explicit
- * non-receiver player (different room, group, etc.) — pass an explicit
- * `queueOrPlayerId` there. This helper only covers the "play it here" intent.
+ * Routes through [SendspinReceiverService.playMusicAssistantMedia] (REST) for
+ * the actual command — that service owns the protocol-link race handling
+ * (SendSpin endpoints register with MA as `PlayerType.PROTOCOL` players whose
+ * Universal Player wrapper takes up to ~15 s to materialise). [MaSessionRepository]
+ * also receives an **optimistic hint** so the mini-player shows the just-tapped
+ * track immediately, instead of waiting for MA's event stream to catch up.
  */
 suspend fun launchMusicAssistantQuery(
     context: Context,
     repository: MusicAssistantRepository,
+    session: MaSessionRepository,
+    serviceClient: ServiceClient,
     query: String,
 ) {
     if (query.isBlank()) return
@@ -48,10 +46,40 @@ suspend fun launchMusicAssistantQuery(
         return
     }
     Timber.tag(TAG).i("dispatching MA play for '%s' → %s", query, uri)
+    dispatchMusicAssistantPlay(context, session, serviceClient, item, uri)
+}
+
+/**
+ * Shared entry point for "play this MA URI on the SendSpin receiver" used by
+ * the voice helper, the Beam card-tap, and the search-result tap. Surfaces an
+ * optimistic hint into [MaSessionRepository] so every UI surface bound to
+ * `session.session` shows the track instantly.
+ *
+ * Pass [item] when available so the mini-player can render real metadata while
+ * the actual `play_media` RPC is in flight; otherwise fall back to URI-only.
+ */
+fun dispatchMusicAssistantPlay(
+    context: Context,
+    session: MaSessionRepository,
+    serviceClient: ServiceClient,
+    item: ServerMediaItem?,
+    uri: String,
+) {
+    if (uri.isBlank()) return
+    session.reportOptimisticPlay(
+        uri = uri,
+        title = item?.name ?: uri.substringAfterLast('/'),
+        artist = item?.artists?.firstOrNull()?.name ?: item?.album?.name,
+        artworkUrl = item?.preferredImagePath()?.let(serviceClient::rebaseServerImageUrl),
+        targetPlayerId = null,
+    )
     SendspinReceiverService.playMusicAssistantMedia(context, uri)
 }
 
-private fun dev.jdtech.jellyfin.data.musicassistant.data.model.server.SearchResult.pickPlayableHit(): ServerMediaItem? =
+private fun ServerMediaItem.preferredImagePath(): String? =
+    image?.path ?: metadata?.images?.firstOrNull()?.path
+
+private fun SearchResult.pickPlayableHit(): ServerMediaItem? =
     tracks.firstOrNull()
         ?: albums.firstOrNull()
         ?: artists.firstOrNull()
