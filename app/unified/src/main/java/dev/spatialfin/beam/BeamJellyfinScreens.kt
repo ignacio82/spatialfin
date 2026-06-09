@@ -526,6 +526,7 @@ fun BeamHomeScreen(
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
+    onOpenMaSearch: () -> Unit = {},
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -2167,6 +2168,7 @@ fun BeamSearchScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    onOpenMaSearch: () -> Unit = {},
     viewModel: BeamSearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -2229,6 +2231,9 @@ fun BeamSearchScreen(
                             OutlinedButton(onClick = { viewModel.setQuery("") }) {
                                 Text("Clear")
                             }
+                        }
+                        OutlinedButton(onClick = onOpenMaSearch) {
+                            Text("Search Music Assistant")
                         }
                     }
                 }

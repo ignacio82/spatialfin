@@ -95,4 +95,73 @@ class MusicAssistantRepository(
         }
         return emptyList()
     }
+
+    // -----------------------------------------------------------------------
+    // Detail fetchers (Phase 2). All take the [ServerMediaItem] returned by
+    // search / library / recommendations and dispatch via that item's
+    // provider+item_id pair — MA's detail endpoints require both because the
+    // same logical album can live in multiple providers (Tidal + Local), and
+    // the server can only resolve the metadata + child list within one provider
+    // at a time.
+    // -----------------------------------------------------------------------
+
+    suspend fun getAlbum(item: ServerMediaItem): ServerMediaItem? =
+        getDetail(item) { id, prov -> Request.Album.get(id, prov) }
+
+    suspend fun getAlbumTracks(item: ServerMediaItem, inLibraryOnly: Boolean = false): List<ServerMediaItem> =
+        getList(item) { id, prov -> Request.Album.getTracks(id, prov, inLibraryOnly) }
+
+    suspend fun getArtist(item: ServerMediaItem): ServerMediaItem? =
+        getDetail(item) { id, prov -> Request.Artist.get(id, prov) }
+
+    suspend fun getArtistAlbums(item: ServerMediaItem, inLibraryOnly: Boolean = false): List<ServerMediaItem> =
+        getList(item) { id, prov -> Request.Artist.getAlbums(id, prov, inLibraryOnly) }
+
+    suspend fun getArtistTracks(item: ServerMediaItem, inLibraryOnly: Boolean = false): List<ServerMediaItem> =
+        getList(item) { id, prov -> Request.Artist.getTracks(id, prov, inLibraryOnly) }
+
+    suspend fun getPlaylist(item: ServerMediaItem): ServerMediaItem? =
+        getDetail(item) { id, prov -> Request.Playlist.get(id, prov) }
+
+    suspend fun getPlaylistTracks(item: ServerMediaItem): List<ServerMediaItem> =
+        getList(item) { id, prov -> Request.Playlist.getTracks(id, prov) }
+
+    suspend fun getRecommendations(): List<ServerMediaItem> {
+        val request = Request(command = APICommands.MUSIC_RECOMMENDATIONS)
+        val response = serviceClient.sendRequest(request)
+        return if (response.isSuccess) {
+            response.getOrNull()?.resultAs<List<ServerMediaItem>>().orEmpty()
+        } else emptyList()
+    }
+
+    private suspend fun getDetail(
+        item: ServerMediaItem,
+        request: (itemId: String, providerInstance: String) -> Request,
+    ): ServerMediaItem? {
+        val provider = item.providerInstanceOrDomain() ?: return null
+        val response = serviceClient.sendRequest(request(item.itemId, provider))
+        return if (response.isSuccess) response.getOrNull()?.resultAs<ServerMediaItem>() else null
+    }
+
+    private suspend fun getList(
+        item: ServerMediaItem,
+        request: (itemId: String, providerInstance: String) -> Request,
+    ): List<ServerMediaItem> {
+        val provider = item.providerInstanceOrDomain() ?: return emptyList()
+        val response = serviceClient.sendRequest(request(item.itemId, provider))
+        return if (response.isSuccess) {
+            response.getOrNull()?.resultAs<List<ServerMediaItem>>().orEmpty()
+        } else emptyList()
+    }
+
+    /**
+     * MA's child-fetcher endpoints (`/album/tracks`, `/artist/albums`, etc.)
+     * key off provider_instance_id_or_domain. The top-level [ServerMediaItem]
+     * exposes a `provider` field which is sometimes the instance id and
+     * sometimes the domain — fall back to the first entry in
+     * `provider_mappings` so locally-imported items still resolve.
+     */
+    private fun ServerMediaItem.providerInstanceOrDomain(): String? =
+        provider.takeIf { it.isNotBlank() }
+            ?: providerMappings?.firstOrNull()?.providerInstance
 }

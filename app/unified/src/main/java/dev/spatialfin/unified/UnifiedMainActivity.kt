@@ -836,6 +836,13 @@ class UnifiedMainActivity : AppCompatActivity() {
             }
             var showNowPlaying by remember { mutableStateOf(false) }
             var showPickerSheet by remember { mutableStateOf(false) }
+            var showMaSearch by remember { mutableStateOf(false) }
+            var maDetailSeed by remember {
+                mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
+            }
+            var maDetailKind by remember {
+                mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
+            }
             val xrContext = androidx.compose.ui.platform.LocalContext.current
             val dispatcher = remember(xrContext) {
                 dev.spatialfin.unified.MaPlayDispatcher(xrContext, maSession, maServiceClient)
@@ -862,6 +869,10 @@ class UnifiedMainActivity : AppCompatActivity() {
                     session = maSession,
                     onBack = { showNowPlaying = false },
                     onPickPlayer = { showPickerSheet = true },
+                    onOpenSearch = {
+                        showNowPlaying = false
+                        showMaSearch = true
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -871,6 +882,46 @@ class UnifiedMainActivity : AppCompatActivity() {
                     dispatcher = dispatcher,
                     serverId = sendspinState.serverId,
                     onDismiss = { showPickerSheet = false },
+                )
+            }
+            if (showMaSearch) {
+                androidx.activity.compose.BackHandler(onBack = { showMaSearch = false })
+                dev.spatialfin.unified.music.MaSearchScreen(
+                    onBack = { showMaSearch = false },
+                    onOpenItem = { target ->
+                        maDetailSeed = target.item
+                        maDetailKind = when (target) {
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            val seed = maDetailSeed
+            val kind = maDetailKind
+            if (seed != null && kind != null) {
+                androidx.activity.compose.BackHandler(onBack = { maDetailSeed = null })
+                dev.spatialfin.unified.music.MaDetailScreen(
+                    seed = seed,
+                    kind = kind,
+                    onBack = { maDetailSeed = null },
+                    onOpenItem = { nested ->
+                        maDetailSeed = nested.item
+                        maDetailKind = when (nested) {
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }

@@ -511,6 +511,23 @@ constructor(
                         )
                     }
                 }
+                // Recommendations are a separate request to MA's recommendations
+                // engine; surfaced as the third MA row so the user sees fresh
+                // suggestions next to recently-played and their saved playlists.
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_recommendations", true)) {
+                    val recommendations = musicAssistantRepository.getRecommendations()
+                    if (recommendations.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:recommendations".toByteArray()),
+                                    name = UiText.DynamicString("Recommended for you (Music Assistant)"),
+                                    items = recommendations,
+                                )
+                            )
+                        )
+                    }
+                }
                 android.util.Log.e("HomeViewModel", "MA sections to add: ${sections.size}")
                 _state.update {
                     it.copy(musicAssistantSections = sections.toImmutableList())

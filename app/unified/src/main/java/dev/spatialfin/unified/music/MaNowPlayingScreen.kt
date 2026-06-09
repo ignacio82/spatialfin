@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AssistChip
@@ -79,6 +80,7 @@ fun MaNowPlayingScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onPickPlayer: (() -> Unit)? = null,
+    onOpenSearch: (() -> Unit)? = null,
 ) {
     val state by session.session.collectAsStateWithLifecycle()
     Surface(
@@ -91,6 +93,14 @@ fun MaNowPlayingScreen(
                 modifier = Modifier.align(Alignment.TopStart),
             ) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            }
+            if (onOpenSearch != null) {
+                IconButton(
+                    onClick = onOpenSearch,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                ) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
+                }
             }
             NowPlayingBody(
                 state = state,

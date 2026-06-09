@@ -129,6 +129,11 @@ private enum class BeamRoute {
     Plugins,
     PluginBrowse,
     Settings,
+    /** Dedicated Music Assistant search across tracks/albums/artists/etc. */
+    MaSearch,
+    /** Music Assistant album/artist/playlist detail. The selected
+     *  [ServerMediaItem] is held in [BeamRoot]'s `maDetailSeed` state. */
+    MaDetail,
 }
 
 private data class BeamTab(
@@ -224,6 +229,32 @@ fun BeamNavigationRoot(
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Phase 2 — MA detail navigation. Holds the seed ServerMediaItem that
+    // the user tapped (search/recommendation) so the detail screen can call
+    // its `/get` and child-list endpoints. Not @Saveable because the rich
+    // type isn't, and a process-death restore would reasonably bounce the
+    // user to the search route anyway.
+    var maDetailSeed by remember {
+        mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
+    }
+    var maDetailKind by remember {
+        mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
+    }
+    var maDetailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.MaSearch) }
+
+    fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
+        maDetailSeed = target.item
+        maDetailKind = when (target) {
+            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
+                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
+            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
+                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
+            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
+                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
+        }
+        maDetailBackRoute = currentRoute
+        currentRoute = BeamRoute.MaDetail
+    }
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
     var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
@@ -626,6 +657,7 @@ fun BeamNavigationRoot(
                                 detailBackRoute = BeamRoute.Search
                                 currentRoute = BeamRoute.Detail
                             },
+                            onOpenMaSearch = { currentRoute = BeamRoute.MaSearch },
                         )
                     }
                     currentRoute == BeamRoute.Library -> {
@@ -875,6 +907,30 @@ fun BeamNavigationRoot(
                             navigateBack = { currentRoute = BeamRoute.Network }
                         )
                     }
+                    currentRoute == BeamRoute.MaSearch -> {
+                        dev.spatialfin.unified.music.MaSearchScreen(
+                            onBack = { currentRoute = BeamRoute.Home },
+                            onOpenItem = ::openMaBrowse,
+                        )
+                    }
+                    currentRoute == BeamRoute.MaDetail -> {
+                        val seed = maDetailSeed
+                        val kind = maDetailKind
+                        if (seed == null || kind == null) {
+                            // Defensive fallback: shouldn't happen but if state
+                            // was lost (process death without saveable seed),
+                            // bounce the user back rather than render an empty
+                            // detail screen.
+                            currentRoute = maDetailBackRoute
+                        } else {
+                            dev.spatialfin.unified.music.MaDetailScreen(
+                                seed = seed,
+                                kind = kind,
+                                onBack = { currentRoute = maDetailBackRoute },
+                                onOpenItem = ::openMaBrowse,
+                            )
+                        }
+                    }
                     else -> {
                 BeamSignedInShell(
                     state = state,
@@ -928,6 +984,10 @@ fun BeamNavigationRoot(
                     session = maSession,
                     onBack = { showNowPlaying = false },
                     onPickPlayer = { showPlayerPicker = true },
+                    onOpenSearch = {
+                        showNowPlaying = false
+                        currentRoute = BeamRoute.MaSearch
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1381,7 +1441,9 @@ private fun BeamSignedInShell(
         BeamRoute.PluginBrowse,
         BeamRoute.Settings,
         BeamRoute.NetworkAddShare,
-        BeamRoute.NetworkShare ->
+        BeamRoute.NetworkShare,
+        BeamRoute.MaSearch,
+        BeamRoute.MaDetail ->
             Unit
 
         BeamRoute.Welcome -> Unit

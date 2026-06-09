@@ -109,6 +109,35 @@ class MusicAssistantRepository @Inject constructor(
         return parseItems(array)
     }
 
+    /**
+     * Pull MA's "recommendations" feed for the home row. MA returns this as
+     * a list of folders, each with its own items array — we flatten across
+     * folders for a single carousel row in Phase 2. Per-folder grouping
+     * (multiple carousels) is a later phase improvement.
+     *
+     * Response shape (sampled from MA 2.x):
+     *   [{ "id": "...", "name": "Quick picks", "items": [ ... ] }, ...]
+     * or sometimes a flat array of items when there's only one folder.
+     */
+    suspend fun getRecommendations(): List<SpatialFinItem> {
+        val raw = executeCommand("music/recommendations") ?: return emptyList()
+        val flat = JSONArray()
+        for (i in 0 until raw.length()) {
+            val entry = raw.optJSONObject(i) ?: continue
+            val nested = entry.optJSONArray("items")
+            if (nested != null) {
+                // Folder shape — drain its `items` array into our flat list.
+                for (j in 0 until nested.length()) {
+                    nested.optJSONObject(j)?.let(flat::put)
+                }
+            } else if (entry.has("item_id") || entry.has("uri") || entry.has("name")) {
+                // Item shape — recognize by the fields parseItem actually reads.
+                flat.put(entry)
+            }
+        }
+        return parseItems(flat)
+    }
+
     private fun parseItems(array: JSONArray): List<SpatialFinItem> {
         val items = mutableListOf<SpatialFinItem>()
         for (i in 0 until array.length()) {

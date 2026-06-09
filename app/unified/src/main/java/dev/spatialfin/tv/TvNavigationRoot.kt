@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
@@ -149,7 +150,9 @@ import dev.jdtech.jellyfin.viewmodels.MainState
 import java.util.UUID
 
 private enum class TvRoute {
-    Home, Search, Library, Detail, Show, Season, Person, Companion, Settings, Users
+    Home, Search, Library, Detail, Show, Season, Person, Companion, Settings, Users,
+    /** Music Assistant search + detail (Phase 2). */
+    MaSearch, MaDetail,
 }
 
 private data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
@@ -157,6 +160,7 @@ private data class TvNavItem(val route: TvRoute, val label: String, val icon: Im
 private val tvNavItems = listOf(
     TvNavItem(TvRoute.Home, "Home", Icons.Rounded.Home),
     TvNavItem(TvRoute.Search, "Search", Icons.AutoMirrored.Rounded.ManageSearch),
+    TvNavItem(TvRoute.MaSearch, "Music", Icons.Rounded.MusicNote),
     TvNavItem(TvRoute.Library, "Libraries", Icons.Rounded.LiveTv),
     TvNavItem(TvRoute.Companion, "Companion", Icons.Rounded.Link),
     TvNavItem(TvRoute.Settings, "Settings", Icons.Rounded.Settings),
@@ -288,6 +292,24 @@ fun TvNavigationRoot(
                     try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
                 }
                 Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
+                    var maDetailSeed by remember {
+                        mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
+                    }
+                    var maDetailKind by remember {
+                        mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
+                    }
+                    fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
+                        maDetailSeed = target.item
+                        maDetailKind = when (target) {
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
+                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
+                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
+                        }
+                        navigate(TvRoute.MaDetail)
+                    }
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
@@ -299,6 +321,24 @@ fun TvNavigationRoot(
                         TvRoute.Settings -> TvSettingsScreen(state, appPreferences, homeState.server?.name, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { navigate(TvRoute.Users) })
                         TvRoute.Users -> TvUsersScreen({ popBack() }, { navigate(TvRoute.Home) })
                         TvRoute.Companion -> TvCompanionScreen(onBack = { popBack() }, onFinishApp = onFinishApp)
+                        TvRoute.MaSearch -> dev.spatialfin.unified.music.MaSearchScreen(
+                            onBack = { popBack() },
+                            onOpenItem = ::openMaBrowse,
+                        )
+                        TvRoute.MaDetail -> {
+                            val seed = maDetailSeed
+                            val kind = maDetailKind
+                            if (seed == null || kind == null) {
+                                popBack()
+                            } else {
+                                dev.spatialfin.unified.music.MaDetailScreen(
+                                    seed = seed,
+                                    kind = kind,
+                                    onBack = { popBack() },
+                                    onOpenItem = ::openMaBrowse,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -327,6 +367,10 @@ fun TvNavigationRoot(
                     session = maSession,
                     onBack = { showNowPlaying = false },
                     onPickPlayer = { showPickerSheet = true },
+                    onOpenSearch = {
+                        showNowPlaying = false
+                        navigate(TvRoute.MaSearch)
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
