@@ -53,6 +53,8 @@ class MaDetailViewModel @Inject constructor(
                     DetailKind.Album -> loadAlbum(seed)
                     DetailKind.Artist -> loadArtist(seed)
                     DetailKind.Playlist -> loadPlaylist(seed)
+                    DetailKind.Podcast -> loadPodcast(seed)
+                    DetailKind.Audiobook -> loadAudiobook(seed)
                 }
             } catch (e: Exception) {
                 Timber.tag(TAG).w(e, "%s detail load failed for %s", kind, seed.itemId)
@@ -91,6 +93,31 @@ class MaDetailViewModel @Inject constructor(
             kind = DetailKind.Playlist,
             header = header,
             tracks = tracks,
+            albums = emptyList(),
+        )
+    }
+
+    private suspend fun loadPodcast(seed: ServerMediaItem) {
+        // A podcast isn't directly playable — you play its episodes. The header
+        // carries description/publisher; `tracks` is the episode list.
+        val header = repository.getPodcast(seed) ?: seed
+        val episodes = repository.getPodcastEpisodes(seed)
+        _state.value = MaDetailState.Loaded(
+            kind = DetailKind.Podcast,
+            header = header,
+            tracks = episodes,
+            albums = emptyList(),
+        )
+    }
+
+    private suspend fun loadAudiobook(seed: ServerMediaItem) {
+        // An audiobook is a single playable item; its chapters live in
+        // header.metadata.chapters as seek targets, not as separate children.
+        val header = repository.getAudiobook(seed) ?: seed
+        _state.value = MaDetailState.Loaded(
+            kind = DetailKind.Audiobook,
+            header = header,
+            tracks = emptyList(),
             albums = emptyList(),
         )
     }
@@ -147,13 +174,15 @@ class MaDetailViewModel @Inject constructor(
                 DetailKind.Album -> loadAlbum(seed)
                 DetailKind.Artist -> loadArtist(seed)
                 DetailKind.Playlist -> loadPlaylist(seed)
+                DetailKind.Podcast -> loadPodcast(seed)
+                DetailKind.Audiobook -> loadAudiobook(seed)
             }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "background reload failed for %s", seed.itemId)
         }
     }
 
-    enum class DetailKind { Album, Artist, Playlist }
+    enum class DetailKind { Album, Artist, Playlist, Podcast, Audiobook }
 
     private companion object {
         const val TAG = "MaDetail"

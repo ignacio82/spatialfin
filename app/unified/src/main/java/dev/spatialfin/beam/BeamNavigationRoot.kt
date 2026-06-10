@@ -248,14 +248,7 @@ fun BeamNavigationRoot(
 
     fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
         maDetailSeed = target.item
-        maDetailKind = when (target) {
-            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
-                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
-            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
-                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
-            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
-                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
-        }
+        maDetailKind = target.detailKind
         maDetailBackRoute = currentRoute
         currentRoute = BeamRoute.MaDetail
     }
@@ -622,7 +615,11 @@ fun BeamNavigationRoot(
                                 selectedPluginId = pluginId
                                 selectedPluginRowId = rowId
                                 currentRoute = BeamRoute.PluginBrowse
-                            }
+                            },
+                            onOpenMaBrowse = { uri, name ->
+                                dev.spatialfin.unified.music.maDetailTargetForUri(uri, name)
+                                    ?.let(::openMaBrowse)
+                            },
                         )
                     }
                     currentRoute == BeamRoute.PluginBrowse -> {

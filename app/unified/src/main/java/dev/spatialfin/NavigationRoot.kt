@@ -230,6 +230,12 @@ fun NavigationRoot(
     currentServerAddress: String? = null,
     /** Process-singleton FCast session manager. Null on form factors that don't cast (TV). */
     fcastSession: dev.spatialfin.fcast.session.CastSessionManager? = null,
+    /**
+     * Intercepts home-row taps that are Music Assistant items (play or open
+     * detail). Returns true when it handled the item, so normal Jellyfin item
+     * navigation is skipped. Null on surfaces with no MA wiring.
+     */
+    onMaItemTap: ((dev.jdtech.jellyfin.models.SpatialFinItem) -> Boolean)? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -583,7 +589,12 @@ fun NavigationRoot(
                         )
                     },
                     onItemClick = { item ->
-                        navigateToItem(navController = navController, item = item)
+                        // MA home-row items (podcasts/audiobooks → detail, tracks
+                        // → play) are handled by the host; fall through to normal
+                        // Jellyfin navigation only when it's not an MA item.
+                        if (onMaItemTap?.invoke(item) != true) {
+                            navigateToItem(navController = navController, item = item)
+                        }
                     },
                     onPluginBrowse = { pluginId, rowId ->
                         navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId, rowId = rowId))

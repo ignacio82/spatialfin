@@ -238,6 +238,20 @@ fun TvNavigationRoot(
         }
     }
 
+    // MA detail nav state — hoisted above openItem so a home-row tap on a
+    // podcast/audiobook can route into the detail screen.
+    var maDetailSeed by remember {
+        mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
+    }
+    var maDetailKind by remember {
+        mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
+    }
+    fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
+        maDetailSeed = target.item
+        maDetailKind = target.detailKind
+        navigate(TvRoute.MaDetail)
+    }
+
     fun openItem(item: SpatialFinItem) {
         when (item) {
             is SpatialFinShow -> { selectedShowId = item.id.toString(); navigate(TvRoute.Show) }
@@ -248,6 +262,12 @@ fun TvNavigationRoot(
                 // not open-Jellyfin-detail (which would 404 on an MA uri).
                 val maUri = item.originalTitle
                 if (!maUri.isNullOrBlank() && maUri.contains("://")) {
+                    // Podcasts/audiobooks open a detail screen; everything else plays.
+                    val target = dev.spatialfin.unified.music.maDetailTargetForUri(maUri, item.name)
+                    if (target != null) {
+                        openMaBrowse(target)
+                        return
+                    }
                     maDispatcher.playUri(maUri, title = item.name, artworkUrl = item.images.primary?.toString())
                 } else {
                     selectedItemId = item.id.toString(); navigate(TvRoute.Detail)
@@ -317,24 +337,6 @@ fun TvNavigationRoot(
                     try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
                 }
                 Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
-                    var maDetailSeed by remember {
-                        mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
-                    }
-                    var maDetailKind by remember {
-                        mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
-                    }
-                    fun openMaBrowse(target: dev.spatialfin.unified.music.MaBrowseTarget) {
-                        maDetailSeed = target.item
-                        maDetailKind = when (target) {
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
-                        }
-                        navigate(TvRoute.MaDetail)
-                    }
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
                         TvRoute.Search -> TvSearchScreen(::openItem)

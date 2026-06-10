@@ -145,6 +145,11 @@ internal fun ServerMediaItem.subtitleLine(): String? {
         "artist" -> null
         "playlist" -> "Playlist"
         "podcast" -> publisher ?: "Podcast"
+        "podcast_episode" -> podcast?.name ?: "Episode"
+        "audiobook" -> listOfNotNull(
+            authors?.firstOrNull()?.takeIf { it.isNotBlank() },
+            narrators?.firstOrNull()?.takeIf { it.isNotBlank() }?.let { "Narrated by $it" },
+        ).joinToString(" • ").ifBlank { "Audiobook" }
         "radio" -> "Radio"
         else -> artistName
     }

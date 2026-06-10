@@ -239,6 +239,7 @@ private fun ResultsView(
             if (result.artists.isNotEmpty()) add(SearchTab.Artists to result.artists)
             if (result.playlists.isNotEmpty()) add(SearchTab.Playlists to result.playlists)
             if (result.podcasts.isNotEmpty()) add(SearchTab.Podcasts to result.podcasts)
+            if (result.audiobooks.isNotEmpty()) add(SearchTab.Audiobooks to result.audiobooks)
             if (result.radio.isNotEmpty()) add(SearchTab.Radio to result.radio)
         }
     }
@@ -264,9 +265,9 @@ private fun ResultsView(
         MaSelectionBar(selection = selection, dispatcher = dispatcher)
         val (tab, items) = tabs[selectedIndex.coerceIn(0, tabs.lastIndex)]
         // Multi-select only on leaf-playable rows (where bulk queue/favourite
-        // actions make sense), not on Albums/Artists/Playlists.
+        // actions make sense). Podcasts/audiobooks now open a detail screen, so
+        // they're not bulk-selectable here.
         val selectable = tab == SearchTab.Tracks ||
-            tab == SearchTab.Podcasts ||
             tab == SearchTab.Radio
         LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -293,9 +294,12 @@ private fun ResultsView(
                                 SearchTab.Albums -> onOpenItem(MaBrowseTarget.Album(item))
                                 SearchTab.Artists -> onOpenItem(MaBrowseTarget.Artist(item))
                                 SearchTab.Playlists -> onOpenItem(MaBrowseTarget.Playlist(item))
-                                // Podcasts and Radio fall through to a play
-                                // action; podcast detail lands in a later phase.
-                                SearchTab.Podcasts, SearchTab.Radio -> onPlayTrack(item)
+                                // Podcasts → episode list, audiobooks → chapters
+                                // + resume; both need a detail screen, not direct
+                                // play.
+                                SearchTab.Podcasts -> onOpenItem(MaBrowseTarget.Podcast(item))
+                                SearchTab.Audiobooks -> onOpenItem(MaBrowseTarget.Audiobook(item))
+                                SearchTab.Radio -> onPlayTrack(item)
                             }
                         }
                     },
@@ -316,6 +320,7 @@ private enum class SearchTab(val label: String) {
     Artists("Artists"),
     Playlists("Playlists"),
     Podcasts("Podcasts"),
+    Audiobooks("Audiobooks"),
     Radio("Radio"),
 }
 
@@ -328,6 +333,76 @@ sealed interface MaBrowseTarget {
     data class Album(override val item: ServerMediaItem) : MaBrowseTarget
     data class Artist(override val item: ServerMediaItem) : MaBrowseTarget
     data class Playlist(override val item: ServerMediaItem) : MaBrowseTarget
+    data class Podcast(override val item: ServerMediaItem) : MaBrowseTarget
+    data class Audiobook(override val item: ServerMediaItem) : MaBrowseTarget
+
+    /** The detail-screen kind this target opens. Keeps all nav roots in sync. */
+    val detailKind: MaDetailViewModel.DetailKind
+        get() = when (this) {
+            is Album -> MaDetailViewModel.DetailKind.Album
+            is Artist -> MaDetailViewModel.DetailKind.Artist
+            is Playlist -> MaDetailViewModel.DetailKind.Playlist
+            is Podcast -> MaDetailViewModel.DetailKind.Podcast
+            is Audiobook -> MaDetailViewModel.DetailKind.Audiobook
+        }
+}
+
+/**
+ * Build a detail-browse target from a bare MA uri — home-row cards carry only
+ * the uri (in `SpatialFinItem.originalTitle`), not a typed [ServerMediaItem].
+ * MA uris are `provider://media_type/item_id`. Returns a Podcast/Audiobook
+ * target (those need a detail screen, not direct play) or null for everything
+ * else, in which case the caller should just play the uri.
+ */
+fun maDetailTargetForUri(uri: String, name: String): MaBrowseTarget? {
+    if (!uri.contains("://")) return null
+    val provider = uri.substringBefore("://").ifBlank { return null }
+    val rest = uri.substringAfter("://")
+    if (!rest.contains("/")) return null
+    val mediaType = rest.substringBefore("/")
+    // Keep the full remainder as the id — file-based providers embed a path
+    // (e.g. `filesystem://audiobook//books/foo.m4b`) with slashes in the id.
+    val itemId = rest.substringAfter("/").ifBlank { return null }
+    val seed = ServerMediaItem(
+        itemId = itemId,
+        provider = provider,
+        name = name,
+        mediaType = mediaType,
+        uri = uri,
+    )
+    return when (mediaType.lowercase()) {
+        "podcast" -> MaBrowseTarget.Podcast(seed)
+        "audiobook" -> MaBrowseTarget.Audiobook(seed)
+        else -> null
+    }
+}
+
+/**
+ * Handle a tap on a home-row card that might be a Music Assistant item (its uri
+ * lives in [SpatialFinItem.originalTitle]). Podcasts/audiobooks open a detail
+ * screen via [onOpenDetail] when one is available; everything else (and
+ * podcasts/audiobooks where no detail surface exists) plays directly.
+ *
+ * Returns true when the item was an MA item and was handled — the caller should
+ * then NOT fall through to its normal Jellyfin item navigation. Returns false
+ * for non-MA items (no uri scheme), leaving them to the caller.
+ */
+fun handleMaHomeItemTap(
+    item: dev.jdtech.jellyfin.models.SpatialFinItem,
+    dispatcher: dev.spatialfin.unified.MaPlayDispatcher?,
+    onOpenDetail: ((MaBrowseTarget) -> Unit)?,
+): Boolean {
+    val uri = item.originalTitle
+    if (uri.isNullOrBlank() || !uri.contains("://")) return false
+    if (onOpenDetail != null) {
+        maDetailTargetForUri(uri, item.name)?.let { target ->
+            onOpenDetail(target)
+            return true
+        }
+    }
+    if (dispatcher == null) return false
+    dispatcher.playUri(uri, title = item.name, artworkUrl = item.images.primary?.toString())
+    return true
 }
 
 private fun warnNoDispatcher() {

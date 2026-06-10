@@ -424,6 +424,11 @@ class MaSessionRepository(
         name = displayName.ifBlank { playerId },
         provider = provider,
         isPlaying = state == PlayerState.PLAYING,
+        volumeLevel = volumeLevel?.toInt(),
+        volumeMuted = volumeMuted == true,
+        // MA reports "none" (or empty) when the endpoint exposes no volume knob
+        // — hide the slider then rather than send no-op RPCs.
+        supportsVolume = volumeControl.isNotBlank() && volumeControl != "none",
     )
 
     private data class PendingPlay(
@@ -519,6 +524,11 @@ data class MaPlayerSummary(
     val name: String,
     val provider: String,
     val isPlaying: Boolean,
+    /** Current volume 0–100, or null when the player reports none. */
+    val volumeLevel: Int? = null,
+    val volumeMuted: Boolean = false,
+    /** Whether this player exposes a volume control (drives slider visibility). */
+    val supportsVolume: Boolean = false,
 )
 
 data class NowPlayingTrack(

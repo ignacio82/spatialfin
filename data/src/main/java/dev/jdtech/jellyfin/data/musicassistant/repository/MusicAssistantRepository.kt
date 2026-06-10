@@ -149,6 +149,22 @@ class MusicAssistantRepository(
     suspend fun getPlaylistTracks(item: ServerMediaItem): List<ServerMediaItem> =
         getList(item) { id, prov -> Request.Playlist.getTracks(id, prov) }
 
+    /** Full podcast header (carries description + provider metadata). */
+    suspend fun getPodcast(item: ServerMediaItem): ServerMediaItem? =
+        getDetail(item) { id, prov -> Request.Podcast.get(id, prov) }
+
+    /** Episodes of a podcast, newest-first as the server returns them. */
+    suspend fun getPodcastEpisodes(item: ServerMediaItem): List<ServerMediaItem> =
+        getList(item) { id, prov -> Request.Podcast.getEpisodes(id, prov) }
+
+    /**
+     * Full audiobook header. Unlike podcasts, an audiobook is a single playable
+     * item — its `metadata.chapters` are seek targets within that one stream,
+     * not separate playable children.
+     */
+    suspend fun getAudiobook(item: ServerMediaItem): ServerMediaItem? =
+        getDetail(item) { id, prov -> Request.Audiobook.get(id, prov) }
+
     suspend fun getRecommendations(): List<ServerMediaItem> {
         val request = Request(command = APICommands.MUSIC_RECOMMENDATIONS)
         val response = serviceClient.sendRequest(request)
@@ -181,6 +197,20 @@ class MusicAssistantRepository(
         return serviceClient.sendRequest(
             Request.Player.seek(playerId, (positionMs / 1000).coerceAtLeast(0)),
         ).isSuccess
+    }
+
+    /** Set the selected player's volume (0–100). */
+    suspend fun setVolume(playerId: String, volumeLevel: Int): Boolean {
+        if (playerId.isBlank()) return false
+        return serviceClient.sendRequest(
+            Request.Player.setVolume(playerId, volumeLevel.coerceIn(0, 100).toDouble()),
+        ).isSuccess
+    }
+
+    /** Mute / unmute the selected player. */
+    suspend fun setMute(playerId: String, muted: Boolean): Boolean {
+        if (playerId.isBlank()) return false
+        return serviceClient.sendRequest(Request.Player.setMute(playerId, muted)).isSuccess
     }
 
     /** Set the active queue's repeat mode (off / one / all). */

@@ -836,6 +836,18 @@ class UnifiedMainActivity : AppCompatActivity() {
             label = "home-space-fade",
         )
         Box(modifier = Modifier.fillMaxSize().alpha(surfaceAlpha)) {
+            // MA detail/play state — declared above NavigationRoot so a home-row
+            // tap on an MA item can open the detail overlay or play it.
+            var maDetailSeed by remember {
+                mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
+            }
+            var maDetailKind by remember {
+                mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
+            }
+            val xrContext = androidx.compose.ui.platform.LocalContext.current
+            val dispatcher = remember(xrContext) {
+                dev.spatialfin.unified.MaPlayDispatcher(xrContext, maSession, maServiceClient)
+            }
             NavigationRoot(
                 navController = navController,
                 hasServers = state.hasServers,
@@ -850,6 +862,16 @@ class UnifiedMainActivity : AppCompatActivity() {
                 currentUser = state.currentUser,
                 currentServerAddress = state.currentServerAddress,
                 fcastSession = fcastSession,
+                onMaItemTap = { item ->
+                    dev.spatialfin.unified.music.handleMaHomeItemTap(
+                        item = item,
+                        dispatcher = dispatcher,
+                        onOpenDetail = { target ->
+                            maDetailSeed = target.item
+                            maDetailKind = target.detailKind
+                        },
+                    )
+                },
             )
             VoiceControlOverlay(
                 state = voiceState,
@@ -880,16 +902,6 @@ class UnifiedMainActivity : AppCompatActivity() {
             var showPickerSheet by remember { mutableStateOf(false) }
             var showParty by remember { mutableStateOf(false) }
             var showMaSearch by remember { mutableStateOf(false) }
-            var maDetailSeed by remember {
-                mutableStateOf<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem?>(null)
-            }
-            var maDetailKind by remember {
-                mutableStateOf<dev.spatialfin.unified.music.MaDetailViewModel.DetailKind?>(null)
-            }
-            val xrContext = androidx.compose.ui.platform.LocalContext.current
-            val dispatcher = remember(xrContext) {
-                dev.spatialfin.unified.MaPlayDispatcher(xrContext, maSession, maServiceClient)
-            }
             val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
                 .state.collectAsStateWithLifecycle()
             // Open the right MA overlay when a queue/party deep link arrives.
@@ -953,14 +965,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                     onBack = { showMaSearch = false },
                     onOpenItem = { target ->
                         maDetailSeed = target.item
-                        maDetailKind = when (target) {
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
-                        }
+                        maDetailKind = target.detailKind
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -975,14 +980,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                     onBack = { maDetailSeed = null },
                     onOpenItem = { nested ->
                         maDetailSeed = nested.item
-                        maDetailKind = when (nested) {
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Album ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Album
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Artist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Artist
-                            is dev.spatialfin.unified.music.MaBrowseTarget.Playlist ->
-                                dev.spatialfin.unified.music.MaDetailViewModel.DetailKind.Playlist
-                        }
+                        maDetailKind = nested.detailKind
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -1045,6 +1043,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                     .height(XR_APP_PANEL_HEIGHT_DP.dp)
                     .transformingMovable()
             ) {
+                // SpatialPanel scope: shared by NavigationRoot (inside the
+                // pointer Box) and the now-playing / picker overlays below.
+                val spatialCtx = androidx.compose.ui.platform.LocalContext.current
+                val spatialDispatcher = remember(spatialCtx) {
+                    dev.spatialfin.unified.MaPlayDispatcher(spatialCtx, maSession, maServiceClient)
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1077,6 +1081,15 @@ class UnifiedMainActivity : AppCompatActivity() {
                         currentUser = state.currentUser,
                         currentServerAddress = state.currentServerAddress,
                         fcastSession = fcastSession,
+                        // Full Space has no MA detail overlay, so MA items play
+                        // directly (audiobooks resume; podcasts play their feed).
+                        onMaItemTap = { item ->
+                            dev.spatialfin.unified.music.handleMaHomeItemTap(
+                                item = item,
+                                dispatcher = spatialDispatcher,
+                                onOpenDetail = null,
+                            )
+                        },
                     )
                     VoiceControlOverlay(
                         state = voiceState,
@@ -1129,10 +1142,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                 }
                 var showSpatialPicker by remember { mutableStateOf(false) }
                 var showSpatialParty by remember { mutableStateOf(false) }
-                val spatialCtx = androidx.compose.ui.platform.LocalContext.current
-                val spatialDispatcher = remember(spatialCtx) {
-                    dev.spatialfin.unified.MaPlayDispatcher(spatialCtx, maSession, maServiceClient)
-                }
                 val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
                     .state.collectAsStateWithLifecycle()
                 if (showSpatialNowPlaying) {

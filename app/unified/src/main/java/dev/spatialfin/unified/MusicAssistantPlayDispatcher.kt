@@ -8,10 +8,13 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
+import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * "Play this on the SendSpin receiver, and tell every UI surface it's
@@ -43,6 +46,28 @@ class MaPlayDispatcher(
     fun play(item: ServerMediaItem) {
         val uri = item.uri ?: return
         dispatchMusicAssistantPlay(context, session, serviceClient, item, uri)
+    }
+
+    /**
+     * Play [item] and, once it's actually rolling, seek to [positionMs] —
+     * audiobook chapter navigation, where chapters are seek offsets within a
+     * single stream rather than separate tracks. Waits (bounded) for the
+     * session to report this item playing so the seek lands on a live queue.
+     */
+    fun playThenSeek(item: ServerMediaItem, positionMs: Long) {
+        play(item)
+        val uri = item.uri ?: return
+        if (positionMs <= 0L) return
+        scope.launch {
+            val ready = withTimeoutOrNull(20_000L) {
+                session.session.first { s ->
+                    s.nowPlaying?.uri == uri &&
+                        s.playbackPhase != PlaybackPhase.Preparing &&
+                        s.selectedPlayer != null
+                }
+            } ?: return@launch
+            ready.selectedPlayer?.id?.let { repository.seekTo(it, positionMs) }
+        }
     }
 
     // --- Transport (targets the selected player) --------------------------
@@ -78,6 +103,18 @@ class MaPlayDispatcher(
         val queueId = session.session.value.activeQueueId ?: return
         val enabled = !session.session.value.shuffleEnabled
         scope.launch { repository.setShuffle(queueId, enabled) }
+    }
+
+    /** Set the selected player's volume (0–100). */
+    fun setVolume(level: Int) {
+        val playerId = session.session.value.selectedPlayer?.id ?: return
+        scope.launch { repository.setVolume(playerId, level) }
+    }
+
+    /** Toggle mute on the selected player. */
+    fun toggleMute() {
+        val player = session.session.value.selectedPlayer ?: return
+        scope.launch { repository.setMute(player.id, !player.volumeMuted) }
     }
 
     private fun transport(action: suspend (playerId: String) -> Unit) {

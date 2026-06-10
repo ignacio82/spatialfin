@@ -527,6 +527,10 @@ fun BeamHomeScreen(
     onOpenItem: (UUID) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
     onOpenMaSearch: () -> Unit = {},
+    // Primitive-typed (uri, name) rather than a MaBrowseTarget lambda: the
+    // @TraceRecomposition compiler plugin on this composable mishandles a
+    // sealed-type parameter here. The caller rebuilds the browse target.
+    onOpenMaBrowse: (String, String) -> Unit = { _, _ -> },
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -701,8 +705,8 @@ fun BeamHomeScreen(
                         BeamPosterCarousel(
                             items = section.homeSection.items,
                             onItemClick = { item ->
-                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
-                            }
+                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher, onOpenMaBrowse)
+                            },
                         )
                     }
                 }
@@ -3099,6 +3103,7 @@ private fun openServerItem(
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
     maPlayDispatcher: dev.spatialfin.unified.MaPlayDispatcher? = null,
+    onOpenMaUriBrowse: ((uri: String, name: String) -> Unit)? = null,
 ) {
     when (item) {
         is SpatialFinCollection -> onOpenLibrary(item.id, item.name, item.type)
@@ -3108,6 +3113,14 @@ private fun openServerItem(
         else -> {
             val maUri = item.originalTitle
             if (!maUri.isNullOrBlank() && maUri.contains("://")) {
+                // Podcasts/audiobooks open a detail screen (episode list /
+                // chapters + resume); tracks & directly-playable items just play.
+                val browseable = onOpenMaUriBrowse != null &&
+                    dev.spatialfin.unified.music.maDetailTargetForUri(maUri, item.name) != null
+                if (browseable) {
+                    onOpenMaUriBrowse!!(maUri, item.name)
+                    return
+                }
                 val artwork = item.images.primary?.toString()
                 if (maPlayDispatcher != null) {
                     maPlayDispatcher.playUri(maUri, title = item.name, artworkUrl = artwork)

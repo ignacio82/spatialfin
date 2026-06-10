@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
@@ -41,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -78,9 +81,9 @@ import kotlinx.coroutines.delay
  *    queue; without the tick the scrubber jumps in 1-second steps and looks
  *    laggy on a 60 Hz display).
  *
- * Transport buttons are stubbed in Phase 1 — they exist for visual layout but
- * the play/pause/skip RPCs land in Phase 3 alongside queue management. The
- * scrubber is also read-only for now (seek is a Queue.seek RPC, same phase).
+ * Full transport: play/pause/skip, stop (dismisses the player), repeat-cycle,
+ * shuffle, a draggable seek scrubber, and a per-player volume slider (shown
+ * only for players that expose a volume control).
  *
  * Designed for parity across Beam (regular screen), TV (full-screen route with
  * d-pad focus), and XR Home Space (regular screen) / Full Space (hosted in a
@@ -153,6 +156,9 @@ fun MaNowPlayingScreen(
                 onStop = dispatcher?.let { { it.stop() } },
                 onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
                 onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
+                onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
+                onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
+                onToggleMute = dispatcher?.let { { it.toggleMute() } },
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -215,6 +221,9 @@ private fun NowPlayingBody(
     onStop: (() -> Unit)? = null,
     onCycleRepeat: (() -> Unit)? = null,
     onToggleShuffle: (() -> Unit)? = null,
+    onSeek: ((Long) -> Unit)? = null,
+    onSetVolume: ((Int) -> Unit)? = null,
+    onToggleMute: (() -> Unit)? = null,
 ) {
     val track = state.nowPlaying
     if (track == null) {
@@ -295,7 +304,7 @@ private fun NowPlayingBody(
             }
         }
 
-        Scrubber(state = state)
+        Scrubber(state = state, onSeek = onSeek)
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -379,6 +388,17 @@ private fun NowPlayingBody(
             )
         }
 
+        // Volume — only for players that expose a volume knob (a Chromecast
+        // group does; a raw line-out source may not).
+        state.selectedPlayer?.takeIf { it.supportsVolume }?.let { player ->
+            VolumeRow(
+                level = player.volumeLevel ?: 0,
+                muted = player.volumeMuted,
+                onSetVolume = onSetVolume,
+                onToggleMute = onToggleMute,
+            )
+        }
+
         // Player picker chip. Always render it (even with no selected player)
         // so the user can choose where to play before tapping a song.
         AssistChip(
@@ -427,11 +447,17 @@ private fun NowPlayingBody(
  * for streams (`PlayerState.PLAYING` with no duration: radio, podcast).
  */
 @Composable
-private fun Scrubber(state: MaSession) {
+private fun Scrubber(state: MaSession, onSeek: ((Long) -> Unit)? = null) {
     val duration = state.nowPlaying?.durationMs
     val anchorElapsed = state.elapsedMs
     val anchorAt = state.elapsedAsOfEpochMs
     var now by remember(anchorAt) { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // While the user is dragging the thumb, this holds the dragged fraction so
+    // the bar + elapsed label track the finger instead of the 1 Hz server tick.
+    // Not keyed on the server anchor: a tick mid-drag must not reset the thumb.
+    // Cleared on release.
+    var scrubFraction by remember { mutableStateOf<Float?>(null) }
 
     // Tick only while we have something to extrapolate. Stopped / Preparing /
     // missing-duration content skips the tick to keep idle CPU near zero.
@@ -482,18 +508,76 @@ private fun Scrubber(state: MaSession) {
         } else {
             anchorElapsed.coerceAtMost(duration)
         }
-        val progress = if (duration > 0) effective.toFloat() / duration.toFloat() else 0f
-        LinearProgressIndicator(
-            progress = { progress.coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().height(4.dp),
-        )
+        val liveProgress = if (duration > 0) (effective.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+        val shownProgress = scrubFraction ?: liveProgress
+        val shownElapsed = (shownProgress * duration).toLong()
+
+        if (onSeek != null) {
+            Slider(
+                value = shownProgress,
+                onValueChange = { scrubFraction = it },
+                onValueChangeFinished = {
+                    scrubFraction?.let { f -> onSeek((f * duration).toLong()) }
+                    scrubFraction = null
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            LinearProgressIndicator(
+                progress = { shownProgress },
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(text = formatDuration(effective), style = MaterialTheme.typography.labelSmall)
+            Text(text = formatDuration(shownElapsed), style = MaterialTheme.typography.labelSmall)
             Text(text = formatDuration(duration), style = MaterialTheme.typography.labelSmall)
         }
+    }
+}
+
+/**
+ * Per-player volume: mute toggle + slider. Only rendered for players that
+ * report a volume control. The slider tracks the finger locally while dragging
+ * and commits on release, so we don't fire a `volume_set` RPC per pixel.
+ */
+@Composable
+private fun VolumeRow(
+    level: Int,
+    muted: Boolean,
+    onSetVolume: ((Int) -> Unit)?,
+    onToggleMute: (() -> Unit)?,
+) {
+    // Not keyed on `level`: a server volume echo mid-drag must not snap the
+    // thumb. While dragging, show the dragged value; otherwise the live level.
+    var dragLevel by remember { mutableStateOf<Float?>(null) }
+    val shown = dragLevel ?: level.toFloat()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IconButton(onClick = { onToggleMute?.invoke() }, enabled = onToggleMute != null) {
+            Icon(
+                imageVector = if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = if (muted) "Unmute" else "Mute",
+                modifier = Modifier.size(22.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Slider(
+            value = if (muted) 0f else shown,
+            onValueChange = { dragLevel = it },
+            onValueChangeFinished = {
+                dragLevel?.let { onSetVolume?.invoke(it.toInt()) }
+                dragLevel = null
+            },
+            valueRange = 0f..100f,
+            enabled = onSetVolume != null && !muted,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
