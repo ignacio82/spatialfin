@@ -149,6 +149,12 @@ class PluginSettingsViewModel @Inject constructor(
                 name = "Podcasts",
                 description = "Podcasts from your Music Assistant library.",
                 enabled = sharedPreferences.getBoolean(HOME_MA_PODCASTS, true)
+            ),
+            MusicAssistantHomeRowUi(
+                key = "radio",
+                name = "Radio",
+                description = "Radio stations from your Music Assistant library.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_RADIO, true)
             )
         )
         _pluginRows.value = installedPlugins.associate { plugin ->
@@ -189,6 +195,7 @@ class PluginSettingsViewModel @Inject constructor(
             "playlists" -> HOME_MA_PLAYLISTS
             "audiobooks" -> HOME_MA_AUDIOBOOKS
             "podcasts" -> HOME_MA_PODCASTS
+            "radio" -> HOME_MA_RADIO
             else -> null
         } ?: return
         sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
@@ -266,6 +273,7 @@ class PluginSettingsViewModel @Inject constructor(
         private const val HOME_MA_PLAYLISTS = "home_ma_playlists"
         private const val HOME_MA_AUDIOBOOKS = "home_ma_audiobooks"
         private const val HOME_MA_PODCASTS = "home_ma_podcasts"
+        private const val HOME_MA_RADIO = "home_ma_radio"
     }
 }
 

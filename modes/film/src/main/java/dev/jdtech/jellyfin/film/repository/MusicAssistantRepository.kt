@@ -118,6 +118,18 @@ class MusicAssistantRepository @Inject constructor(
     }
 
     /**
+     * Library radio stations, most-recently-added first. Empty when no radio
+     * providers are configured, which hides the home row.
+     */
+    suspend fun getRadios(): List<SpatialFinItem> {
+        val args = JSONObject()
+            .put("limit", 25)
+            .put("order_by", "timestamp_added DESC")
+        val array = executeCommand("music/radios/library_items", args) ?: return emptyList()
+        return parseItems(array)
+    }
+
+    /**
      * Library audiobooks, newest first. Empty when the server has no audiobook
      * providers configured — the home row then hides itself.
      */

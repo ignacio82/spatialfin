@@ -546,6 +546,20 @@ constructor(
                         )
                     }
                 }
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_radio", true)) {
+                    val radios = musicAssistantRepository.getRadios()
+                    if (radios.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:radio".toByteArray()),
+                                    name = UiText.DynamicString("Radio (Music Assistant)"),
+                                    items = radios,
+                                )
+                            )
+                        )
+                    }
+                }
                 if (appPreferences.sharedPreferences.getBoolean("home_ma_podcasts", true)) {
                     val podcasts = musicAssistantRepository.getPodcasts()
                     if (podcasts.isNotEmpty()) {
