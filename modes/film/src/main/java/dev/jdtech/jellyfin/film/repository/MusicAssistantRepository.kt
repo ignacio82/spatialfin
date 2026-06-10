@@ -104,6 +104,20 @@ class MusicAssistantRepository @Inject constructor(
     }
 
     /**
+     * Favorite tracks, most-recently-added first. The `favorite` filter on
+     * `library_items` is the same one the MA web UI uses; empty when the user
+     * has no favorites, which hides the home row.
+     */
+    suspend fun getFavorites(): List<SpatialFinItem> {
+        val args = JSONObject()
+            .put("favorite", true)
+            .put("limit", 25)
+            .put("order_by", "timestamp_added DESC")
+        val array = executeCommand("music/tracks/library_items", args) ?: return emptyList()
+        return parseItems(array)
+    }
+
+    /**
      * Library audiobooks, newest first. Empty when the server has no audiobook
      * providers configured — the home row then hides itself.
      */

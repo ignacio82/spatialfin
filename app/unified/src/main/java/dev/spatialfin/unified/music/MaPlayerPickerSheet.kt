@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material.icons.filled.SpeakerGroup
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -66,10 +68,17 @@ fun MaPlayerPickerSheet(
     ) {
         PickerContent(
             players = state.visiblePlayers,
-            selectedPlayerId = state.selectedPlayer?.id,
+            selectedPlayer = state.selectedPlayer,
             onPick = { id ->
                 dispatcher.setPreferredPlayer(serverId, id)
                 onDismiss()
+            },
+            onToggleGroupMember = { leaderId, memberId, grouped ->
+                if (grouped) {
+                    dispatcher.removeFromSyncGroup(leaderId, memberId)
+                } else {
+                    dispatcher.addToSyncGroup(leaderId, memberId)
+                }
             },
         )
     }
@@ -78,9 +87,11 @@ fun MaPlayerPickerSheet(
 @Composable
 private fun PickerContent(
     players: List<MaPlayerSummary>,
-    selectedPlayerId: String?,
+    selectedPlayer: MaPlayerSummary?,
     onPick: (String?) -> Unit,
+    onToggleGroupMember: (leaderId: String, memberId: String, currentlyGrouped: Boolean) -> Unit,
 ) {
+    val selectedPlayerId = selectedPlayer?.id
     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
         Text(
             text = "Play on",
@@ -134,6 +145,57 @@ private fun PickerContent(
                     modifier = Modifier.fillMaxWidth().clickable(onClick = { onPick(player.id) }),
                     colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
                 )
+            }
+
+            // Sync-group section — only when a concrete player is selected (it's
+            // the group leader) and there are players it can group with.
+            if (selectedPlayer != null) {
+                val groupable = players.filter { p ->
+                    p.id != selectedPlayer.id &&
+                        (selectedPlayer.canGroupWith.contains(p.id) || p.canGroupWith.contains(selectedPlayer.id))
+                }
+                if (groupable.isNotEmpty()) {
+                    item(key = "group-header") {
+                        HorizontalDivider()
+                        Text(
+                            text = "Sync speakers with ${selectedPlayer.name}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(groupable, key = { "group-" + it.id }) { player ->
+                        // The pair is grouped if the selected player leads `player`
+                        // OR follows it. Removal must target the actual leader, so
+                        // resolve who-leads-whom rather than assuming the selected
+                        // player is the leader.
+                        val selectedLeads = player.syncedToPlayerId == selectedPlayer.id ||
+                            selectedPlayer.groupMemberIds.contains(player.id)
+                        val selectedFollows = selectedPlayer.syncedToPlayerId == player.id ||
+                            player.groupMemberIds.contains(selectedPlayer.id)
+                        val grouped = selectedLeads || selectedFollows
+                        // Add → selected player becomes the leader. Remove → target
+                        // whichever of the two is the current leader.
+                        val leaderId = if (selectedFollows) player.id else selectedPlayer.id
+                        val memberId = if (selectedFollows) selectedPlayer.id else player.id
+                        ListItem(
+                            headlineContent = { Text(player.name) },
+                            supportingContent = { Text(if (grouped) "In sync" else "Tap to add") },
+                            leadingContent = { Icon(Icons.Filled.SpeakerGroup, contentDescription = null) },
+                            trailingContent = {
+                                Checkbox(
+                                    checked = grouped,
+                                    onCheckedChange = { onToggleGroupMember(leaderId, memberId, grouped) },
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().clickable(
+                                onClick = { onToggleGroupMember(leaderId, memberId, grouped) },
+                            ),
+                            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+                        )
+                    }
+                }
             }
         }
     }

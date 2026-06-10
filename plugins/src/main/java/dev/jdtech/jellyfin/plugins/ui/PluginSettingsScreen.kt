@@ -121,6 +121,12 @@ class PluginSettingsViewModel @Inject constructor(
                 enabled = sharedPreferences.getBoolean(HOME_MA_RECENTLY_PLAYED, true)
             ),
             MusicAssistantHomeRowUi(
+                key = "favorites",
+                name = "Favorites",
+                description = "Your favorited Music Assistant tracks.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_FAVORITES, true)
+            ),
+            MusicAssistantHomeRowUi(
                 key = "recommendations",
                 name = "Recommendations",
                 description = "Recommended tracks and albums from Music Assistant.",
@@ -178,6 +184,7 @@ class PluginSettingsViewModel @Inject constructor(
     fun updateMusicAssistantHomeRow(key: String, enabled: Boolean) {
         val preferenceKey = when (key) {
             "recentlyPlayed" -> HOME_MA_RECENTLY_PLAYED
+            "favorites" -> HOME_MA_FAVORITES
             "recommendations" -> HOME_MA_RECOMMENDATIONS
             "playlists" -> HOME_MA_PLAYLISTS
             "audiobooks" -> HOME_MA_AUDIOBOOKS
@@ -254,6 +261,7 @@ class PluginSettingsViewModel @Inject constructor(
         private const val HOME_NEXT_UP = "home_next_up"
         private const val HOME_LATEST = "home_latest"
         private const val HOME_MA_RECENTLY_PLAYED = "home_ma_recently_played"
+        private const val HOME_MA_FAVORITES = "home_ma_favorites"
         private const val HOME_MA_RECOMMENDATIONS = "home_ma_recommendations"
         private const val HOME_MA_PLAYLISTS = "home_ma_playlists"
         private const val HOME_MA_AUDIOBOOKS = "home_ma_audiobooks"

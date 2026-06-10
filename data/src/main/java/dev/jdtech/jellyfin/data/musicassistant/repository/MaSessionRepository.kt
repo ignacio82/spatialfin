@@ -414,6 +414,7 @@ class MaSessionRepository(
             activeQueueId = activeQueueId,
             repeatMode = activeQueue?.repeatMode?.let(RepeatMode::fromServer) ?: RepeatMode.OFF,
             shuffleEnabled = activeQueue?.shuffleEnabled == true,
+            dontStopTheMusic = activeQueue?.dontStopTheMusicEnabled == true,
             currentQueueItemId = activeQueue?.currentItem?.queueItemId,
             partySource = partySource,
         )
@@ -429,6 +430,9 @@ class MaSessionRepository(
         // MA reports "none" (or empty) when the endpoint exposes no volume knob
         // — hide the slider then rather than send no-op RPCs.
         supportsVolume = volumeControl.isNotBlank() && volumeControl != "none",
+        canGroupWith = canGroupWith?.toSet() ?: emptySet(),
+        syncedToPlayerId = syncedTo,
+        groupMemberIds = groupMembers ?: emptySet(),
     )
 
     private data class PendingPlay(
@@ -482,6 +486,8 @@ data class MaSession(
     val repeatMode: RepeatMode,
     /** Active queue's shuffle state — drives the shuffle toggle. */
     val shuffleEnabled: Boolean,
+    /** Active queue's "Don't Stop The Music" auto-continuation state. */
+    val dontStopTheMusic: Boolean,
     /** `queue_item_id` of the currently-playing item, for highlighting in the queue panel. */
     val currentQueueItemId: String?,
     /** The selected player's Party-plugin source, when one exists. Drives the party toggle. */
@@ -500,6 +506,7 @@ data class MaSession(
             activeQueueId = null,
             repeatMode = RepeatMode.OFF,
             shuffleEnabled = false,
+            dontStopTheMusic = false,
             currentQueueItemId = null,
             partySource = null,
         )
@@ -529,6 +536,12 @@ data class MaPlayerSummary(
     val volumeMuted: Boolean = false,
     /** Whether this player exposes a volume control (drives slider visibility). */
     val supportsVolume: Boolean = false,
+    /** Player ids this player can be sync-grouped with. */
+    val canGroupWith: Set<String> = emptySet(),
+    /** The leader this player is currently synced to, if it's a follower. */
+    val syncedToPlayerId: String? = null,
+    /** Players currently synced under this one, if it's a group leader. */
+    val groupMemberIds: Set<String> = emptySet(),
 )
 
 data class NowPlayingTrack(

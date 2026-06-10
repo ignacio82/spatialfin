@@ -1,6 +1,8 @@
 package dev.spatialfin.unified.music
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +18,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Celebration
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
@@ -100,10 +104,35 @@ fun MaNowPlayingScreen(
     onOpenParty: (() -> Unit)? = null,
 ) {
     val state by session.session.collectAsStateWithLifecycle()
+    val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
     var showQueue by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
+
+    // Lyrics are fetched lazily per track (search/queue payloads don't carry
+    // them). Null = none / not yet loaded; the Lyrics button only shows when
+    // we actually have lyrics for the current track.
+    var lyrics by remember { mutableStateOf<String?>(null) }
+    val currentUri = state.nowPlaying?.uri
+    LaunchedEffect(currentUri, dispatcher) {
+        lyrics = null
+        showLyrics = false
+        val uri = currentUri
+        if (!uri.isNullOrBlank() && dispatcher != null) {
+            lyrics = runCatching { dispatcher.lyricsFor(uri) }.getOrNull()
+        }
+    }
 
     if (showQueue) {
         MaQueuePanel(onBack = { showQueue = false }, modifier = modifier)
+        return
+    }
+    if (showLyrics) {
+        MaLyricsPanel(
+            lyrics = lyrics.orEmpty(),
+            title = state.nowPlaying?.title,
+            onBack = { showLyrics = false },
+            modifier = modifier,
+        )
         return
     }
 
@@ -112,7 +141,6 @@ fun MaNowPlayingScreen(
         color = MaterialTheme.colorScheme.background,
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
             IconButton(
                 onClick = onBack,
                 modifier = Modifier.align(Alignment.TopStart),
@@ -130,6 +158,11 @@ fun MaNowPlayingScreen(
                 if (onOpenParty != null) {
                     IconButton(onClick = onOpenParty) {
                         Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
+                    }
+                }
+                if (!lyrics.isNullOrBlank()) {
+                    IconButton(onClick = { showLyrics = true }) {
+                        Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
                     }
                 }
                 IconButton(onClick = { showQueue = true }) {
@@ -159,6 +192,7 @@ fun MaNowPlayingScreen(
                 onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
                 onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
                 onToggleMute = dispatcher?.let { { it.toggleMute() } },
+                onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -224,6 +258,7 @@ private fun NowPlayingBody(
     onSeek: ((Long) -> Unit)? = null,
     onSetVolume: ((Int) -> Unit)? = null,
     onToggleMute: (() -> Unit)? = null,
+    onToggleDontStop: (() -> Unit)? = null,
 ) {
     val track = state.nowPlaying
     if (track == null) {
@@ -414,6 +449,23 @@ private fun NowPlayingBody(
             colors = AssistChipDefaults.assistChipColors(),
         )
 
+        // "Don't Stop The Music" — MA keeps the queue alive with similar tracks
+        // when it runs dry. Only meaningful once a queue exists.
+        if (onToggleDontStop != null && state.activeQueueId != null) {
+            FilterChip(
+                selected = state.dontStopTheMusic,
+                onClick = onToggleDontStop,
+                label = { Text(if (state.dontStopTheMusic) "Endless play on" else "Endless play") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.AllInclusive,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            )
+        }
+
         // Party mode toggle — only when the selected player exposes the MA
         // Party plugin's source.
         state.partySource?.let { party ->
@@ -578,6 +630,49 @@ private fun VolumeRow(
             enabled = onSetVolume != null && !muted,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+/**
+ * Full-screen lyrics view, mirroring the queue panel's host pattern (the
+ * now-playing screen swaps to it and back). Scrollable plain text — MA returns
+ * lyrics as a single newline-delimited blob, synced timestamps not exposed.
+ */
+@Composable
+private fun MaLyricsPanel(
+    lyrics: String,
+    title: String?,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 56.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = title ?: "Lyrics",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = lyrics,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(24.dp))
+            }
+        }
     }
 }
 

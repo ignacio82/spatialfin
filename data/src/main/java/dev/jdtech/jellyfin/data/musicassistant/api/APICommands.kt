@@ -93,6 +93,7 @@ object APICommands {
     const val CONFIG_DSP_PRESETS_GET = "config/dsp_presets/get"
 
     // Media type kinds
+    const val KIND_TRACKS = "tracks"
     const val KIND_ALBUMS = "albums"
     const val KIND_ARTISTS = "artists"
     const val KIND_PLAYLISTS = "playlists"

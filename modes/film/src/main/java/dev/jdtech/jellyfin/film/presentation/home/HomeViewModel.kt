@@ -483,6 +483,20 @@ constructor(
                         )
                     }
                 }
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_favorites", true)) {
+                    val favorites = musicAssistantRepository.getFavorites()
+                    if (favorites.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:favorites".toByteArray()),
+                                    name = UiText.DynamicString("Favorites (Music Assistant)"),
+                                    items = favorites,
+                                )
+                            )
+                        )
+                    }
+                }
                 if (appPreferences.sharedPreferences.getBoolean("home_ma_playlists", true)) {
                     val playlists = musicAssistantRepository.getPlaylists()
                     if (playlists.isNotEmpty()) {

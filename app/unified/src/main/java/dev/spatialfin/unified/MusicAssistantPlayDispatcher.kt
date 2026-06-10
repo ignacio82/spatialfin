@@ -117,6 +117,25 @@ class MaPlayDispatcher(
         scope.launch { repository.setMute(player.id, !player.volumeMuted) }
     }
 
+    /** Toggle "Don't Stop The Music" auto-continuation on the active queue. */
+    fun toggleDontStopTheMusic() {
+        val queueId = session.session.value.activeQueueId ?: return
+        val enabled = !session.session.value.dontStopTheMusic
+        scope.launch { repository.setDontStopTheMusic(queueId, enabled) }
+    }
+
+    /** Add [memberId] to [leaderId]'s sync group (multi-room). */
+    fun addToSyncGroup(leaderId: String, memberId: String) {
+        if (leaderId.isBlank() || memberId.isBlank()) return
+        scope.launch { repository.setGroupMembers(leaderId, playersToAdd = listOf(memberId)) }
+    }
+
+    /** Remove [memberId] from [leaderId]'s sync group. */
+    fun removeFromSyncGroup(leaderId: String, memberId: String) {
+        if (leaderId.isBlank() || memberId.isBlank()) return
+        scope.launch { repository.setGroupMembers(leaderId, playersToRemove = listOf(memberId)) }
+    }
+
     private fun transport(action: suspend (playerId: String) -> Unit) {
         val playerId = session.session.value.selectedPlayer?.id ?: return
         scope.launch { action(playerId) }
@@ -201,6 +220,9 @@ class MaPlayDispatcher(
             onResult(newState ?: !makeFavorite)
         }
     }
+
+    /** Lyrics for the track at [uri], or null when the provider has none. */
+    suspend fun lyricsFor(uri: String): String? = repository.getTrackLyrics(uri)
 
     /** Editable (user-owned) playlists, for the "Add to playlist" picker. */
     suspend fun editablePlaylists(): List<ServerMediaItem> =

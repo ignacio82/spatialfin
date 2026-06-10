@@ -165,6 +165,22 @@ class MusicAssistantRepository(
     suspend fun getAudiobook(item: ServerMediaItem): ServerMediaItem? =
         getDetail(item) { id, prov -> Request.Audiobook.get(id, prov) }
 
+    /**
+     * Lyrics for the track at [uri] (`provider://track/item_id`), or null when
+     * the provider exposes none. Fetches the full track detail — search/queue
+     * payloads don't carry `metadata.lyrics`.
+     */
+    suspend fun getTrackLyrics(uri: String): String? {
+        if (!uri.contains("://")) return null
+        val provider = uri.substringBefore("://").takeIf { it.isNotBlank() } ?: return null
+        val rest = uri.substringAfter("://")
+        if (!rest.contains("/")) return null
+        val itemId = rest.substringAfter("/").takeIf { it.isNotBlank() } ?: return null
+        val seed = ServerMediaItem(itemId = itemId, provider = provider, name = "", mediaType = "track", uri = uri)
+        val full = getDetail(seed) { id, prov -> Request.Track.get(id, prov) }
+        return full?.metadata?.lyrics?.takeIf { it.isNotBlank() }
+    }
+
     suspend fun getRecommendations(): List<ServerMediaItem> {
         val request = Request(command = APICommands.MUSIC_RECOMMENDATIONS)
         val response = serviceClient.sendRequest(request)
@@ -213,6 +229,21 @@ class MusicAssistantRepository(
         return serviceClient.sendRequest(Request.Player.setMute(playerId, muted)).isSuccess
     }
 
+    /**
+     * Add/remove sync-group members under [leaderId]. Synced players render the
+     * same audio in lock-step — MA's multi-room primitive.
+     */
+    suspend fun setGroupMembers(
+        leaderId: String,
+        playersToAdd: List<String>? = null,
+        playersToRemove: List<String>? = null,
+    ): Boolean {
+        if (leaderId.isBlank()) return false
+        return serviceClient.sendRequest(
+            Request.Player.setGroupMembers(leaderId, playersToAdd, playersToRemove),
+        ).isSuccess
+    }
+
     /** Set the active queue's repeat mode (off / one / all). */
     suspend fun setRepeatMode(queueId: String, repeatMode: RepeatMode): Boolean {
         if (queueId.isBlank()) return false
@@ -223,6 +254,15 @@ class MusicAssistantRepository(
     suspend fun setShuffle(queueId: String, enabled: Boolean): Boolean {
         if (queueId.isBlank()) return false
         return serviceClient.sendRequest(Request.Queue.setShuffle(queueId, enabled)).isSuccess
+    }
+
+    /**
+     * Toggle "Don't Stop The Music" — when on, MA auto-appends similar tracks
+     * as the queue runs dry so playback never ends.
+     */
+    suspend fun setDontStopTheMusic(queueId: String, enabled: Boolean): Boolean {
+        if (queueId.isBlank()) return false
+        return serviceClient.sendRequest(Request.Queue.setDontStopTheMusic(queueId, enabled)).isSuccess
     }
 
     // -----------------------------------------------------------------------
