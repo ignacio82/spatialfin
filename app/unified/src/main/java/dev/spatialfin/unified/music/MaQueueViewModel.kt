@@ -38,9 +38,9 @@ class MaQueueViewModel @Inject constructor(
     private val _state = MutableStateFlow(MaQueueState())
     val state: StateFlow<MaQueueState> = _state.asStateFlow()
 
-    private val _partyJoinUrl = MutableStateFlow<String?>(null)
-    /** The Party plugin's guest join URL, for the share QR. Null until loaded / if unavailable. */
-    val partyJoinUrl: StateFlow<String?> = _partyJoinUrl.asStateFlow()
+    private val _partyJoin = MutableStateFlow(PartyJoinUiState())
+    /** Share-QR state: the join URL plus enough context to message the user when it's absent. */
+    val partyJoin: StateFlow<PartyJoinUiState> = _partyJoin.asStateFlow()
 
     /** Tracks the queue we're currently bound to, so we only full-reload on change. */
     private var boundQueueId: String? = null
@@ -108,10 +108,21 @@ class MaQueueViewModel @Inject constructor(
         }
     }
 
-    /** Fetch the Party plugin guest join URL (for the share QR). Safe to call repeatedly. */
+    /**
+     * Fetch the Party plugin guest join URL (for the share QR). Safe to call
+     * repeatedly; flips to [PartyJoinUiState.loading] while in flight so the UI
+     * can show a spinner instead of a premature "unavailable" message.
+     */
     fun loadPartyUrl() {
         viewModelScope.launch {
-            _partyJoinUrl.value = repository.getPartyUrl()
+            _partyJoin.update { it.copy(loading = true) }
+            val info = repository.getPartyJoinInfo()
+            _partyJoin.value = PartyJoinUiState(
+                url = info.url,
+                pluginAvailable = info.pluginAvailable,
+                loading = false,
+                loaded = true,
+            )
         }
     }
 
@@ -131,6 +142,21 @@ class MaQueueViewModel @Inject constructor(
         const val TAG = "MaQueue"
     }
 }
+
+/**
+ * UI state for the party share-QR.
+ *
+ *  - [url] non-null → render the QR.
+ *  - [loaded] && url == null && [pluginAvailable] → plugin loaded but guest
+ *    access is off → prompt the user to enable it.
+ *  - [loaded] && url == null && !pluginAvailable → Party plugin not installed.
+ */
+data class PartyJoinUiState(
+    val url: String? = null,
+    val pluginAvailable: Boolean = false,
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+)
 
 data class MaQueueState(
     val queueId: String? = null,

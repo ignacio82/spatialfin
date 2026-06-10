@@ -73,6 +73,7 @@ object APICommands {
 
     // Party plugin
     const val PARTY_URL = "party/url"
+    const val PARTY_CONFIG = "party/config"
 
     // Search and recommendations
     const val MUSIC_SEARCH = "music/search"

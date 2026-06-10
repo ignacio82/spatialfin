@@ -257,7 +257,9 @@ class SendspinReceiverService : Service() {
                             musicAssistantLoading = false,
                             musicAssistantError = null,
                             musicAssistantPlayers = emptyList(),
+                            musicAssistantToken = null,
                             musicAssistantCurrentPlayerId = null,
+                            musicAssistantQueuePlayerId = null,
                             musicAssistantGroupTargetPlayerId = null,
                             musicAssistantActiveMemberIds = emptySet(),
                             musicAssistantBusyPlayerIds = emptySet(),
@@ -498,7 +500,7 @@ class SendspinReceiverService : Service() {
                 runCatching {
                     val players =
                         requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                    updateMusicAssistantPlayers(serverUrl, players)
+                    updateMusicAssistantPlayers(serverUrl, token, players)
                 }.onFailure { error ->
                     handleMusicAssistantError(serverUrl, error)
                 }
@@ -532,7 +534,7 @@ class SendspinReceiverService : Service() {
                     storeMusicAssistantToken(SendspinReceiverSession.state.value.serverId, serverUrl, token)
                     val players =
                         requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                    updateMusicAssistantPlayers(serverUrl, players)
+                    updateMusicAssistantPlayers(serverUrl, token, players)
                 }.onFailure { error ->
                     handleMusicAssistantError(serverUrl, error)
                 }
@@ -606,7 +608,7 @@ class SendspinReceiverService : Service() {
                     playerIdsToRemove = if (add) emptyList() else listOf(playerId),
                 )
                 val players = requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                updateMusicAssistantPlayers(serverUrl, players)
+                updateMusicAssistantPlayers(serverUrl, token, players)
             }.onFailure { error ->
                 handleMusicAssistantError(serverUrl, error)
             }
@@ -850,12 +852,17 @@ class SendspinReceiverService : Service() {
 
     private fun updateMusicAssistantPlayers(
         serverUrl: String,
+        token: String,
         players: List<MusicAssistantPlayerState>,
     ) {
         storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
         val currentPlayer =
             players.firstOrNull { it.id == receiverClientId }
                 ?: players.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
+        // The wrapper (universal_player) holds our queue/now-playing; the protocol
+        // `currentPlayer` is just the audio output. The MA session selects the
+        // wrapper so local playback surfaces queue / party / playlist in one player.
+        val queuePlayerId = currentPlayer?.let { thisDeviceWrapperId(it, players) }
         val targetPlayerId =
             currentPlayer?.activeGroup
                 ?: currentPlayer?.syncedTo
@@ -908,11 +915,13 @@ class SendspinReceiverService : Service() {
         SendspinReceiverSession.update {
             it.copy(
                 musicAssistantServerUrl = serverUrl,
+                musicAssistantToken = token,
                 musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
                 musicAssistantLoading = false,
                 musicAssistantError = null,
                 musicAssistantPlayers = uiPlayers,
                 musicAssistantCurrentPlayerId = currentPlayer?.id,
+                musicAssistantQueuePlayerId = queuePlayerId,
                 musicAssistantGroupTargetPlayerId = targetPlayerId,
                 musicAssistantActiveMemberIds = activeMemberIds,
             )

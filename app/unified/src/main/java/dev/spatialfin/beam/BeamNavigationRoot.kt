@@ -182,6 +182,8 @@ fun BeamNavigationRoot(
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
 
     val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
+    // Make the MA session track local SendSpin playback → one unified player.
+    dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
     val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
         dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATED -> sendspinState.musicAssistantServerUrl ?: "Configured server"
         dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState.AUTHENTICATING -> "Authenticating..."
@@ -504,8 +506,13 @@ fun BeamNavigationRoot(
                         // owns the slot — it has the live PCM-side metadata
                         // and the right transport command surface. Otherwise
                         // fall through to the MA controller mini-player.
+                        // Unified player: when MA is presenting this playback,
+                        // the MA mini-player (with queue / playlist / party on
+                        // expand) owns the slot and the SendSpin one is hidden.
+                        val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
                         dev.spatialfin.sendspin.SendspinMiniPlayer(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            suppressed = maNowPlaying.nowPlaying != null,
                         )
                         dev.spatialfin.unified.music.MaMiniPlayer(
                             session = maSession,
@@ -978,7 +985,10 @@ fun BeamNavigationRoot(
                 }
             }
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
-            dev.spatialfin.sendspin.SendspinFullscreenPlayer()
+            val maNowPlayingFs by maSession.session.collectAsStateWithLifecycle()
+            dev.spatialfin.sendspin.SendspinFullscreenPlayer(
+                suppressed = maNowPlayingFs.nowPlaying != null,
+            )
             var showPlayerPicker by remember { mutableStateOf(false) }
             var showParty by remember { mutableStateOf(false) }
             // Open the right MA overlay when a queue/party deep link arrives.

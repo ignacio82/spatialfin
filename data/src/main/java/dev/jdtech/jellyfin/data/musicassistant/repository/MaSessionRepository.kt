@@ -4,6 +4,7 @@ import dev.jdtech.jellyfin.data.musicassistant.api.APICommands
 import dev.jdtech.jellyfin.data.musicassistant.api.Request
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.PlayerState
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerPlayer
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueue
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.events.MediaItemPlayedEvent
@@ -69,6 +70,14 @@ class MaSessionRepository(
     private val _hydrationState = MutableStateFlow(HydrationState.Idle)
 
     /**
+     * URI the user explicitly Stopped. While the active queue still holds this
+     * item, the now-playing UI stays hidden (Stop = "I'm done", not "pause").
+     * Cleared by a new play (optimistic hint) or once the queue moves to a
+     * different track. Null means nothing is dismissed.
+     */
+    private val _dismissedUri = MutableStateFlow<String?>(null)
+
+    /**
      * Fires the affected `queue_id` every time the server reports a queue
      * mutation (add / update / items-updated). The queue panel collects this
      * to refetch its item list — `MaSession` only carries the *current* item,
@@ -86,7 +95,16 @@ class MaSessionRepository(
         _pendingPlay,
         _hydrationState,
     ) { players, queues, selectedId, pending, hydration ->
-        buildSession(players, queues, selectedId, pending, hydration)
+        SessionInputs(players, queues, selectedId, pending, hydration)
+    }.combine(_dismissedUri) { inputs, dismissedUri ->
+        buildSession(
+            inputs.players,
+            inputs.queues,
+            inputs.selectedId,
+            inputs.pending,
+            inputs.hydration,
+            dismissedUri,
+        )
     }
         // Coalesce rapid bursts (QUEUE_TIME_UPDATED fires up to ~once/s per active
         // queue, PLAYER_UPDATED can fire several times during state transitions).
@@ -123,7 +141,19 @@ class MaSessionRepository(
             createdAtMs = System.currentTimeMillis(),
         )
         _pendingPlay.value = hint
+        // A fresh play overrides any prior Stop dismissal.
+        _dismissedUri.value = null
         targetPlayerId?.takeIf { it.isNotBlank() }?.let { _selectedPlayerId.value = it }
+    }
+
+    /**
+     * The user pressed Stop. Hide the now-playing / mini-player for the current
+     * track until something new plays — Stop means "I'm done", unlike Pause.
+     * MA keeps the stopped item in the queue, so we remember the URI and the
+     * session suppresses it until the queue advances or a new play arrives.
+     */
+    fun dismissPlayback() {
+        _dismissedUri.value = session.value.nowPlaying?.uri?.takeIf { it.isNotBlank() }
     }
 
     /**
@@ -246,15 +276,13 @@ class MaSessionRepository(
 
     private fun maybeClearPendingPlay() {
         val hint = _pendingPlay.value ?: return
-        val target = _players.value.findById(hint.targetPlayerId)
-        val activeQueueId = target?.activeSource
-            ?: target?.currentMedia?.queueId
-            ?: hint.targetPlayerId
-            ?: return
-        val activeQueue = _queues.value[activeQueueId]
-        val currentUri = activeQueue?.currentItem?.mediaItem?.uri
-            ?: target?.currentMedia?.uri
-        if (currentUri != null && currentUri == hint.uri) {
+        // Clear once ANY player is actually playing the hinted uri. For local
+        // playback targetPlayerId is null (the wrapper id is resolved later in
+        // the SendSpin service), so keying off a single known target would never
+        // clear and the mini-player would sit on "Preparing…" until timeout.
+        val queues = _queues.value
+        val playing = _players.value.values.any { it.playsUri(hint.uri, queues) }
+        if (playing) {
             _pendingPlay.value = null
         }
     }
@@ -262,12 +290,20 @@ class MaSessionRepository(
     private fun Map<String, ServerPlayer>.findById(id: String?): ServerPlayer? =
         if (id == null) null else this[id]
 
+    /** True if this player's current media (or its active queue's item) is [uri]. */
+    private fun ServerPlayer.playsUri(uri: String, queues: Map<String, ServerQueue>): Boolean {
+        if (currentMedia?.uri == uri) return true
+        val queueId = activeSource ?: currentMedia?.queueId ?: playerId
+        return queues[queueId]?.currentItem?.mediaItem?.uri == uri
+    }
+
     private fun buildSession(
         players: Map<String, ServerPlayer>,
         queues: Map<String, ServerQueue>,
         selectedId: String?,
         pending: PendingPlay?,
         hydration: HydrationState,
+        dismissedUri: String?,
     ): MaSession {
         // Visible-player filter mirrors the official app's PlayerFactory:
         // available && enabled && !hidden && !hide_in_ui.
@@ -280,6 +316,18 @@ class MaSessionRepository(
         val selected = players.findById(selectedId)
             ?.takeIf { it.available && it.enabled }
             ?: players.findById(pending?.targetPlayerId)
+            // Playing on THIS device casts to a Universal-Player wrapper whose id
+            // we don't know at dispatch time (targetPlayerId is null), so follow
+            // whichever player is actually playing the just-tapped track, then
+            // any actively-playing visible player. Without this the session locks
+            // onto an unrelated "first visible" player and the now-playing /
+            // mini-player / Now Playing actions (queue, party, playlist) never
+            // surface for local playback.
+            ?: pending?.uri?.let { uri -> players.values.firstOrNull { it.playsUri(uri, queues) } }
+            ?: players.values.firstOrNull {
+                it.state == PlayerState.PLAYING && it.available && it.enabled &&
+                    it.hidden != true && it.hideInUi != true
+            }
             ?: visiblePlayers.firstOrNull()
 
         val activeQueueId = selected?.let { p ->
@@ -326,7 +374,7 @@ class MaSessionRepository(
             }
 
         // If MA hasn't echoed yet, the optimistic hint stands in.
-        val nowPlaying = nowPlayingFromServer
+        val resolvedNowPlaying = nowPlayingFromServer
             ?: pending?.let {
                 NowPlayingTrack(
                     uri = it.uri,
@@ -337,7 +385,15 @@ class MaSessionRepository(
                 )
             }
 
+        // Stop dismissal: while the dismissed URI is still the current track and
+        // the user hasn't started anything new, hide the now-playing entirely.
+        val dismissed = dismissedUri != null &&
+            pending == null &&
+            resolvedNowPlaying?.uri == dismissedUri
+        val nowPlaying = if (dismissed) null else resolvedNowPlaying
+
         val playbackState = when {
+            dismissed -> PlaybackPhase.Stopped
             pending != null && nowPlayingFromServer == null -> PlaybackPhase.Preparing
             selected?.state == PlayerState.PLAYING -> PlaybackPhase.Playing
             selected?.state == PlayerState.PAUSED -> PlaybackPhase.Paused
@@ -356,6 +412,8 @@ class MaSessionRepository(
             hydrationState = hydration,
             pendingPlayUri = pending?.uri,
             activeQueueId = activeQueueId,
+            repeatMode = activeQueue?.repeatMode?.let(RepeatMode::fromServer) ?: RepeatMode.OFF,
+            shuffleEnabled = activeQueue?.shuffleEnabled == true,
             currentQueueItemId = activeQueue?.currentItem?.queueItemId,
             partySource = partySource,
         )
@@ -375,6 +433,15 @@ class MaSessionRepository(
         val artworkUrl: String?,
         val targetPlayerId: String?,
         val createdAtMs: Long,
+    )
+
+    /** The five event-derived inputs, bundled so a 6th (dismissal) can combine in. */
+    private data class SessionInputs(
+        val players: Map<String, ServerPlayer>,
+        val queues: Map<String, ServerQueue>,
+        val selectedId: String?,
+        val pending: PendingPlay?,
+        val hydration: HydrationState,
     )
 
     private companion object {
@@ -406,6 +473,10 @@ data class MaSession(
      * (next / add). Null when no player is selected or it has no queue.
      */
     val activeQueueId: String?,
+    /** Active queue's repeat mode (off / one / all) — drives the repeat toggle. */
+    val repeatMode: RepeatMode,
+    /** Active queue's shuffle state — drives the shuffle toggle. */
+    val shuffleEnabled: Boolean,
     /** `queue_item_id` of the currently-playing item, for highlighting in the queue panel. */
     val currentQueueItemId: String?,
     /** The selected player's Party-plugin source, when one exists. Drives the party toggle. */
@@ -422,6 +493,8 @@ data class MaSession(
             hydrationState = HydrationState.Idle,
             pendingPlayUri = null,
             activeQueueId = null,
+            repeatMode = RepeatMode.OFF,
+            shuffleEnabled = false,
             currentQueueItemId = null,
             partySource = null,
         )

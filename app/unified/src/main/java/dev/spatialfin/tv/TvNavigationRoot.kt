@@ -213,6 +213,20 @@ fun TvNavigationRoot(
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
+    // Make the MA session track local SendSpin playback → one unified player.
+    dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
+
+    // Shared MA play dispatcher — drives home-row taps (music/audiobooks/
+    // podcasts play on tap, not "open detail") and the player picker sheet.
+    val tvAppContext = LocalContext.current
+    val maDispatcher = remember(tvAppContext, maSession, maServiceClient) {
+        dev.spatialfin.unified.MaPlayDispatcher(
+            context = tvAppContext,
+            session = maSession,
+            serviceClient = maServiceClient,
+        )
+    }
+
     LaunchedEffect(Unit) { homeViewModel.loadData() }
 
     LaunchedEffect(initialSearchQuery) {
@@ -229,7 +243,16 @@ fun TvNavigationRoot(
             is SpatialFinShow -> { selectedShowId = item.id.toString(); navigate(TvRoute.Show) }
             is SpatialFinSeason -> { selectedSeasonId = item.id.toString(); navigate(TvRoute.Season) }
             is SpatialFinCollection -> Unit
-            else -> { selectedItemId = item.id.toString(); navigate(TvRoute.Detail) }
+            else -> {
+                // MA library items carry their URI in originalTitle — tap = play,
+                // not open-Jellyfin-detail (which would 404 on an MA uri).
+                val maUri = item.originalTitle
+                if (!maUri.isNullOrBlank() && maUri.contains("://")) {
+                    maDispatcher.playUri(maUri, title = item.name, artworkUrl = item.images.primary?.toString())
+                } else {
+                    selectedItemId = item.id.toString(); navigate(TvRoute.Detail)
+                }
+            }
         }
     }
 
@@ -344,7 +367,9 @@ fun TvNavigationRoot(
                     }
                 }
             }
-            dev.spatialfin.sendspin.SendspinFullscreenPlayer()
+            val maNowPlayingTv by maSession.session.collectAsStateWithLifecycle()
+            val maPresentsPlayback = maNowPlayingTv.nowPlaying != null
+            dev.spatialfin.sendspin.SendspinFullscreenPlayer(suppressed = maPresentsPlayback)
             var showNowPlaying by remember { mutableStateOf(false) }
             // Bottom-of-screen MA mini-player. D-pad reaches it after the
             // last focusable row in the active screen.
@@ -355,7 +380,7 @@ fun TvNavigationRoot(
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
                 Column {
-                    dev.spatialfin.sendspin.SendspinMiniPlayer()
+                    dev.spatialfin.sendspin.SendspinMiniPlayer(suppressed = maPresentsPlayback)
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },
@@ -399,19 +424,11 @@ fun TvNavigationRoot(
                 )
             }
             if (showPickerSheet) {
-                val tvContext = androidx.compose.ui.platform.LocalContext.current
-                val dispatcher = remember(tvContext, maSession, maServiceClient) {
-                    dev.spatialfin.unified.MaPlayDispatcher(
-                        context = tvContext,
-                        session = maSession,
-                        serviceClient = maServiceClient,
-                    )
-                }
                 val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
                     .state.collectAsStateWithLifecycle()
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
-                    dispatcher = dispatcher,
+                    dispatcher = maDispatcher,
                     serverId = sendspinState.serverId,
                     onDismiss = { showPickerSheet = false },
                 )
@@ -458,6 +475,14 @@ private fun TvHomeScreen(homeState: HomeState, state: MainState, appPreferences:
         homeState.nextUpSection?.let { add(ShelfSpec(it.homeSection.name.asString(), it.homeSection.items)) }
         homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.Movies }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added movies", it.items)) }
         homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.TvShows }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added TV", it.items)) }
+        // Music Assistant rows (recently played / playlists / recommendations /
+        // audiobooks / podcasts) — same data the phone & XR homes show, so MA
+        // is a first-class source on TV too. Tapping a card plays it (openItem
+        // routes MA uris to the dispatcher).
+        homeState.musicAssistantSections.forEach { section ->
+            section.homeSection.items.takeIf { it.isNotEmpty() }
+                ?.let { add(ShelfSpec(section.homeSection.name.asString(), it)) }
+        }
     }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),

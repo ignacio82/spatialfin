@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinControllerCommands
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverPlaybackState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
@@ -62,7 +63,10 @@ import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
  * the song doesn't need to know which UI it came from.
  */
 @Composable
-fun SendspinMiniPlayer(modifier: Modifier = Modifier) {
+fun SendspinMiniPlayer(
+    modifier: Modifier = Modifier,
+    suppressed: Boolean = false,
+) {
     val state by SendspinReceiverSession.state.collectAsStateWithLifecycle()
     // Show whenever the user dismissed the fullscreen during an active session,
     // so they can always tap to restore and resume. Pausing a SendSpin endpoint
@@ -70,7 +74,19 @@ fun SendspinMiniPlayer(modifier: Modifier = Modifier) {
     // the mini-player on pause (no way back). `playbackStarted` stays true
     // through a pause but is cleared by a genuine Stop, which keeps Stop a clean
     // exit (mini-player hides).
-    val visible = state.connected &&
+    // [suppressed] when MA is already presenting this playback through the
+    // unified MA player — avoids two mini-players for the same song.
+    //
+    // Single-player rule: when this device is an MA-driven SendSpin endpoint
+    // (authenticated), the rich MA now-playing player owns the UI for the whole
+    // playback lifecycle. We hide the SendSpin player entirely rather than gate
+    // on the MA session's per-frame now-playing (which briefly clears on pause
+    // and made the SendSpin player flicker back in). The SendSpin receiver keeps
+    // doing its job headless; only its UI steps aside.
+    val maDriven = state.musicAssistantAuthState == SendspinMusicAssistantAuthState.AUTHENTICATED
+    val visible = !suppressed &&
+        !maDriven &&
+        state.connected &&
         state.controlsDismissed &&
         state.hasMedia &&
         (state.playbackState != SendspinReceiverPlaybackState.STOPPED || state.playbackStarted)

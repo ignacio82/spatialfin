@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -145,9 +146,10 @@ private fun MaMiniPlayerContent(
                 }
                 // Transport buttons. Disabled during Preparing because MA
                 // can't react until the queue is loaded.
-                val transportEnabled = state.playbackPhase != PlaybackPhase.Preparing
+                val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+                val transportEnabled = dispatcher != null && state.playbackPhase != PlaybackPhase.Preparing
                 IconButton(
-                    onClick = { /* TODO Phase 1: wire to PlayerCommand.PAUSE/PLAY via ServiceClient */ },
+                    onClick = { dispatcher?.playPause() },
                     enabled = transportEnabled,
                 ) {
                     Icon(
@@ -156,10 +158,17 @@ private fun MaMiniPlayerContent(
                     )
                 }
                 IconButton(
-                    onClick = { /* TODO Phase 1: wire to PlayerCommand.NEXT via ServiceClient */ },
+                    onClick = { dispatcher?.next() },
                     enabled = transportEnabled,
                 ) {
                     Icon(Icons.Filled.SkipNext, contentDescription = "Next")
+                }
+                // Stop — dismisses the bar entirely (distinct from Pause).
+                IconButton(
+                    onClick = { dispatcher?.stop() },
+                    enabled = dispatcher != null,
+                ) {
+                    Icon(Icons.Filled.Stop, contentDescription = "Stop")
                 }
             }
         }

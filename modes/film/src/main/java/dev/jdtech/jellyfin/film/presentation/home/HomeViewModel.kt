@@ -514,6 +514,38 @@ constructor(
                         )
                     }
                 }
+                // Audiobooks — only present when the server has an audiobook
+                // provider; the fetch returns empty otherwise and the row is
+                // skipped. Off by default would hide a feature the user enabled
+                // server-side, so default true and let them disable it.
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_audiobooks", true)) {
+                    val audiobooks = musicAssistantRepository.getAudiobooks()
+                    if (audiobooks.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:audiobooks".toByteArray()),
+                                    name = UiText.DynamicString("Audiobooks (Music Assistant)"),
+                                    items = audiobooks,
+                                )
+                            )
+                        )
+                    }
+                }
+                if (appPreferences.sharedPreferences.getBoolean("home_ma_podcasts", true)) {
+                    val podcasts = musicAssistantRepository.getPodcasts()
+                    if (podcasts.isNotEmpty()) {
+                        sections.add(
+                            HomeItem.Section(
+                                dev.jdtech.jellyfin.models.HomeSection(
+                                    id = UUID.nameUUIDFromBytes("ma:podcasts".toByteArray()),
+                                    name = UiText.DynamicString("Podcasts (Music Assistant)"),
+                                    items = podcasts,
+                                )
+                            )
+                        )
+                    }
+                }
                 _state.update {
                     it.copy(musicAssistantSections = sections.toImmutableList())
                 }

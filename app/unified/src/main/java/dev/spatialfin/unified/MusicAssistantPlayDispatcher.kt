@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.compositionLocalOf
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.QueueOption
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository
@@ -49,8 +50,35 @@ class MaPlayDispatcher(
     fun playPause() = transport { repository.playPause(it) }
     fun next() = transport { repository.next(it) }
     fun previous() = transport { repository.previous(it) }
-    fun stop() = transport { repository.stop(it) }
     fun seekTo(positionMs: Long) = transport { repository.seekTo(it, positionMs) }
+
+    /**
+     * Stop playback AND dismiss the now-playing UI — Stop means "I'm done", so
+     * the mini-player / now-playing screen disappear (unlike Pause). The session
+     * suppresses the stopped track locally until the next play.
+     */
+    fun stop() {
+        session.dismissPlayback()
+        transport { repository.stop(it) }
+    }
+
+    /** Cycle repeat: Off → All → One → Off. Targets the active queue. */
+    fun cycleRepeatMode() {
+        val queueId = session.session.value.activeQueueId ?: return
+        val next = when (session.session.value.repeatMode) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+        scope.launch { repository.setRepeatMode(queueId, next) }
+    }
+
+    /** Toggle shuffle on the active queue. */
+    fun toggleShuffle() {
+        val queueId = session.session.value.activeQueueId ?: return
+        val enabled = !session.session.value.shuffleEnabled
+        scope.launch { repository.setShuffle(queueId, enabled) }
+    }
 
     private fun transport(action: suspend (playerId: String) -> Unit) {
         val playerId = session.session.value.selectedPlayer?.id ?: return

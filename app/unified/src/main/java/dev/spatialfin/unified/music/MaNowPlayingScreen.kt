@@ -15,18 +15,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Celebration
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -52,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSession
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
@@ -100,6 +109,7 @@ fun MaNowPlayingScreen(
         color = MaterialTheme.colorScheme.background,
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+            val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
             IconButton(
                 onClick = onBack,
                 modifier = Modifier.align(Alignment.TopStart),
@@ -127,8 +137,12 @@ fun MaNowPlayingScreen(
                         Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
                     }
                 }
+                // Current-track actions (add to queue / playlist) — makes this
+                // the single player with the MA overflow.
+                state.nowPlaying?.uri?.takeIf { it.isNotBlank() }?.let { uri ->
+                    NowPlayingTrackMenu(uri = uri, title = state.nowPlaying?.title, dispatcher = dispatcher)
+                }
             }
-            val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
             NowPlayingBody(
                 state = state,
                 onPickPlayer = onPickPlayer,
@@ -136,9 +150,56 @@ fun MaNowPlayingScreen(
                 onPrevious = dispatcher?.let { { it.previous() } },
                 onPlayPause = dispatcher?.let { { it.playPause() } },
                 onNext = dispatcher?.let { { it.next() } },
+                onStop = dispatcher?.let { { it.stop() } },
+                onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
+                onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
                 modifier = Modifier.align(Alignment.Center),
             )
         }
+    }
+}
+
+@Composable
+private fun NowPlayingTrackMenu(
+    uri: String,
+    title: String?,
+    dispatcher: dev.spatialfin.unified.MaPlayDispatcher?,
+) {
+    if (dispatcher == null) return
+    var expanded by remember { mutableStateOf(false) }
+    var showPlaylist by remember { mutableStateOf(false) }
+    val item = remember(uri) {
+        dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem(
+            itemId = "",
+            provider = "",
+            name = title ?: "Track",
+            uri = uri,
+            mediaType = "track",
+        )
+    }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "Track actions")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Add to queue") },
+                leadingIcon = { Icon(Icons.Filled.QueueMusic, contentDescription = null) },
+                onClick = { expanded = false; dispatcher.addToQueue(item) },
+            )
+            DropdownMenuItem(
+                text = { Text("Add to playlist") },
+                leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                onClick = { expanded = false; showPlaylist = true },
+            )
+        }
+    }
+    if (showPlaylist) {
+        MaAddToPlaylistDialog(
+            items = listOf(item),
+            dispatcher = dispatcher,
+            onDismiss = { showPlaylist = false },
+        )
     }
 }
 
@@ -151,6 +212,9 @@ private fun NowPlayingBody(
     onPrevious: (() -> Unit)? = null,
     onPlayPause: (() -> Unit)? = null,
     onNext: (() -> Unit)? = null,
+    onStop: (() -> Unit)? = null,
+    onCycleRepeat: (() -> Unit)? = null,
+    onToggleShuffle: (() -> Unit)? = null,
 ) {
     val track = state.nowPlaying
     if (track == null) {
@@ -235,8 +299,24 @@ private fun NowPlayingBody(
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Shuffle — tinted when on.
+            IconButton(
+                onClick = { onToggleShuffle?.invoke() },
+                enabled = onToggleShuffle != null,
+            ) {
+                Icon(
+                    Icons.Filled.Shuffle,
+                    contentDescription = if (state.shuffleEnabled) "Shuffle on" else "Shuffle off",
+                    modifier = Modifier.size(24.dp),
+                    tint = if (state.shuffleEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
             IconButton(
                 onClick = { onPrevious?.invoke() },
                 enabled = onPrevious != null && state.playbackPhase != PlaybackPhase.Preparing,
@@ -260,6 +340,43 @@ private fun NowPlayingBody(
             ) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
             }
+            // Repeat — Off (dim) / All (tinted) / One (tinted, RepeatOne glyph).
+            IconButton(
+                onClick = { onCycleRepeat?.invoke() },
+                enabled = onCycleRepeat != null,
+            ) {
+                Icon(
+                    imageVector = if (state.repeatMode == RepeatMode.ONE) {
+                        Icons.Filled.RepeatOne
+                    } else {
+                        Icons.Filled.Repeat
+                    },
+                    contentDescription = when (state.repeatMode) {
+                        RepeatMode.OFF -> "Repeat off"
+                        RepeatMode.ALL -> "Repeat all"
+                        RepeatMode.ONE -> "Repeat one"
+                    },
+                    modifier = Modifier.size(24.dp),
+                    tint = if (state.repeatMode == RepeatMode.OFF) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+        }
+
+        // Stop — ends playback and dismisses the player (unlike Pause).
+        IconButton(
+            onClick = { onStop?.invoke() },
+            enabled = onStop != null && state.playbackPhase != PlaybackPhase.Stopped,
+        ) {
+            Icon(
+                Icons.Filled.Stop,
+                contentDescription = "Stop",
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         // Player picker chip. Always render it (even with no selected player)

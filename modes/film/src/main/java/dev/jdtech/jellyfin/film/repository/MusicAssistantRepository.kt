@@ -104,6 +104,30 @@ class MusicAssistantRepository @Inject constructor(
     }
 
     /**
+     * Library audiobooks, newest first. Empty when the server has no audiobook
+     * providers configured — the home row then hides itself.
+     */
+    suspend fun getAudiobooks(): List<SpatialFinItem> {
+        val args = JSONObject()
+            .put("limit", 25)
+            .put("order_by", "timestamp_added DESC")
+        val array = executeCommand("music/audiobooks/library_items", args) ?: return emptyList()
+        return parseItems(array)
+    }
+
+    /**
+     * Library podcasts, newest first. Empty when the server has no podcast
+     * providers configured — the home row then hides itself.
+     */
+    suspend fun getPodcasts(): List<SpatialFinItem> {
+        val args = JSONObject()
+            .put("limit", 25)
+            .put("order_by", "timestamp_added DESC")
+        val array = executeCommand("music/podcasts/library_items", args) ?: return emptyList()
+        return parseItems(array)
+    }
+
+    /**
      * Pull MA's "recommendations" feed for the home row. MA returns this as
      * a list of folders, each with its own items array — we flatten across
      * folders for a single carousel row in Phase 2. Per-folder grouping

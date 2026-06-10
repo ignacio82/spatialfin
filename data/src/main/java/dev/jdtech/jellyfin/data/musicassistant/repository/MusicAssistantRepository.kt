@@ -4,6 +4,7 @@ import dev.jdtech.jellyfin.data.musicassistant.api.APICommands
 import dev.jdtech.jellyfin.data.musicassistant.api.Request
 import dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.MediaType
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.QueueOption
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.SearchResult
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
@@ -98,6 +99,26 @@ class MusicAssistantRepository(
         return emptyList()
     }
 
+    /** Library audiobooks, newest first. Empty when the server has no audiobook providers. */
+    suspend fun getLibraryAudiobooks(limit: Int = 25): List<ServerMediaItem> {
+        val response = serviceClient.sendRequest(
+            Request.Audiobook.listLibrary(limit = limit, orderBy = "timestamp_added DESC"),
+        )
+        return if (response.isSuccess) {
+            response.getOrNull()?.resultAs<List<ServerMediaItem>>().orEmpty()
+        } else emptyList()
+    }
+
+    /** Library podcasts, newest first. Empty when the server has no podcast providers. */
+    suspend fun getLibraryPodcasts(limit: Int = 25): List<ServerMediaItem> {
+        val response = serviceClient.sendRequest(
+            Request.Podcast.listLibrary(limit = limit, orderBy = "timestamp_added DESC"),
+        )
+        return if (response.isSuccess) {
+            response.getOrNull()?.resultAs<List<ServerMediaItem>>().orEmpty()
+        } else emptyList()
+    }
+
     // -----------------------------------------------------------------------
     // Detail fetchers (Phase 2). All take the [ServerMediaItem] returned by
     // search / library / recommendations and dispatch via that item's
@@ -160,6 +181,18 @@ class MusicAssistantRepository(
         return serviceClient.sendRequest(
             Request.Player.seek(playerId, (positionMs / 1000).coerceAtLeast(0)),
         ).isSuccess
+    }
+
+    /** Set the active queue's repeat mode (off / one / all). */
+    suspend fun setRepeatMode(queueId: String, repeatMode: RepeatMode): Boolean {
+        if (queueId.isBlank()) return false
+        return serviceClient.sendRequest(Request.Queue.setRepeatMode(queueId, repeatMode)).isSuccess
+    }
+
+    /** Toggle shuffle on the active queue. */
+    suspend fun setShuffle(queueId: String, enabled: Boolean): Boolean {
+        if (queueId.isBlank()) return false
+        return serviceClient.sendRequest(Request.Queue.setShuffle(queueId, enabled)).isSuccess
     }
 
     // -----------------------------------------------------------------------
@@ -269,6 +302,30 @@ class MusicAssistantRepository(
         null
     }
 
+    /**
+     * Resolve the share-QR state in one shot so the UI can give the user an
+     * actionable message instead of a blank panel:
+     *
+     *  - [PartyJoinInfo.url] non-null  → render the QR.
+     *  - url null, [PartyJoinInfo.pluginAvailable] true → the Party plugin is
+     *    loaded but guest access is OFF (the only reason `party/url` returns
+     *    null for an authenticated user) → tell the user to enable it.
+     *  - url null, pluginAvailable false → the Party plugin isn't installed /
+     *    loaded on this server.
+     *
+     * `party/config` is the probe: it succeeds whenever the provider is loaded,
+     * regardless of guest-access state.
+     */
+    suspend fun getPartyJoinInfo(): PartyJoinInfo {
+        getPartyUrl()?.let { return PartyJoinInfo(url = it, pluginAvailable = true) }
+        val pluginAvailable = try {
+            serviceClient.sendRequest(Request(command = APICommands.PARTY_CONFIG)).isSuccess
+        } catch (e: Exception) {
+            false
+        }
+        return PartyJoinInfo(url = null, pluginAvailable = pluginAvailable)
+    }
+
     /** Convenience: toggle [item]'s favorite flag. Returns the new state, or null on failure. */
     suspend fun setFavorite(item: ServerMediaItem, favorite: Boolean): Boolean? {
         val ok = if (favorite) {
@@ -347,3 +404,12 @@ class MusicAssistantRepository(
         provider.takeIf { it.isNotBlank() }
             ?: providerMappings?.firstOrNull()?.providerInstance
 }
+
+/**
+ * Resolved state for the party share-QR. See
+ * [MusicAssistantRepository.getPartyJoinInfo].
+ */
+data class PartyJoinInfo(
+    val url: String?,
+    val pluginAvailable: Boolean,
+)

@@ -131,6 +131,18 @@ class PluginSettingsViewModel @Inject constructor(
                 name = "Playlists",
                 description = "Your favorite Music Assistant playlists.",
                 enabled = sharedPreferences.getBoolean(HOME_MA_PLAYLISTS, true)
+            ),
+            MusicAssistantHomeRowUi(
+                key = "audiobooks",
+                name = "Audiobooks",
+                description = "Audiobooks from your Music Assistant library.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_AUDIOBOOKS, true)
+            ),
+            MusicAssistantHomeRowUi(
+                key = "podcasts",
+                name = "Podcasts",
+                description = "Podcasts from your Music Assistant library.",
+                enabled = sharedPreferences.getBoolean(HOME_MA_PODCASTS, true)
             )
         )
         _pluginRows.value = installedPlugins.associate { plugin ->
@@ -168,6 +180,8 @@ class PluginSettingsViewModel @Inject constructor(
             "recentlyPlayed" -> HOME_MA_RECENTLY_PLAYED
             "recommendations" -> HOME_MA_RECOMMENDATIONS
             "playlists" -> HOME_MA_PLAYLISTS
+            "audiobooks" -> HOME_MA_AUDIOBOOKS
+            "podcasts" -> HOME_MA_PODCASTS
             else -> null
         } ?: return
         sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
@@ -242,6 +256,8 @@ class PluginSettingsViewModel @Inject constructor(
         private const val HOME_MA_RECENTLY_PLAYED = "home_ma_recently_played"
         private const val HOME_MA_RECOMMENDATIONS = "home_ma_recommendations"
         private const val HOME_MA_PLAYLISTS = "home_ma_playlists"
+        private const val HOME_MA_AUDIOBOOKS = "home_ma_audiobooks"
+        private const val HOME_MA_PODCASTS = "home_ma_podcasts"
     }
 }
 

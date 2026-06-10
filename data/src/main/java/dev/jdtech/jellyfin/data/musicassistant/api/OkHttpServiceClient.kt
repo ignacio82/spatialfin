@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -54,6 +56,13 @@ class OkHttpServiceClient(
 
     private var webSocket: WebSocket? = null
     private val jsonFormat = Json { ignoreUnknownKeys = true }
+
+    // MA auth handshake: the server sends `server_info` on connect, then the
+    // first command MUST be `auth` with the token. We hold the token between
+    // connect() and the server_info arrival, and only mark the socket
+    // command-ready once auth succeeds.
+    private var pendingAuthToken: String? = null
+    private var awaitingServerInfo = false
 
     private val rpcEngine = RpcEngine(
         onAuthError = {
@@ -122,9 +131,36 @@ class OkHttpServiceClient(
         rpcEngine.clear()
     }
 
+    /**
+     * Send the MA `auth` command (the mandatory first command on an
+     * auth-enabled server). On success the server replies with a result that
+     * has no `error_code`; that's when the socket becomes command-ready. An
+     * `error_code 20` reply is routed by [RpcEngine] to its auth-error handler,
+     * which disconnects so the caller can retry.
+     */
+    private fun sendAuth(token: String) {
+        val request = Request(
+            command = APICommands.AUTH,
+            args = buildJsonObject { put("token", JsonPrimitive(token)) },
+        )
+        rpcEngine.registerCallback(request.messageId) { answer ->
+            if (!answer.json.containsKey("error_code")) {
+                Timber.i("MA WebSocket authenticated")
+                _isReadyForCommands.value = true
+            }
+        }
+        val requestStr = myJson.encodeToJsonElement(Request.serializer(), request).toString()
+        if (webSocket?.send(requestStr) != true) {
+            rpcEngine.removeCallback(request.messageId)
+        }
+    }
+
     override fun connect(connection: ConnectionInfo) {
         _sessionState.update { SessionState.Connecting }
         _serverBaseUrl.value = connection.webUrl
+
+        pendingAuthToken = connection.token?.takeIf { it.isNotBlank() }
+        awaitingServerInfo = pendingAuthToken != null
 
         val wsUrl = connection.webUrl.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
         val request = okhttp3.Request.Builder().url(wsUrl).build()
@@ -137,7 +173,12 @@ class OkHttpServiceClient(
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     Timber.i("WebSocket connected")
                     _sessionState.update { SessionState.Connected.Direct(connection) }
-                    _isReadyForCommands.value = true
+                    // Auth-required servers: stay not-ready until the `auth`
+                    // command (sent after server_info) succeeds. Open servers:
+                    // ready immediately.
+                    if (pendingAuthToken == null) {
+                        _isReadyForCommands.value = true
+                    }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -145,6 +186,13 @@ class OkHttpServiceClient(
                         try {
                             val element = jsonFormat.parseToJsonElement(text)
                             if (element is JsonObject) {
+                                // The first message is `server_info`; reply with
+                                // the `auth` command before anything else.
+                                if (awaitingServerInfo && element["message_id"] == null) {
+                                    awaitingServerInfo = false
+                                    pendingAuthToken?.let { sendAuth(it) }
+                                    return@launch
+                                }
                                 val isHandled = rpcEngine.handleResponse(element)
                                 if (!isHandled) {
                                     // Try parse as Event

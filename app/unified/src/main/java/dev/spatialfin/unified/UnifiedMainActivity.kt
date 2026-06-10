@@ -291,6 +291,11 @@ class UnifiedMainActivity : AppCompatActivity() {
                 preference = appPreferences.onboardingCompleted,
             )
 
+            // Open the app-side MA WebSocket (using the server the SendSpin
+            // receiver discovered) so the now-playing / queue / party / playlist
+            // UI has live data. Without this every MA RPC silently fails.
+            dev.spatialfin.unified.music.MaConnectionBridge(maServiceClient)
+
             when (deviceClass) {
                 DeviceClass.TV -> {
                     TvTheme {
@@ -332,6 +337,9 @@ class UnifiedMainActivity : AppCompatActivity() {
                 DeviceClass.XR -> {
                     val coroutineScope = rememberCoroutineScope()
                     val context = LocalContext.current
+
+                    // Make the MA session track local SendSpin playback → one unified player.
+                    dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
 
                     SpatialFinTheme(dynamicColor = state.isDynamicColors) {
                         val navController = rememberNavController()
@@ -901,7 +909,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
                 androidx.compose.foundation.layout.Column {
-                    dev.spatialfin.sendspin.SendspinMiniPlayer()
+                    val maNp by maSession.session.collectAsStateWithLifecycle()
+                    dev.spatialfin.sendspin.SendspinMiniPlayer(suppressed = maNp.nowPlaying != null)
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },
@@ -1108,7 +1117,10 @@ class UnifiedMainActivity : AppCompatActivity() {
                     ),
                 ) {
                     androidx.compose.foundation.layout.Column {
-                        dev.spatialfin.sendspin.SendspinMiniPlayer()
+                        val maNpSpatial by maSession.session.collectAsStateWithLifecycle()
+                        dev.spatialfin.sendspin.SendspinMiniPlayer(
+                            suppressed = maNpSpatial.nowPlaying != null,
+                        )
                         dev.spatialfin.unified.music.MaMiniPlayer(
                             session = maSession,
                             onExpand = { showSpatialNowPlaying = true },

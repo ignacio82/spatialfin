@@ -90,15 +90,22 @@ import dev.jdtech.jellyfin.sendspin.R as SendspinR
 @Composable
 fun SendspinFullscreenPlayer(
     modifier: Modifier = Modifier,
+    suppressed: Boolean = false,
     queueViewModel: SendspinQueueViewModel = hiltViewModel(),
 ) {
     val state by SendspinReceiverSession.state.collectAsState()
     val queueItems by queueViewModel.queueItems.collectAsState()
-    
+
     LaunchedEffect(state.musicAssistantCurrentPlayerId) {
         queueViewModel.setQueueId(state.musicAssistantCurrentPlayerId)
     }
-    if (!state.showControls) return
+    // [suppressed] when MA presents this playback through the unified MA player,
+    // so the SendSpin fullscreen doesn't auto-pop over it. When this device is an
+    // MA-driven endpoint (authenticated), the MA now-playing player owns the UI
+    // outright — never auto-pop the SendSpin fullscreen (it used to flash back on
+    // pause). The receiver keeps running headless.
+    val maDriven = state.musicAssistantAuthState == SendspinMusicAssistantAuthState.AUTHENTICATED
+    if (suppressed || maDriven || !state.showControls) return
 
     val context = LocalContext.current
     val bitmap =

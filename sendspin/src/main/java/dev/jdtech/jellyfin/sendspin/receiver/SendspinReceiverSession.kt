@@ -65,12 +65,26 @@ data class SendspinReceiverUiState(
     val repeat: String? = null,
     val shuffle: Boolean? = null,
     val musicAssistantServerUrl: String? = null,
+    /**
+     * The Bearer token the receiver authenticated with. Exposed (in-memory only,
+     * never persisted here) so the app-side MA WebSocket client can reuse it —
+     * MA's `/ws` rejects unauthenticated connections. Null until authenticated.
+     */
+    val musicAssistantToken: String? = null,
     val musicAssistantAuthState: SendspinMusicAssistantAuthState =
         SendspinMusicAssistantAuthState.UNKNOWN,
     val musicAssistantLoading: Boolean = false,
     val musicAssistantError: String? = null,
     val musicAssistantPlayers: List<SendspinMusicAssistantPlayer> = emptyList(),
     val musicAssistantCurrentPlayerId: String? = null,
+    /**
+     * The MA Universal-Player wrapper that holds THIS device's queue/now-playing
+     * (resolved from our protocol endpoint). This — not [musicAssistantCurrentPlayerId],
+     * which is the protocol output — is the player the MA session should select so
+     * the unified now-playing surface (queue / party / playlist) tracks local
+     * playback. Null until MA links the wrapper to our endpoint.
+     */
+    val musicAssistantQueuePlayerId: String? = null,
     val musicAssistantGroupTargetPlayerId: String? = null,
     val musicAssistantActiveMemberIds: Set<String> = emptySet(),
     val musicAssistantBusyPlayerIds: Set<String> = emptySet(),
