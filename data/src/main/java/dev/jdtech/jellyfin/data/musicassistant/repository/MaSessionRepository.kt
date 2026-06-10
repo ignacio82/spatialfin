@@ -225,6 +225,22 @@ class MaSessionRepository(
             .getOrThrow()
             .resultAs<List<ServerPlayer>>()
     }.onFailure { Timber.tag(TAG).w(it, "players/all failed") }.getOrNull()
+        ?.also { players ->
+            // Diagnostic: dump the grouping-relevant fields so we can verify the
+            // picker's compatibility logic against what MA actually reports.
+            players.forEach { p ->
+                Timber.tag(TAG).i(
+                    "player id=%s provider=%s setMembers=%s canGroupWith=%s syncedTo=%s activeGroup=%s members=%s",
+                    p.playerId,
+                    p.provider,
+                    p.supportedFeatures.any { it.equals("set_members", ignoreCase = true) },
+                    p.canGroupWith,
+                    p.syncedTo,
+                    p.activeGroup,
+                    p.groupMembers,
+                )
+            }
+        }
 
     private suspend fun fetchQueues(): List<ServerQueue>? = runCatching {
         serviceClient
@@ -276,12 +292,19 @@ class MaSessionRepository(
 
     private fun maybeClearPendingPlay() {
         val hint = _pendingPlay.value ?: return
-        // Clear once ANY player is actually playing the hinted uri. For local
-        // playback targetPlayerId is null (the wrapper id is resolved later in
-        // the SendSpin service), so keying off a single known target would never
-        // clear and the mini-player would sit on "Preparing…" until timeout.
+        // Clear only once a player is actually PLAYING the hinted uri — not
+        // merely when MA has *loaded* it. MA loads the media (currentMedia/queue
+        // item set) a beat before the player transitions to PLAYING; clearing on
+        // load alone dropped the optimistic hint into a gap where the real
+        // now-playing wasn't resolvable yet, so the mini-player flickered off and
+        // only came back when playback truly started. Requiring PLAYING keeps the
+        // hint up through that window (the age-based timeout is the safety net for
+        // a play that never reaches PLAYING). For local playback targetPlayerId is
+        // null, so we match on any player, not a single known target.
         val queues = _queues.value
-        val playing = _players.value.values.any { it.playsUri(hint.uri, queues) }
+        val playing = _players.value.values.any {
+            it.state == PlayerState.PLAYING && it.playsUri(hint.uri, queues)
+        }
         if (playing) {
             _pendingPlay.value = null
         }
@@ -438,9 +461,14 @@ class MaSessionRepository(
         // MA reports "none" (or empty) when the endpoint exposes no volume knob
         // — hide the slider then rather than send no-op RPCs.
         supportsVolume = volumeControl.isNotBlank() && volumeControl != "none",
+        // MA's can_group_with holds player ids AND provider-instance ids; the
+        // picker matches on both (mirrors the official frontend). Grouping is
+        // only offered when the player advertises the set_members feature.
         canGroupWith = canGroupWith?.toSet() ?: emptySet(),
+        supportsGrouping = supportedFeatures.any { it.equals("set_members", ignoreCase = true) },
         syncedToPlayerId = syncedTo,
         groupMemberIds = groupMembers ?: emptySet(),
+        activeGroup = activeGroup,
     )
 
     private data class PendingPlay(
@@ -544,12 +572,16 @@ data class MaPlayerSummary(
     val volumeMuted: Boolean = false,
     /** Whether this player exposes a volume control (drives slider visibility). */
     val supportsVolume: Boolean = false,
-    /** Player ids this player can be sync-grouped with. */
+    /** Player ids AND provider-instance ids this player can be sync-grouped with. */
     val canGroupWith: Set<String> = emptySet(),
+    /** Whether MA advertises the `set_members` feature (i.e. it can lead/join a sync group). */
+    val supportsGrouping: Boolean = false,
     /** The leader this player is currently synced to, if it's a follower. */
     val syncedToPlayerId: String? = null,
     /** Players currently synced under this one, if it's a group leader. */
     val groupMemberIds: Set<String> = emptySet(),
+    /** The group this player is currently captured by, if any (MA `active_group`). */
+    val activeGroup: String? = null,
 )
 
 data class NowPlayingTrack(

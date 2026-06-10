@@ -148,15 +148,26 @@ private fun PickerContent(
             }
 
             // Multi-room: pick which other players join the current one in a
-            // synced group (the official app's "group players" UX). MA reports
-            // each player's `canGroupWith`, so we only list compatible targets;
-            // the toggle works mid-playback. Control can't be stranded by this —
-            // the session follows whatever player is actually playing, even if
-            // grouping flips its hide_in_ui flag.
-            if (selectedPlayer != null) {
+            // synced group (the official app's "group players" UX). Mirrors the
+            // MA frontend's logic exactly — both players must advertise the
+            // `set_members` feature, candidates must share a sync protocol
+            // (can_group_with matches by player id OR provider, in either
+            // direction), and a candidate already captured by a different group
+            // is excluded. The toggle works mid-playback; control can't be
+            // stranded because the session follows whatever's actually playing.
+            val leader = selectedPlayer?.takeIf { it.supportsGrouping && it.syncedToPlayerId == null }
+            if (leader != null) {
                 val groupable = players.filter { p ->
-                    p.id != selectedPlayer.id &&
-                        (selectedPlayer.canGroupWith.contains(p.id) || p.canGroupWith.contains(selectedPlayer.id))
+                    p.id != leader.id &&
+                        p.supportsGrouping &&
+                        (
+                            leader.canGroupWith.contains(p.id) ||
+                                leader.canGroupWith.contains(p.provider) ||
+                                p.canGroupWith.contains(leader.id) ||
+                                p.canGroupWith.contains(leader.provider)
+                        ) &&
+                        (p.activeGroup == null || p.activeGroup == leader.id) &&
+                        (p.syncedToPlayerId == null || p.syncedToPlayerId == leader.id)
                 }
                 if (groupable.isNotEmpty()) {
                     item(key = "group-header") {
@@ -170,19 +181,11 @@ private fun PickerContent(
                         )
                     }
                     items(groupable, key = { "group-" + it.id }) { player ->
-                        // The pair is grouped if the selected player leads `player`
-                        // OR follows it. Removal must target the actual leader, so
-                        // resolve who-leads-whom rather than assuming the selected
-                        // player is the leader.
-                        val selectedLeads = player.syncedToPlayerId == selectedPlayer.id ||
-                            selectedPlayer.groupMemberIds.contains(player.id)
-                        val selectedFollows = selectedPlayer.syncedToPlayerId == player.id ||
-                            player.groupMemberIds.contains(selectedPlayer.id)
-                        val grouped = selectedLeads || selectedFollows
-                        // Add → selected player becomes the leader. Remove → target
-                        // whichever of the two is the current leader.
-                        val leaderId = if (selectedFollows) player.id else selectedPlayer.id
-                        val memberId = if (selectedFollows) selectedPlayer.id else player.id
+                        // `leader` is always the group leader here (it isn't synced
+                        // to anything), so a candidate is grouped iff it's synced
+                        // under the leader. Toggling adds/removes it from the leader.
+                        val grouped = player.syncedToPlayerId == leader.id ||
+                            leader.groupMemberIds.contains(player.id)
                         ListItem(
                             headlineContent = { Text(player.name) },
                             supportingContent = { Text(if (grouped) "In sync" else "Tap to add") },
@@ -190,11 +193,11 @@ private fun PickerContent(
                             trailingContent = {
                                 Checkbox(
                                     checked = grouped,
-                                    onCheckedChange = { onToggleGroupMember(leaderId, memberId, grouped) },
+                                    onCheckedChange = { onToggleGroupMember(leader.id, player.id, grouped) },
                                 )
                             },
                             modifier = Modifier.fillMaxWidth().clickable(
-                                onClick = { onToggleGroupMember(leaderId, memberId, grouped) },
+                                onClick = { onToggleGroupMember(leader.id, player.id, grouped) },
                             ),
                             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
                         )
