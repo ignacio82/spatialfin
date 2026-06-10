@@ -117,13 +117,6 @@ fun MaPartyScreen(
             // beat-reactive backdrop until real audio analysis lands.
             PartyPulse(modifier = Modifier.fillMaxSize())
 
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
-            ) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-            }
-
             // Wide surfaces (TV / XR / landscape) get the lean-back two-column
             // layout; a phone in portrait stacks everything in one scroll so the
             // QR and queue aren't crushed into vertical letter-per-line text.
@@ -158,6 +151,15 @@ fun MaPartyScreen(
                         currentItemId = queue.currentItemId,
                     )
                 }
+            }
+
+            // Drawn last so it sits above the (full-screen, scrollable) party
+            // content — otherwise the content captures the tap and Back is dead.
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+            ) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
         }
     }

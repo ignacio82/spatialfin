@@ -140,61 +140,72 @@ fun MaNowPlayingScreen(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
     ) {
-        Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
-            }
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
+            // Top bar gets its own row so the centered artwork below can never
+            // overlap the back / action icons (it did on shorter phone screens).
             Row(
-                modifier = Modifier.align(Alignment.TopEnd),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                // Always reachable: the Party plugin is configured server-side
-                // (no player "source"), so we can't gate on partySource — the
-                // party screen itself loads the guest QR via `party/url` and
-                // simply omits it when the plugin isn't present.
-                if (onOpenParty != null) {
-                    IconButton(onClick = onOpenParty) {
-                        Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Always reachable: the Party plugin is configured server-side
+                    // (no player "source"), so we can't gate on partySource — the
+                    // party screen itself loads the guest QR via `party/url` and
+                    // simply omits it when the plugin isn't present.
+                    if (onOpenParty != null) {
+                        IconButton(onClick = onOpenParty) {
+                            Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
+                        }
                     }
-                }
-                if (!lyrics.isNullOrBlank()) {
-                    IconButton(onClick = { showLyrics = true }) {
-                        Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
+                    if (!lyrics.isNullOrBlank()) {
+                        IconButton(onClick = { showLyrics = true }) {
+                            Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
+                        }
                     }
-                }
-                IconButton(onClick = { showQueue = true }) {
-                    Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
-                }
-                if (onOpenSearch != null) {
-                    IconButton(onClick = onOpenSearch) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
+                    IconButton(onClick = { showQueue = true }) {
+                        Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
                     }
-                }
-                // Current-track actions (add to queue / playlist) — makes this
-                // the single player with the MA overflow.
-                state.nowPlaying?.uri?.takeIf { it.isNotBlank() }?.let { uri ->
-                    NowPlayingTrackMenu(uri = uri, title = state.nowPlaying?.title, dispatcher = dispatcher)
+                    if (onOpenSearch != null) {
+                        IconButton(onClick = onOpenSearch) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
+                        }
+                    }
+                    // Current-track actions (add to queue / playlist) — makes this
+                    // the single player with the MA overflow.
+                    state.nowPlaying?.uri?.takeIf { it.isNotBlank() }?.let { uri ->
+                        NowPlayingTrackMenu(uri = uri, title = state.nowPlaying?.title, dispatcher = dispatcher)
+                    }
                 }
             }
-            NowPlayingBody(
-                state = state,
-                onPickPlayer = onPickPlayer,
-                onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
-                onPrevious = dispatcher?.let { { it.previous() } },
-                onPlayPause = dispatcher?.let { { it.playPause() } },
-                onNext = dispatcher?.let { { it.next() } },
-                onStop = dispatcher?.let { { it.stop() } },
-                onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
-                onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
-                onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
-                onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
-                onToggleMute = dispatcher?.let { { it.toggleMute() } },
-                onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
-                modifier = Modifier.align(Alignment.Center),
-            )
+            // Body fills the rest, centered, and scrolls if it's taller than the
+            // remaining space (tall content on small phones).
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.Center,
+            ) {
+                NowPlayingBody(
+                    state = state,
+                    onPickPlayer = onPickPlayer,
+                    onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
+                    onPrevious = dispatcher?.let { { it.previous() } },
+                    onPlayPause = dispatcher?.let { { it.playPause() } },
+                    onNext = dispatcher?.let { { it.next() } },
+                    onStop = dispatcher?.let { { it.stop() } },
+                    onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
+                    onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
+                    onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
+                    onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
+                    onToggleMute = dispatcher?.let { { it.toggleMute() } },
+                    onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
+                )
+            }
         }
     }
 }

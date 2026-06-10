@@ -147,8 +147,12 @@ private fun PickerContent(
                 )
             }
 
-            // Sync-group section — only when a concrete player is selected (it's
-            // the group leader) and there are players it can group with.
+            // Multi-room: pick which other players join the current one in a
+            // synced group (the official app's "group players" UX). MA reports
+            // each player's `canGroupWith`, so we only list compatible targets;
+            // the toggle works mid-playback. Control can't be stranded by this —
+            // the session follows whatever player is actually playing, even if
+            // grouping flips its hide_in_ui flag.
             if (selectedPlayer != null) {
                 val groupable = players.filter { p ->
                     p.id != selectedPlayer.id &&
@@ -158,7 +162,7 @@ private fun PickerContent(
                     item(key = "group-header") {
                         HorizontalDivider()
                         Text(
-                            text = "Sync speakers with ${selectedPlayer.name}",
+                            text = "Also play on (in sync)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
