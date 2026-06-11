@@ -224,6 +224,10 @@ class MaPlayDispatcher(
     /** Lyrics for the track at [uri], or null when the provider has none. */
     suspend fun lyricsFor(uri: String): String? = repository.getTrackLyrics(uri)
 
+    /** Chapters for the audiobook at [uri]; empty when not an audiobook / no chapters. */
+    suspend fun chaptersFor(uri: String): List<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter> =
+        repository.getAudiobookChapters(uri)
+
     /** Editable (user-owned) playlists, for the "Add to playlist" picker. */
     suspend fun editablePlaylists(): List<ServerMediaItem> =
         repository.getLibraryPlaylists().filter { it.isEditable == true }

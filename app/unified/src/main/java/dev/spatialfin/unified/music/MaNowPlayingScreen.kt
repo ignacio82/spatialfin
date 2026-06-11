@@ -1,12 +1,16 @@
 package dev.spatialfin.unified.music
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +35,7 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.SkipNext
@@ -107,18 +112,27 @@ fun MaNowPlayingScreen(
     val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showChapters by remember { mutableStateOf(false) }
 
-    // Lyrics are fetched lazily per track (search/queue payloads don't carry
-    // them). Null = none / not yet loaded; the Lyrics button only shows when
-    // we actually have lyrics for the current track.
+    // Lyrics + audiobook chapters are fetched lazily per track (the now-playing
+    // payload doesn't carry them). Each button only shows once we actually have
+    // content for the current item.
     var lyrics by remember { mutableStateOf<String?>(null) }
+    var chapters by remember {
+        mutableStateOf<List<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter>>(emptyList())
+    }
     val currentUri = state.nowPlaying?.uri
     LaunchedEffect(currentUri, dispatcher) {
         lyrics = null
+        chapters = emptyList()
         showLyrics = false
+        showChapters = false
         val uri = currentUri
         if (!uri.isNullOrBlank() && dispatcher != null) {
             lyrics = runCatching { dispatcher.lyricsFor(uri) }.getOrNull()
+            if (uri.contains("://audiobook/")) {
+                chapters = runCatching { dispatcher.chaptersFor(uri) }.getOrDefault(emptyList())
+            }
         }
     }
 
@@ -131,6 +145,19 @@ fun MaNowPlayingScreen(
             lyrics = lyrics.orEmpty(),
             title = state.nowPlaying?.title,
             onBack = { showLyrics = false },
+            modifier = modifier,
+        )
+        return
+    }
+    if (showChapters) {
+        MaChaptersPanel(
+            chapters = chapters,
+            title = state.nowPlaying?.title,
+            onSelect = { chapter ->
+                dispatcher?.seekTo((chapter.start * 1000.0).toLong())
+                showChapters = false
+            },
+            onBack = { showChapters = false },
             modifier = modifier,
         )
         return
@@ -159,6 +186,11 @@ fun MaNowPlayingScreen(
                     if (onOpenParty != null) {
                         IconButton(onClick = onOpenParty) {
                             Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
+                        }
+                    }
+                    if (chapters.isNotEmpty()) {
+                        IconButton(onClick = { showChapters = true }) {
+                            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Chapters")
                         }
                     }
                     if (!lyrics.isNullOrBlank()) {
@@ -682,6 +714,73 @@ private fun MaLyricsPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen audiobook chapter picker (same host pattern as the lyrics/queue
+ * panels). Tapping a chapter seeks the active stream to its start — the
+ * audiobook is a single item, so chapters are seek offsets, not tracks.
+ */
+@Composable
+private fun MaChaptersPanel(
+    chapters: List<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter>,
+    title: String?,
+    onSelect: (dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(top = 56.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                item("title") {
+                    Text(
+                        text = title ?: "Chapters",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
+                itemsIndexed(chapters, key = { _, c -> "ch|" + c.position }) { index, chapter ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(chapter) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "${index + 1}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.widthIn(min = 28.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = chapter.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = formatDuration((chapter.start * 1000.0).toLong()),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }

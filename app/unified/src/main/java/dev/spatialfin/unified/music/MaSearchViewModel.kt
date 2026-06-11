@@ -131,7 +131,7 @@ class MaSearchViewModel @Inject constructor(
         private const val RESULT_LIMIT = 30
         private const val TAG = "MaSearch"
         private val ALL_MEDIA_TYPES = listOf(
-            "track", "album", "artist", "playlist", "podcast", "radio",
+            "track", "album", "artist", "playlist", "podcast", "audiobook", "radio",
         )
     }
 }

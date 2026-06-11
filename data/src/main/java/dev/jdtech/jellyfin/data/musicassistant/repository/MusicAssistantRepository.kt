@@ -8,6 +8,7 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.QueueOption
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.SearchResult
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
+import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueueItem
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -164,6 +165,21 @@ class MusicAssistantRepository(
      */
     suspend fun getAudiobook(item: ServerMediaItem): ServerMediaItem? =
         getDetail(item) { id, prov -> Request.Audiobook.get(id, prov) }
+
+    /**
+     * Chapters for the audiobook at [uri] (`provider://audiobook/item_id`).
+     * Empty when not an audiobook uri or the provider exposes no chapters.
+     * Fetches the full detail — the now-playing payload doesn't carry chapters.
+     */
+    suspend fun getAudiobookChapters(uri: String): List<ServerMediaItemChapter> {
+        if (!uri.contains("://")) return emptyList()
+        val provider = uri.substringBefore("://").takeIf { it.isNotBlank() } ?: return emptyList()
+        val rest = uri.substringAfter("://")
+        if (!rest.contains("/")) return emptyList()
+        val itemId = rest.substringAfter("/").takeIf { it.isNotBlank() } ?: return emptyList()
+        val seed = ServerMediaItem(itemId = itemId, provider = provider, name = "", mediaType = "audiobook", uri = uri)
+        return getAudiobook(seed)?.metadata?.chapters.orEmpty()
+    }
 
     /**
      * Lyrics for the track at [uri] (`provider://track/item_id`), or null when
