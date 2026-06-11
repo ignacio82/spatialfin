@@ -68,6 +68,7 @@ class MaSessionRepository(
     private val _selectedPlayerId = MutableStateFlow<String?>(null)
     private val _pendingPlay = MutableStateFlow<PendingPlay?>(null)
     private val _hydrationState = MutableStateFlow(HydrationState.Idle)
+    private val lastNowPlayingByPlayer = java.util.concurrent.ConcurrentHashMap<String, NowPlayingTrack>()
 
     /**
      * URI the user explicitly Stopped. While the active queue still holds this
@@ -304,6 +305,13 @@ class MaSessionRepository(
         return queues[queueId]?.currentItem?.mediaItem?.uri == uri
     }
 
+    /** True when MA still has a track loaded for this player, even if paused. */
+    private fun ServerPlayer.hasLoadedMedia(queues: Map<String, ServerQueue>): Boolean {
+        if (currentMedia != null) return true
+        val queueId = activeSource ?: currentMedia?.queueId ?: playerId
+        return queues[queueId]?.currentItem?.mediaItem != null
+    }
+
     private fun buildSession(
         players: Map<String, ServerPlayer>,
         queues: Map<String, ServerQueue>,
@@ -319,6 +327,11 @@ class MaSessionRepository(
                 p.available && p.enabled && p.hidden != true && p.hideInUi != true
             }
             .sortedBy { it.displayName.lowercase() }
+        val playerSelectionOrder = players.values
+            .sortedWith(
+                compareBy<ServerPlayer> { it.type.equals("protocol", ignoreCase = true) }
+                    .thenBy { it.displayName.lowercase() }
+            )
 
         val selected = players.findById(selectedId)
             ?.takeIf { it.available && it.enabled }
@@ -331,25 +344,39 @@ class MaSessionRepository(
             // mini-player / Now Playing actions (queue, party, playlist) never
             // surface for local playback.
             ?: pending?.uri?.let { uri -> 
-                players.values
-                    .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+                playerSelectionOrder
                     .firstOrNull { it.playsUri(uri, queues) } 
             }
-            ?: players.values
-                .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+            ?: playerSelectionOrder
                 .firstOrNull {
                     it.state == PlayerState.PLAYING && it.available && it.enabled &&
-                        it.hidden != true && it.hideInUi != true
+                        it.hidden != true && it.hideInUi != true && it.hasLoadedMedia(queues)
+                }
+            // Pause is still an active remote-control session. Keep following
+            // the paused player while it still has a loaded track/queue item so
+            // another SpatialFin device can resume Music Assistant playback.
+            ?: playerSelectionOrder
+                .firstOrNull {
+                    it.state == PlayerState.PAUSED && it.available && it.enabled &&
+                        it.hidden != true && it.hideInUi != true && it.hasLoadedMedia(queues)
+                }
+            ?: playerSelectionOrder
+                .firstOrNull {
+                    it.available && it.enabled &&
+                        it.hidden != true && it.hideInUi != true && it.hasLoadedMedia(queues)
                 }
             // Last-resort before "first visible": follow ANY actively-playing
             // player even if it's hidden. When a player gets pulled into a sync
             // group MA can flip its hide_in_ui flag; without this clause control
             // would jump to an unrelated visible player and the user loses the
             // transport for the song that's actually playing.
-            ?: players.values
-                .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+            ?: playerSelectionOrder
                 .firstOrNull {
-                    it.state == PlayerState.PLAYING && it.available && it.enabled
+                    it.state == PlayerState.PLAYING && it.available && it.enabled && it.hasLoadedMedia(queues)
+                }
+            ?: playerSelectionOrder
+                .firstOrNull {
+                    it.state == PlayerState.PAUSED && it.available && it.enabled && it.hasLoadedMedia(queues)
                 }
             ?: visiblePlayers.firstOrNull()
 
@@ -395,9 +422,19 @@ class MaSessionRepository(
                     durationMs = media.duration?.let { (it * 1000.0).toLong() },
                 )
             }
+        val selectedPlayerId = selected?.playerId
+        if (selectedPlayerId != null && nowPlayingFromServer != null) {
+            lastNowPlayingByPlayer[selectedPlayerId] = nowPlayingFromServer
+        }
+        val pausedFallbackNowPlaying =
+            selected
+                ?.takeIf { it.state == PlayerState.PAUSED }
+                ?.playerId
+                ?.let(lastNowPlayingByPlayer::get)
 
         // If MA hasn't echoed yet, the optimistic hint stands in.
         val resolvedNowPlaying = nowPlayingFromServer
+            ?: pausedFallbackNowPlaying
             ?: pending?.let {
                 NowPlayingTrack(
                     uri = it.uri,

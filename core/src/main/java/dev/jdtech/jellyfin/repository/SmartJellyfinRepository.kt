@@ -342,7 +342,38 @@ constructor(
         onlineRepository.observeSyncPlayGroupUpdates()
 
     override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> =
-        onlineRepository.observeGeneralCommandMessages()
+        if (connectionMonitor.shouldUseOfflineRepository()) {
+            offlineRepository.observeGeneralCommandMessages()
+        } else {
+            onlineRepository.observeGeneralCommandMessages()
+        }
+
+    override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> =
+        if (connectionMonitor.shouldUseOfflineRepository()) {
+            offlineRepository.observeSessions()
+        } else {
+            onlineRepository.observeSessions()
+        }
+
+    override suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto> =
+        runWithFallback(
+            online = { onlineRepository.getSessions() },
+            offline = { offlineRepository.getSessions() },
+        )
+
+    override suspend fun sendPlaystateCommand(sessionId: String, command: org.jellyfin.sdk.model.api.PlaystateCommand, seekPositionTicks: Long?) {
+        runWithFallback(
+            online = { onlineRepository.sendPlaystateCommand(sessionId, command, seekPositionTicks) },
+            offline = { offlineRepository.sendPlaystateCommand(sessionId, command, seekPositionTicks) },
+        )
+    }
+
+    override suspend fun sendGeneralCommand(sessionId: String, command: org.jellyfin.sdk.model.api.GeneralCommandType, arguments: Map<String, String>?) {
+        runWithFallback(
+            online = { onlineRepository.sendGeneralCommand(sessionId, command, arguments) },
+            offline = { offlineRepository.sendGeneralCommand(sessionId, command, arguments) },
+        )
+    }
 
     override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> =
         onlineRepository.observeRealtimeEvents()

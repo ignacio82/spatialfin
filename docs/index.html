@@ -57,6 +57,8 @@
                     <span>Offline Engine</span>
                     <span>FCast · Google Cast · AirPlay</span>
                     <span>Split-A/V on Galaxy XR</span>
+                    <span>Music Assistant Client</span>
+                    <span>SendSpin Receiver</span>
                 </div>
             </div>
 
@@ -168,6 +170,7 @@
                         <button class="explorer-tab" onclick="showPane('sync')">SyncPlay & Social</button>
                         <button class="explorer-tab" onclick="showPane('network')">Network & Local</button>
                         <button class="explorer-tab" onclick="showPane('offline')">Offline Engine</button>
+                        <button class="explorer-tab" onclick="showPane('music')">Music Assistant</button>
                         <button class="explorer-tab" onclick="showPane('companion')">Companion Hub</button>
                         <button class="explorer-tab" onclick="showPane('security')">Security</button>
                     </nav>
@@ -302,6 +305,29 @@
                                         <li><strong>Automatic Mode:</strong> Seamlessly switches to offline library when the server is unreachable.</li>
                                         <li><strong>Complete Mirroring:</strong> Offline items include posters, backdrops, and scrubber thumbnails.</li>
                                         <li><strong>Smart Cleanup:</strong> Automatically reconciles library if files are removed manually.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Music Assistant -->
+                        <div class="explorer-pane" id="pane-music">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>First-Class Controller</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Full Library Control:</strong> Browse, search, and play from your Music Assistant library with a unified interface across XR, phone, and TV.</li>
+                                        <li><strong>Queue Management:</strong> Reorder, remove, or jump to tracks in your queue seamlessly.</li>
+                                        <li><strong>Playlist Editor:</strong> Create new playlists, add tracks, and manage favorites directly from the app.</li>
+                                        <li><strong>Party Mode:</strong> Start or join a collaborative queue and see what's playing in real-time.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Audio Integration</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>SendSpin Receiver:</strong> Turn your device into a high-fidelity, multi-room synchronized audio endpoint via the native SendSpin receiver service.</li>
+                                        <li><strong>Deep Android Integration:</strong> Android MediaSession support brings lock-screen controls, Bluetooth headset compatibility, and native media notifications.</li>
+                                        <li><strong>Optimistic UI:</strong> A persistent mini-player and full-screen Now Playing interface respond instantly to input, verified by live WebSocket events.</li>
                                     </ul>
                                 </div>
                             </div>

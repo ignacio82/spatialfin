@@ -8,11 +8,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -217,30 +220,46 @@ fun MaNowPlayingScreen(
                     }
                 }
             }
-            // Body fills the rest, centered, and scrolls if it's taller than the
-            // remaining space (tall content on small phones).
-            Box(
+            // Body fills the rest. XR / TV-sized surfaces get a fixed two-column
+            // layout; phones keep the scroll fallback for narrow portrait space.
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
-                NowPlayingBody(
-                    state = state,
-                    onPickPlayer = onPickPlayer,
-                    onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
-                    onPrevious = dispatcher?.let { { it.previous() } },
-                    onPlayPause = dispatcher?.let { { it.playPause() } },
-                    onNext = dispatcher?.let { { it.next() } },
-                    onStop = dispatcher?.let { { it.stop() } },
-                    onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
-                    onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
-                    onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
-                    onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
-                    onToggleMute = dispatcher?.let { { it.toggleMute() } },
-                    onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
-                )
+                val wideBody = maxWidth >= 720.dp && maxHeight >= 520.dp
+                val body: @Composable (Modifier) -> Unit = { bodyModifier ->
+                    NowPlayingBody(
+                        state = state,
+                        wideLayout = wideBody,
+                        onPickPlayer = onPickPlayer,
+                        onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
+                        onPrevious = dispatcher?.let { { it.previous() } },
+                        onPlayPause = dispatcher?.let { { it.playPause() } },
+                        onNext = dispatcher?.let { { it.next() } },
+                        onStop = dispatcher?.let { { it.stop() } },
+                        onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
+                        onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
+                        onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
+                        onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
+                        onToggleMute = dispatcher?.let { { it.toggleMute() } },
+                        onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
+                        modifier = bodyModifier,
+                    )
+                }
+                if (wideBody) {
+                    body(Modifier.fillMaxSize())
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        body(Modifier)
+                    }
+                }
             }
         }
     }
@@ -294,6 +313,7 @@ private fun NowPlayingTrackMenu(
 private fun NowPlayingBody(
     state: MaSession,
     modifier: Modifier = Modifier,
+    wideLayout: Boolean = false,
     onPickPlayer: (() -> Unit)? = null,
     onToggleParty: (() -> Unit)? = null,
     onPrevious: (() -> Unit)? = null,
@@ -334,15 +354,9 @@ private fun NowPlayingBody(
         return
     }
 
-    Column(
-        modifier = modifier
-            .widthIn(max = 520.dp)
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
+    val artwork: @Composable (Modifier) -> Unit = { artworkModifier ->
         Surface(
-            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+            modifier = artworkModifier,
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
             tonalElevation = 8.dp,
@@ -364,11 +378,13 @@ private fun NowPlayingBody(
                 )
             }
         }
+    }
 
+    val controls: @Composable ColumnScope.() -> Unit = {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = track.title ?: "Unknown track",
-                style = MaterialTheme.typography.headlineSmall,
+                style = if (wideLayout) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -537,6 +553,45 @@ private fun NowPlayingBody(
                     )
                 },
             )
+        }
+    }
+
+    if (wideLayout) {
+        Row(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(0.9f)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                artwork(Modifier.fillMaxWidth().aspectRatio(1f))
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1.1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            ) {
+                controls()
+            }
+        }
+    } else {
+        Column(
+            modifier = modifier
+                .widthIn(max = 520.dp)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            artwork(Modifier.fillMaxWidth().aspectRatio(1f))
+            controls()
         }
     }
 }

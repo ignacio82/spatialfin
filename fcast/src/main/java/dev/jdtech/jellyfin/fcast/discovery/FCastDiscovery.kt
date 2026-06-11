@@ -11,6 +11,10 @@ import java.net.NetworkInterface
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -51,6 +55,59 @@ class FCastDiscovery(private val context: Context) {
                 try { multicastLock?.release() } catch (_: Exception) {}
             }
         }
+
+    /**
+     * Continuously observe FCast receivers on the network.
+     */
+    fun browseFlow(): Flow<List<FCastReceiver>> = callbackFlow {
+        val multicastLock = acquireMulticastLock()
+        val bindAddress = findBindableAddress()
+        var jmdns: JmDNS? = null
+
+        if (bindAddress == null) {
+            Timber.tag(TAG).w("FCast browseFlow skipped: no bindable address")
+            close()
+            return@callbackFlow
+        }
+
+        try {
+            jmdns = JmDNS.create(bindAddress)
+            val localIps = localIpAddresses()
+            val receivers = mutableMapOf<String, FCastReceiver>()
+
+            val listener = object : javax.jmdns.ServiceListener {
+                override fun serviceAdded(event: javax.jmdns.ServiceEvent) {
+                    jmdns.requestServiceInfo(event.type, event.name, 1)
+                }
+
+                override fun serviceRemoved(event: javax.jmdns.ServiceEvent) {
+                    if (receivers.remove(event.name) != null) {
+                        trySend(receivers.values.toList())
+                    }
+                }
+
+                override fun serviceResolved(event: javax.jmdns.ServiceEvent) {
+                    val receiver = toReceiver(event.info) ?: return
+                    if (receiver.host in localIps) return
+                    receivers[event.name] = receiver
+                    trySend(receivers.values.toList())
+                }
+            }
+
+            jmdns.addServiceListener(FCAST_MDNS_SERVICE_TYPE, listener)
+
+            awaitClose {
+                try { jmdns?.removeServiceListener(FCAST_MDNS_SERVICE_TYPE, listener) } catch (_: Exception) {}
+                try { jmdns?.close() } catch (_: Exception) {}
+                try { multicastLock?.release() } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "FCast browseFlow failed")
+            try { jmdns?.close() } catch (_: Exception) {}
+            try { multicastLock?.release() } catch (_: Exception) {}
+            close(e)
+        }
+    }.flowOn(Dispatchers.IO)
 
     private fun localIpAddresses(): Set<String> {
         val out = mutableSetOf<String>()

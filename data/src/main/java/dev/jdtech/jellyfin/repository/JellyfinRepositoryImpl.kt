@@ -48,6 +48,7 @@ import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.DeviceOptionsDto
 import org.jellyfin.sdk.model.api.DeviceProfile
+import org.jellyfin.sdk.model.api.GeneralCommand
 import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.GeneralCommandType
 import org.jellyfin.sdk.model.api.GroupInfoDto
@@ -750,6 +751,45 @@ class JellyfinRepositoryImpl(
     override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> =
         jellyfinApi.api.webSocket.subscribeGeneralCommands(supportedGeneralCommands().toSet())
 
+    override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> =
+        jellyfinApi.api.webSocket.subscribe(org.jellyfin.sdk.model.api.SessionsMessage::class).mapNotNull { it.data?.toList() }
+
+    override suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.sessionApi.getSessions().content.toList()
+        }
+
+    override suspend fun sendPlaystateCommand(sessionId: String, command: PlaystateCommand, seekPositionTicks: Long?) {
+        withContext(Dispatchers.IO) {
+            jellyfinApi.sessionApi.sendPlaystateCommand(
+                sessionId = sessionId,
+                command = command,
+                seekPositionTicks = seekPositionTicks
+            )
+        }
+    }
+
+    override suspend fun sendGeneralCommand(sessionId: String, command: GeneralCommandType, arguments: Map<String, String>?) {
+        withContext(Dispatchers.IO) {
+            if (arguments.isNullOrEmpty()) {
+                jellyfinApi.sessionApi.sendGeneralCommand(
+                    sessionId = sessionId,
+                    command = command,
+                )
+            } else {
+                jellyfinApi.sessionApi.sendFullGeneralCommand(
+                    sessionId = sessionId,
+                    data =
+                        GeneralCommand(
+                            name = command,
+                            controllingUserId = jellyfinApi.userId!!,
+                            arguments = arguments,
+                        ),
+                )
+            }
+        }
+    }
+
     override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> =
         merge(
             jellyfinApi.api.webSocket.subscribe(UserDataChangedMessage::class).mapNotNull { message ->
@@ -780,7 +820,7 @@ class JellyfinRepositoryImpl(
         Timber.d("Sending capabilities")
         withContext(Dispatchers.IO) {
             jellyfinApi.sessionApi.postCapabilities(
-                playableMediaTypes = listOf(MediaType.VIDEO),
+                playableMediaTypes = listOf(MediaType.VIDEO, MediaType.AUDIO),
                 supportedCommands = supportedGeneralCommands(),
                 supportsMediaControl = true,
             )

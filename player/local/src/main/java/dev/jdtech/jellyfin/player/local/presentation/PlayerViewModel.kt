@@ -373,6 +373,16 @@ constructor(
         viewModelScope.launch {
             repository.observeSocketState().collectLatest(syncPlay::handleSocketState)
         }
+        viewModelScope.launch {
+            while (true) {
+                // Periodically report playback progress to Jellyfin (keeps session alive and state fresh)
+                if (player.isPlaying) {
+                    runCatching { updatePlaybackProgress() }
+                        .onFailure { Timber.e(it, "Failed to update periodic playback progress") }
+                }
+                kotlinx.coroutines.delay(10000L)
+            }
+        }
     }
 
     private var currentItemKind: String? = null
@@ -2025,6 +2035,10 @@ constructor(
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         super.onIsPlayingChanged(isPlaying)
+        // Immediately report progress on pause/play boundary to ensure Jellyfin session knows state
+        runCatching { updatePlaybackProgress() }
+            .onFailure { Timber.e(it, "Failed to update playback progress on play state change") }
+
         if (syncPlay.isActive() && !syncPlay.shouldSuppressEvents() && player.playbackState == Player.STATE_READY) {
             viewModelScope.launch {
                 runCatching {

@@ -369,6 +369,14 @@ class JellyfinRepositoryOfflineImpl(
 
     override fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage> = emptyFlow()
 
+    override fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>> = emptyFlow()
+
+    override suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto> = emptyList()
+
+    override suspend fun sendPlaystateCommand(sessionId: String, command: org.jellyfin.sdk.model.api.PlaystateCommand, seekPositionTicks: Long?) = Unit
+
+    override suspend fun sendGeneralCommand(sessionId: String, command: org.jellyfin.sdk.model.api.GeneralCommandType, arguments: Map<String, String>?) = Unit
+
     override fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent> = emptyFlow()
 
     override fun observeSocketState(): Flow<SocketApiState> = emptyFlow()

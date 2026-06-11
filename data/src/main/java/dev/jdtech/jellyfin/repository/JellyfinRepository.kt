@@ -165,6 +165,14 @@ interface JellyfinRepository {
 
     fun observeGeneralCommandMessages(): Flow<GeneralCommandMessage>
 
+    fun observeSessions(): Flow<List<org.jellyfin.sdk.model.api.SessionInfoDto>>
+
+    suspend fun getSessions(): List<org.jellyfin.sdk.model.api.SessionInfoDto>
+
+    suspend fun sendPlaystateCommand(sessionId: String, command: org.jellyfin.sdk.model.api.PlaystateCommand, seekPositionTicks: Long? = null)
+
+    suspend fun sendGeneralCommand(sessionId: String, command: org.jellyfin.sdk.model.api.GeneralCommandType, arguments: Map<String, String>? = null)
+
     fun observeRealtimeEvents(): Flow<JellyfinRealtimeEvent>
 
     fun observeSocketState(): Flow<SocketApiState>

@@ -205,6 +205,12 @@ fun BeamNavigationRoot(
     val voicePartial by voiceController.voiceService.partialTranscript.collectAsStateWithLifecycle()
     val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsStateWithLifecycle()
     val voiceCapability by llmModelManager.voiceCapability.collectAsStateWithLifecycle()
+
+    val remoteControlViewModel: dev.spatialfin.unified.RemoteControlViewModel =
+        androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
+    val activeRemoteSession by remoteControlViewModel.activeRemoteSession.collectAsStateWithLifecycle()
+    val activeMediaStreams by remoteControlViewModel.activeMediaStreams.collectAsStateWithLifecycle()
+
     // Show voice UI whenever the device can run a usable backend (AICore / NPU / GPU)
     // or the user has a cloud API key. Hide it on CPU-only LiteRT — the experience
     // is measured in tens of seconds per reply and users tap the mic expecting
@@ -510,6 +516,23 @@ fun BeamNavigationRoot(
                         dev.spatialfin.unified.music.MaMiniPlayer(
                             session = maSession,
                             onExpand = { showNowPlaying = true },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                        dev.spatialfin.unified.RemoteControlMiniPlayer(
+                            session = activeRemoteSession,
+                            baseUrl = repository.getBaseUrl(),
+                            accessToken = repository.getAccessToken(),
+                            mediaStreams = activeMediaStreams,
+                            onPlayStateCommand = { cmd ->
+                                activeRemoteSession?.id?.let {
+                                    remoteControlViewModel.sendCommand(it, cmd)
+                                }
+                            },
+                            onGeneralCommand = { cmd, args ->
+                                activeRemoteSession?.id?.let {
+                                    remoteControlViewModel.sendGeneralCommand(it, cmd, args)
+                                }
+                            },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
                         if (useBottomNav) {
