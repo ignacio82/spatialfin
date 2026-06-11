@@ -59,5 +59,10 @@ fastlane/screenshots
 fastlane/test_output
 androidx/
 
+# Screenshots and PNGs
+/*.png
+fastlane/metadata/android/en-US/images/
+screenshots/
+
 # Personal planning docs (per-developer scratch, not shipped)
 MA_CLIENT_PLAN.md
