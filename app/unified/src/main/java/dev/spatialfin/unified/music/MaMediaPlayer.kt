@@ -40,11 +40,16 @@ class MaMediaPlayer(
     private val dispatcher: MaPlayDispatcher,
 ) : SimpleBasePlayer(looper) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Plain Dispatchers.Main (NOT .immediate): the collector's first emission
+    // (StateFlow replays its current value) must not run invalidateState()
+    // synchronously inside the SimpleBasePlayer constructor — that touches not-
+    // yet-initialized base state and throws, killing the collector and freezing
+    // the published state. Dispatching defers it to after construction.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
         scope.launch {
-            session.session.collect { invalidateState() }
+            session.session.collect { runCatching { invalidateState() } }
         }
     }
 
