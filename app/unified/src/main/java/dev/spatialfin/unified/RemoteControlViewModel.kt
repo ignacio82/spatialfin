@@ -9,6 +9,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.toSpatialFinMediaStream
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -34,22 +35,40 @@ class RemoteControlViewModel @Inject constructor(
     private val localReceivers = fcastDiscovery.browseFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val activeRemoteSession: StateFlow<SessionInfoDto?> = combine(
+    private val selectedRemoteSessionId = MutableStateFlow<String?>(null)
+
+    val activeRemoteSessions: StateFlow<List<SessionInfoDto>> = combine(
         activeSessions,
-        localReceivers
+        localReceivers,
     ) { sessions, receivers ->
         // localReceivers automatically filters out the current device in FCastDiscovery.kt
         val localDeviceNames = receivers.mapNotNull { it.name }.toSet()
 
-        sessions.firstOrNull { session ->
-            session.client?.contains("SpatialFin", ignoreCase = true) == true &&
-            session.nowPlayingItem != null &&
-            session.deviceName?.let { deviceName ->
-                localDeviceNames.any { localName ->
-                    localName.contains(deviceName, ignoreCase = true) || deviceName.contains(localName, ignoreCase = true)
-                }
-            } == true
-        }
+        sessions
+            .filter { session ->
+                !session.id.isNullOrBlank() &&
+                    session.client?.contains("SpatialFin", ignoreCase = true) == true &&
+                    session.nowPlayingItem != null &&
+                    session.deviceName?.let { deviceName ->
+                        localDeviceNames.any { localName ->
+                            localName.contains(deviceName, ignoreCase = true) ||
+                                deviceName.contains(localName, ignoreCase = true)
+                        }
+                    } == true
+            }
+            .sortedWith(
+                compareBy<SessionInfoDto> { it.deviceName.orEmpty().lowercase() }
+                    .thenBy { it.nowPlayingItem?.name.orEmpty().lowercase() }
+            )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeRemoteSession: StateFlow<SessionInfoDto?> = combine(
+        activeRemoteSessions,
+        selectedRemoteSessionId,
+    ) { sessions, selectedId ->
+        selectedId
+            ?.let { id -> sessions.firstOrNull { it.id == id } }
+            ?: sessions.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -89,6 +108,10 @@ class RemoteControlViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { repository.sendGeneralCommand(sessionId, command, args) }
         }
+    }
+
+    fun selectRemoteSession(sessionId: String) {
+        selectedRemoteSessionId.value = sessionId
     }
 
     private fun List<SpatialFinMediaStream>.filterSelectableRemoteStreams(): List<SpatialFinMediaStream> =

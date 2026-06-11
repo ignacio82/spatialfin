@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
@@ -40,9 +41,11 @@ import java.util.UUID
 @Composable
 fun RemoteControlView(
     session: SessionInfoDto,
+    availableSessions: List<SessionInfoDto>,
     baseUrl: String,
     accessToken: String?,
     mediaStreams: List<SpatialFinMediaStream>,
+    onSelectSession: (String) -> Unit,
     onPlayStateCommand: (PlaystateCommand) -> Unit,
     onGeneralCommand: (GeneralCommandType, Map<String, String>?) -> Unit,
     modifier: Modifier = Modifier
@@ -79,6 +82,14 @@ fun RemoteControlView(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (availableSessions.size > 1) {
+            RemoteSessionSelector(
+                sessions = availableSessions,
+                selectedSessionId = session.id,
+                onSelectSession = onSelectSession,
+            )
+        }
+
         Text(
             text = "Playing on ${session.deviceName}",
             style = MaterialTheme.typography.labelMedium,
@@ -277,9 +288,11 @@ fun RemoteControlView(
 @Composable
 fun RemoteControlMiniPlayer(
     session: SessionInfoDto?,
+    availableSessions: List<SessionInfoDto>,
     baseUrl: String,
     accessToken: String?,
     mediaStreams: List<SpatialFinMediaStream>,
+    onSelectSession: (String) -> Unit,
     onPlayStateCommand: (PlaystateCommand) -> Unit,
     onGeneralCommand: (GeneralCommandType, Map<String, String>?) -> Unit,
     modifier: Modifier = Modifier
@@ -368,14 +381,88 @@ fun RemoteControlMiniPlayer(
                     }
                     RemoteControlView(
                         session = session,
+                        availableSessions = availableSessions,
                         baseUrl = baseUrl,
                         accessToken = accessToken,
                         mediaStreams = mediaStreams,
+                        onSelectSession = onSelectSession,
                         onPlayStateCommand = onPlayStateCommand,
                         onGeneralCommand = onGeneralCommand,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoteSessionSelector(
+    sessions: List<SessionInfoDto>,
+    selectedSessionId: String?,
+    onSelectSession: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = sessions.firstOrNull { it.id == selectedSessionId } ?: sessions.firstOrNull()
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Icon(Icons.Default.CastConnected, contentDescription = null)
+            Spacer(Modifier.width(12.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                Text(
+                    text = selected?.remoteDeviceLabel() ?: "Choose device",
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = selected?.nowPlayingItem?.name ?: "Remote playback",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.fillMaxWidth(0.92f),
+        ) {
+            sessions.forEach { remoteSession ->
+                val sessionId = remoteSession.id ?: return@forEach
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = remoteSession.remoteDeviceLabel(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = remoteSession.nowPlayingItem?.name ?: "Remote playback",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    leadingIcon = { Icon(Icons.Default.CastConnected, contentDescription = null) },
+                    onClick = {
+                        expanded = false
+                        onSelectSession(sessionId)
+                    },
+                )
             }
         }
     }
@@ -424,3 +511,10 @@ private fun SpatialFinMediaStream.remoteTrackLabel(): String {
         .firstOrNull { !it.isNullOrBlank() }
         ?: "Unknown"
 }
+
+private fun SessionInfoDto.remoteDeviceLabel(): String =
+    deviceName
+        ?.takeIf { it.isNotBlank() }
+        ?: client
+            ?.takeIf { it.isNotBlank() }
+        ?: "SpatialFin"
