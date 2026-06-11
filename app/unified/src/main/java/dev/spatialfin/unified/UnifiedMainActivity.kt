@@ -295,6 +295,9 @@ class UnifiedMainActivity : AppCompatActivity() {
             // receiver discovered) so the now-playing / queue / party / playlist
             // UI has live data. Without this every MA RPC silently fails.
             dev.spatialfin.unified.music.MaConnectionBridge(maServiceClient)
+            // Surface MA playback to the system (shade / lock-screen / BT) via a
+            // MediaSession the moment there's a now-playing track.
+            dev.spatialfin.unified.music.MaMediaSessionBridge(maSession)
 
             when (deviceClass) {
                 DeviceClass.TV -> {

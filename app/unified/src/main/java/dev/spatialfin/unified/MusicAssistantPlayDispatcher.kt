@@ -105,6 +105,18 @@ class MaPlayDispatcher(
         scope.launch { repository.setShuffle(queueId, enabled) }
     }
 
+    /** Set the active queue's repeat mode to a specific value (for MediaSession). */
+    fun setRepeatMode(mode: RepeatMode) {
+        val queueId = session.session.value.activeQueueId ?: return
+        scope.launch { repository.setRepeatMode(queueId, mode) }
+    }
+
+    /** Set the active queue's shuffle state to a specific value (for MediaSession). */
+    fun setShuffle(enabled: Boolean) {
+        val queueId = session.session.value.activeQueueId ?: return
+        scope.launch { repository.setShuffle(queueId, enabled) }
+    }
+
     /** Set the selected player's volume (0–100). */
     fun setVolume(level: Int) {
         val playerId = session.session.value.selectedPlayer?.id ?: return

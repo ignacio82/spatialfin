@@ -230,6 +230,10 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.exoplayer.dash)
     implementation(libs.androidx.media3.ui)
+    // System MediaSession for Music Assistant playback — lock-screen / shade
+    // notification + Bluetooth/headset transport, bridged to MA via a
+    // SimpleBasePlayer (MaMediaPlayer) hosted by MaMediaSessionService.
+    implementation(libs.androidx.media3.session)
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
 
     // Backend

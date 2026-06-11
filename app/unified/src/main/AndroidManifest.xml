@@ -172,6 +172,19 @@
             android:name="dev.spatialfin.fcast.FCastInboundBridgeService"
             android:exported="false" />
 
+        <!-- System MediaSession for Music Assistant playback: shade / lock-screen
+             notification, Bluetooth + wired headset transport (and Android Auto
+             later). exported=true with the MediaSessionService intent filter so
+             system media controllers can discover it. -->
+        <service
+            android:name="dev.spatialfin.unified.music.MaMediaSessionService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
         <!-- Debug-only launcher Activity for split-A/V iteration via `adb shell am start`.
              The class no-ops on release builds (BuildConfig.DEBUG gate) but the manifest entry
              stays universal — Android does not let a release-only entry coexist with a debug-
