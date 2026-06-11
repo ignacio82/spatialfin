@@ -330,19 +330,27 @@ class MaSessionRepository(
             // onto an unrelated "first visible" player and the now-playing /
             // mini-player / Now Playing actions (queue, party, playlist) never
             // surface for local playback.
-            ?: pending?.uri?.let { uri -> players.values.firstOrNull { it.playsUri(uri, queues) } }
-            ?: players.values.firstOrNull {
-                it.state == PlayerState.PLAYING && it.available && it.enabled &&
-                    it.hidden != true && it.hideInUi != true
+            ?: pending?.uri?.let { uri -> 
+                players.values
+                    .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+                    .firstOrNull { it.playsUri(uri, queues) } 
             }
+            ?: players.values
+                .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+                .firstOrNull {
+                    it.state == PlayerState.PLAYING && it.available && it.enabled &&
+                        it.hidden != true && it.hideInUi != true
+                }
             // Last-resort before "first visible": follow ANY actively-playing
             // player even if it's hidden. When a player gets pulled into a sync
             // group MA can flip its hide_in_ui flag; without this clause control
             // would jump to an unrelated visible player and the user loses the
             // transport for the song that's actually playing.
-            ?: players.values.firstOrNull {
-                it.state == PlayerState.PLAYING && it.available && it.enabled
-            }
+            ?: players.values
+                .sortedBy { it.type.equals("protocol", ignoreCase = true) }
+                .firstOrNull {
+                    it.state == PlayerState.PLAYING && it.available && it.enabled
+                }
             ?: visiblePlayers.firstOrNull()
 
         val activeQueueId = selected?.let { p ->

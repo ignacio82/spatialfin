@@ -76,6 +76,10 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSession
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import kotlinx.coroutines.delay
 
 /**
@@ -391,6 +395,7 @@ private fun NowPlayingBody(
             // Shuffle — tinted when on.
             IconButton(
                 onClick = { onToggleShuffle?.invoke() },
+                modifier = Modifier.maFocusHighlight(),
                 enabled = onToggleShuffle != null,
             ) {
                 Icon(
@@ -406,13 +411,14 @@ private fun NowPlayingBody(
             }
             IconButton(
                 onClick = { onPrevious?.invoke() },
+                modifier = Modifier.maFocusHighlight(),
                 enabled = onPrevious != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(36.dp))
             }
             FilledIconButton(
                 onClick = { onPlayPause?.invoke() },
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(64.dp).maFocusHighlight(),
                 enabled = onPlayPause != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(
@@ -423,6 +429,7 @@ private fun NowPlayingBody(
             }
             IconButton(
                 onClick = { onNext?.invoke() },
+                modifier = Modifier.maFocusHighlight(),
                 enabled = onNext != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
@@ -430,6 +437,7 @@ private fun NowPlayingBody(
             // Repeat — Off (dim) / All (tinted) / One (tinted, RepeatOne glyph).
             IconButton(
                 onClick = { onCycleRepeat?.invoke() },
+                modifier = Modifier.maFocusHighlight(),
                 enabled = onCycleRepeat != null,
             ) {
                 Icon(
@@ -456,6 +464,7 @@ private fun NowPlayingBody(
         // Stop — ends playback and dismisses the player (unlike Pause).
         IconButton(
             onClick = { onStop?.invoke() },
+            modifier = Modifier.maFocusHighlight(),
             enabled = onStop != null && state.playbackPhase != PlaybackPhase.Stopped,
         ) {
             Icon(
@@ -481,6 +490,7 @@ private fun NowPlayingBody(
         // so the user can choose where to play before tapping a song.
         AssistChip(
             onClick = { onPickPlayer?.invoke() },
+            modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
             enabled = onPickPlayer != null,
             label = {
                 Text(
@@ -498,6 +508,7 @@ private fun NowPlayingBody(
             FilterChip(
                 selected = state.dontStopTheMusic,
                 onClick = onToggleDontStop,
+                modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
                 label = { Text(if (state.dontStopTheMusic) "Endless play on" else "Endless play") },
                 leadingIcon = {
                     Icon(
@@ -515,6 +526,7 @@ private fun NowPlayingBody(
             FilterChip(
                 selected = party.active,
                 onClick = { onToggleParty?.invoke() },
+                modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
                 enabled = onToggleParty != null,
                 label = { Text(if (party.active) "Party mode on" else "Party mode") },
                 leadingIcon = {
@@ -654,7 +666,11 @@ private fun VolumeRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        IconButton(onClick = { onToggleMute?.invoke() }, enabled = onToggleMute != null) {
+        IconButton(
+            onClick = { onToggleMute?.invoke() }, 
+            modifier = Modifier.maFocusHighlight(),
+            enabled = onToggleMute != null
+        ) {
             Icon(
                 imageVector = if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                 contentDescription = if (muted) "Unmute" else "Mute",
@@ -804,4 +820,16 @@ private fun PreparingSpinner() {
     CircularProgressIndicator()
     Spacer(Modifier.size(8.dp))
     Text("Preparing audio…", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+}
+
+@Composable
+internal fun Modifier.maFocusHighlight(shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.CircleShape): Modifier {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (isFocused) 1.15f else 1f, label = "focusScale")
+    val outlineColor = MaterialTheme.colorScheme.primary
+    return this
+        .onFocusChanged { isFocused = it.isFocused }
+        .scale(scale)
+        .background(if (isFocused) outlineColor.copy(alpha = 0.15f) else Color.Transparent, shape)
+        .border(if (isFocused) 2.dp else 0.dp, if (isFocused) outlineColor else Color.Transparent, shape)
 }

@@ -18,6 +18,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width as uiWidth
+import androidx.compose.foundation.layout.height as uiHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.ui.draw.alpha
@@ -917,13 +919,16 @@ class UnifiedMainActivity : AppCompatActivity() {
                 }
                 if (pendingDeepLink != null) maUiDeepLink.value = null
             }
-            Box(
-                modifier = Modifier
-                    .align(androidx.compose.ui.Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            androidx.compose.runtime.CompositionLocalProvider(
+                dev.spatialfin.unified.LocalMaPlayDispatcher provides dispatcher
             ) {
-                androidx.compose.foundation.layout.Column {
+                Box(
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                ) {
+                    androidx.compose.foundation.layout.Column {
                     val maNp by maSession.session.collectAsStateWithLifecycle()
                     dev.spatialfin.sendspin.SendspinMiniPlayer(suppressed = maNp.nowPlaying != null)
                     dev.spatialfin.unified.music.MaMiniPlayer(
@@ -951,6 +956,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 dev.spatialfin.unified.music.MaPartyScreen(
                     session = maSession,
                     onBack = { showParty = false },
+                    onPickPlayer = { showPickerSheet = true },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -962,16 +968,17 @@ class UnifiedMainActivity : AppCompatActivity() {
                     onDismiss = { showPickerSheet = false },
                 )
             }
-            if (showMaSearch) {
-                androidx.activity.compose.BackHandler(onBack = { showMaSearch = false })
-                dev.spatialfin.unified.music.MaSearchScreen(
-                    onBack = { showMaSearch = false },
-                    onOpenItem = { target ->
-                        maDetailSeed = target.item
-                        maDetailKind = target.detailKind
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (showMaSearch) {
+                    androidx.activity.compose.BackHandler(onBack = { showMaSearch = false })
+                    dev.spatialfin.unified.music.MaSearchScreen(
+                        onBack = { showMaSearch = false },
+                        onOpenItem = { target ->
+                            maDetailSeed = target.item
+                            maDetailKind = target.detailKind
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
             val seed = maDetailSeed
             val kind = maDetailKind
@@ -1124,23 +1131,27 @@ class UnifiedMainActivity : AppCompatActivity() {
                 // so the user can browse and see what's playing without the
                 // panel having to grow to fit it.
                 var showSpatialNowPlaying by remember { mutableStateOf(false) }
-                androidx.xr.compose.spatial.Orbiter(
-                    anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.Bottom,
-                    offset = androidx.xr.compose.unit.DpVolumeOffset(
-                        x = 0.dp,
-                        y = 32.dp,
-                        z = androidx.xr.compose.spatial.OrbiterDefaults.Elevation,
-                    ),
+                androidx.compose.runtime.CompositionLocalProvider(
+                    dev.spatialfin.unified.LocalMaPlayDispatcher provides spatialDispatcher
                 ) {
-                    androidx.compose.foundation.layout.Column {
-                        val maNpSpatial by maSession.session.collectAsStateWithLifecycle()
-                        dev.spatialfin.sendspin.SendspinMiniPlayer(
-                            suppressed = maNpSpatial.nowPlaying != null,
-                        )
-                        dev.spatialfin.unified.music.MaMiniPlayer(
-                            session = maSession,
-                            onExpand = { showSpatialNowPlaying = true },
-                        )
+                    androidx.xr.compose.spatial.Orbiter(
+                        anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.Bottom,
+                        offset = androidx.xr.compose.unit.DpVolumeOffset(
+                            x = 0.dp,
+                            y = 32.dp,
+                            z = androidx.xr.compose.spatial.OrbiterDefaults.Elevation,
+                        ),
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            val maNpSpatial by maSession.session.collectAsStateWithLifecycle()
+                            dev.spatialfin.sendspin.SendspinMiniPlayer(
+                                suppressed = maNpSpatial.nowPlaying != null,
+                            )
+                            dev.spatialfin.unified.music.MaMiniPlayer(
+                                session = maSession,
+                                onExpand = { showSpatialNowPlaying = true },
+                            )
+                        }
                     }
                 }
                 var showSpatialPicker by remember { mutableStateOf(false) }
@@ -1148,42 +1159,69 @@ class UnifiedMainActivity : AppCompatActivity() {
                 val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
                     .state.collectAsStateWithLifecycle()
                 if (showSpatialNowPlaying) {
+                    val dialogModifier = androidx.compose.ui.Modifier.uiWidth(800.dp).uiHeight(824.dp)
                     // Pushes the parent panel back by SpatialDialog's default
                     // 125 dp depth — Now Playing reads as a peer surface, not
                     // a layer trapped behind the browser.
                     androidx.xr.compose.spatial.SpatialDialog(
                         onDismissRequest = { showSpatialNowPlaying = false },
                     ) {
-                        dev.spatialfin.unified.music.MaNowPlayingScreen(
-                            session = maSession,
-                            onBack = { showSpatialNowPlaying = false },
-                            onPickPlayer = { showSpatialPicker = true },
-                            onOpenParty = { showSpatialParty = true },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            dev.spatialfin.unified.LocalMaPlayDispatcher provides spatialDispatcher
+                        ) {
+                            dev.spatialfin.unified.music.MaNowPlayingScreen(
+                                session = maSession,
+                                onBack = { showSpatialNowPlaying = false },
+                                onPickPlayer = { showSpatialNowPlaying = false; showSpatialPicker = true },
+                                onOpenParty = { showSpatialNowPlaying = false; showSpatialParty = true },
+                                modifier = dialogModifier,
+                            )
+                        }
                     }
                 }
                 if (showSpatialParty) {
+                    val dialogModifier = androidx.compose.ui.Modifier.uiWidth(800.dp).uiHeight(824.dp)
                     androidx.xr.compose.spatial.SpatialDialog(
-                        onDismissRequest = { showSpatialParty = false },
+                        onDismissRequest = { showSpatialParty = false; showSpatialNowPlaying = true },
                     ) {
-                        dev.spatialfin.unified.music.MaPartyScreen(
-                            session = maSession,
-                            onBack = { showSpatialParty = false },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            dev.spatialfin.unified.LocalMaPlayDispatcher provides spatialDispatcher
+                        ) {
+                            dev.spatialfin.unified.music.MaPartyScreen(
+                                session = maSession,
+                                onBack = { showSpatialParty = false; showSpatialNowPlaying = true },
+                                onPickPlayer = { showSpatialPicker = true },
+                                modifier = dialogModifier,
+                            )
+                        }
                     }
                 }
                 if (showSpatialPicker) {
+                    val dialogModifier = androidx.compose.ui.Modifier.uiWidth(800.dp).uiHeight(824.dp)
                     androidx.xr.compose.spatial.SpatialDialog(
-                        onDismissRequest = { showSpatialPicker = false },
+                        onDismissRequest = { showSpatialPicker = false; showSpatialNowPlaying = true },
                     ) {
-                        dev.spatialfin.unified.music.MaPlayerPickerSheet(
-                            session = maSession,
-                            dispatcher = spatialDispatcher,
-                            serverId = sendspinState.serverId,
-                            onDismiss = { showSpatialPicker = false },
-                        )
+                        androidx.compose.material3.Surface(
+                            modifier = dialogModifier,
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+                        ) {
+                            val state by maSession.session.collectAsStateWithLifecycle()
+                            dev.spatialfin.unified.music.MaPlayerPickerContent(
+                                players = state.visiblePlayers,
+                                selectedPlayer = state.selectedPlayer,
+                                onPick = { id ->
+                                    spatialDispatcher.setPreferredPlayer(sendspinState.serverId, id)
+                                    showSpatialPicker = false; showSpatialNowPlaying = true
+                                },
+                                onToggleGroupMember = { leaderId, memberId, grouped ->
+                                    if (grouped) {
+                                        spatialDispatcher.removeFromSyncGroup(leaderId, memberId)
+                                    } else {
+                                        spatialDispatcher.addToSyncGroup(leaderId, memberId)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

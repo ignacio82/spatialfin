@@ -35,12 +35,19 @@ import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SpeakerGroup
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -78,6 +85,7 @@ fun MaPartyScreen(
     session: MaSessionRepository,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onPickPlayer: (() -> Unit)? = null,
     queueViewModel: MaQueueViewModel = hiltViewModel(),
 ) {
     val state by session.session.collectAsStateWithLifecycle()
@@ -128,12 +136,14 @@ fun MaPartyScreen(
                         horizontalArrangement = Arrangement.spacedBy(48.dp),
                     ) {
                         NowPlayingColumn(
+                            session = session,
                             title = track?.title,
                             artist = track?.artist,
                             artworkUrl = track?.artworkUrl,
                             partyActive = queue.partyActive,
                             partyJoin = partyJoin,
                             centered = false,
+                            onPickPlayer = onPickPlayer,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )
                         UpNextColumn(
@@ -144,11 +154,13 @@ fun MaPartyScreen(
                     }
                 } else {
                     PartyPortraitLayout(
+                        session = session,
                         track = track,
                         partyActive = queue.partyActive,
                         partyJoin = partyJoin,
                         items = queue.items,
                         currentItemId = queue.currentItemId,
+                        onPickPlayer = onPickPlayer,
                     )
                 }
             }
@@ -157,7 +169,7 @@ fun MaPartyScreen(
             // content — otherwise the content captures the tap and Back is dead.
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+                modifier = Modifier.align(Alignment.TopStart).padding(16.dp).maFocusHighlight(),
             ) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
@@ -172,11 +184,13 @@ fun MaPartyScreen(
  */
 @Composable
 private fun PartyPortraitLayout(
+    session: MaSessionRepository,
     track: dev.jdtech.jellyfin.data.musicassistant.repository.NowPlayingTrack?,
     partyActive: Boolean,
     partyJoin: PartyJoinUiState,
     items: List<ServerQueueItem>,
     currentItemId: String?,
+    onPickPlayer: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -187,12 +201,14 @@ private fun PartyPortraitLayout(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         NowPlayingColumn(
+            session = session,
             title = track?.title,
             artist = track?.artist,
             artworkUrl = track?.artworkUrl,
             partyActive = partyActive,
             partyJoin = partyJoin,
             centered = true,
+            onPickPlayer = onPickPlayer,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(36.dp))
@@ -228,12 +244,14 @@ private fun PartyPulse(modifier: Modifier = Modifier) {
 
 @Composable
 private fun NowPlayingColumn(
+    session: MaSessionRepository,
     title: String?,
     artist: String?,
     artworkUrl: String?,
     partyActive: Boolean,
     partyJoin: PartyJoinUiState,
     centered: Boolean,
+    onPickPlayer: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val align = if (centered) Alignment.CenterHorizontally else Alignment.Start
@@ -304,6 +322,69 @@ private fun NowPlayingColumn(
                 textAlign = textAlign,
             )
         }
+        
+        Spacer(Modifier.height(24.dp))
+        val maDispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+        val sessionState by session.session.collectAsStateWithLifecycle()
+        val playbackPhase = sessionState.playbackPhase
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            IconButton(
+                onClick = { maDispatcher?.previous() },
+                modifier = Modifier.maFocusHighlight(),
+                enabled = maDispatcher != null && playbackPhase != PlaybackPhase.Preparing,
+            ) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(36.dp))
+            }
+            FilledIconButton(
+                onClick = { maDispatcher?.playPause() },
+                modifier = Modifier.size(64.dp).maFocusHighlight(),
+                enabled = maDispatcher != null && playbackPhase != PlaybackPhase.Preparing,
+                colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Icon(
+                    imageVector = if (playbackPhase == PlaybackPhase.Playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (playbackPhase == PlaybackPhase.Playing) "Pause" else "Play",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            IconButton(
+                onClick = { maDispatcher?.next() },
+                modifier = Modifier.maFocusHighlight(),
+                enabled = maDispatcher != null && playbackPhase != PlaybackPhase.Preparing,
+            ) {
+                Icon(Icons.Filled.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(36.dp))
+            }
+        }
+
+        if (onPickPlayer != null) {
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.AssistChip(
+                onClick = { onPickPlayer.invoke() },
+                modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.SpeakerGroup,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                label = {
+                    Text(
+                        text = sessionState.selectedPlayer?.let { "Playing on ${it.name}" } ?: "Choose a player"
+                    )
+                },
+                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                    labelColor = Color.White,
+                    leadingIconContentColor = Color.White,
+                ),
+            )
+        }
+
         Spacer(Modifier.height(28.dp))
         JoinShare(partyJoin = partyJoin, centered = centered)
     }

@@ -141,6 +141,7 @@ internal fun MaAddToPlaylistDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
+            modifier = Modifier.width(400.dp),
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,

@@ -66,7 +66,7 @@ fun MaPlayerPickerSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
-        PickerContent(
+        MaPlayerPickerContent(
             players = state.visiblePlayers,
             selectedPlayer = state.selectedPlayer,
             onPick = { id ->
@@ -85,7 +85,7 @@ fun MaPlayerPickerSheet(
 }
 
 @Composable
-private fun PickerContent(
+fun MaPlayerPickerContent(
     players: List<MaPlayerSummary>,
     selectedPlayer: MaPlayerSummary?,
     onPick: (String?) -> Unit,

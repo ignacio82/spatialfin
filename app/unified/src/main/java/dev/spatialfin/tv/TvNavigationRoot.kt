@@ -276,7 +276,10 @@ fun TvNavigationRoot(
         }
     }
 
-    CompositionLocalProvider(LocalFocusedBackground provides { focusedBackgroundUrl = it }) {
+    CompositionLocalProvider(
+        LocalFocusedBackground provides { focusedBackgroundUrl = it },
+        dev.spatialfin.unified.LocalMaPlayDispatcher provides maDispatcher,
+    ) {
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             TvAmbientBackground(backgroundModel = focusedBackgroundUrl)
             NavigationDrawer(

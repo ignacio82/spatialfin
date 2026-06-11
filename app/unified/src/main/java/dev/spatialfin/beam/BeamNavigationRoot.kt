@@ -1019,6 +1019,7 @@ fun BeamNavigationRoot(
                 dev.spatialfin.unified.music.MaPartyScreen(
                     session = maSession,
                     onBack = { showParty = false },
+                    onPickPlayer = { showPlayerPicker = true },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
