@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.sendspin.receiver.audio
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Build
 import com.sendspin.protocol.AudioBuffer
@@ -45,6 +46,17 @@ class AndroidSendspinAudioPlayer(
     private var streamFormat: StreamFormat? = null
     private var pumpJob: Job? = null
     private var volume = 1.0f
+
+    // Output-latency compensation. The AudioBuffer schedules each chunk's
+    // *write* time as `toLocal(serverTimestamp) - staticDelayMicros`, but the
+    // sound isn't actually emitted until the AudioTrack + HAL output latency
+    // later — so without compensation this device lags every other player in a
+    // sync group by that latency. We measure the real write→emit latency from
+    // AudioTrack.getTimestamp() and feed it back as staticDelayMicros (positive
+    // = render earlier), so the audio lands on the shared timeline.
+    @Volatile private var pcmBytesWritten: Long = 0L
+    private var lastLatencyUpdateMs: Long = 0L
+    private val audioTimestamp = AudioTimestamp()
 
     override fun configure(format: StreamFormat) {
         synchronized(lock) {
@@ -92,6 +104,10 @@ class AndroidSendspinAudioPlayer(
             val track = audioTrack ?: return
             runCatching { track.pause() }
             runCatching { track.flush() }
+            // flush() rewinds the AudioTrack's frame position; keep the
+            // written-frames counter in step and re-measure latency promptly.
+            pcmBytesWritten = 0L
+            lastLatencyUpdateMs = 0L
             if (isPlaying) {
                 runCatching { track.play() }
             }
@@ -136,6 +152,8 @@ class AndroidSendspinAudioPlayer(
                     delay(IDLE_DELAY_MS)
                     continue
                 }
+
+                maybeUpdateOutputLatency()
 
                 val waitMicros = buffer.nextChunkDelayMicros()
                 when {
@@ -224,6 +242,36 @@ class AndroidSendspinAudioPlayer(
                 continue
             }
             offset += written
+            pcmBytesWritten += written
+        }
+    }
+
+    /**
+     * Periodically measure the AudioTrack write→emit latency and publish it as
+     * the buffer's static delay so this device stays aligned with the rest of a
+     * sync group. Cheap (a [AudioTrack.getTimestamp] call at most every
+     * [LATENCY_UPDATE_INTERVAL_MS]); a bad/absent reading just leaves the delay
+     * unchanged, so it can never glitch the audio path.
+     */
+    private fun maybeUpdateOutputLatency() {
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastLatencyUpdateMs < LATENCY_UPDATE_INTERVAL_MS) return
+        lastLatencyUpdateMs = nowMs
+        synchronized(lock) {
+            val track = audioTrack ?: return
+            val format = audioTrackFormat ?: return
+            if (track.playState != AudioTrack.PLAYSTATE_PLAYING) return
+            if (!track.getTimestamp(audioTimestamp)) return
+            val framesWritten = pcmBytesWritten / format.bytesPerFrame
+            val elapsedNanos = (System.nanoTime() - audioTimestamp.nanoTime).coerceAtLeast(0L)
+            val framesPresented = audioTimestamp.framePosition +
+                elapsedNanos * format.sampleRate / 1_000_000_000L
+            val latencyFrames = (framesWritten - framesPresented).coerceAtLeast(0L)
+            val latencyUs = (latencyFrames * 1_000_000L / format.sampleRate)
+                .coerceIn(0L, MAX_OUTPUT_LATENCY_US)
+            // EWMA so a single noisy reading doesn't yank the timeline.
+            val prev = buffer.staticDelayMicros
+            buffer.staticDelayMicros = if (prev == 0L) latencyUs else (prev * 3 + latencyUs) / 4
         }
     }
 
@@ -278,6 +326,9 @@ class AndroidSendspinAudioPlayer(
                 }
                 require(state == AudioTrack.STATE_INITIALIZED) { "AudioTrack failed to initialize" }
                 audioTrackFormat = format
+                // framePosition restarts with a fresh track, so the matching
+                // written-frames counter must restart too.
+                pcmBytesWritten = 0L
             }
     }
 
@@ -317,6 +368,11 @@ class AndroidSendspinAudioPlayer(
         private const val READY_WINDOW_US = 2_000L
         private const val TARGET_BUFFER_MS = 120
         private const val START_THRESHOLD_MS = 20
+        private const val LATENCY_UPDATE_INTERVAL_MS = 500L
+        // Clamp the compensation below the buffered lead so advancing the render
+        // time can't starve the buffer into underruns. Real speaker/wired output
+        // latency sits well under this.
+        private const val MAX_OUTPUT_LATENCY_US = 100_000L
         private val CHANNEL_COUNTS = intArrayOf(2, 1)
         private val LOSSLESS_SAMPLE_RATES = intArrayOf(48_000, 44_100)
         private val FLAC_BIT_DEPTHS = intArrayOf(24, 16)

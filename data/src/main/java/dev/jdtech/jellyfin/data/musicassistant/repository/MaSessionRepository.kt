@@ -225,22 +225,6 @@ class MaSessionRepository(
             .getOrThrow()
             .resultAs<List<ServerPlayer>>()
     }.onFailure { Timber.tag(TAG).w(it, "players/all failed") }.getOrNull()
-        ?.also { players ->
-            // Diagnostic: dump the grouping-relevant fields so we can verify the
-            // picker's compatibility logic against what MA actually reports.
-            players.forEach { p ->
-                Timber.tag(TAG).i(
-                    "player id=%s provider=%s setMembers=%s canGroupWith=%s syncedTo=%s activeGroup=%s members=%s",
-                    p.playerId,
-                    p.provider,
-                    p.supportedFeatures.any { it.equals("set_members", ignoreCase = true) },
-                    p.canGroupWith,
-                    p.syncedTo,
-                    p.activeGroup,
-                    p.groupMembers,
-                )
-            }
-        }
 
     private suspend fun fetchQueues(): List<ServerQueue>? = runCatching {
         serviceClient
