@@ -1013,14 +1013,18 @@ class SendspinReceiverService : Service() {
             prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
             prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
         }
-        val urlBase = "$PREF_MA_TOKEN_URL_PREFIX$serverUrl"
-        prefs.getString(scopedKey(urlBase), null)?.takeIf { it.isNotBlank() }?.let { return it }
-        return prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() } // legacy
+        tokenUrlCandidates(serverUrl).forEach { candidate ->
+            val urlBase = "$PREF_MA_TOKEN_URL_PREFIX$candidate"
+            prefs.getString(scopedKey(urlBase), null)?.takeIf { it.isNotBlank() }?.let { return it }
+            prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
+        }
+        return null
     }
 
     private fun storeMusicAssistantToken(serverId: String?, serverUrl: String, token: String) {
+        val normalizedServerUrl = serverUrl.normalizeMusicAssistantUrl()
         musicAssistantPrefs().edit().apply {
-            putString(scopedKey("$PREF_MA_TOKEN_URL_PREFIX$serverUrl"), token)
+            putString(scopedKey("$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl"), token)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
                 putString(scopedKey("$PREF_MA_TOKEN_SERVER_PREFIX$id"), token)
             }
@@ -1031,18 +1035,27 @@ class SendspinReceiverService : Service() {
         val prefs = musicAssistantPrefs()
         serverId?.takeIf { it.isNotBlank() }?.let { id ->
             val base = "$PREF_MA_URL_SERVER_PREFIX$id"
-            prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
-            prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
+            prefs.getString(scopedKey(base), null)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { return it.normalizeMusicAssistantUrl() }
+            prefs.getString(base, null)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { return it.normalizeMusicAssistantUrl() } // legacy
         }
-        prefs.getString(scopedKey(PREF_MA_LAST_URL), null)?.takeIf { it.isNotBlank() }?.let { return it }
-        return prefs.getString(PREF_MA_LAST_URL, null)?.takeIf { it.isNotBlank() } // legacy
+        prefs.getString(scopedKey(PREF_MA_LAST_URL), null)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it.normalizeMusicAssistantUrl() }
+        return prefs.getString(PREF_MA_LAST_URL, null)
+            ?.takeIf { it.isNotBlank() }
+            ?.normalizeMusicAssistantUrl() // legacy
     }
 
     private fun storeMusicAssistantServerUrl(serverId: String?, serverUrl: String) {
+        val normalizedServerUrl = serverUrl.normalizeMusicAssistantUrl()
         musicAssistantPrefs().edit().apply {
-            putString(scopedKey(PREF_MA_LAST_URL), serverUrl)
+            putString(scopedKey(PREF_MA_LAST_URL), normalizedServerUrl)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
-                putString(scopedKey("$PREF_MA_URL_SERVER_PREFIX$id"), serverUrl)
+                putString(scopedKey("$PREF_MA_URL_SERVER_PREFIX$id"), normalizedServerUrl)
             }
         }.apply()
     }
@@ -1388,15 +1401,26 @@ class SendspinReceiverService : Service() {
     private fun Float.normalizeVisualizerScalar(): Float =
         (this / VISUALIZER_SCALAR_MAX).coerceIn(MIN_VISUALIZER_LEVEL, 1f)
 
-    private fun String.normalizeMusicAssistantUrl(): String {
-        val trimmed = trim().trimEnd('/')
-        if (trimmed.isBlank()) return trimmed
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            trimmed
-        } else {
-            "http://$trimmed"
-        }
-    }
+    private fun String.normalizeMusicAssistantUrl(): String =
+        normalizeMusicAssistantUrl(this)
+
+    private fun tokenUrlCandidates(serverUrl: String): List<String> =
+        buildList {
+            val raw = serverUrl.trim()
+            val rawNoSlash = raw.trimEnd('/')
+            val normalized = raw.normalizeMusicAssistantUrl()
+            val withoutScheme =
+                normalized
+                    .removePrefix("http://")
+                    .removePrefix("https://")
+            add(raw)
+            add(rawNoSlash)
+            add("$rawNoSlash/")
+            add(normalized)
+            add("$normalized/")
+            add(withoutScheme)
+            add("$withoutScheme/")
+        }.filter { it.isNotBlank() }.distinct()
 
     private fun ensureNotificationChannel() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
@@ -1513,6 +1537,16 @@ class SendspinReceiverService : Service() {
         private fun scopedPrefKey(jellyfinUserId: String?, base: String): String {
             val scope = jellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
             return "u:$scope/$base"
+        }
+
+        private fun normalizeMusicAssistantUrl(serverUrl: String): String {
+            val trimmed = serverUrl.trim().trimEnd('/')
+            if (trimmed.isBlank()) return trimmed
+            return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                trimmed
+            } else {
+                "http://$trimmed"
+            }
         }
 
         fun start(
@@ -1665,11 +1699,15 @@ class SendspinReceiverService : Service() {
             serverUrl: String,
             token: String?,
         ) {
-            if (serverUrl.isBlank()) return
+            val normalizedServerUrl = normalizeMusicAssistantUrl(serverUrl)
+            if (normalizedServerUrl.isBlank()) return
             context.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE).edit().apply {
-                putString(scopedPrefKey(jellyfinUserId, PREF_MA_LAST_URL), serverUrl)
+                putString(scopedPrefKey(jellyfinUserId, PREF_MA_LAST_URL), normalizedServerUrl)
                 token?.takeIf { it.isNotBlank() }?.let {
-                    putString(scopedPrefKey(jellyfinUserId, "$PREF_MA_TOKEN_URL_PREFIX$serverUrl"), it)
+                    putString(
+                        scopedPrefKey(jellyfinUserId, "$PREF_MA_TOKEN_URL_PREFIX$normalizedServerUrl"),
+                        it,
+                    )
                 }
             }.apply()
         }

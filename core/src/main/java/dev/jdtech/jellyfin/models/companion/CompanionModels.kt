@@ -62,6 +62,7 @@ data class CompanionMusicAssistant(
     val url: String,
     val token: String? = null,
     val username: String? = null,
+    val password: String? = null,
 )
 
 @Serializable

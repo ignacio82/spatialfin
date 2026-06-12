@@ -23,17 +23,29 @@ import kotlinx.coroutines.withContext
 
 @Singleton
 class MusicAssistantRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi,
 ) {
     private fun getCredentials(): Pair<String, String>? {
         val prefs = context.getSharedPreferences("sendspin_music_assistant", Context.MODE_PRIVATE)
-        val serverUrl = prefs.all.keys
-            .firstOrNull { it.startsWith("token_url:") }
-            ?.removePrefix("token_url:")
-            ?: return null
-        val token = prefs.getString("token_url:$serverUrl", "")
-        if (token.isNullOrBlank()) return null
-        return Pair(serverUrl, token)
+        // MA config is scoped per Jellyfin user (`u:<userId>/<base>`); check the
+        // active user's scope first, then the default scope, then the legacy
+        // un-prefixed keys so pre-scoping devices keep their home rows.
+        val scopes = buildList {
+            jellyfinApi.userId?.toString()?.let { add("u:$it/") }
+            add("u:default/")
+            add("")
+        }
+        for (scope in scopes) {
+            val tokenPrefix = "${scope}token_url:"
+            val serverUrl = prefs.getString("${scope}last_url", null)
+                ?.takeIf { !prefs.getString("$tokenPrefix$it", null).isNullOrBlank() }
+                ?: prefs.all.keys.firstOrNull { it.startsWith(tokenPrefix) }?.removePrefix(tokenPrefix)
+                ?: continue
+            val token = prefs.getString("$tokenPrefix$serverUrl", null)
+            if (!token.isNullOrBlank()) return Pair(serverUrl, token)
+        }
+        return null
     }
 
     /**

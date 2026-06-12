@@ -325,9 +325,7 @@ fun BeamNetworkShareScreen(
                                         Text("Scan Share")
                                     }
                                 }
-                                OutlinedButton(onClick = onBack) {
-                                    Text("Back")
-                                }
+                                BeamBackAction(onClick = onBack)
                             }
                         }
                     }
@@ -350,9 +348,7 @@ fun BeamNetworkShareScreen(
                         ) {
                             Text("Remove Share")
                         }
-                        OutlinedButton(onClick = onBack) {
-                            Text("Back")
-                        }
+                        BeamBackAction(onClick = onBack)
                     }
                 }
                 items(state.videos, key = { it.networkVideoId }) { item ->

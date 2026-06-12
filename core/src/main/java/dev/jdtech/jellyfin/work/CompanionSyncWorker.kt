@@ -151,6 +151,15 @@ class CompanionSyncWorker @AssistedInject constructor(
             }
         }
 
+        // Music Assistant config is stored per Jellyfin user, so apply it for
+        // every synced user — a user switch then finds it immediately instead
+        // of waiting for a sync that happens to run while that user is active.
+        importedUserMusicAssistant.forEach { (userId, ma) ->
+            Timber.d("COMPANION SYNC: Applying Music Assistant config for user $userId")
+            runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
+                .onFailure { Timber.e(it, "COMPANION SYNC: Failed to apply MA config") }
+        }
+
         val activeServerState =
             syncedServers.firstOrNull { it.serverId == previousCurrentServer }
                 ?: syncedServers.firstOrNull()
@@ -175,14 +184,9 @@ class CompanionSyncWorker @AssistedInject constructor(
                         applyPreferences(nonNull)
                     }
                 }
-                // Per-user Music Assistant + universal plugins — applied for the
-                // active user only, through `:app:unified` (which can reach the
-                // `:sendspin` and `:plugins` modules `:core` cannot depend on).
-                importedUserMusicAssistant[userId]?.let { ma ->
-                    Timber.d("COMPANION SYNC: Applying Music Assistant config for user $userId")
-                    runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
-                        .onFailure { Timber.e(it, "COMPANION SYNC: Failed to apply MA config") }
-                }
+                // Universal plugins involve per-URL network installs, so they
+                // stay active-user-only, through `:app:unified` (which can reach
+                // the `:plugins` module `:core` cannot depend on).
                 importedUserPlugins[userId]?.takeIf { it.isNotEmpty() }?.let { manifestUrls ->
                     Timber.d("COMPANION SYNC: Installing ${manifestUrls.size} plugin(s) for user $userId")
                     runCatching { extrasApplier.installPlugins(userId.toString(), manifestUrls) }

@@ -17,11 +17,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Surface
@@ -61,6 +65,7 @@ import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
+import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingEnvelope
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingInfo
@@ -69,6 +74,7 @@ import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 import dev.jdtech.jellyfin.work.CompanionSyncWorker
+import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
@@ -126,6 +132,7 @@ constructor(
     private val appPreferences: AppPreferences,
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
+    private val extrasApplier: CompanionUserExtrasApplier,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow<TvCompanionState>(TvCompanionState.Idle)
@@ -288,6 +295,8 @@ constructor(
 
             val importedSessions = mutableListOf<ImportedSession>()
             val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
+            val importedUserMusicAssistant = mutableMapOf<UUID, CompanionMusicAssistant>()
+            val importedUserPlugins = mutableMapOf<UUID, List<String>>()
             val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
             config.servers.forEach { serverConfig ->
@@ -304,6 +313,8 @@ constructor(
                     }.getOrNull()?.let { user ->
                         validUsers.add(user)
                         importedUserPreferences[user.id] = companionUser.preferences
+                        companionUser.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
+                        if (companionUser.plugins.isNotEmpty()) importedUserPlugins[user.id] = companionUser.plugins
                         if (serverSession == null) {
                             serverSession =
                                 ImportedSession(
@@ -342,6 +353,15 @@ constructor(
 
             applyNetworkShares(config.networkShares)
 
+            // Music Assistant config is stored per Jellyfin user, so persist it
+            // for every imported user now instead of leaving it to the 12-hour
+            // background sync (which used to be the only path that applied it).
+            importedUserMusicAssistant.forEach { (userId, ma) ->
+                Timber.d("TV COMPANION: Applying Music Assistant config for user $userId")
+                runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
+                    .onFailure { Timber.e(it, "TV COMPANION: Failed to apply Music Assistant config") }
+            }
+
             val activeSession =
                 importedSessions.firstOrNull { it.serverId == previousCurrentServer }
                     ?: importedSessions.firstOrNull()
@@ -351,11 +371,20 @@ constructor(
                 appPreferences.setValue(appPreferences.onboardingCompleted, true)
                 jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
                 jellyfinApi.userId = session.userId
+                if (importedUserMusicAssistant.containsKey(session.userId)) {
+                    runCatching { extrasApplier.refreshMusicAssistant(session.userId.toString()) }
+                        .onFailure { Timber.e(it, "TV COMPANION: Failed to refresh active Music Assistant config") }
+                }
                 importedUserPreferences[session.userId]
                     ?.filterValues { it != null }
                     ?.mapValues { it.value!! }
                     ?.takeIf { it.isNotEmpty() }
                     ?.let(::applyPreferences)
+                importedUserPlugins[session.userId]?.let { manifestUrls ->
+                    Timber.d("TV COMPANION: Installing ${manifestUrls.size} plugin(s) for user ${session.userId}")
+                    runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
+                        .onFailure { Timber.e(it, "TV COMPANION: Failed to install plugins") }
+                }
             }
         }
 
@@ -646,7 +675,7 @@ fun TvCompanionScreen(
                         Text(current.message, style = MaterialTheme.typography.bodyLarge)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(onClick = viewModel::startPairing) { Text("Retry") }
-                            OutlinedButton(onClick = onBack) { Text("Back") }
+                            TvCompanionBackAction(onClick = onBack)
                         }
                     }
                 }
@@ -729,13 +758,29 @@ fun TvCompanionScreen(
                                 val seconds = secondsLeft % 60
                                 val countdownText = String.format("%02d:%02d", minutes, seconds)
                                 Button(onClick = viewModel::startPairing) { Text("Refresh Code ($countdownText)") }
-                                OutlinedButton(onClick = onBack) { Text("Back") }
+                                TvCompanionBackAction(onClick = onBack)
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TvCompanionBackAction(
+    label: String = "Back",
+    onClick: () -> Unit,
+) {
+    OutlinedButton(onClick = onClick) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(label)
     }
 }
 

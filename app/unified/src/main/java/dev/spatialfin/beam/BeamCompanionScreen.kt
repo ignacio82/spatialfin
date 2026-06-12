@@ -66,11 +66,13 @@ import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.domain.applyCompanionPreference
 import dev.jdtech.jellyfin.work.CompanionSyncWorker
+import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.util.UUID
@@ -112,6 +114,7 @@ constructor(
     private val appPreferences: AppPreferences,
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
+    private val extrasApplier: CompanionUserExtrasApplier,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow<BeamCompanionState>(BeamCompanionState.Idle)
@@ -187,6 +190,8 @@ constructor(
 
             val importedSessions = mutableListOf<ImportedSession>()
             val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
+            val importedUserMusicAssistant = mutableMapOf<UUID, CompanionMusicAssistant>()
+            val importedUserPlugins = mutableMapOf<UUID, List<String>>()
             val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
             config.servers.forEach { serverConfig ->
@@ -203,6 +208,8 @@ constructor(
                     }.getOrNull()?.let { user ->
                         validUsers.add(user)
                         importedUserPreferences[user.id] = companionUser.preferences
+                        companionUser.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
+                        if (companionUser.plugins.isNotEmpty()) importedUserPlugins[user.id] = companionUser.plugins
                         if (serverSession == null) {
                             serverSession =
                                 ImportedSession(
@@ -241,6 +248,15 @@ constructor(
 
             applyNetworkShares(config.networkShares)
 
+            // Music Assistant config is stored per Jellyfin user, so persist it
+            // for every imported user now instead of leaving it to the 12-hour
+            // background sync (which used to be the only path that applied it).
+            importedUserMusicAssistant.forEach { (userId, ma) ->
+                Timber.d("COMPANION: Applying Music Assistant config for user $userId")
+                runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
+                    .onFailure { Timber.e(it, "COMPANION: Failed to apply Music Assistant config") }
+            }
+
             val activeSession =
                 importedSessions.firstOrNull { it.serverId == previousCurrentServer }
                     ?: importedSessions.firstOrNull()
@@ -251,11 +267,20 @@ constructor(
                 jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
                 jellyfinApi.userId = session.userId
                 scheduleCompanionSync()
+                if (importedUserMusicAssistant.containsKey(session.userId)) {
+                    runCatching { extrasApplier.refreshMusicAssistant(session.userId.toString()) }
+                        .onFailure { Timber.e(it, "COMPANION: Failed to refresh active Music Assistant config") }
+                }
                 importedUserPreferences[session.userId]
                     ?.filterValues { it != null }
                     ?.mapValues { it.value!! }
                     ?.takeIf { it.isNotEmpty() }
                     ?.let(::applyPreferences)
+                importedUserPlugins[session.userId]?.let { manifestUrls ->
+                    Timber.d("COMPANION: Installing ${manifestUrls.size} plugin(s) for user ${session.userId}")
+                    runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
+                        .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
+                }
             }
         }
 
@@ -403,10 +428,8 @@ fun BeamCompanionScreen(
                                 OutlinedButton(onClick = viewModel::syncNow) {
                                     Text("Use Saved Companion")
                                 }
-                                OutlinedButton(onClick = onBack) {
-                                    Text("Back")
-                                }
                             }
+                            BeamBackAction(onClick = onBack)
                         }
                     }
                 }
@@ -432,9 +455,7 @@ fun BeamCompanionScreen(
                                     },
                                 )
                             }
-                            OutlinedButton(onClick = onBack) {
-                                Text("Cancel")
-                            }
+                            BeamBackAction(label = "Cancel", onClick = onBack)
                         }
                     }
                 }
@@ -485,9 +506,7 @@ fun BeamCompanionScreen(
                                 Button(onClick = viewModel::startScanning) {
                                     Text("Try Again")
                                 }
-                                OutlinedButton(onClick = viewModel::reset) {
-                                    Text("Back")
-                                }
+                                BeamBackAction(label = "Back to options", onClick = viewModel::reset)
                             }
                         }
                     }

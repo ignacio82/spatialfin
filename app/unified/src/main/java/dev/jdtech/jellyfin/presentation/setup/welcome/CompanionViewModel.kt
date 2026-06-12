@@ -13,6 +13,7 @@ import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
 import dev.jdtech.jellyfin.models.companion.DeviceIdentity
@@ -32,6 +33,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import dev.jdtech.jellyfin.work.CompanionSyncWorker
+import dev.jdtech.jellyfin.work.CompanionUserExtrasApplier
 import timber.log.Timber
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -61,6 +63,7 @@ class CompanionViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
+    private val extrasApplier: CompanionUserExtrasApplier,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -153,6 +156,8 @@ class CompanionViewModel @Inject constructor(
 
         val importedSessions = mutableListOf<ImportedSession>()
         val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
+        val importedUserMusicAssistant = mutableMapOf<UUID, CompanionMusicAssistant>()
+        val importedUserPlugins = mutableMapOf<UUID, List<String>>()
         val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users
@@ -172,6 +177,8 @@ class CompanionViewModel @Inject constructor(
                     if (user != null) {
                         validUsers.add(user)
                         importedUserPreferences[user.id] = u.preferences
+                        u.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
+                        if (u.plugins.isNotEmpty()) importedUserPlugins[user.id] = u.plugins
                         Timber.d("COMPANION: Successfully added user ${u.username} (id=${user.id})")
                         if (serverSession == null) {
                             serverSession = ImportedSession(
@@ -215,6 +222,15 @@ class CompanionViewModel @Inject constructor(
         // Apply Network Shares
         applyNetworkShares(config.networkShares)
 
+        // Music Assistant config is stored per Jellyfin user, so persist it for
+        // every imported user now instead of leaving it to the 12-hour
+        // background sync (which used to be the only path that applied it).
+        importedUserMusicAssistant.forEach { (userId, ma) ->
+            Timber.d("COMPANION: Applying Music Assistant config for user $userId")
+            runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
+                .onFailure { Timber.e(it, "COMPANION: Failed to apply Music Assistant config") }
+        }
+
         val activeSession =
             importedSessions.firstOrNull { it.serverId == previousCurrentServer }
                 ?: importedSessions.firstOrNull()
@@ -226,12 +242,21 @@ class CompanionViewModel @Inject constructor(
             jellyfinApi.api.update(baseUrl = session.baseUrl, accessToken = session.accessToken)
             jellyfinApi.userId = session.userId
             scheduleCompanionSync()
+            if (importedUserMusicAssistant.containsKey(session.userId)) {
+                runCatching { extrasApplier.refreshMusicAssistant(session.userId.toString()) }
+                    .onFailure { Timber.e(it, "COMPANION: Failed to refresh active Music Assistant config") }
+            }
             importedUserPreferences[session.userId]?.let { userPrefs ->
                 val nonNull = userPrefs.filterValues { it != null }.mapValues { it.value!! }
                 if (nonNull.isNotEmpty()) {
                     Timber.d("COMPANION: Applying ${nonNull.size} user-level preferences")
                     applyPreferences(nonNull)
                 }
+            }
+            importedUserPlugins[session.userId]?.let { manifestUrls ->
+                Timber.d("COMPANION: Installing ${manifestUrls.size} plugin(s) for user ${session.userId}")
+                runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
+                    .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
             }
         }
     }

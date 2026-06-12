@@ -421,6 +421,7 @@ fun BeamNavigationRoot(
         val onboardingCompleted = appPreferences.getValue(appPreferences.onboardingCompleted)
         val newRoute =
             when {
+                !onboardingCompleted && currentRoute == BeamRoute.Companion -> BeamRoute.Companion
                 !onboardingCompleted -> BeamRoute.Welcome
                 state.hasServers && state.hasCurrentServer && state.hasCurrentUser ->
                     if (state.isOfflineMode) BeamRoute.Downloads else BeamRoute.Home
@@ -579,7 +580,6 @@ fun BeamNavigationRoot(
                         BeamWelcomeScreen(
                             contentPadding = PaddingValues(0.dp),
                             onImportFromCompanion = {
-                                appPreferences.setValue(appPreferences.onboardingCompleted, true)
                                 currentRoute = BeamRoute.Companion
                             },
                             onConnectToServer = {

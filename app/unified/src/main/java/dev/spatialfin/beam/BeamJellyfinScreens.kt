@@ -884,9 +884,7 @@ fun BeamLibraryScreen(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                OutlinedButton(onClick = onBack) {
-                    Text("Back")
-                }
+                BeamBackAction(onClick = onBack)
                 Text(
                     text = state.title.ifBlank { title },
                     style = MaterialTheme.typography.headlineSmall,

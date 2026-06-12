@@ -8,9 +8,11 @@ import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
  * config (`:sendspin`) and universal source plugins (`:plugins`, which itself
  * depends on `:core`).
  *
- * Implemented in `:app:unified` (which can see both modules) and injected into
- * [CompanionSyncWorker] via Hilt. Calls are made only for the **current** active
- * Jellyfin user, so the implementations may key off the live session identity.
+ * Implemented in `:app:unified` (which can see both modules) and injected via
+ * Hilt into [CompanionSyncWorker] and the initial-setup companion importers
+ * (XR, Beam, TV). [applyMusicAssistant] is called for **every** imported user;
+ * [installPlugins] only for the active user. Implementations must therefore key
+ * strictly off the [jellyfinUserId] parameter, never the live session identity.
  */
 interface CompanionUserExtrasApplier {
     /**
@@ -19,6 +21,12 @@ interface CompanionUserExtrasApplier {
      * non-null value only when the companion supplied one.
      */
     fun applyMusicAssistant(jellyfinUserId: String, musicAssistant: CompanionMusicAssistant)
+
+    /**
+     * Rebind the live receiver/session UI to [jellyfinUserId] after foreground
+     * onboarding imports MA config for the active user.
+     */
+    fun refreshMusicAssistant(jellyfinUserId: String)
 
     /**
      * Install each manifest URL in [manifestUrls] into [jellyfinUserId]'s plugin

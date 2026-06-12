@@ -237,9 +237,7 @@ fun BeamAddServerScreen(
                             }
                             Text("Connect")
                         }
-                        OutlinedButton(onClick = onBackClick) {
-                            Text("Back")
-                        }
+                        BeamBackAction(onClick = onBackClick)
                     }
                 }
             }
