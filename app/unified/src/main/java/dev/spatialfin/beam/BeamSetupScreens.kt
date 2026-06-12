@@ -40,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -315,12 +316,9 @@ fun BeamUsersScreen(
                 onPrimaryClick = onAddClick,
                 secondaryLabel = "Change Server",
                 onSecondaryClick = onChangeServerClick,
+                tertiaryLabel = "Reset Onboarding",
+                onTertiaryClick = onResetOnboarding,
             )
-        }
-        item {
-            OutlinedButton(onClick = onResetOnboarding, modifier = Modifier.fillMaxWidth()) {
-                Text("Reset Onboarding")
-            }
         }
     }
 
@@ -560,22 +558,42 @@ private fun BeamActionRow(
     tertiaryLabel: String? = null,
     onTertiaryClick: (() -> Unit)? = null,
 ) {
+    val hasTertiary = tertiaryLabel != null && onTertiaryClick != null
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Button(onClick = onPrimaryClick) {
-            Text(primaryLabel)
+        Button(
+            onClick = onPrimaryClick,
+            modifier = if (hasTertiary) Modifier.weight(1f) else Modifier,
+        ) {
+            BeamActionLabel(primaryLabel)
         }
-        OutlinedButton(onClick = onSecondaryClick) {
-            Text(secondaryLabel)
+        OutlinedButton(
+            onClick = onSecondaryClick,
+            modifier = if (hasTertiary) Modifier.weight(1f) else Modifier,
+        ) {
+            BeamActionLabel(secondaryLabel)
         }
         if (tertiaryLabel != null && onTertiaryClick != null) {
-            OutlinedButton(onClick = onTertiaryClick) {
-                Text(tertiaryLabel)
+            OutlinedButton(
+                onClick = onTertiaryClick,
+                modifier = Modifier.weight(1f),
+            ) {
+                BeamActionLabel(tertiaryLabel)
             }
         }
     }
+}
+
+@Composable
+private fun BeamActionLabel(label: String) {
+    Text(
+        text = label,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable

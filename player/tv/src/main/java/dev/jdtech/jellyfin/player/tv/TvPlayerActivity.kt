@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Looper
 import android.util.Rational
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
@@ -73,11 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import dev.jdtech.jellyfin.core.R as CoreR
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
@@ -530,6 +527,14 @@ private fun TvPlayerScreen(
         }
     }
 
+    fun togglePlaybackFromRemote() {
+        if (player.playWhenReady || player.isPlaying) {
+            player.pause()
+        } else {
+            player.play()
+        }
+    }
+
     LaunchedEffect(player.currentTracks) {
         val libassPref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         useLibass = LibassSubtitleHelper.shouldUseLibass(player, libassPref)
@@ -681,45 +686,52 @@ private fun TvPlayerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
                 .onPreviewKeyEvent { keyEvent ->
-                    if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (keyEvent.key) {
-                        Key.DirectionLeft -> {
-                            if (!controlsVisible) {
-                                revealControls()
+                    val native = keyEvent.nativeKeyEvent
+                    if (native.action != AndroidKeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                    when (native.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_LEFT,
+                        AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT -> {
+                            if (!controlsVisible && activeDialog == null) {
                                 player.seekBack()
                                 true
                             } else {
                                 false
                             }
                         }
-                        Key.DirectionRight -> {
-                            if (!controlsVisible) {
-                                revealControls()
+                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
+                        AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT -> {
+                            if (!controlsVisible && activeDialog == null) {
                                 player.seekForward()
                                 true
                             } else {
                                 false
                             }
                         }
-                        Key.DirectionUp,
-                        Key.DirectionDown -> {
-                            if (!controlsVisible) {
+                        AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            player.seekBack()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            player.seekForward()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_UP,
+                        AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP,
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+                        AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN -> {
+                            if (!controlsVisible && activeDialog == null) {
                                 revealControls()
                                 true
                             } else {
                                 false
                             }
                         }
-                        Key.DirectionCenter,
-                        Key.Enter,
-                        Key.NumPadEnter -> {
-                            if (!controlsVisible) {
-                                val segment = uiState.currentSegment
-                                if (segment != null) {
-                                    viewModel.skipSegment(segment)
-                                } else {
-                                    revealControls()
-                                }
+                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                        AndroidKeyEvent.KEYCODE_ENTER,
+                        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                        AndroidKeyEvent.KEYCODE_SPACE -> {
+                            if (!controlsVisible && activeDialog == null) {
+                                if (native.repeatCount == 0) togglePlaybackFromRemote()
                                 true
                             } else {
                                 false
@@ -730,9 +742,17 @@ private fun TvPlayerScreen(
                         // press (nothing to close) falls through to the system which
                         // finishes the activity. Intercepting here to "reveal
                         // controls" trapped the user with no way out of playback.
-                        Key.MediaPlayPause -> {
-                            revealControls()
-                            if (isPlaying) player.pause() else player.play()
+                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        AndroidKeyEvent.KEYCODE_HEADSETHOOK -> {
+                            if (native.repeatCount == 0) togglePlaybackFromRemote()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                            player.play()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                            player.pause()
                             true
                         }
                         else -> false

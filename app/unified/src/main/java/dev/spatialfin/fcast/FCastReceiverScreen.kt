@@ -1,6 +1,7 @@
 package dev.spatialfin.fcast
 
 import android.graphics.Bitmap
+import android.view.KeyEvent as AndroidKeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -46,6 +47,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -69,9 +71,33 @@ fun FCastReceiverScreen(
     audioInfoLine: String?,
     libassBitmap: Bitmap?,
     isAudioOnly: Boolean,
+    remoteInteractionTick: Long,
     onStop: () -> Unit
 ) {
     var showControls by remember { mutableStateOf(true) }
+
+    fun togglePlaybackFromRemote() {
+        if (player.playWhenReady || player.isPlaying) {
+            player.pause()
+        } else {
+            player.play()
+        }
+        showControls = true
+    }
+
+    fun seekByRemote(deltaMs: Long) {
+        val unclamped = player.currentPosition.coerceAtLeast(0L) + deltaMs
+        val durationMs = player.duration.takeIf { it > 0L }
+        val targetMs = durationMs?.let { unclamped.coerceIn(0L, it) } ?: unclamped.coerceAtLeast(0L)
+        player.seekTo(targetMs)
+        showControls = true
+    }
+
+    LaunchedEffect(remoteInteractionTick) {
+        if (remoteInteractionTick != 0L) {
+            showControls = true
+        }
+    }
     
     // Auto-hide controls after 5 seconds if not audio-only
     LaunchedEffect(showControls, isAudioOnly) {
@@ -85,6 +111,76 @@ fun FCastReceiverScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onPreviewKeyEvent { keyEvent ->
+                val native = keyEvent.nativeKeyEvent
+                if (native.action != AndroidKeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                when (native.keyCode) {
+                    AndroidKeyEvent.KEYCODE_DPAD_LEFT,
+                    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT -> {
+                        if (!showControls || isAudioOnly) {
+                            seekByRemote(-REMOTE_SEEK_BACK_MS)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
+                    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT -> {
+                        if (!showControls || isAudioOnly) {
+                            seekByRemote(REMOTE_SEEK_FORWARD_MS)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                        seekByRemote(-REMOTE_SEEK_BACK_MS)
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                        seekByRemote(REMOTE_SEEK_FORWARD_MS)
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                    AndroidKeyEvent.KEYCODE_ENTER,
+                    AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
+                    AndroidKeyEvent.KEYCODE_SPACE -> {
+                        if (!showControls || isAudioOnly) {
+                            if (native.repeatCount == 0) togglePlaybackFromRemote()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                    AndroidKeyEvent.KEYCODE_HEADSETHOOK -> {
+                        if (native.repeatCount == 0) togglePlaybackFromRemote()
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        player.play()
+                        showControls = true
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                        player.pause()
+                        showControls = true
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_DPAD_UP,
+                    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP,
+                    AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+                    AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN -> {
+                        if (!showControls) {
+                            showControls = true
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -349,3 +445,6 @@ fun FCastReceiverScreen(
         }
     }
 }
+
+private const val REMOTE_SEEK_BACK_MS: Long = 10_000L
+private const val REMOTE_SEEK_FORWARD_MS: Long = 10_000L

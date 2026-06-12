@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ImageView
@@ -113,6 +114,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     private val thumbnailUrlState = MutableStateFlow<String?>(null)
     private val audioInfoLineState = MutableStateFlow<String?>(null)
     private val isAudioOnlyState = MutableStateFlow(false)
+    private val remoteInteractionTick = MutableStateFlow(0L)
     
     /** Passthrough-capable audio codec tokens of the attached chain; set in [logAudioCapabilities]. */
     private var receiverAudioCodecs: List<String> = emptyList()
@@ -272,6 +274,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 val thumbnailUrl by thumbnailUrlState.collectAsState()
                 val audioInfoLine by audioInfoLineState.collectAsState()
                 val isAudioOnly by isAudioOnlyState.collectAsState()
+                val remoteTick by remoteInteractionTick.collectAsState()
 
                 FCastReceiverScreen(
                     player = exo,
@@ -280,6 +283,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                     audioInfoLine = audioInfoLine,
                     libassBitmap = libassBitmap,
                     isAudioOnly = isAudioOnly,
+                    remoteInteractionTick = remoteTick,
                     onStop = {
                         player?.stop()
                         finish()
@@ -303,6 +307,85 @@ class FCastInboundPlayerActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) applyImmersiveSystemBars()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (super.dispatchKeyEvent(event)) return true
+        return handleRemoteKey(event)
+    }
+
+    private fun handleRemoteKey(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT,
+            KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                seekByRemote(-REMOTE_SEEK_BACK_MS)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT,
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                seekByRemote(REMOTE_SEEK_FORWARD_MS)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_SPACE,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_HEADSETHOOK -> {
+                if (event.repeatCount == 0) togglePlaybackByRemote()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                player?.play()
+                markRemoteInteraction()
+                pushPlaybackSnapshot()
+                true
+            }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                player?.pause()
+                markRemoteInteraction()
+                pushPlaybackSnapshot()
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN -> {
+                markRemoteInteraction()
+                false
+            }
+            else -> false
+        }
+    }
+
+    private fun togglePlaybackByRemote() {
+        val p = player ?: return
+        if (p.playWhenReady || p.isPlaying) {
+            p.pause()
+        } else {
+            p.play()
+        }
+        markRemoteInteraction()
+        pushPlaybackSnapshot()
+    }
+
+    private fun seekByRemote(deltaMs: Long) {
+        val p = player ?: return
+        val unclamped = p.currentPosition.coerceAtLeast(0L) + deltaMs
+        val durationMs = p.duration.takeIf { it > 0L && it != C.TIME_UNSET }
+        val targetMs = durationMs?.let { unclamped.coerceIn(0L, it) } ?: unclamped.coerceAtLeast(0L)
+        libassRenderer?.clearCache()
+        audioSinkPositionOffsetUs = null
+        p.seekTo(targetMs)
+        markRemoteInteraction()
+        pushPlaybackSnapshot()
+    }
+
+    private fun markRemoteInteraction() {
+        remoteInteractionTick.value = SystemClock.elapsedRealtime()
     }
 
     /**
@@ -1027,6 +1110,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
 
         private const val NORMAL_TICKER_INTERVAL_MS: Long = 1_000L
         private const val MIN_TICKER_INTERVAL_MS: Long = 50L
+        private const val REMOTE_SEEK_BACK_MS: Long = 10_000L
+        private const val REMOTE_SEEK_FORWARD_MS: Long = 10_000L
         private const val TAG: String = "FCastInbound"
 
         /**
