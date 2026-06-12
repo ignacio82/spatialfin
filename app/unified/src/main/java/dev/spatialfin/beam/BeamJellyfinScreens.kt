@@ -96,6 +96,8 @@ import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
 import dev.jdtech.jellyfin.utils.BulkDownloadResult
 import dev.jdtech.jellyfin.utils.Downloader
 import dev.jdtech.jellyfin.models.HomeItem
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -103,6 +105,9 @@ import dev.jdtech.jellyfin.models.SpatialFinFolder
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
@@ -113,9 +118,14 @@ import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.isDownloading
+import dev.jdtech.jellyfin.models.toAudioQueueItem
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.utils.getShowDateString
+import dev.spatialfin.unified.audio.AudioPlaybackDispatcher
+import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
+import dev.spatialfin.unified.audio.JellyfinAudioDetailType
+import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -525,6 +535,7 @@ fun BeamHomeScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
     onOpenMaSearch: () -> Unit = {},
     // Primitive-typed (uri, name) rather than a MaBrowseTarget lambda: the
@@ -537,6 +548,7 @@ fun BeamHomeScreen(
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
     val maPlayDispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -574,10 +586,28 @@ fun BeamHomeScreen(
                             item = featured,
                             actions = {
                                 BeamPrimaryActionButton(label = if (featured.playbackPositionTicks > 0L) "Resume" else "Play") {
-                                    launchServerItem(context, fcastSession, scope,featured)
+                                    if (
+                                        !openNativeAudioItem(
+                                            featured,
+                                            jellyfinAudioDispatcher,
+                                            onOpenJellyfinAudioDetail,
+                                        )
+                                    ) {
+                                        launchServerItem(context, fcastSession, scope, featured)
+                                    }
                                 }
                                 BeamSecondaryActionButton(label = "Details") {
-                                    openServerItem(context, featured, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
+                                    openServerItem(
+                                        context,
+                                        featured,
+                                        onOpenLibrary,
+                                        onOpenShow,
+                                        onOpenSeason,
+                                        onOpenItem,
+                                        maPlayDispatcher,
+                                        audioDispatcher = jellyfinAudioDispatcher,
+                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                    )
                                 }
                             },
                         )
@@ -594,7 +624,19 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = filtered,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
+                                onItemClick = {
+                                    openServerItem(
+                                        context,
+                                        it,
+                                        onOpenLibrary,
+                                        onOpenShow,
+                                        onOpenSeason,
+                                        onOpenItem,
+                                        maPlayDispatcher,
+                                        audioDispatcher = jellyfinAudioDispatcher,
+                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                    )
+                                },
                             )
                         }
                     }
@@ -610,7 +652,19 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
+                                onItemClick = {
+                                    openServerItem(
+                                        context,
+                                        it,
+                                        onOpenLibrary,
+                                        onOpenShow,
+                                        onOpenSeason,
+                                        onOpenItem,
+                                        maPlayDispatcher,
+                                        audioDispatcher = jellyfinAudioDispatcher,
+                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                    )
+                                },
                                 showProgress = true,
                             )
                         }
@@ -627,7 +681,19 @@ fun BeamHomeScreen(
                         item {
                             BeamPosterCarousel(
                                 items = items,
-                                onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
+                                onItemClick = {
+                                    openServerItem(
+                                        context,
+                                        it,
+                                        onOpenLibrary,
+                                        onOpenShow,
+                                        onOpenSeason,
+                                        onOpenItem,
+                                        maPlayDispatcher,
+                                        audioDispatcher = jellyfinAudioDispatcher,
+                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                    )
+                                },
                             )
                         }
                     }
@@ -654,7 +720,19 @@ fun BeamHomeScreen(
                             item {
                                 BeamPosterCarousel(
                                     items = viewItems,
-                                    onItemClick = { openServerItem(context, it, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher) },
+                                    onItemClick = {
+                                        openServerItem(
+                                            context,
+                                            it,
+                                            onOpenLibrary,
+                                            onOpenShow,
+                                            onOpenSeason,
+                                            onOpenItem,
+                                            maPlayDispatcher,
+                                            audioDispatcher = jellyfinAudioDispatcher,
+                                            onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                        )
+                                    },
                                 )
                             }
                         }
@@ -688,7 +766,17 @@ fun BeamHomeScreen(
                                         )
                                     )
                                 } else {
-                                    openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher)
+                                    openServerItem(
+                                        context,
+                                        item,
+                                        onOpenLibrary,
+                                        onOpenShow,
+                                        onOpenSeason,
+                                        onOpenItem,
+                                        maPlayDispatcher,
+                                        audioDispatcher = jellyfinAudioDispatcher,
+                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                    )
                                 }
                             }
                         )
@@ -705,7 +793,18 @@ fun BeamHomeScreen(
                         BeamPosterCarousel(
                             items = section.homeSection.items,
                             onItemClick = { item ->
-                                openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem, maPlayDispatcher, onOpenMaBrowse)
+                                openServerItem(
+                                    context,
+                                    item,
+                                    onOpenLibrary,
+                                    onOpenShow,
+                                    onOpenSeason,
+                                    onOpenItem,
+                                    maPlayDispatcher,
+                                    onOpenMaBrowse,
+                                    audioDispatcher = jellyfinAudioDispatcher,
+                                    onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                                )
                             },
                         )
                     }
@@ -955,6 +1054,7 @@ fun BeamShowScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
     val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
@@ -1179,6 +1279,7 @@ fun BeamSeasonScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
     val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showBulkDownloadDialog by rememberSaveable { mutableStateOf(false) }
@@ -1322,6 +1423,7 @@ fun BeamItemDetailScreen(
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
     val scope = rememberCoroutineScope()
     val setBackground = LocalBeamBackground.current
     var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
@@ -1357,6 +1459,20 @@ fun BeamItemDetailScreen(
                     DownloaderEvent.Deleted -> "Download deleted"
                 }
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    state.item?.let { itemData ->
+        itemData.jellyfinAudioDetailType()?.let { detailType ->
+            JellyfinAudioDetailScreen(
+                itemId = itemData.id,
+                title = itemData.name,
+                detailType = detailType,
+                parentId = null,
+                onBack = onBack,
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
+            )
+            return
         }
     }
 
@@ -1424,7 +1540,11 @@ fun BeamItemDetailScreen(
                         ) {
                             if (itemData.canPlay) {
                                 androidx.compose.material3.FilledIconButton(
-                                    onClick = { launchServerItem(context, fcastSession, scope,itemData) }
+                                    onClick = {
+                                        if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
+                                            launchServerItem(context, fcastSession, scope, itemData)
+                                        }
+                                    }
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
@@ -1432,7 +1552,23 @@ fun BeamItemDetailScreen(
                                     )
                                 }
                                 androidx.compose.material3.FilledTonalIconButton(
-                                    onClick = { launchServerItem(context = context, fcastSession = fcastSession, scope = scope, item = itemData, startFromBeginning = true) }
+                                    onClick = {
+                                        if (
+                                            !playNativeAudioItem(
+                                                itemData,
+                                                jellyfinAudioDispatcher,
+                                                fromStart = true,
+                                            )
+                                        ) {
+                                            launchServerItem(
+                                                context = context,
+                                                fcastSession = fcastSession,
+                                                scope = scope,
+                                                item = itemData,
+                                                startFromBeginning = true,
+                                            )
+                                        }
+                                    }
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
@@ -2170,12 +2306,14 @@ fun BeamSearchScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
+    onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
     onOpenMaSearch: () -> Unit = {},
     viewModel: BeamSearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
     val scope = rememberCoroutineScope()
     var submittedInitialSearch by rememberSaveable { mutableStateOf(false) }
     var pendingSeerrRequest by remember { mutableStateOf<SeerrSearchResult?>(null) }
@@ -2260,8 +2398,23 @@ fun BeamSearchScreen(
                 items(state.items, key = { it.id }) { item ->
                     BeamServerItemCard(
                         item = item,
-                        onPlay = { launchServerItem(context, fcastSession, scope,item) },
-                        onOpen = { openServerItem(context, item, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem) },
+                        onPlay = {
+                            if (!playNativeAudioItem(item, jellyfinAudioDispatcher)) {
+                                launchServerItem(context, fcastSession, scope, item)
+                            }
+                        },
+                        onOpen = {
+                            openServerItem(
+                                context,
+                                item,
+                                onOpenLibrary,
+                                onOpenShow,
+                                onOpenSeason,
+                                onOpenItem,
+                                audioDispatcher = jellyfinAudioDispatcher,
+                                onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                            )
+                        },
                     )
                 }
             }
@@ -3102,21 +3255,39 @@ private fun openServerItem(
     onOpenItem: (UUID) -> Unit,
     maPlayDispatcher: dev.spatialfin.unified.MaPlayDispatcher? = null,
     onOpenMaUriBrowse: ((uri: String, name: String) -> Unit)? = null,
+    audioDispatcher: AudioPlaybackDispatcher? = null,
+    onOpenJellyfinAudioDetail: ((UUID, String, JellyfinAudioDetailType) -> Unit)? = null,
 ) {
     when (item) {
         is SpatialFinCollection -> onOpenLibrary(item.id, item.name, item.type)
         is SpatialFinFolder -> onOpenLibrary(item.id, item.name, CollectionType.Folders)
         is SpatialFinShow -> onOpenShow(item.id)
         is SpatialFinSeason -> onOpenSeason(item.id)
+        is SpatialFinAudioTrack -> {
+            if (!playNativeAudioItem(item, audioDispatcher)) onOpenItem(item.id)
+        }
+        is SpatialFinMusicAlbum,
+        is SpatialFinMusicArtist,
+        is SpatialFinPlaylist,
+        is SpatialFinAudioBook -> {
+            val detailType = item.jellyfinAudioDetailType()
+            if (detailType != null && onOpenJellyfinAudioDetail != null) {
+                onOpenJellyfinAudioDetail(item.id, item.name, detailType)
+            } else {
+                onOpenItem(item.id)
+            }
+        }
         else -> {
             val maUri = item.originalTitle
             if (!maUri.isNullOrBlank() && maUri.contains("://")) {
                 // Podcasts/audiobooks open a detail screen (episode list /
                 // chapters + resume); tracks & directly-playable items just play.
-                val browseable = onOpenMaUriBrowse != null &&
-                    dev.spatialfin.unified.music.maDetailTargetForUri(maUri, item.name) != null
-                if (browseable) {
-                    onOpenMaUriBrowse!!(maUri, item.name)
+                val browseCallback = onOpenMaUriBrowse
+                if (
+                    browseCallback != null &&
+                        dev.spatialfin.unified.music.maDetailTargetForUri(maUri, item.name) != null
+                ) {
+                    browseCallback(maUri, item.name)
                     return
                 }
                 val artwork = item.images.primary?.toString()
@@ -3138,6 +3309,37 @@ private fun openServerItem(
             }
         }
     }
+}
+
+private fun SpatialFinItem.jellyfinAudioDetailType(): JellyfinAudioDetailType? =
+    when (this) {
+        is SpatialFinMusicAlbum -> JellyfinAudioDetailType.Album
+        is SpatialFinMusicArtist -> JellyfinAudioDetailType.Artist
+        is SpatialFinPlaylist -> JellyfinAudioDetailType.Playlist
+        is SpatialFinAudioBook -> JellyfinAudioDetailType.Book
+        else -> null
+    }
+
+private fun openNativeAudioItem(
+    item: SpatialFinItem,
+    audioDispatcher: AudioPlaybackDispatcher?,
+    onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
+): Boolean {
+    if (playNativeAudioItem(item, audioDispatcher)) return true
+    val detailType = item.jellyfinAudioDetailType() ?: return false
+    onOpenJellyfinAudioDetail(item.id, item.name, detailType)
+    return true
+}
+
+private fun playNativeAudioItem(
+    item: SpatialFinItem,
+    audioDispatcher: AudioPlaybackDispatcher?,
+    fromStart: Boolean = false,
+): Boolean {
+    val track = item as? SpatialFinAudioTrack ?: return false
+    val playableTrack = if (fromStart) track.copy(playbackPositionTicks = 0L) else track
+    audioDispatcher?.playQueue(listOf(playableTrack.toAudioQueueItem()))
+    return audioDispatcher != null
 }
 
 /**

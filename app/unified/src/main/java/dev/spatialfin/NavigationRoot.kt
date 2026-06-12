@@ -67,14 +67,18 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.LocalVideoItem
 import dev.jdtech.jellyfin.models.NetworkVideoItem
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinFolder
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.presentation.film.CollectionScreen
@@ -108,6 +112,12 @@ import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.settings.R as SettingsR
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.unified.XrSpaceMode
+import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
+import dev.spatialfin.unified.audio.JellyfinAudioDetailType
+import dev.spatialfin.unified.audio.JellyfinAudioLibraryScreen
+import dev.spatialfin.unified.audio.JellyfinAudioMiniPlayer
+import dev.spatialfin.unified.audio.JellyfinAudioNowPlayingScreen
+import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 import kotlinx.serialization.Serializable
 
@@ -148,6 +158,14 @@ data class LibraryRoute(
     val libraryId: String,
     val libraryName: String,
     val libraryType: CollectionType,
+)
+
+@Serializable
+data class AudioDetailRoute(
+    val itemId: String,
+    val title: String,
+    val detailType: JellyfinAudioDetailType,
+    val parentId: String? = null,
 )
 
 @Serializable data class CollectionRoute(val collectionId: String, val collectionName: String)
@@ -210,6 +228,9 @@ val sourcesTab =
         route = UniversalPluginsRoute,
     )
 
+private val AUDIO_COLLECTION_TYPES =
+    setOf(CollectionType.Music, CollectionType.Playlists, CollectionType.Books)
+
 @Composable
 fun NavigationRoot(
     navController: NavHostController,
@@ -271,6 +292,7 @@ fun NavigationRoot(
 
     var searchExpanded by remember { mutableStateOf(false) }
     var pendingInitialSearchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
+    var showAudioNowPlaying by remember { mutableStateOf(false) }
 
     val currentRoute = navBackStackEntry?.destination?.route
     val showBottomBar = currentRoute in navigationItemClassNames && !searchExpanded
@@ -678,14 +700,44 @@ fun NavigationRoot(
             }
             composable<LibraryRoute> { backStackEntry ->
                 val route: LibraryRoute = backStackEntry.toRoute()
-                LibraryScreen(
-                    libraryId = UUID.fromString(route.libraryId),
-                    libraryName = route.libraryName,
-                    libraryType = route.libraryType,
-                    onItemClick = { item ->
-                        navigateToItem(navController = navController, item = item)
-                    },
-                    navigateBack = { navController.safePopBackStack() },
+                val libraryId = UUID.fromString(route.libraryId)
+                if (route.libraryType in AUDIO_COLLECTION_TYPES) {
+                    JellyfinAudioLibraryScreen(
+                        libraryId = libraryId,
+                        libraryName = route.libraryName,
+                        libraryType = route.libraryType,
+                        onBack = { navController.safePopBackStack() },
+                        onDetailClick = { id, title, detailType ->
+                            navController.safeNavigate(
+                                AudioDetailRoute(
+                                    itemId = id.toString(),
+                                    title = title,
+                                    detailType = detailType,
+                                    parentId = route.libraryId,
+                                )
+                            )
+                        },
+                    )
+                } else {
+                    LibraryScreen(
+                        libraryId = libraryId,
+                        libraryName = route.libraryName,
+                        libraryType = route.libraryType,
+                        onItemClick = { item ->
+                            navigateToItem(navController = navController, item = item)
+                        },
+                        navigateBack = { navController.safePopBackStack() },
+                    )
+                }
+            }
+            composable<AudioDetailRoute> { backStackEntry ->
+                val route: AudioDetailRoute = backStackEntry.toRoute()
+                JellyfinAudioDetailScreen(
+                    itemId = UUID.fromString(route.itemId),
+                    title = route.title,
+                    detailType = route.detailType,
+                    parentId = route.parentId?.let(UUID::fromString),
+                    onBack = { navController.safePopBackStack() },
                 )
             }
             composable<CollectionRoute> { backStackEntry ->
@@ -854,6 +906,22 @@ fun NavigationRoot(
             if (fcastSession != null) {
                 dev.spatialfin.fcast.session.FCastMiniController(sessionManager = fcastSession)
             }
+            LocalAudioPlaybackDispatcher.current?.let { dispatcher ->
+                JellyfinAudioMiniPlayer(
+                    dispatcher = dispatcher,
+                    onExpand = { showAudioNowPlaying = true },
+                )
+            }
+        }
+        LocalAudioPlaybackDispatcher.current?.let { dispatcher ->
+            if (showAudioNowPlaying) {
+                androidx.activity.compose.BackHandler(onBack = { showAudioNowPlaying = false })
+                JellyfinAudioNowPlayingScreen(
+                    dispatcher = dispatcher,
+                    onBack = { showAudioNowPlaying = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
         dev.spatialfin.sendspin.SendspinFullscreenPlayer()
     }
@@ -890,6 +958,38 @@ private fun navigateToItem(navController: NavHostController, item: SpatialFinIte
         is SpatialFinSeason -> navController.safeNavigate(SeasonRoute(seasonId = item.id.toString()))
         is SpatialFinEpisode ->
             navController.safeNavigate(EpisodeRoute(episodeId = item.id.toString()))
+        is SpatialFinMusicAlbum ->
+            navController.safeNavigate(
+                AudioDetailRoute(
+                    itemId = item.id.toString(),
+                    title = item.name,
+                    detailType = JellyfinAudioDetailType.Album,
+                )
+            )
+        is SpatialFinMusicArtist ->
+            navController.safeNavigate(
+                AudioDetailRoute(
+                    itemId = item.id.toString(),
+                    title = item.name,
+                    detailType = JellyfinAudioDetailType.Artist,
+                )
+            )
+        is SpatialFinPlaylist ->
+            navController.safeNavigate(
+                AudioDetailRoute(
+                    itemId = item.id.toString(),
+                    title = item.name,
+                    detailType = JellyfinAudioDetailType.Playlist,
+                )
+            )
+        is SpatialFinAudioBook ->
+            navController.safeNavigate(
+                AudioDetailRoute(
+                    itemId = item.id.toString(),
+                    title = item.name,
+                    detailType = JellyfinAudioDetailType.Book,
+                )
+            )
         is SpatialFinCollection ->
             navController.safeNavigate(
                 LibraryRoute(

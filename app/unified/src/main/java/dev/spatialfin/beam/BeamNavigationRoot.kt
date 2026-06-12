@@ -102,9 +102,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.presentation.components.CinematicBackdrop
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.viewmodels.MainState
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
+import dev.jdtech.jellyfin.models.toAudioQueueItem
+import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
+import dev.spatialfin.unified.audio.JellyfinAudioDetailType
+import dev.spatialfin.unified.audio.JellyfinAudioLibraryScreen
+import dev.spatialfin.unified.audio.JellyfinAudioMiniPlayer
+import dev.spatialfin.unified.audio.JellyfinAudioNowPlayingScreen
+import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 
 private enum class BeamRoute {
@@ -134,6 +146,8 @@ private enum class BeamRoute {
     /** Music Assistant album/artist/playlist detail. The selected
      *  [ServerMediaItem] is held in [BeamRoot]'s `maDetailSeed` state. */
     MaDetail,
+    /** Native Jellyfin albums/artists/playlists/books. */
+    AudioDetail,
 }
 
 private data class BeamTab(
@@ -153,6 +167,9 @@ private val primaryTabs =
     )
 
 val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
+
+private val AUDIO_COLLECTION_TYPES =
+    setOf(CollectionType.Music, CollectionType.Playlists, CollectionType.Books)
 
 @Composable
 @TraceRecomposition(tag = "beam-shell", threshold = 3)
@@ -180,6 +197,8 @@ fun BeamNavigationRoot(
         dev.spatialfin.unified.MaPlayDispatcher(context, maSession, maServiceClient)
     }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
+    var showJellyfinAudioNowPlaying by rememberSaveable { mutableStateOf(false) }
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
 
     val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
     // Make the MA session track local SendSpin playback → one unified player.
@@ -240,6 +259,11 @@ fun BeamNavigationRoot(
     var selectedDetailItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioTitle by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioDetailType by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioParentId by rememberSaveable { mutableStateOf<String?>(null) }
+    var audioBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
     // Phase 2 — MA detail navigation. Holds the seed ServerMediaItem that
     // the user tapped (search/recommendation) so the detail screen can call
     // its `/get` and child-list endpoints. Not @Saveable because the rich
@@ -259,6 +283,21 @@ fun BeamNavigationRoot(
         maDetailBackRoute = currentRoute
         currentRoute = BeamRoute.MaDetail
     }
+
+    fun openJellyfinAudioDetail(
+        itemId: UUID,
+        title: String,
+        detailType: JellyfinAudioDetailType,
+        parentId: UUID? = null,
+        backRoute: BeamRoute = currentRoute,
+    ) {
+        selectedAudioItemId = itemId.toString()
+        selectedAudioTitle = title
+        selectedAudioDetailType = detailType.name
+        selectedAudioParentId = parentId?.toString()
+        audioBackRoute = backRoute
+        currentRoute = BeamRoute.AudioDetail
+    }
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
     var personBackRoute by rememberSaveable { mutableStateOf(BeamRoute.Home) }
@@ -275,7 +314,7 @@ fun BeamNavigationRoot(
         }
     }
 
-    val navigation = remember(context, fcastSession) {
+    val navigation = remember(context, fcastSession, jellyfinAudioDispatcher) {
         object : HomeVoiceNavigation {
             override fun launchItem(item: SpatialFinItem): Boolean {
                 val routed = dev.spatialfin.fcast.session.launchPlayback(
@@ -314,6 +353,26 @@ fun BeamNavigationRoot(
                         selectedSeasonId = item.id.toString()
                         seasonBackRoute = currentRoute
                         currentRoute = BeamRoute.Season
+                        true
+                    }
+                    is SpatialFinMusicAlbum -> {
+                        openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Album)
+                        true
+                    }
+                    is SpatialFinMusicArtist -> {
+                        openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Artist)
+                        true
+                    }
+                    is SpatialFinPlaylist -> {
+                        openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Playlist)
+                        true
+                    }
+                    is SpatialFinAudioBook -> {
+                        openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Book)
+                        true
+                    }
+                    is SpatialFinAudioTrack -> {
+                        jellyfinAudioDispatcher?.playQueue(listOf(item.toAudioQueueItem()))
                         true
                     }
                     else -> {
@@ -513,13 +572,26 @@ fun BeamNavigationRoot(
                         val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
                         dev.spatialfin.sendspin.SendspinMiniPlayer(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            suppressed = maNowPlaying.nowPlaying != null,
+                            suppressed = maNowPlaying.nowPlaying != null ||
+                                maNowPlaying.pendingPlayUri != null,
                         )
                         dev.spatialfin.unified.music.MaMiniPlayer(
                             session = maSession,
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
+                        jellyfinAudioDispatcher?.let { dispatcher ->
+                            JellyfinAudioMiniPlayer(
+                                dispatcher = dispatcher,
+                                onExpand = { showJellyfinAudioNowPlaying = true },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                // pendingPlayUri covers the optimistic window after an
+                                // MA play tap, before MA echoes nowPlaying — the
+                                // arbitration bridge is about to clear this queue.
+                                suppressed = maNowPlaying.nowPlaying != null ||
+                                    maNowPlaying.pendingPlayUri != null,
+                            )
+                        }
                         dev.spatialfin.unified.RemoteControlMiniPlayer(
                             session = activeRemoteSession,
                             availableSessions = activeRemoteSessions,
@@ -639,6 +711,14 @@ fun BeamNavigationRoot(
                                 detailBackRoute = BeamRoute.Home
                                 currentRoute = BeamRoute.Detail
                             },
+                            onOpenJellyfinAudioDetail = { itemId, title, detailType ->
+                                openJellyfinAudioDetail(
+                                    itemId = itemId,
+                                    title = title,
+                                    detailType = detailType,
+                                    backRoute = BeamRoute.Home,
+                                )
+                            },
                             onOpenPluginBrowse = { pluginId, rowId ->
                                 selectedPluginId = pluginId
                                 selectedPluginRowId = rowId
@@ -691,6 +771,14 @@ fun BeamNavigationRoot(
                                 detailBackRoute = BeamRoute.Search
                                 currentRoute = BeamRoute.Detail
                             },
+                            onOpenJellyfinAudioDetail = { itemId, title, detailType ->
+                                openJellyfinAudioDetail(
+                                    itemId = itemId,
+                                    title = title,
+                                    detailType = detailType,
+                                    backRoute = BeamRoute.Search,
+                                )
+                            },
                             onOpenMaSearch = { currentRoute = BeamRoute.MaSearch },
                         )
                     }
@@ -701,33 +789,69 @@ fun BeamNavigationRoot(
                 if (libraryId == null || libraryName == null || libraryType == null) {
                     currentRoute = BeamRoute.Home
                 } else {
-                    BeamLibraryScreen(
-                        contentPadding = PaddingValues(0.dp),
-                        parentId = libraryId,
-                        title = libraryName,
-                        type = libraryType,
-                        onBack = { currentRoute = BeamRoute.Home },
-                        onOpenLibrary = { nestedId, nestedName, nestedType ->
-                            selectedLibraryId = nestedId.toString()
-                            selectedLibraryName = nestedName
-                            selectedLibraryType = nestedType.name
-                            currentRoute = BeamRoute.Library
-                        },
-                        onOpenShow = { showId ->
-                            selectedShowId = showId.toString()
-                            showBackRoute = BeamRoute.Library
-                            currentRoute = BeamRoute.Show
-                        },
-                        onOpenSeason = { seasonId ->
-                            selectedSeasonId = seasonId.toString()
-                            seasonBackRoute = BeamRoute.Library
-                            currentRoute = BeamRoute.Season
-                        },
-                        onOpenItem = { itemId ->
-                            selectedDetailItemId = itemId.toString()
-                            detailBackRoute = BeamRoute.Library
-                            currentRoute = BeamRoute.Detail
-                        },
+                    if (libraryType in AUDIO_COLLECTION_TYPES) {
+                        JellyfinAudioLibraryScreen(
+                            libraryId = libraryId,
+                            libraryName = libraryName,
+                            libraryType = libraryType,
+                            onBack = { currentRoute = BeamRoute.Home },
+                            onDetailClick = { id, title, detailType ->
+                                openJellyfinAudioDetail(
+                                    itemId = id,
+                                    title = title,
+                                    detailType = detailType,
+                                    parentId = libraryId,
+                                    backRoute = BeamRoute.Library,
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        BeamLibraryScreen(
+                            contentPadding = PaddingValues(0.dp),
+                            parentId = libraryId,
+                            title = libraryName,
+                            type = libraryType,
+                            onBack = { currentRoute = BeamRoute.Home },
+                            onOpenLibrary = { nestedId, nestedName, nestedType ->
+                                selectedLibraryId = nestedId.toString()
+                                selectedLibraryName = nestedName
+                                selectedLibraryType = nestedType.name
+                                currentRoute = BeamRoute.Library
+                            },
+                            onOpenShow = { showId ->
+                                selectedShowId = showId.toString()
+                                showBackRoute = BeamRoute.Library
+                                currentRoute = BeamRoute.Show
+                            },
+                            onOpenSeason = { seasonId ->
+                                selectedSeasonId = seasonId.toString()
+                                seasonBackRoute = BeamRoute.Library
+                                currentRoute = BeamRoute.Season
+                            },
+                            onOpenItem = { itemId ->
+                                selectedDetailItemId = itemId.toString()
+                                detailBackRoute = BeamRoute.Library
+                                currentRoute = BeamRoute.Detail
+                            },
+                        )
+                    }
+                }
+                    }
+                    currentRoute == BeamRoute.AudioDetail -> {
+                val itemId = selectedAudioItemId?.let(UUID::fromString)
+                val title = selectedAudioTitle
+                val detailType = selectedAudioDetailType?.let(JellyfinAudioDetailType::valueOf)
+                if (itemId == null || title == null || detailType == null) {
+                    currentRoute = audioBackRoute
+                } else {
+                    JellyfinAudioDetailScreen(
+                        itemId = itemId,
+                        title = title,
+                        detailType = detailType,
+                        parentId = selectedAudioParentId?.let(UUID::fromString),
+                        onBack = { currentRoute = audioBackRoute },
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
                     }
@@ -1041,6 +1165,16 @@ fun BeamNavigationRoot(
                     onOpenParty = { showParty = true },
                     modifier = Modifier.fillMaxSize(),
                 )
+            }
+            jellyfinAudioDispatcher?.let { dispatcher ->
+                if (showJellyfinAudioNowPlaying) {
+                    BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
+                    JellyfinAudioNowPlayingScreen(
+                        dispatcher = dispatcher,
+                        onBack = { showJellyfinAudioNowPlaying = false },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
             if (showParty) {
                 BackHandler(onBack = { showParty = false })
@@ -1503,7 +1637,8 @@ private fun BeamSignedInShell(
         BeamRoute.NetworkAddShare,
         BeamRoute.NetworkShare,
         BeamRoute.MaSearch,
-        BeamRoute.MaDetail ->
+        BeamRoute.MaDetail,
+        BeamRoute.AudioDetail ->
             Unit
 
         BeamRoute.Welcome -> Unit

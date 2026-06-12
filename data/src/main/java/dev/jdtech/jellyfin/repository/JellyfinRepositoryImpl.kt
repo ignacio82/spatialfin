@@ -8,10 +8,16 @@ import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
+import dev.jdtech.jellyfin.models.SpatialFinLyrics
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinPerson
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -19,11 +25,20 @@ import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.models.SortBy
 import dev.jdtech.jellyfin.models.SortOrder
+import dev.jdtech.jellyfin.models.groupLooseAudioBooks
+import dev.jdtech.jellyfin.models.sortedForAlbumPlayback
+import dev.jdtech.jellyfin.models.sortedForPlaylistPlayback
+import dev.jdtech.jellyfin.models.toSpatialFinAudioBook
+import dev.jdtech.jellyfin.models.toSpatialFinAudioTrack
 import dev.jdtech.jellyfin.models.toSpatialFinCollection
 import dev.jdtech.jellyfin.models.toSpatialFinEpisode
 import dev.jdtech.jellyfin.models.toSpatialFinItem
+import dev.jdtech.jellyfin.models.toSpatialFinLyrics
+import dev.jdtech.jellyfin.models.toSpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.toSpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.toSpatialFinMovie
 import dev.jdtech.jellyfin.models.toSpatialFinPerson
+import dev.jdtech.jellyfin.models.toSpatialFinPlaylist
 import dev.jdtech.jellyfin.models.toSpatialFinSeason
 import dev.jdtech.jellyfin.models.toSpatialFinSegment
 import dev.jdtech.jellyfin.models.toSpatialFinSegmentsDto
@@ -52,6 +67,7 @@ import org.jellyfin.sdk.model.api.GeneralCommand
 import org.jellyfin.sdk.model.api.GeneralCommandMessage
 import org.jellyfin.sdk.model.api.GeneralCommandType
 import org.jellyfin.sdk.model.api.GroupInfoDto
+import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.ItemFilter
 import org.jellyfin.sdk.model.api.ItemSortBy
@@ -83,6 +99,7 @@ import org.jellyfin.sdk.model.api.JoinGroupRequestDto
 import org.jellyfin.sdk.model.api.NewGroupRequestDto
 import org.jellyfin.sdk.model.api.NextItemRequestDto
 import org.jellyfin.sdk.model.api.PreviousItemRequestDto
+import org.jellyfin.sdk.model.api.request.GetUniversalAudioStreamRequest
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import org.jellyfin.sdk.model.api.SubtitleProfile
 import org.jellyfin.sdk.model.api.UserDataChangeInfo
@@ -275,6 +292,313 @@ class JellyfinRepositoryImpl(
                 .items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
+        }
+
+    override suspend fun getAudioAlbums(
+        parentId: UUID?,
+        artistId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicAlbum> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    artistIds = artistId?.let(::listOf),
+                    includeItemTypes = listOf(BaseItemKind.MUSIC_ALBUM),
+                    recursive = true,
+                    sortBy = listOf(ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    limit = limit,
+                    fields = AUDIO_ITEM_FIELDS,
+                )
+                .content
+                .items
+                .map { it.toSpatialFinMusicAlbum(this@JellyfinRepositoryImpl) }
+        }
+
+    override suspend fun getAudioAlbumTracks(albumId: UUID): List<SpatialFinAudioTrack> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = albumId,
+                    includeItemTypes = listOf(BaseItemKind.AUDIO),
+                    // recursive=true + a non-library parentId returns 0 items on Jellyfin
+                    // 10.11 (recursive queries only resolve library roots as ancestors).
+                    // Albums are flat, so a direct-children query is correct anyway.
+                    recursive = false,
+                    sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    fields = AUDIO_ITEM_FIELDS,
+                )
+                .content
+                .items
+                .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl) }
+                .sortedForAlbumPlayback()
+        }
+
+    override suspend fun getAudioArtists(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicArtist> =
+        withContext(Dispatchers.IO) {
+            // /Artists/AlbumArtists, not Items?includeItemTypes=MusicArtist: the Items
+            // query returns folder-backed artist entries whose ids don't match the
+            // ArtistItems links on tracks, so opening one finds zero albums/tracks.
+            jellyfinApi.artistsApi
+                .getAlbumArtists(
+                    userId = jellyfinApi.userId!!,
+                    parentId = parentId,
+                    limit = limit,
+                    sortBy = listOf(ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    fields = listOf(ItemFields.ITEM_COUNTS, ItemFields.OVERVIEW),
+                )
+                .content
+                .items
+                .map { it.toSpatialFinMusicArtist(this@JellyfinRepositoryImpl) }
+        }
+
+    override suspend fun getAudioArtistTracks(
+        parentId: UUID?,
+        artistId: UUID,
+        limit: Int?,
+    ): List<SpatialFinAudioTrack> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    artistIds = listOf(artistId),
+                    includeItemTypes = listOf(BaseItemKind.AUDIO),
+                    recursive = true,
+                    sortBy = listOf(ItemSortBy.ALBUM, ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    limit = limit,
+                    fields = AUDIO_ITEM_FIELDS,
+                )
+                .content
+                .items
+                .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl) }
+                .sortedForAlbumPlayback()
+        }
+
+    override suspend fun getAudioSongs(parentId: UUID?, limit: Int?): List<SpatialFinAudioTrack> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    includeItemTypes = listOf(BaseItemKind.AUDIO),
+                    recursive = true,
+                    sortBy = listOf(ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    limit = limit,
+                    fields = AUDIO_ITEM_FIELDS,
+                )
+                .content
+                .items
+                .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl) }
+        }
+
+    override suspend fun getAudioPlaylists(parentId: UUID?, limit: Int?): List<SpatialFinPlaylist> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    includeItemTypes = listOf(BaseItemKind.PLAYLIST),
+                    recursive = parentId != null,
+                    sortBy = listOf(ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    limit = limit,
+                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT, ItemFields.OVERVIEW),
+                )
+                .content
+                .items
+                .map { it.toSpatialFinPlaylist(this@JellyfinRepositoryImpl) }
+        }
+
+    override suspend fun getAudioPlaylistTracks(playlistId: UUID): List<SpatialFinAudioTrack> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.playlistsApi
+                .getPlaylistItems(
+                    playlistId = playlistId,
+                    userId = jellyfinApi.userId!!,
+                    fields = AUDIO_ITEM_FIELDS,
+                    enableImages = true,
+                    enableUserData = true,
+                    imageTypeLimit = 1,
+                    enableImageTypes = listOf(ImageType.PRIMARY),
+                )
+                .content
+                .items
+                .filter { it.type == BaseItemKind.AUDIO || it.type == BaseItemKind.AUDIO_BOOK }
+                .mapIndexed { index, item ->
+                    item.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = item.type == BaseItemKind.AUDIO_BOOK)
+                        .copy(trackNumber = index)
+                }
+                .sortedForPlaylistPlayback()
+        }
+
+    override suspend fun getAudioBooks(parentId: UUID?, limit: Int?): List<SpatialFinAudioBook> =
+        withContext(Dispatchers.IO) {
+            val explicitBooks =
+                jellyfinApi.itemsApi
+                    .getItems(
+                        jellyfinApi.userId!!,
+                        parentId = parentId,
+                        includeItemTypes = listOf(BaseItemKind.AUDIO_BOOK, BaseItemKind.BOOK, BaseItemKind.FOLDER, BaseItemKind.MUSIC_ALBUM),
+                        recursive = false,
+                        sortBy = listOf(ItemSortBy.SORT_NAME),
+                        sortOrder = listOf(ItemSortOrder.ASCENDING),
+                        limit = limit,
+                        fields = AUDIO_ITEM_FIELDS + listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    )
+                    .content
+                    .items
+                    .filter { it.type != BaseItemKind.FOLDER || it.childCount != null || it.recursiveItemCount != null }
+                    .map { it.toSpatialFinAudioBook(this@JellyfinRepositoryImpl) }
+
+            val looseBooks =
+                jellyfinApi.itemsApi
+                    .getItems(
+                        jellyfinApi.userId!!,
+                        parentId = parentId,
+                        includeItemTypes = listOf(BaseItemKind.AUDIO),
+                        recursive = true,
+                        sortBy = listOf(ItemSortBy.ALBUM, ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+                        sortOrder = listOf(ItemSortOrder.ASCENDING),
+                        fields = AUDIO_ITEM_FIELDS,
+                    )
+                    .content
+                    .items
+                    .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = true) }
+                    .groupLooseAudioBooks()
+
+            (explicitBooks + looseBooks)
+                .distinctBy { it.id }
+                .sortedBy { it.name.lowercase() }
+                .let { books -> limit?.let(books::take) ?: books }
+        }
+
+    override suspend fun getAudioBookTracks(bookId: UUID): List<SpatialFinAudioTrack> =
+        withContext(Dispatchers.IO) {
+            val item = runCatching {
+                jellyfinApi.userLibraryApi.getItem(itemId = bookId, userId = jellyfinApi.userId!!).content
+            }.getOrNull()
+
+            when (item?.type) {
+                BaseItemKind.AUDIO ->
+                    jellyfinApi.itemsApi
+                        .getItems(
+                            jellyfinApi.userId!!,
+                            parentId = item.parentId,
+                            includeItemTypes = listOf(BaseItemKind.AUDIO),
+                            recursive = false,
+                            sortBy = listOf(ItemSortBy.ALBUM, ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+                            sortOrder = listOf(ItemSortOrder.ASCENDING),
+                            fields = AUDIO_ITEM_FIELDS,
+                        )
+                        .content
+                        .items
+                        .filter { candidate ->
+                            !item.album.isNullOrBlank() && candidate.album == item.album ||
+                                item.albumId != null && candidate.albumId == item.albumId
+                        }
+                        .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = true) }
+                        .sortedForAlbumPlayback()
+                        .ifEmpty { listOf(item.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = true)) }
+
+                BaseItemKind.MUSIC_ALBUM ->
+                    getAudioAlbumTracks(bookId).map { it.copy(isAudiobook = true) }
+
+                else ->
+                    collectAudioDescendants(bookId)
+                        .map { it.toSpatialFinAudioTrack(this@JellyfinRepositoryImpl, forceAudiobook = true) }
+                        .sortedForAlbumPlayback()
+            }
+        }
+
+    /**
+     * Depth-first fetch of all audio files under a folder-like item. Needed because
+     * recursive=true with a non-library parentId returns 0 items on Jellyfin 10.11,
+     * so nested audiobook folders (book/disc subfolders) must be walked client-side.
+     */
+    private suspend fun collectAudioDescendants(parentId: UUID, depth: Int = 0): List<BaseItemDto> {
+        if (depth > 4) return emptyList()
+        val children =
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    recursive = false,
+                    sortBy = listOf(ItemSortBy.PARENT_INDEX_NUMBER, ItemSortBy.INDEX_NUMBER, ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    fields = AUDIO_ITEM_FIELDS,
+                )
+                .content
+                .items
+        return children.flatMap { child ->
+            when (child.type) {
+                BaseItemKind.AUDIO, BaseItemKind.AUDIO_BOOK -> listOf(child)
+                BaseItemKind.FOLDER, BaseItemKind.MUSIC_ALBUM ->
+                    collectAudioDescendants(child.id, depth + 1)
+                else -> emptyList()
+            }
+        }
+    }
+
+    override suspend fun getAudioSearchItems(
+        query: String,
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinItem> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.itemsApi
+                .getItems(
+                    jellyfinApi.userId!!,
+                    parentId = parentId,
+                    searchTerm = query,
+                    includeItemTypes =
+                        listOf(
+                            BaseItemKind.AUDIO,
+                            BaseItemKind.MUSIC_ALBUM,
+                            BaseItemKind.MUSIC_ARTIST,
+                            BaseItemKind.PLAYLIST,
+                            BaseItemKind.AUDIO_BOOK,
+                            BaseItemKind.BOOK,
+                        ),
+                    recursive = true,
+                    sortBy = listOf(ItemSortBy.SORT_NAME),
+                    sortOrder = listOf(ItemSortOrder.ASCENDING),
+                    limit = limit,
+                    fields = AUDIO_ITEM_FIELDS + listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                )
+                .content
+                .items
+                .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
+        }
+
+    override suspend fun getAudioTrack(itemId: UUID): SpatialFinAudioTrack? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                jellyfinApi.userLibraryApi
+                    .getItem(itemId = itemId, userId = jellyfinApi.userId!!)
+                    .content
+                    .toSpatialFinAudioTrack(this@JellyfinRepositoryImpl)
+            }.getOrNull()
+        }
+
+    override suspend fun getAudioLyrics(itemId: UUID): SpatialFinLyrics? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                jellyfinApi.lyricsApi.getLyrics(itemId).content.toSpatialFinLyrics(itemId)
+            }.getOrElse {
+                Timber.d(it, "No lyrics available for audio item %s", itemId)
+                null
+            }
         }
 
     override suspend fun getSuggestions(): List<SpatialFinItem> =
@@ -480,6 +804,23 @@ class JellyfinRepositoryImpl(
             }
         }
 
+    override suspend fun getAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            try {
+                jellyfinApi.audioApi.getAudioStreamUrl(
+                    itemId,
+                    static = true,
+                    mediaSourceId = mediaSourceId,
+                )
+            } catch (e: Exception) {
+                Timber.e(e)
+                ""
+            }
+        }
+
     override suspend fun getAudioTranscodeStreamUrl(
         itemId: UUID,
         mediaSourceId: String,
@@ -587,6 +928,34 @@ class JellyfinRepositoryImpl(
                 ""
             }
         }
+
+    override fun getUniversalAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+        startPositionTicks: Long,
+    ): String {
+        return jellyfinApi.universalAudioApi.getUniversalAudioStreamUrl(
+            itemId = itemId,
+            container = UNIVERSAL_AUDIO_DIRECT_PLAY_CONTAINERS,
+            mediaSourceId = mediaSourceId,
+            deviceId = jellyfinApi.jellyfin.deviceInfo?.id,
+            userId = jellyfinApi.userId!!,
+            audioCodec = "aac",
+            maxAudioChannels = null,
+            transcodingAudioChannels = null,
+            maxStreamingBitrate = 320_000,
+            audioBitRate = 320_000,
+            startTimeTicks = startPositionTicks.takeIf { it > 0L },
+            transcodingContainer = "aac",
+            transcodingProtocol = MediaStreamProtocol.HTTP,
+            maxAudioSampleRate = null,
+            maxAudioBitDepth = null,
+            enableRemoteMedia = true,
+            enableAudioVbrEncoding = true,
+            breakOnNonKeyFrames = false,
+            enableRedirection = true,
+        )
+    }
 
     override suspend fun getMediaAttachment(
         itemId: UUID,
@@ -1196,5 +1565,18 @@ class JellyfinRepositoryImpl(
 
     companion object {
         private val DASHLESS_UUID = Regex("^[0-9a-fA-F]{32}$")
+        private val AUDIO_ITEM_FIELDS =
+            listOf(
+                ItemFields.MEDIA_SOURCES,
+                ItemFields.MEDIA_STREAMS,
+                ItemFields.CHAPTERS,
+                ItemFields.OVERVIEW,
+                ItemFields.GENRES,
+                ItemFields.PARENT_ID,
+                ItemFields.PRIMARY_IMAGE_ASPECT_RATIO,
+                ItemFields.CAN_DOWNLOAD,
+            )
+        private val UNIVERSAL_AUDIO_DIRECT_PLAY_CONTAINERS =
+            listOf("mp3", "aac", "flac", "wav", "ogg", "m4a", "m4b")
     }
 }

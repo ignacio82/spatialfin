@@ -35,6 +35,12 @@ suspend fun BaseItemDto.toSpatialFinItem(
         BaseItemKind.SERIES -> toSpatialFinShow(jellyfinRepository)
         BaseItemKind.BOX_SET -> toSpatialFinBoxSet(jellyfinRepository)
         BaseItemKind.FOLDER -> toSpatialFinFolder(jellyfinRepository)
+        BaseItemKind.AUDIO -> toSpatialFinAudioTrack(jellyfinRepository)
+        BaseItemKind.MUSIC_ALBUM -> toSpatialFinMusicAlbum(jellyfinRepository)
+        BaseItemKind.MUSIC_ARTIST -> toSpatialFinMusicArtist(jellyfinRepository)
+        BaseItemKind.PLAYLIST -> toSpatialFinPlaylist(jellyfinRepository)
+        BaseItemKind.AUDIO_BOOK,
+        BaseItemKind.BOOK -> toSpatialFinAudioBook(jellyfinRepository)
         else -> null
     }
 }

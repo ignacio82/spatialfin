@@ -106,7 +106,15 @@ fun SendspinFullscreenPlayer(
     // outright — never auto-pop the SendSpin fullscreen (it used to flash back on
     // pause). The receiver keeps running headless.
     val maDriven = state.musicAssistantAuthState == SendspinMusicAssistantAuthState.AUTHENTICATED
-    if (suppressed || maDriven || !state.showControls) return
+    // Also self-suppress whenever the MA session presents (or is about to
+    // present) playback. The auth state above flips to AUTHENTICATED only after
+    // the receiver's MA handshake completes, so on a cold "play in MA" the
+    // SendSpin audio frames (and showControls) can arrive first and this old
+    // receiver-controls fullscreen flashed over the rich MA player. pendingPlayUri
+    // is set optimistically the moment the user taps play, which closes that gap.
+    val maSessionState by queueViewModel.maSession.session.collectAsState()
+    val maPresents = maSessionState.nowPlaying != null || maSessionState.pendingPlayUri != null
+    if (suppressed || maDriven || maPresents || !state.showControls) return
 
     val context = LocalContext.current
     val bitmap =

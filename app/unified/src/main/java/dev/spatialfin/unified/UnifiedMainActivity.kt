@@ -151,6 +151,9 @@ class UnifiedMainActivity : AppCompatActivity() {
     @Inject
     lateinit var fcastSession: dev.spatialfin.fcast.session.CastSessionManager
 
+    @Inject
+    lateinit var jellyfinAudioDispatcher: dev.spatialfin.unified.audio.JellyfinAudioPlayDispatcher
+
     private val llmModelManager: LlmModelManager by lazy(LazyThreadSafetyMode.NONE) {
         modelManager.get()
     }
@@ -300,41 +303,62 @@ class UnifiedMainActivity : AppCompatActivity() {
             // Surface MA playback to the system (shade / lock-screen / BT) via a
             // MediaSession the moment there's a now-playing track.
             dev.spatialfin.unified.music.MaMediaSessionBridge(maSession)
+            // Same for native Jellyfin audio: connect a controller (which starts
+            // JellyfinAudioMediaSessionService and its media notification) while a
+            // queue is loaded.
+            dev.spatialfin.unified.audio.JellyfinAudioMediaSessionBridge(jellyfinAudioDispatcher)
+            // Keep MA and native Jellyfin audio mutually exclusive — one active
+            // playback, one mini player, one full-screen player.
+            dev.spatialfin.unified.audio.AudioPlaybackArbitrationBridge(
+                maSession = maSession,
+                maServiceClient = maServiceClient,
+                jellyfinDispatcher = jellyfinAudioDispatcher,
+            )
 
             when (deviceClass) {
                 DeviceClass.TV -> {
-                    TvTheme {
-                        TvNavigationRoot(
-                            state = state,
-                            appPreferences = appPreferences,
-                            maSession = maSession,
-                            maServiceClient = maServiceClient,
-                            onFinishApp = ::finishAndKillProcess,
-                            initialSearchQuery = initialSearchQueryExtra,
-                            maDeepLink = maUiDeepLink,
-                            onMaDeepLinkHandled = { maUiDeepLink.value = null },
-                        )
+                    CompositionLocalProvider(
+                        dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher provides
+                            jellyfinAudioDispatcher
+                    ) {
+                        TvTheme {
+                            TvNavigationRoot(
+                                state = state,
+                                appPreferences = appPreferences,
+                                maSession = maSession,
+                                maServiceClient = maServiceClient,
+                                onFinishApp = ::finishAndKillProcess,
+                                initialSearchQuery = initialSearchQueryExtra,
+                                maDeepLink = maUiDeepLink,
+                                onMaDeepLinkHandled = { maUiDeepLink.value = null },
+                            )
+                        }
                     }
                 }
 
                 DeviceClass.PHONE -> {
-                    BeamTheme {
-                        Surface(modifier = Modifier, color = Color.Transparent) {
-                            BeamNavigationRoot(
-                                state = state,
-                                appPreferences = appPreferences,
-                                repository = repository,
-                                llmModelManager = llmModelManager,
-                                voiceTelemetryStore = voiceTelemetryStore,
-                                fcastSession = fcastSession,
-                                musicAssistantRepository = musicAssistantRepository,
-                                maSession = maSession,
-                                maServiceClient = maServiceClient,
-                                onReconnect = viewModel::reconnect,
-                                onFinishApp = ::finishAndKillProcess,
-                                maDeepLink = maUiDeepLink,
-                                onMaDeepLinkHandled = { maUiDeepLink.value = null },
-                            )
+                    CompositionLocalProvider(
+                        dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher provides
+                            jellyfinAudioDispatcher
+                    ) {
+                        BeamTheme {
+                            Surface(modifier = Modifier, color = Color.Transparent) {
+                                BeamNavigationRoot(
+                                    state = state,
+                                    appPreferences = appPreferences,
+                                    repository = repository,
+                                    llmModelManager = llmModelManager,
+                                    voiceTelemetryStore = voiceTelemetryStore,
+                                    fcastSession = fcastSession,
+                                    musicAssistantRepository = musicAssistantRepository,
+                                    maSession = maSession,
+                                    maServiceClient = maServiceClient,
+                                    onReconnect = viewModel::reconnect,
+                                    onFinishApp = ::finishAndKillProcess,
+                                    maDeepLink = maUiDeepLink,
+                                    onMaDeepLinkHandled = { maUiDeepLink.value = null },
+                                )
+                            }
                         }
                     }
                 }
@@ -346,6 +370,10 @@ class UnifiedMainActivity : AppCompatActivity() {
                     // Make the MA session track local SendSpin playback → one unified player.
                     dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
 
+                    CompositionLocalProvider(
+                        dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher provides
+                            jellyfinAudioDispatcher
+                    ) {
                     SpatialFinTheme(dynamicColor = state.isDynamicColors) {
                         val navController = rememberNavController()
                         val lifecycleOwner = LocalLifecycleOwner.current
@@ -390,6 +418,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

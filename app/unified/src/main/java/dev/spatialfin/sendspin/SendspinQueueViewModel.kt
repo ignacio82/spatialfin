@@ -21,7 +21,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SendspinQueueViewModel @Inject constructor(
-    private val serviceClient: ServiceClient
+    private val serviceClient: ServiceClient,
+    /** Exposed so [SendspinFullscreenPlayer] can self-suppress while MA presents playback. */
+    val maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
 ) : ViewModel() {
 
     private val _queueItems = MutableStateFlow<List<ServerQueueItem>>(emptyList())

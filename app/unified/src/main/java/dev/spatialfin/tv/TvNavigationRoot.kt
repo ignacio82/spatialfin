@@ -131,28 +131,42 @@ import dev.jdtech.jellyfin.core.presentation.components.MetadataPill
 import dev.jdtech.jellyfin.film.presentation.home.HomeState
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
 import dev.jdtech.jellyfin.models.SpatialFinBoxSet
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinFolder
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.View
 import dev.jdtech.jellyfin.models.isDownloaded
+import dev.jdtech.jellyfin.models.toAudioQueueItem
 import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.player.tv.TvPlayerActivity
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.getShowDateString
 import dev.jdtech.jellyfin.viewmodels.MainState
+import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
+import dev.spatialfin.unified.audio.JellyfinAudioDetailType
+import dev.spatialfin.unified.audio.JellyfinAudioLibraryScreen
+import dev.spatialfin.unified.audio.JellyfinAudioMiniPlayer
+import dev.spatialfin.unified.audio.JellyfinAudioNowPlayingScreen
+import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
 
 private enum class TvRoute {
     Home, Search, Library, Detail, Show, Season, Person, Companion, Settings, Users,
     /** Music Assistant search + detail (Phase 2). */
     MaSearch, MaDetail,
+    /** Native Jellyfin albums/artists/playlists/books. */
+    AudioDetail,
 }
 
 private data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
@@ -167,6 +181,9 @@ private val tvNavItems = listOf(
 )
 
 val LocalFocusedBackground = compositionLocalOf<(Any?) -> Unit> { {} }
+
+private val AUDIO_COLLECTION_TYPES =
+    setOf(CollectionType.Music, CollectionType.Playlists, CollectionType.Books)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -211,6 +228,10 @@ fun TvNavigationRoot(
     var selectedShowId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSeasonId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioTitle by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioDetailType by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAudioParentId by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     // Make the MA session track local SendSpin playback → one unified player.
@@ -226,6 +247,7 @@ fun TvNavigationRoot(
             serviceClient = maServiceClient,
         )
     }
+    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
 
     LaunchedEffect(Unit) { homeViewModel.loadData() }
 
@@ -252,11 +274,34 @@ fun TvNavigationRoot(
         navigate(TvRoute.MaDetail)
     }
 
+    fun openJellyfinAudioDetail(
+        itemId: UUID,
+        title: String,
+        detailType: JellyfinAudioDetailType,
+        parentId: UUID? = null,
+    ) {
+        selectedAudioItemId = itemId.toString()
+        selectedAudioTitle = title
+        selectedAudioDetailType = detailType.name
+        selectedAudioParentId = parentId?.toString()
+        navigate(TvRoute.AudioDetail)
+    }
+
     fun openItem(item: SpatialFinItem) {
         when (item) {
             is SpatialFinShow -> { selectedShowId = item.id.toString(); navigate(TvRoute.Show) }
             is SpatialFinSeason -> { selectedSeasonId = item.id.toString(); navigate(TvRoute.Season) }
             is SpatialFinCollection -> Unit
+            is SpatialFinMusicAlbum ->
+                openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Album)
+            is SpatialFinMusicArtist ->
+                openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Artist)
+            is SpatialFinPlaylist ->
+                openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Playlist)
+            is SpatialFinAudioBook ->
+                openJellyfinAudioDetail(item.id, item.name, JellyfinAudioDetailType.Book)
+            is SpatialFinAudioTrack ->
+                jellyfinAudioDispatcher?.playQueue(listOf(item.toAudioQueueItem()))
             else -> {
                 // MA library items carry their URI in originalTitle — tap = play,
                 // not open-Jellyfin-detail (which would 404 on an MA uri).
@@ -343,7 +388,34 @@ fun TvNavigationRoot(
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
-                        TvRoute.Library -> TvLibraryScreen(selectedView, homeState.views.map { it.view }, { popBack() }, { selectedView = it }, ::openItem)
+                        TvRoute.Library -> {
+                            val view = selectedView
+                            if (view != null && view.type in AUDIO_COLLECTION_TYPES) {
+                                JellyfinAudioLibraryScreen(
+                                    libraryId = view.id,
+                                    libraryName = view.name,
+                                    libraryType = view.type,
+                                    onBack = { popBack() },
+                                    onDetailClick = { id, title, detailType ->
+                                        openJellyfinAudioDetail(
+                                            itemId = id,
+                                            title = title,
+                                            detailType = detailType,
+                                            parentId = view.id,
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                TvLibraryScreen(
+                                    selectedView,
+                                    homeState.views.map { it.view },
+                                    { popBack() },
+                                    { selectedView = it },
+                                    ::openItem,
+                                )
+                            }
+                        }
                         TvRoute.Detail -> TvItemDetailScreen(selectedItemId?.let(UUID::fromString), { popBack() }, ::openItem, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, { selectedShowId = it.toString(); navigate(TvRoute.Show) }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) })
                         TvRoute.Show -> TvShowScreen(selectedShowId?.let(UUID::fromString), { popBack() }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) })
                         TvRoute.Season -> TvSeasonScreen(selectedSeasonId?.let(UUID::fromString), { popBack() }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) })
@@ -369,13 +441,35 @@ fun TvNavigationRoot(
                                 )
                             }
                         }
+                        TvRoute.AudioDetail -> {
+                            val itemId = selectedAudioItemId?.let(UUID::fromString)
+                            val title = selectedAudioTitle
+                            val detailType =
+                                selectedAudioDetailType?.let(JellyfinAudioDetailType::valueOf)
+                            if (itemId == null || title == null || detailType == null) {
+                                popBack()
+                            } else {
+                                JellyfinAudioDetailScreen(
+                                    itemId = itemId,
+                                    title = title,
+                                    detailType = detailType,
+                                    parentId = selectedAudioParentId?.let(UUID::fromString),
+                                    onBack = { popBack() },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
                     }
                 }
             }
             val maNowPlayingTv by maSession.session.collectAsStateWithLifecycle()
-            val maPresentsPlayback = maNowPlayingTv.nowPlaying != null
+            // pendingPlayUri covers the optimistic window after an MA play tap,
+            // before MA echoes nowPlaying.
+            val maPresentsPlayback =
+                maNowPlayingTv.nowPlaying != null || maNowPlayingTv.pendingPlayUri != null
             dev.spatialfin.sendspin.SendspinFullscreenPlayer(suppressed = maPresentsPlayback)
             var showNowPlaying by remember { mutableStateOf(false) }
+            var showJellyfinAudioNowPlaying by remember { mutableStateOf(false) }
             // Bottom-of-screen MA mini-player. D-pad reaches it after the
             // last focusable row in the active screen.
             Box(
@@ -390,6 +484,13 @@ fun TvNavigationRoot(
                         session = maSession,
                         onExpand = { showNowPlaying = true },
                     )
+                    jellyfinAudioDispatcher?.let { dispatcher ->
+                        JellyfinAudioMiniPlayer(
+                            dispatcher = dispatcher,
+                            onExpand = { showJellyfinAudioNowPlaying = true },
+                            suppressed = maPresentsPlayback,
+                        )
+                    }
                 }
             }
             var showPickerSheet by remember { mutableStateOf(false) }
@@ -419,6 +520,16 @@ fun TvNavigationRoot(
                     onOpenParty = { showParty = true },
                     modifier = Modifier.fillMaxSize(),
                 )
+            }
+            jellyfinAudioDispatcher?.let { dispatcher ->
+                if (showJellyfinAudioNowPlaying) {
+                    BackHandler(onBack = { showJellyfinAudioNowPlaying = false })
+                    JellyfinAudioNowPlayingScreen(
+                        dispatcher = dispatcher,
+                        onBack = { showJellyfinAudioNowPlaying = false },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
             if (showParty) {
                 BackHandler(onBack = { showParty = false })

@@ -185,6 +185,18 @@
             </intent-filter>
         </service>
 
+        <!-- System MediaSession host for native Jellyfin audio playback (shade /
+             lock-screen / BT transport). Separate from MaMediaSessionService and
+             built with an explicit session ID so the two sessions can coexist. -->
+        <service
+            android:name="dev.spatialfin.unified.audio.JellyfinAudioMediaSessionService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
         <!-- Debug-only launcher Activity for split-A/V iteration via `adb shell am start`.
              The class no-ops on release builds (BuildConfig.DEBUG gate) but the manifest entry
              stays universal — Android does not let a release-only entry coexist with a debug-

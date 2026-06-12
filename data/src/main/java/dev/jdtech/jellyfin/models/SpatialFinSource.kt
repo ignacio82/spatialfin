@@ -31,6 +31,9 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
     itemId: UUID,
     includePath: Boolean = false,
 ): SpatialFinSource {
+    val isAudioItem = mediaStreams?.none { it.type == org.jellyfin.sdk.model.api.MediaStreamType.VIDEO } == true && 
+                      mediaStreams?.any { it.type == org.jellyfin.sdk.model.api.MediaStreamType.AUDIO } == true
+
     // If Jellyfin rejected direct play (e.g. source bitrate > user's cap) it
     // returns an HLS master playlist URL in `transcodingUrl`. Prefix with the
     // server base so the URL is absolute and ExoPlayer's DefaultMediaSourceFactory
@@ -48,7 +51,11 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
                 try {
                     if (includePath) {
                         if (supportsDirectPlay || absoluteTranscodingUrl == null) {
-                            jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                            if (isAudioItem) {
+                                jellyfinRepository.getAudioStreamUrl(itemId, id.orEmpty())
+                            } else {
+                                jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                            }
                         } else {
                             absoluteTranscodingUrl
                         }

@@ -8,15 +8,19 @@ import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 import org.jellyfin.sdk.api.client.HttpClientOptions
 import org.jellyfin.sdk.api.client.extensions.brandingApi
+import org.jellyfin.sdk.api.client.extensions.artistsApi
+import org.jellyfin.sdk.api.client.extensions.audioApi
 import org.jellyfin.sdk.api.client.extensions.devicesApi
 import org.jellyfin.sdk.api.client.extensions.itemLookupApi
 import org.jellyfin.sdk.api.client.extensions.itemRefreshApi
 import org.jellyfin.sdk.api.client.extensions.itemUpdateApi
 import org.jellyfin.sdk.api.client.extensions.itemsApi
 import org.jellyfin.sdk.api.client.extensions.libraryApi
+import org.jellyfin.sdk.api.client.extensions.lyricsApi
 import org.jellyfin.sdk.api.client.extensions.mediaInfoApi
 import org.jellyfin.sdk.api.client.extensions.mediaSegmentsApi
 import org.jellyfin.sdk.api.client.extensions.playStateApi
+import org.jellyfin.sdk.api.client.extensions.playlistsApi
 import org.jellyfin.sdk.api.client.extensions.quickConnectApi
 import org.jellyfin.sdk.api.client.extensions.sessionApi
 import org.jellyfin.sdk.api.client.extensions.syncPlayApi
@@ -25,6 +29,7 @@ import org.jellyfin.sdk.api.client.extensions.suggestionsApi
 import org.jellyfin.sdk.api.client.extensions.systemApi
 import org.jellyfin.sdk.api.client.extensions.trickplayApi
 import org.jellyfin.sdk.api.client.extensions.tvShowsApi
+import org.jellyfin.sdk.api.client.extensions.universalAudioApi
 import org.jellyfin.sdk.api.client.extensions.userApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.api.client.extensions.userViewsApi
@@ -68,6 +73,8 @@ class JellyfinApi(
     var userId: UUID? = null
 
     val brandingApi = api.brandingApi
+    val artistsApi = api.artistsApi
+    val audioApi = api.audioApi
     val devicesApi = api.devicesApi
     val itemsApi = api.itemsApi
     val mediaInfoApi = api.mediaInfoApi
@@ -89,6 +96,9 @@ class JellyfinApi(
     val itemRefreshApi = api.itemRefreshApi
     val itemUpdateApi = api.itemUpdateApi
     val libraryApi = api.libraryApi
+    val lyricsApi = api.lyricsApi
+    val playlistsApi = api.playlistsApi
+    val universalAudioApi = api.universalAudioApi
 
     companion object {
         @Volatile private var INSTANCE: JellyfinApi? = null

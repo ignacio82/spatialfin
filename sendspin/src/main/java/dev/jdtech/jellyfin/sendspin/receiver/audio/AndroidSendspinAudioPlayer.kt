@@ -231,10 +231,14 @@ class AndroidSendspinAudioPlayer(
             val track = synchronized(lock) {
                 ensureAudioTrackLocked(frame.format)
             } ?: return
+            
             val written = track.write(data, offset, data.size - offset, AudioTrack.WRITE_BLOCKING)
             if (written < 0) {
                 droppedDecodeFrames += (data.size - offset) / frame.format.bytesPerFrame
                 Timber.tag(TAG).w("AudioTrack write failed: %d", written)
+                synchronized(lock) {
+                    releaseTrackLocked()
+                }
                 return
             }
             if (written == 0) {

@@ -2,10 +2,16 @@ package dev.jdtech.jellyfin.repository
 
 import androidx.paging.PagingData
 import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
+import dev.jdtech.jellyfin.models.SpatialFinLyrics
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinPerson
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -159,6 +165,102 @@ constructor(
             offline = { offlineRepository.getSearchItems(query) },
         )
 
+    override suspend fun getAudioAlbums(
+        parentId: UUID?,
+        artistId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicAlbum> =
+        runWithFallback(
+            online = { onlineRepository.getAudioAlbums(parentId, artistId, limit) },
+            offline = { offlineRepository.getAudioAlbums(parentId, artistId, limit) },
+        )
+
+    override suspend fun getAudioAlbumTracks(albumId: UUID): List<SpatialFinAudioTrack> =
+        runWithFallback(
+            online = { onlineRepository.getAudioAlbumTracks(albumId) },
+            offline = { offlineRepository.getAudioAlbumTracks(albumId) },
+        )
+
+    override suspend fun getAudioArtists(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicArtist> =
+        runWithFallback(
+            online = { onlineRepository.getAudioArtists(parentId, limit) },
+            offline = { offlineRepository.getAudioArtists(parentId, limit) },
+        )
+
+    override suspend fun getAudioArtistTracks(
+        parentId: UUID?,
+        artistId: UUID,
+        limit: Int?,
+    ): List<SpatialFinAudioTrack> =
+        runWithFallback(
+            online = { onlineRepository.getAudioArtistTracks(parentId, artistId, limit) },
+            offline = { offlineRepository.getAudioArtistTracks(parentId, artistId, limit) },
+        )
+
+    override suspend fun getAudioSongs(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinAudioTrack> =
+        runWithFallback(
+            online = { onlineRepository.getAudioSongs(parentId, limit) },
+            offline = { offlineRepository.getAudioSongs(parentId, limit) },
+        )
+
+    override suspend fun getAudioPlaylists(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinPlaylist> =
+        runWithFallback(
+            online = { onlineRepository.getAudioPlaylists(parentId, limit) },
+            offline = { offlineRepository.getAudioPlaylists(parentId, limit) },
+        )
+
+    override suspend fun getAudioPlaylistTracks(playlistId: UUID): List<SpatialFinAudioTrack> =
+        runWithFallback(
+            online = { onlineRepository.getAudioPlaylistTracks(playlistId) },
+            offline = { offlineRepository.getAudioPlaylistTracks(playlistId) },
+        )
+
+    override suspend fun getAudioBooks(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinAudioBook> =
+        runWithFallback(
+            online = { onlineRepository.getAudioBooks(parentId, limit) },
+            offline = { offlineRepository.getAudioBooks(parentId, limit) },
+        )
+
+    override suspend fun getAudioBookTracks(bookId: UUID): List<SpatialFinAudioTrack> =
+        runWithFallback(
+            online = { onlineRepository.getAudioBookTracks(bookId) },
+            offline = { offlineRepository.getAudioBookTracks(bookId) },
+        )
+
+    override suspend fun getAudioSearchItems(
+        query: String,
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinItem> =
+        runWithFallback(
+            online = { onlineRepository.getAudioSearchItems(query, parentId, limit) },
+            offline = { offlineRepository.getAudioSearchItems(query, parentId, limit) },
+        )
+
+    override suspend fun getAudioTrack(itemId: UUID): SpatialFinAudioTrack? =
+        runWithFallback(
+            online = { onlineRepository.getAudioTrack(itemId) },
+            offline = { offlineRepository.getAudioTrack(itemId) },
+        )
+
+    override suspend fun getAudioLyrics(itemId: UUID): SpatialFinLyrics? =
+        runWithFallback(
+            online = { onlineRepository.getAudioLyrics(itemId) },
+            offline = { offlineRepository.getAudioLyrics(itemId) },
+        )
+
     override suspend fun getSuggestions(): List<SpatialFinItem> =
         runWithFallback(
             online = { onlineRepository.getSuggestions() },
@@ -245,6 +347,12 @@ constructor(
     ): String =
         runOnlineOnly { onlineRepository.getStreamUrl(itemId, mediaSourceId, audioStreamIndex) }
 
+    override suspend fun getAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+    ): String =
+        runOnlineOnly { onlineRepository.getAudioStreamUrl(itemId, mediaSourceId) }
+
     override suspend fun getAudioTranscodeStreamUrl(
         itemId: UUID,
         mediaSourceId: String,
@@ -261,6 +369,13 @@ constructor(
                 audioStreamIndex,
             )
         }
+
+    override fun getUniversalAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+        startPositionTicks: Long,
+    ): String =
+        onlineRepository.getUniversalAudioStreamUrl(itemId, mediaSourceId, startPositionTicks)
 
     override suspend fun getMediaAttachment(
         itemId: UUID,

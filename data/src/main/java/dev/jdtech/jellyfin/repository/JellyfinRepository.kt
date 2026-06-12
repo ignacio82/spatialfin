@@ -2,10 +2,16 @@ package dev.jdtech.jellyfin.repository
 
 import androidx.paging.PagingData
 import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
+import dev.jdtech.jellyfin.models.SpatialFinLyrics
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinPerson
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -73,6 +79,30 @@ interface JellyfinRepository {
 
     suspend fun getSearchItems(query: String): List<SpatialFinItem>
 
+    suspend fun getAudioAlbums(parentId: UUID?, artistId: UUID? = null, limit: Int? = null): List<SpatialFinMusicAlbum>
+
+    suspend fun getAudioAlbumTracks(albumId: UUID): List<SpatialFinAudioTrack>
+
+    suspend fun getAudioArtists(parentId: UUID?, limit: Int? = null): List<SpatialFinMusicArtist>
+
+    suspend fun getAudioArtistTracks(parentId: UUID?, artistId: UUID, limit: Int? = null): List<SpatialFinAudioTrack>
+
+    suspend fun getAudioSongs(parentId: UUID?, limit: Int? = null): List<SpatialFinAudioTrack>
+
+    suspend fun getAudioPlaylists(parentId: UUID?, limit: Int? = null): List<SpatialFinPlaylist>
+
+    suspend fun getAudioPlaylistTracks(playlistId: UUID): List<SpatialFinAudioTrack>
+
+    suspend fun getAudioBooks(parentId: UUID?, limit: Int? = null): List<SpatialFinAudioBook>
+
+    suspend fun getAudioBookTracks(bookId: UUID): List<SpatialFinAudioTrack>
+
+    suspend fun getAudioSearchItems(query: String, parentId: UUID? = null, limit: Int? = null): List<SpatialFinItem>
+
+    suspend fun getAudioTrack(itemId: UUID): SpatialFinAudioTrack?
+
+    suspend fun getAudioLyrics(itemId: UUID): SpatialFinLyrics?
+
     suspend fun getSuggestions(): List<SpatialFinItem>
 
     suspend fun getResumeItems(): List<SpatialFinItem>
@@ -104,6 +134,11 @@ interface JellyfinRepository {
         audioStreamIndex: Int? = null,
     ): String
 
+    suspend fun getAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String? = null,
+    ): String
+
     /**
      * An HLS stream URL whose audio is server-transcoded to one of [allowedAudioCodecs] while
      * the video is copied. Used by split-A/V when the picked receiver's chain cannot render
@@ -123,6 +158,12 @@ interface JellyfinRepository {
         allowedAudioCodecs: List<String>,
         startPositionMs: Long = 0L,
         audioStreamIndex: Int? = null,
+    ): String
+
+    fun getUniversalAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String? = null,
+        startPositionTicks: Long = 0L,
     ): String
 
     suspend fun getMediaAttachment(

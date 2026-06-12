@@ -131,6 +131,11 @@ class PlaylistManager @Inject internal constructor(
                     items = episodes
                     episode
                 }
+                BaseItemKind.AUDIO, BaseItemKind.AUDIO_BOOK -> {
+                    val item = repository.getItem(itemId) ?: return null
+                    items = listOf(item)
+                    item
+                }
                 else -> null
             }
 

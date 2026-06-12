@@ -15,6 +15,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.sendspin.protocol.ArtworkChannel
 import com.sendspin.protocol.ClientPreferences
+import com.sendspin.protocol.ClientState
 import com.sendspin.protocol.ControllerState
 import com.sendspin.protocol.GroupPlaybackState
 import com.sendspin.protocol.JsonOptional
@@ -178,6 +179,15 @@ class SendspinReceiverService : Service() {
         // its own timing profile.
         musicAssistantClient = ensureMusicAssistantClient(http)
         receiverClientId = clientId
+        // Official-MA-app-style outbound dial: when this device already knows its
+        // MA server (configured or previously used), we connect OUT to the
+        // server's /sendspin endpoint instead of waiting for the server to
+        // mDNS-discover our advert and dial in. Registration is instant (no
+        // discovery wait, so the universal-player wrapper link survives across
+        // plays) and the dial loop below re-establishes the connection within
+        // seconds after a Wi-Fi blip — the inbound topology could stay silent for
+        // minutes while MA showed the track as "playing".
+        val maOutboundUrl = storedMusicAssistantServerUrl(null)?.toSendspinWsUrl()
         val newClient =
             SendSpinClient(
                 okHttpClient = http,
@@ -225,20 +235,28 @@ class SendspinReceiverService : Service() {
             port = port,
             scope = scope,
         )
+        var hostUsable = true
         try {
             newHost.startServer()
             withTimeout(10_000) { newHost.serverReady.await() }
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Sendspin service failed to bind on port %d", port)
-            createdAudioPlayer.close()
+            if (maOutboundUrl == null) {
+                Timber.tag(TAG).e(e, "Sendspin service failed to bind on port %d", port)
+                createdAudioPlayer.close()
+                runCatching { newHost.stopServer() }
+                http.dispatcher.executorService.shutdown()
+                http.connectionPool.evictAll()
+                stopSelf()
+                return
+            }
+            // The outbound dial doesn't need a listening socket — keep the
+            // service alive instead of going silent while MA reports playing.
+            Timber.tag(TAG).w(e, "Sendspin host bind failed on port %d; continuing outbound-only", port)
             runCatching { newHost.stopServer() }
-            http.dispatcher.executorService.shutdown()
-            http.connectionPool.evictAll()
-            stopSelf()
-            return
+            hostUsable = false
         }
         client = newClient
-        serverHost = newHost
+        serverHost = newHost.takeIf { hostUsable }
         audioPlayer = createdAudioPlayer
         okHttpClient = http
         SendspinReceiverSession.update { it.copy(serviceRunning = true) }
@@ -362,20 +380,70 @@ class SendspinReceiverService : Service() {
         // which is exactly how MA "stops seeing" the receiver. Retry until it
         // registers, then health-check and re-publish if it ever drops, so MA
         // can always re-discover us without a manual restart.
-        scope.launch {
-            while (true) {
-                // Re-publish if we've never advertised, dropped, OR the device's
-                // LAN IP changed under us (DHCP) — a stale-IP record is as bad as
-                // none for MA's server-initiated connect.
-                if (ad.isActive() && !ad.addressChanged()) {
-                    kotlinx.coroutines.delay(ADVERTISE_HEALTH_INTERVAL_MS)
-                    continue
+        fun launchAdvertiseLoop() {
+            scope.launch {
+                while (true) {
+                    // Re-publish if we've never advertised, dropped, OR the device's
+                    // LAN IP changed under us (DHCP) — a stale-IP record is as bad as
+                    // none for MA's server-initiated connect.
+                    if (ad.isActive() && !ad.addressChanged()) {
+                        kotlinx.coroutines.delay(ADVERTISE_HEALTH_INTERVAL_MS)
+                        continue
+                    }
+                    val ok = ad.register(serviceName = clientId, port = newHost.port, properties = advertiseProps)
+                    kotlinx.coroutines.delay(if (ok) ADVERTISE_HEALTH_INTERVAL_MS else ADVERTISE_RETRY_DELAY_MS)
                 }
-                val ok = ad.register(serviceName = clientId, port = newHost.port, properties = advertiseProps)
-                kotlinx.coroutines.delay(if (ok) ADVERTISE_HEALTH_INTERVAL_MS else ADVERTISE_RETRY_DELAY_MS)
             }
         }
+
+        if (maOutboundUrl != null) {
+            // Outbound dial loop (official MA app topology). While disconnected,
+            // (re)dial the server's /sendspin endpoint every few seconds; while
+            // connected this is just a cheap state check. Deliberately NOT
+            // advertising via mDNS in this mode: the server would also dial in
+            // and the two sessions would fight. If the stored URL turns out to
+            // be stale/unreachable, fall back to the legacy advertise topology
+            // after a few failed dials so MA can still discover us.
+            scope.launch {
+                var disconnectedTicks = 0
+                var advertiseFallbackStarted = false
+                while (true) {
+                    val st = newClient.state.value
+                    val connected = newClient.serverId.value.isNotBlank() &&
+                        st != ClientState.DISCONNECTED && st != ClientState.ERROR
+                    if (connected) {
+                        disconnectedTicks = 0
+                    } else if (st != ClientState.CONNECTING && st != ClientState.HANDSHAKING) {
+                        runCatching { newClient.connect(maOutboundUrl) }
+                            .onFailure {
+                                Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", maOutboundUrl)
+                            }
+                        disconnectedTicks++
+                        if (
+                            disconnectedTicks >= OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK &&
+                            !advertiseFallbackStarted &&
+                            hostUsable
+                        ) {
+                            Timber.tag(TAG).w(
+                                "Outbound SendSpin dial keeps failing — enabling mDNS advertise fallback",
+                            )
+                            advertiseFallbackStarted = true
+                            launchAdvertiseLoop()
+                        }
+                    }
+                    kotlinx.coroutines.delay(OUTBOUND_DIAL_CHECK_INTERVAL_MS)
+                }
+            }
+        } else if (hostUsable) {
+            launchAdvertiseLoop()
+        }
     }
+
+    /** `http(s)://host:port` MA base URL → `ws(s)://host:port/sendspin`. */
+    private fun String.toSendspinWsUrl(): String =
+        replaceFirst("https://", "wss://")
+            .replaceFirst("http://", "ws://")
+            .trimEnd('/') + "/sendspin"
 
     override fun onDestroy() {
         super.onDestroy()
@@ -592,6 +660,16 @@ class SendspinReceiverService : Service() {
             it.copy(musicAssistantServerUrl = serverUrl, musicAssistantError = null)
         }
         refreshMusicAssistantPlayers(discoverServerUrl = false)
+        // A (re)configured MA server is a dial target: connect out immediately
+        // instead of waiting for the server to discover our mDNS advert.
+        client?.let { c ->
+            if (SendspinReceiverSession.state.value.serverId.isNullOrBlank()) {
+                scope.launch {
+                    runCatching { c.connect(serverUrl.toSendspinWsUrl()) }
+                        .onFailure { Timber.tag(TAG).d(it, "Outbound SendSpin dial after URL change failed") }
+                }
+            }
+        }
     }
 
     private fun setMusicAssistantGroupMember(playerId: String, add: Boolean) {
@@ -1482,6 +1560,16 @@ class SendspinReceiverService : Service() {
         // re-check periodically and re-publish if it ever drops.
         private const val ADVERTISE_RETRY_DELAY_MS = 3_000L
         private const val ADVERTISE_HEALTH_INTERVAL_MS = 30_000L
+
+        /**
+         * Cadence of the outbound /sendspin dial loop. While connected this is a
+         * cheap state check; while disconnected it bounds Wi-Fi-blip recovery to
+         * a few seconds (the official MA app's reconnect backoff tops out at 10 s).
+         */
+        private const val OUTBOUND_DIAL_CHECK_INTERVAL_MS = 5_000L
+
+        /** Failed dials before the legacy mDNS advertise fallback is enabled. */
+        private const val OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK = 6
         private val VISUALIZER_SCALAR_SHAPE =
             listOf(
                 0.18f,

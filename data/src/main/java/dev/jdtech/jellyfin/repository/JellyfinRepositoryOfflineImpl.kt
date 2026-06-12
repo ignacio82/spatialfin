@@ -6,10 +6,16 @@ import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.downloads.DownloadStorageManager
 import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.SpatialFinAudioBook
+import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
+import dev.jdtech.jellyfin.models.SpatialFinLyrics
+import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
+import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinPerson
+import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -204,6 +210,45 @@ class JellyfinRepositoryOfflineImpl(
         }
     }
 
+    override suspend fun getAudioAlbums(
+        parentId: UUID?,
+        artistId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicAlbum> = emptyList()
+
+    override suspend fun getAudioAlbumTracks(albumId: UUID): List<SpatialFinAudioTrack> = emptyList()
+
+    override suspend fun getAudioArtists(
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinMusicArtist> = emptyList()
+
+    override suspend fun getAudioArtistTracks(
+        parentId: UUID?,
+        artistId: UUID,
+        limit: Int?,
+    ): List<SpatialFinAudioTrack> = emptyList()
+
+    override suspend fun getAudioSongs(parentId: UUID?, limit: Int?): List<SpatialFinAudioTrack> = emptyList()
+
+    override suspend fun getAudioPlaylists(parentId: UUID?, limit: Int?): List<SpatialFinPlaylist> = emptyList()
+
+    override suspend fun getAudioPlaylistTracks(playlistId: UUID): List<SpatialFinAudioTrack> = emptyList()
+
+    override suspend fun getAudioBooks(parentId: UUID?, limit: Int?): List<SpatialFinAudioBook> = emptyList()
+
+    override suspend fun getAudioBookTracks(bookId: UUID): List<SpatialFinAudioTrack> = emptyList()
+
+    override suspend fun getAudioSearchItems(
+        query: String,
+        parentId: UUID?,
+        limit: Int?,
+    ): List<SpatialFinItem> = emptyList()
+
+    override suspend fun getAudioTrack(itemId: UUID): SpatialFinAudioTrack? = null
+
+    override suspend fun getAudioLyrics(itemId: UUID): SpatialFinLyrics? = null
+
     override suspend fun getSuggestions(): List<SpatialFinItem> {
         return emptyList()
     }
@@ -297,6 +342,13 @@ class JellyfinRepositoryOfflineImpl(
         error("getStreamUrl is not available in offline mode (item=$itemId)")
     }
 
+    override suspend fun getAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+    ): String {
+        error("getAudioStreamUrl is not available in offline mode (item=$itemId)")
+    }
+
     override suspend fun getAudioTranscodeStreamUrl(
         itemId: UUID,
         mediaSourceId: String,
@@ -306,6 +358,14 @@ class JellyfinRepositoryOfflineImpl(
     ): String {
         // Split-A/V casts a server stream; it is never initiated for an offline download.
         error("getAudioTranscodeStreamUrl is not available in offline mode (item=$itemId)")
+    }
+
+    override fun getUniversalAudioStreamUrl(
+        itemId: UUID,
+        mediaSourceId: String?,
+        startPositionTicks: Long,
+    ): String {
+        error("getUniversalAudioStreamUrl is not available in offline mode (item=$itemId)")
     }
 
     override suspend fun getMediaAttachment(
