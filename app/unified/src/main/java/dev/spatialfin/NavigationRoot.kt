@@ -40,6 +40,8 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -272,6 +274,24 @@ fun NavigationRoot(
 
     val currentRoute = navBackStackEntry?.destination?.route
     val showBottomBar = currentRoute in navigationItemClassNames && !searchExpanded
+
+    // Re-scope Music Assistant config to the active Jellyfin user whenever the
+    // user switches — but only while the SendSpin receiver is actually running,
+    // so we never spin the service up just to push a user id. The service then
+    // reloads the new user's stored MA URL/token (or shows it as unconfigured)
+    // and a previous user's token can't linger in the controls UI.
+    val maServiceRunning by remember {
+        dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state
+            .map { it.serviceRunning }
+            .distinctUntilChanged()
+    }.collectAsState(initial = false)
+    val maRebindContext = navController.context.applicationContext
+    LaunchedEffect(currentUser?.id, maServiceRunning) {
+        if (maServiceRunning) {
+            dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
+                .setMusicAssistantUser(maRebindContext, currentUser?.id?.toString())
+        }
+    }
 
     LaunchedEffect(pendingInitialSearchQuery, currentRoute) {
         if (!pendingInitialSearchQuery.isNullOrBlank() && currentRoute != MediaRoute::class.qualifiedName) {

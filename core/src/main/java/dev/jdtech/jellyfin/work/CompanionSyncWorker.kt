@@ -41,7 +41,8 @@ class CompanionSyncWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val appPreferences: AppPreferences,
     private val serverDatabase: ServerDatabaseDao,
-    private val jellyfinApi: JellyfinApi
+    private val jellyfinApi: JellyfinApi,
+    private val extrasApplier: CompanionUserExtrasApplier,
 ) : CoroutineWorker(context, params) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -92,6 +93,8 @@ class CompanionSyncWorker @AssistedInject constructor(
 
         val syncedServers = mutableListOf<SyncedServerState>()
         val importedUserPreferences = mutableMapOf<UUID, Map<String, String?>>()
+        val importedUserMusicAssistant = mutableMapOf<UUID, dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant>()
+        val importedUserPlugins = mutableMapOf<UUID, List<String>>()
         val previousCurrentServer = appPreferences.getValue(appPreferences.currentServer)
 
         // Apply Servers and Users (Merge Logic)
@@ -107,6 +110,8 @@ class CompanionSyncWorker @AssistedInject constructor(
                     if (user != null) {
                         validUsers.add(user)
                         importedUserPreferences[user.id] = u.preferences
+                        u.musicAssistant?.let { importedUserMusicAssistant[user.id] = it }
+                        if (u.plugins.isNotEmpty()) importedUserPlugins[user.id] = u.plugins
                         Timber.d("COMPANION SYNC: Added user ${u.username} (id=${user.id})")
                     }
                 } catch (e: Exception) {
@@ -169,6 +174,19 @@ class CompanionSyncWorker @AssistedInject constructor(
                         Timber.d("COMPANION SYNC: Applying ${nonNull.size} user-level preferences")
                         applyPreferences(nonNull)
                     }
+                }
+                // Per-user Music Assistant + universal plugins — applied for the
+                // active user only, through `:app:unified` (which can reach the
+                // `:sendspin` and `:plugins` modules `:core` cannot depend on).
+                importedUserMusicAssistant[userId]?.let { ma ->
+                    Timber.d("COMPANION SYNC: Applying Music Assistant config for user $userId")
+                    runCatching { extrasApplier.applyMusicAssistant(userId.toString(), ma) }
+                        .onFailure { Timber.e(it, "COMPANION SYNC: Failed to apply MA config") }
+                }
+                importedUserPlugins[userId]?.takeIf { it.isNotEmpty() }?.let { manifestUrls ->
+                    Timber.d("COMPANION SYNC: Installing ${manifestUrls.size} plugin(s) for user $userId")
+                    runCatching { extrasApplier.installPlugins(userId.toString(), manifestUrls) }
+                        .onFailure { Timber.e(it, "COMPANION SYNC: Failed to install plugins") }
                 }
             }
         }

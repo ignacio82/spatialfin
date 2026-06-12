@@ -21,6 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItem
 import dev.spatialfin.presentation.theme.spacings
+import dev.spatialfin.unified.music.MaHdBadge
+import dev.spatialfin.unified.music.isHighDefinitionAudio
+import dev.spatialfin.unified.music.providerDisplayName
 
 @Composable
 fun MusicAssistantItemCard(
@@ -54,6 +57,9 @@ fun MusicAssistantItemCard(
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (item.isHighDefinitionAudio()) {
+                    MaHdBadge(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                }
             }
         }
         Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
@@ -108,4 +114,6 @@ private fun buildMusicAssistantMetadata(item: ServerMediaItem): String =
         if (album != null) {
             add(album.name)
         }
+        // Trailing source label (YouTube Music / Local / Audible …).
+        item.providerDisplayName()?.let { add(it) }
     }.joinToString(" • ")

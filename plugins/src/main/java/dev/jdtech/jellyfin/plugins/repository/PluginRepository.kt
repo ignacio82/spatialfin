@@ -1,9 +1,13 @@
 package dev.jdtech.jellyfin.plugins.repository
 
 import android.content.Context
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
+import dev.jdtech.jellyfin.session.ActiveSessionBus
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -17,37 +21,93 @@ import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class PluginRepository @Inject constructor(
     private val context: Context,
-    private val okHttpClient: OkHttpClient
+    private val okHttpClient: OkHttpClient,
+    private val jellyfinApi: JellyfinApi,
+    private val activeSessionBus: ActiveSessionBus,
 ) {
-    private val json = Json { 
+    private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         explicitNulls = false
         coerceInputValues = true
     }
-    private val pluginsDir = File(context.filesDir, "universal_plugins")
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _settingsChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val settingsChanges = _settingsChanges.asSharedFlow()
 
     init {
-        if (!pluginsDir.exists()) {
-            pluginsDir.mkdirs()
-        }
+        // A user switch re-scopes the plugin directory; re-emit so observers
+        // (PluginSettingsViewModel / HomeViewModel) reload the new user's set.
+        activeSessionBus.events
+            .onEach { _settingsChanges.tryEmit(Unit) }
+            .launchIn(scope)
+    }
+
+    private fun rootDir(): File = File(context.filesDir, "universal_plugins")
+
+    /** Per-Jellyfin-user scope; falls back to "default" before any user logs in. */
+    private fun currentScope(): String = jellyfinApi.userId?.toString() ?: "default"
+
+    /**
+     * The plugin directory for [scope] (defaults to the current Jellyfin user).
+     * Each user keeps an independent installed-plugin set + settings under
+     * `universal_plugins/<scope>/`. An explicit [scope] lets the companion-sync
+     * worker target a user that isn't the live session user yet.
+     */
+    private fun pluginsDir(scope: String = currentScope()): File {
+        val scoped = File(rootDir(), scope)
+        if (!scoped.exists()) scoped.mkdirs()
+        migrateLegacyLayoutIfNeeded(scoped)
+        return scoped
     }
 
     /**
-     * Downloads and installs a plugin from a manifest URL.
+     * One-time, non-destructive migration of the old device-global layout
+     * (`universal_plugins/<pluginId>/`) into the current user's scope. Legacy
+     * plugin dirs are distinguished from scope dirs by a top-level manifest.json.
+     * Guarded by a `.migrated` marker so it runs at most once.
      */
-    suspend fun installPlugin(manifestUrl: String): Result<PluginConfig> {
+    @Synchronized
+    private fun migrateLegacyLayoutIfNeeded(targetScope: File) {
+        val root = rootDir()
+        val marker = File(root, ".migrated")
+        if (marker.exists()) return
+        val legacyPluginDirs = root.listFiles()
+            ?.filter { it.isDirectory && File(it, "manifest.json").exists() }
+            .orEmpty()
+        legacyPluginDirs.forEach { legacy ->
+            val dest = File(targetScope, legacy.name)
+            if (!dest.exists()) {
+                runCatching {
+                    legacy.copyRecursively(dest, overwrite = false)
+                    legacy.deleteRecursively()
+                }.onFailure { Timber.e(it, "Failed to migrate legacy plugin ${legacy.name}") }
+            }
+        }
+        runCatching { marker.createNewFile() }
+    }
+
+    /**
+     * Downloads and installs a plugin from a manifest URL. When [scopeOverride]
+     * is set the plugin is installed into that user's scope instead of the live
+     * session user's (used by the companion-sync worker).
+     */
+    suspend fun installPlugin(manifestUrl: String, scopeOverride: String? = null): Result<PluginConfig> {
         return withContext(Dispatchers.IO) {
             try {
+                // Capture the scope once so a user switch mid-install can't split
+                // this plugin's files across two user directories.
+                val targetDir = pluginsDir(scopeOverride ?: currentScope())
                 android.util.Log.e("CRITICAL_ERROR", "Step 1: Downloading manifest from $manifestUrl")
                 val manifestJson = downloadString(manifestUrl)
                 android.util.Log.e("CRITICAL_ERROR", "Step 2: Manifest downloaded, length: ${manifestJson.length}")
@@ -75,12 +135,13 @@ class PluginRepository @Inject constructor(
                 val scriptContent = downloadString(scriptUrl)
                 android.util.Log.e("CRITICAL_ERROR", "Step 5: Script downloaded, length: ${scriptContent.length}")
                 
-                val pluginDir = File(pluginsDir, pluginId)
+                val pluginDir = File(targetDir, pluginId)
                 pluginDir.mkdirs()
                 
                 File(pluginDir, "manifest.json").writeText(manifestJson)
                 File(pluginDir, "script.js").writeText(scriptContent)
-                
+                recordInstalledManifestUrl(targetDir, manifestUrl)
+
                 android.util.Log.e("CRITICAL_ERROR", "Step 6: Plugin files saved")
                 Result.success(config)
             } catch (e: Exception) {
@@ -90,8 +151,28 @@ class PluginRepository @Inject constructor(
         }
     }
 
+    /**
+     * Manifest URLs already installed in [scopeOverride] (or the current user).
+     * Lets the companion-sync worker skip re-downloading plugins every sync.
+     */
+    fun installedManifestUrls(scopeOverride: String? = null): Set<String> {
+        val file = File(pluginsDir(scopeOverride ?: currentScope()), INSTALLED_MANIFESTS_FILE)
+        if (!file.exists()) return emptySet()
+        return runCatching { json.decodeFromString<Set<String>>(file.readText()) }.getOrElse { emptySet() }
+    }
+
+    private fun recordInstalledManifestUrl(scopeDir: File, manifestUrl: String) {
+        val file = File(scopeDir, INSTALLED_MANIFESTS_FILE)
+        val current = runCatching {
+            if (file.exists()) json.decodeFromString<Set<String>>(file.readText()) else emptySet()
+        }.getOrElse { emptySet() }
+        if (manifestUrl in current) return
+        runCatching { file.writeText(json.encodeToString(current + manifestUrl)) }
+            .onFailure { Timber.e(it, "Failed to record installed manifest URL") }
+    }
+
     fun getInstalledPlugins(): List<PluginConfig> {
-        return pluginsDir.listFiles()?.mapNotNull { dir ->
+        return pluginsDir().listFiles()?.mapNotNull { dir ->
             val manifestFile = File(dir, "manifest.json")
             if (manifestFile.exists()) {
                 try {
@@ -108,7 +189,7 @@ class PluginRepository @Inject constructor(
     }
 
     fun uninstallPlugin(pluginId: String): Boolean {
-        val pluginDir = File(pluginsDir, pluginId)
+        val pluginDir = File(pluginsDir(), pluginId)
         return if (pluginDir.exists()) {
             pluginDir.deleteRecursively()
         } else false
@@ -116,7 +197,7 @@ class PluginRepository @Inject constructor(
 
     fun getPluginScript(pluginId: String?): String? {
         if (pluginId == null) return null
-        val scriptFile = File(pluginsDir, "$pluginId/script.js")
+        val scriptFile = File(pluginsDir(), "$pluginId/script.js")
         if (scriptFile.exists()) return scriptFile.readText()
 
         android.util.Log.e("PluginRepository", "Plugin script missing for $pluginId")
@@ -133,7 +214,7 @@ class PluginRepository @Inject constructor(
             }
             ?.toMap()
             ?: emptyMap()
-        val settingsFile = File(pluginsDir, "$pluginId/settings.json")
+        val settingsFile = File(pluginsDir(), "$pluginId/settings.json")
         if (!settingsFile.exists()) return defaults
 
         val saved = runCatching {
@@ -146,7 +227,7 @@ class PluginRepository @Inject constructor(
     }
 
     fun updatePluginSetting(pluginId: String, key: String, value: String) {
-        val pluginDir = File(pluginsDir, pluginId)
+        val pluginDir = File(pluginsDir(), pluginId)
         pluginDir.mkdirs()
         val settings = getPluginSettings(pluginId).toMutableMap()
         settings[key] = value
@@ -219,6 +300,7 @@ class PluginRepository @Inject constructor(
 
     companion object {
         private const val CUSTOM_HOME_ROWS_KEY = "homeRows.custom"
+        private const val INSTALLED_MANIFESTS_FILE = "installed_manifests.json"
     }
 
     private fun downloadString(url: String): String {

@@ -99,7 +99,10 @@ data class ProviderMapping(
 //    @SerialName("provider_domain") val providerDomain: String,
     @SerialName("provider_instance") val providerInstance: String,
 //    @SerialName("available") val available: Boolean,
-//    @SerialName("audio_format") val audioFormat: AudioFormat? = null,
+    // Per-mapping audio quality (sample rate / bit depth / codec) — drives the
+    // HD badge on tiles. A library item carries one mapping per real source, so
+    // the best mapping determines whether we badge the track as hi-res/lossless.
+    @SerialName("audio_format") val audioFormat: AudioFormat? = null,
 //    @SerialName("url") val url: String? = null,
 //    @SerialName("details") val details: String?
 )

@@ -39,7 +39,7 @@ class PluginEngineTest {
 
     @Before
     fun setup() {
-        val httpBridge = RealHttpBridge(okHttpClient)
+        val httpBridge = RealHttpBridge(org.robolectric.RuntimeEnvironment.getApplication(), okHttpClient)
         val domParserBridge = RealDOMParserBridge()
         val utilitiesBridge = RealUtilitiesBridge()
         engine = PluginEngine(httpBridge, domParserBridge, utilitiesBridge)

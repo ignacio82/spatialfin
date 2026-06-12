@@ -250,7 +250,9 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 | Preferences | `settings/.../domain/AppPreferences.kt` | DataStore facade |
 | Voice telemetry | `settings/.../voice/VoiceTelemetryStore.kt` | local telemetry |
 | Companion (QR import) | `app/unified/.../UnifiedMainActivity.kt` (sync glue) | one-shot importer |
-| Universal Plugin Engine | `plugins/.../engine/PluginEngine.kt` (+ bridges) | engine + bridges |
+| Companion per-user extras apply | `core/.../work/CompanionSyncWorker.kt` + `CompanionUserExtrasApplier` (iface in `:core`, impl `app/unified/.../companion/CompanionUserExtrasApplier.kt`) | `CompanionUser.musicAssistant` + `plugins[]` apply for the active user; impl bridges `:sendspin`/`:plugins` that `:core` can't depend on |
+| Universal Plugin Engine | `plugins/.../engine/PluginEngine.kt` (+ bridges) | engine + bridges. Plugins are stored **per Jellyfin user** under `filesDir/universal_plugins/<userId-or-default>/` (`PluginRepository` scopes by `JellyfinApi.userId`; one-time `.migrated` move of the legacy flat layout) |
+| Music Assistant config (per-user) | `sendspin/.../receiver/SendspinReceiverService.kt` | MA URL/token/preferred-player live in the `sendspin_music_assistant` SharedPreferences, keyed `u:<jellyfinUserId-or-default>/<base>` (legacy un-prefixed keys are read as fallback, never deleted). UI/dispatch callers pass `JellyfinApi.userId` via `EXTRA_JELLYFIN_USER_ID`; `NavigationRoot` rebinds on user switch (`setMusicAssistantUser`) only while the receiver runs. Onboarding `WelcomeStep.MusicAssistant` reuses `MusicAssistantAuthFields` |
 | Smart language ranking | `settings/.../voice/SmartLanguageSettings.kt` + per-series overrides | preference + cache |
 
 ---

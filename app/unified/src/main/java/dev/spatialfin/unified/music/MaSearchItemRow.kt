@@ -62,13 +62,20 @@ fun MaSearchItemRow(
         Artwork(item = item, selected = selected)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (item.isHighDefinitionAudio()) {
+                    Spacer(Modifier.width(6.dp))
+                    MaHdBadge()
+                }
+            }
             val subtitle = item.subtitleLine()
             if (!subtitle.isNullOrBlank()) {
                 Text(
@@ -136,6 +143,15 @@ private fun Artwork(item: ServerMediaItem, selected: Boolean = false) {
 }
 
 internal fun ServerMediaItem.subtitleLine(): String? {
+    // Source (YouTube Music / Local / Audible …) trails the descriptive part so
+    // tracks read "Artist • Album • YouTube Music"; provider-only items (radio,
+    // bare artists) fall back to just the source.
+    return listOfNotNull(baseSubtitleLine(), providerDisplayName())
+        .joinToString(" • ")
+        .ifBlank { null }
+}
+
+private fun ServerMediaItem.baseSubtitleLine(): String? {
     val artistName = artists?.firstOrNull()?.name?.takeIf { it.isNotBlank() }
     val albumName = album?.name?.takeIf { it.isNotBlank() }
     val year = year?.toString()

@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.plugins.repository
 
 import android.content.Context
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.plugins.bridge.RealDOMParserBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealHttpBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealUtilitiesBridge
@@ -31,7 +32,7 @@ class PluginRepositoryTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
-        repository = PluginRepository(context, okHttpClient)
+        repository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus())
     }
 
     @Test

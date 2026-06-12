@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.plugins.repository
 
 import android.content.Context
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.plugins.bridge.RealDOMParserBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealHttpBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealUtilitiesBridge
@@ -32,11 +33,11 @@ class PluginContentRepositoryTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
-        val httpBridge = RealHttpBridge(okHttpClient)
+        val httpBridge = RealHttpBridge(context, okHttpClient)
         val domParserBridge = RealDOMParserBridge()
         val utilitiesBridge = RealUtilitiesBridge()
         val engine = PluginEngine(httpBridge, domParserBridge, utilitiesBridge)
-        pluginRepository = PluginRepository(context, okHttpClient)
+        pluginRepository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus())
         val client = PluginClient(engine, pluginRepository)
         contentRepository = PluginContentRepository(client, pluginRepository)
     }

@@ -50,7 +50,18 @@ data class CompanionUser(
     val password: String? = null,
     @SerialName("access_token")
     val accessToken: String? = null,
-    val preferences: Map<String, String?> = emptyMap()
+    val preferences: Map<String, String?> = emptyMap(),
+    /** Per-user Music Assistant connection, applied to this user's MA store. */
+    val musicAssistant: CompanionMusicAssistant? = null,
+    /** Per-user universal-plugin manifest URLs the device installs on sync. */
+    val plugins: List<String> = emptyList(),
+)
+
+@Serializable
+data class CompanionMusicAssistant(
+    val url: String,
+    val token: String? = null,
+    val username: String? = null,
 )
 
 @Serializable

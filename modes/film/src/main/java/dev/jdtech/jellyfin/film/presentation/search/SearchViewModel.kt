@@ -156,7 +156,11 @@ class SearchViewModel @Inject constructor(
                         artworkUrl = artwork,
                         targetPlayerId = null,
                     )
-                    SendspinReceiverService.playMusicAssistantMedia(appContext, uri)
+                    SendspinReceiverService.playMusicAssistantMedia(
+                        appContext,
+                        uri,
+                        dev.jdtech.jellyfin.api.JellyfinApi.getInstance(appContext).userId?.toString(),
+                    )
                 }
             }
             else -> Unit

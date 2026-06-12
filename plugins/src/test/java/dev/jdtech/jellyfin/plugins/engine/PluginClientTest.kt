@@ -4,7 +4,9 @@ import android.content.Context
 import dev.jdtech.jellyfin.plugins.bridge.RealDOMParserBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealHttpBridge
 import dev.jdtech.jellyfin.plugins.bridge.RealUtilitiesBridge
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -33,11 +35,13 @@ class PluginClientTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
-        val httpBridge = RealHttpBridge(okHttpClient)
+        val httpBridge = RealHttpBridge(context, okHttpClient)
         val domParserBridge = RealDOMParserBridge()
         val utilitiesBridge = RealUtilitiesBridge()
         val engine = PluginEngine(httpBridge, domParserBridge, utilitiesBridge)
-        repository = PluginRepository(context, okHttpClient)
+        val jellyfinApi = mockk<JellyfinApi>(relaxed = true)
+        every { jellyfinApi.userId } returns null
+        repository = PluginRepository(context, okHttpClient, jellyfinApi, ActiveSessionBus())
         client = PluginClient(engine, repository)
     }
 
@@ -46,8 +50,10 @@ class PluginClientTest {
         val pluginId = "test-plugin"
         val scriptContent = "globalThis.executed = true;"
         
-        // Mock plugin installation manually
-        val pluginsDir = File(context.filesDir, "universal_plugins")
+        // Mock plugin installation manually. Plugins are scoped per Jellyfin user
+        // under universal_plugins/<userId-or-default>/; the relaxed JellyfinApi
+        // mock has a null userId, so this resolves to the "default" scope.
+        val pluginsDir = File(File(context.filesDir, "universal_plugins"), "default")
         val pluginDir = File(pluginsDir, pluginId)
         pluginDir.mkdirs()
         File(pluginDir, "script.js").writeText(scriptContent)

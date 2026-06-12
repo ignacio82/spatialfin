@@ -65,6 +65,7 @@ import dev.spatialfin.unified.applock.AppLockMode
 import dev.spatialfin.unified.applock.PinSetupScreen
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoStatus
+import dev.jdtech.jellyfin.presentation.settings.MusicAssistantAuthFields
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
 import dev.jdtech.jellyfin.settings.R as SettingsR
@@ -76,6 +77,7 @@ import dev.spatialfin.presentation.theme.SpatialFinTheme
 
 private enum class WelcomeStep {
     Connection,
+    MusicAssistant,
     CompanionDiscovery,
     Languages,
     Security,
@@ -350,6 +352,7 @@ private fun WelcomeScreenLayout(
     val stepTitle =
         when (currentStep) {
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_title)
+            WelcomeStep.MusicAssistant -> "Music Assistant"
             WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_title)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_title)
             WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_title)
@@ -358,6 +361,8 @@ private fun WelcomeScreenLayout(
     val stepBody =
         when (currentStep) {
             WelcomeStep.Connection -> stringResource(SetupR.string.welcome_connect_body)
+            WelcomeStep.MusicAssistant ->
+                "Optionally connect Music Assistant to control speakers and play music. You can skip this and set it up later in settings."
             WelcomeStep.CompanionDiscovery -> stringResource(SettingsR.string.welcome_companion_body)
             WelcomeStep.Languages -> stringResource(SetupR.string.welcome_languages_body)
             WelcomeStep.Security -> stringResource(SetupR.string.welcome_security_body)
@@ -456,6 +461,9 @@ private fun WelcomeScreenLayout(
                                 onConnectToServerChange = onConnectToServerChange,
                                 onLearnMoreClick = onLearnMoreClick,
                             )
+                        }
+                        WelcomeStep.MusicAssistant -> {
+                            MusicAssistantStep()
                         }
                         WelcomeStep.CompanionDiscovery -> {
                             CompanionDiscoveryStep(
@@ -637,6 +645,38 @@ private fun ConnectionStep(
         )
         TextButton(onClick = onLearnMoreClick, modifier = Modifier.align(Alignment.Start)) {
             Text(stringResource(SetupR.string.welcome_btn_learn_more))
+        }
+    }
+}
+
+@Composable
+private fun MusicAssistantStep() {
+    // Self-contained: the credential fields write straight to the per-user MA
+    // store via the receiver service, so onboarding completion needs to know
+    // nothing about MA. Skipping is handled by the wizard's per-step Skip button.
+    var wantsMusicAssistant by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        StepChoiceCard(
+            title = "Set up Music Assistant",
+            body = "Connect to a Music Assistant server to control speakers and play music.",
+            selected = wantsMusicAssistant,
+            onClick = { wantsMusicAssistant = true },
+        )
+        StepChoiceCard(
+            title = "Not now",
+            body = "Skip Music Assistant setup. You can configure it later in settings.",
+            selected = !wantsMusicAssistant,
+            onClick = { wantsMusicAssistant = false },
+        )
+        if (wantsMusicAssistant) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
+                    MusicAssistantAuthFields()
+                }
+            }
         }
     }
 }

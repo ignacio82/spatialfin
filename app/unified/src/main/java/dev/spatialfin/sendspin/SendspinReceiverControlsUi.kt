@@ -79,6 +79,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantPlayer
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinControllerCommands
@@ -135,9 +136,12 @@ fun SendspinFullscreenPlayer(
         SendspinReceiverService.dismissControls(context.applicationContext)
     }
 
+    fun jellyfinUserId(): String? =
+        JellyfinApi.getInstance(context.applicationContext).userId?.toString()
+
     fun openGroupPanel() {
         showGroupPanel = true
-        SendspinReceiverService.refreshMusicAssistantGroups(context.applicationContext)
+        SendspinReceiverService.refreshMusicAssistantGroups(context.applicationContext, jellyfinUserId())
     }
 
     Dialog(
@@ -231,12 +235,13 @@ fun SendspinFullscreenPlayer(
                     state = state,
                     onDismiss = { showGroupPanel = false },
                     onRefresh = {
-                        SendspinReceiverService.refreshMusicAssistantGroups(context.applicationContext)
+                        SendspinReceiverService.refreshMusicAssistantGroups(context.applicationContext, jellyfinUserId())
                     },
                     onSetServerUrl = { serverUrl ->
                         SendspinReceiverService.setMusicAssistantServerUrl(
                             context.applicationContext,
                             serverUrl,
+                            jellyfinUserId(),
                         )
                     },
                     onLogin = { serverUrl, username, password ->
@@ -245,6 +250,7 @@ fun SendspinFullscreenPlayer(
                             serverUrl = serverUrl,
                             username = username,
                             password = password,
+                            jellyfinUserId = jellyfinUserId(),
                         )
                     },
                     onSaveToken = { serverUrl, token ->
@@ -252,6 +258,7 @@ fun SendspinFullscreenPlayer(
                             context = context.applicationContext,
                             serverUrl = serverUrl,
                             token = token,
+                            jellyfinUserId = jellyfinUserId(),
                         )
                     },
                     onTogglePlayer = { player, add ->
@@ -259,6 +266,7 @@ fun SendspinFullscreenPlayer(
                             context = context.applicationContext,
                             playerId = player.id,
                             add = add,
+                            jellyfinUserId = jellyfinUserId(),
                         )
                     },
                 )

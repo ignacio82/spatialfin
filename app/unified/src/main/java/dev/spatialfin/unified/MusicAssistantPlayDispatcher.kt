@@ -291,7 +291,11 @@ class MaPlayDispatcher(
             targetPlayerId = null,
         )
         dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
-            .playMusicAssistantMedia(context, uri)
+            .playMusicAssistantMedia(
+                context,
+                uri,
+                dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
+            )
     }
 
     /**
@@ -307,7 +311,12 @@ class MaPlayDispatcher(
     fun setPreferredPlayer(serverId: String?, playerId: String?) {
         session.setSelectedPlayer(playerId)
         dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
-            .setPreferredPlayer(context, serverId, playerId)
+            .setPreferredPlayer(
+                context,
+                serverId,
+                playerId,
+                dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
+            )
     }
 }
 

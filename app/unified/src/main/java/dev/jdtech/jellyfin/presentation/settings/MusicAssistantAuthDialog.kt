@@ -24,24 +24,126 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+
+/**
+ * Self-contained Music Assistant credential fields (server URL + username/password
+ * sign-in + access-token). Shared by [MusicAssistantAuthDialog] (settings) and the
+ * onboarding "Music Assistant" step so both drive the same per-Jellyfin-user store.
+ *
+ * MA config is scoped to the current Jellyfin user — every action passes the live
+ * [JellyfinApi.userId] so each user keeps an independent URL/token.
+ */
+@Composable
+fun MusicAssistantAuthFields(
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val state by SendspinReceiverSession.state.collectAsStateWithLifecycle()
+
+    fun jellyfinUserId(): String? =
+        JellyfinApi.getInstance(context.applicationContext).userId?.toString()
+
+    var serverUrl by remember(state.musicAssistantServerUrl) { mutableStateOf(state.musicAssistantServerUrl.orEmpty()) }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+
+    val loading = state.musicAssistantLoading
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        state.musicAssistantError?.takeIf(String::isNotBlank)?.let { error ->
+            Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        }
+
+        Text(
+            text = when (state.musicAssistantAuthState) {
+                SendspinMusicAssistantAuthState.INVALID -> "Music Assistant rejected the saved token."
+                SendspinMusicAssistantAuthState.AUTHENTICATING -> "Signing in..."
+                SendspinMusicAssistantAuthState.AUTHENTICATED -> "Connected successfully."
+                else -> "Connect SpatialFin to Music Assistant to manage speakers and view recommendations."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = serverUrl,
+            onValueChange = { serverUrl = it },
+            singleLine = true,
+            label = { Text("Server URL") },
+            placeholder = { Text("http://192.168.1.89:8095") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            TextButton(
+                onClick = {
+                    SendspinReceiverService.setMusicAssistantServerUrl(
+                        context.applicationContext, serverUrl, jellyfinUserId(),
+                    )
+                },
+                enabled = !loading && serverUrl.isNotBlank(),
+            ) {
+                Text("Use server")
+            }
+        }
+        HorizontalDivider()
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            singleLine = true,
+            label = { Text("Username") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            singleLine = true,
+            label = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                SendspinReceiverService.loginMusicAssistant(
+                    context.applicationContext, serverUrl, username, password, jellyfinUserId(),
+                )
+            },
+            enabled = !loading && serverUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Sign in")
+        }
+        HorizontalDivider()
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it },
+            singleLine = true,
+            label = { Text("Access token") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                SendspinReceiverService.saveMusicAssistantToken(
+                    context.applicationContext, serverUrl, token, jellyfinUserId(),
+                )
+            },
+            enabled = !loading && serverUrl.isNotBlank() && token.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save token")
+        }
+    }
+}
 
 @Composable
 fun MusicAssistantAuthDialog(
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val state by SendspinReceiverSession.state.collectAsStateWithLifecycle()
-    
-    var serverUrl by remember(state.musicAssistantServerUrl) { mutableStateOf(state.musicAssistantServerUrl.orEmpty()) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
-    
-    val loading = state.musicAssistantLoading
-    
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -49,78 +151,9 @@ fun MusicAssistantAuthDialog(
     ) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Music Assistant Setup", style = MaterialTheme.typography.titleLarge)
-            
-            state.musicAssistantError?.takeIf(String::isNotBlank)?.let { error ->
-                Text(text = error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-            }
-            
-            Text(
-                text = when (state.musicAssistantAuthState) {
-                    SendspinMusicAssistantAuthState.INVALID -> "Music Assistant rejected the saved token."
-                    SendspinMusicAssistantAuthState.AUTHENTICATING -> "Signing in..."
-                    SendspinMusicAssistantAuthState.AUTHENTICATED -> "Connected successfully."
-                    else -> "Connect SpatialFin to Music Assistant to manage speakers and view recommendations."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = serverUrl,
-                onValueChange = { serverUrl = it },
-                singleLine = true,
-                label = { Text("Server URL") },
-                placeholder = { Text("http://192.168.1.89:8095") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                TextButton(
-                    onClick = { SendspinReceiverService.setMusicAssistantServerUrl(context.applicationContext, serverUrl) },
-                    enabled = !loading && serverUrl.isNotBlank(),
-                ) {
-                    Text("Use server")
-                }
-            }
-            HorizontalDivider()
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                singleLine = true,
-                label = { Text("Username") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                singleLine = true,
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = { SendspinReceiverService.loginMusicAssistant(context.applicationContext, serverUrl, username, password) },
-                enabled = !loading && serverUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Sign in")
-            }
-            HorizontalDivider()
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                singleLine = true,
-                label = { Text("Access token") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = { SendspinReceiverService.saveMusicAssistantToken(context.applicationContext, serverUrl, token) },
-                enabled = !loading && serverUrl.isNotBlank() && token.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Save token")
-            }
-            
+
+            MusicAssistantAuthFields()
+
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 TextButton(onClick = onDismiss) {
                     Text("Close")

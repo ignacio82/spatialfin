@@ -64,6 +64,16 @@ class SendspinReceiverService : Service() {
     @Volatile private var lastPlayedServerId: String = ""
 
     /**
+     * The current Jellyfin user, pushed in via Intent extras (the service is
+     * decoupled from `:data` and can't read [JellyfinApi] directly). Scopes all
+     * MA SharedPreferences reads/writes so each Jellyfin user keeps independent
+     * Music Assistant config. Null ⇒ "default" scope (pre-login / local-only).
+     */
+    @Volatile private var currentJellyfinUserId: String? = null
+
+    private fun scopedKey(base: String): String = scopedPrefKey(currentJellyfinUserId, base)
+
+    /**
      * Set true whenever the connection (re)establishes, consumed by the first
      * playback-state emission that follows. It marks that emission as the
      * server's restore/catch-up sync rather than a user-initiated cast, so we
@@ -114,8 +124,19 @@ class SendspinReceiverService : Service() {
             intent?.action == ACTION_MUSIC_ASSISTANT_SAVE_TOKEN ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SET_SERVER_URL ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SET_MEMBER ||
-            intent?.action == ACTION_MUSIC_ASSISTANT_PLAY_MEDIA
+            intent?.action == ACTION_MUSIC_ASSISTANT_PLAY_MEDIA ||
+            intent?.action == ACTION_MUSIC_ASSISTANT_SET_USER
         ) {
+            // Every MA intent self-describes the active Jellyfin user, so each
+            // mutation scopes to the right user even if the dedicated SET_USER
+            // rebind hasn't been delivered yet.
+            if (intent.hasExtra(EXTRA_JELLYFIN_USER_ID)) {
+                currentJellyfinUserId = intent.getStringExtra(EXTRA_JELLYFIN_USER_ID)
+            }
+            // MA REST works without the full SendSpin server (e.g. configuring MA
+            // during first-run onboarding before the receiver bootstraps). Ensure
+            // the REST client exists so a cold MA action doesn't hit a null client.
+            ensureMusicAssistantClient()
             handleControllerCommand(intent)
             return START_STICKY
         }
@@ -155,13 +176,7 @@ class SendspinReceiverService : Service() {
         // "timeout" toast even though MA actually started playback. Bumping
         // here, not on the shared client, because SendSpin's WebSocket needs
         // its own timing profile.
-        val maHttp = http.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(15))
-            .readTimeout(java.time.Duration.ofSeconds(60))
-            .writeTimeout(java.time.Duration.ofSeconds(60))
-            .callTimeout(java.time.Duration.ofSeconds(90))
-            .build()
-        musicAssistantClient = MusicAssistantGroupClient(maHttp)
+        musicAssistantClient = ensureMusicAssistantClient(http)
         receiverClientId = clientId
         val newClient =
             SendSpinClient(
@@ -429,6 +444,13 @@ class SendspinReceiverService : Service() {
             ACTION_MUSIC_ASSISTANT_PLAY_MEDIA -> {
                 val mediaUri = intent.getStringExtra(EXTRA_MUSIC_ASSISTANT_MEDIA_URI).orEmpty()
                 playMusicAssistantMediaAction(mediaUri)
+                return
+            }
+            ACTION_MUSIC_ASSISTANT_SET_USER -> {
+                // currentJellyfinUserId was already updated in onStartCommand;
+                // reload the session for the new user's stored URL/token so the
+                // controls UI reflects the switched user (or shows unconfigured).
+                refreshMusicAssistantPlayers(discoverServerUrl = true)
                 return
             }
         }
@@ -804,9 +826,11 @@ class SendspinReceiverService : Service() {
     }
 
     private fun preferredPlayerId(serverId: String?): String? {
-        val key = serverId?.takeIf { it.isNotBlank() }?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
-            ?: return null
-        return musicAssistantPrefs().getString(key, null)?.takeIf { it.isNotBlank() }
+        val id = serverId?.takeIf { it.isNotBlank() } ?: return null
+        val base = "$PREF_MA_PREFERRED_PLAYER_PREFIX$id"
+        val prefs = musicAssistantPrefs()
+        prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
+        return prefs.getString(base, null)?.takeIf { it.isNotBlank() } // legacy
     }
 
     private fun showToast(message: String) {
@@ -985,19 +1009,20 @@ class SendspinReceiverService : Service() {
         if (serverUrl.isNullOrBlank()) return null
         val prefs = musicAssistantPrefs()
         serverId?.takeIf { it.isNotBlank() }?.let { id ->
-            prefs.getString("$PREF_MA_TOKEN_SERVER_PREFIX$id", null)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return it }
+            val base = "$PREF_MA_TOKEN_SERVER_PREFIX$id"
+            prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
+            prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
         }
-        return prefs.getString("$PREF_MA_TOKEN_URL_PREFIX$serverUrl", null)
-            ?.takeIf { it.isNotBlank() }
+        val urlBase = "$PREF_MA_TOKEN_URL_PREFIX$serverUrl"
+        prefs.getString(scopedKey(urlBase), null)?.takeIf { it.isNotBlank() }?.let { return it }
+        return prefs.getString(urlBase, null)?.takeIf { it.isNotBlank() } // legacy
     }
 
     private fun storeMusicAssistantToken(serverId: String?, serverUrl: String, token: String) {
         musicAssistantPrefs().edit().apply {
-            putString("$PREF_MA_TOKEN_URL_PREFIX$serverUrl", token)
+            putString(scopedKey("$PREF_MA_TOKEN_URL_PREFIX$serverUrl"), token)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
-                putString("$PREF_MA_TOKEN_SERVER_PREFIX$id", token)
+                putString(scopedKey("$PREF_MA_TOKEN_SERVER_PREFIX$id"), token)
             }
         }.apply()
     }
@@ -1005,24 +1030,42 @@ class SendspinReceiverService : Service() {
     private fun storedMusicAssistantServerUrl(serverId: String?): String? {
         val prefs = musicAssistantPrefs()
         serverId?.takeIf { it.isNotBlank() }?.let { id ->
-            prefs.getString("$PREF_MA_URL_SERVER_PREFIX$id", null)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { return it }
+            val base = "$PREF_MA_URL_SERVER_PREFIX$id"
+            prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
+            prefs.getString(base, null)?.takeIf { it.isNotBlank() }?.let { return it } // legacy
         }
-        return prefs.getString(PREF_MA_LAST_URL, null)?.takeIf { it.isNotBlank() }
+        prefs.getString(scopedKey(PREF_MA_LAST_URL), null)?.takeIf { it.isNotBlank() }?.let { return it }
+        return prefs.getString(PREF_MA_LAST_URL, null)?.takeIf { it.isNotBlank() } // legacy
     }
 
     private fun storeMusicAssistantServerUrl(serverId: String?, serverUrl: String) {
         musicAssistantPrefs().edit().apply {
-            putString(PREF_MA_LAST_URL, serverUrl)
+            putString(scopedKey(PREF_MA_LAST_URL), serverUrl)
             serverId?.takeIf { it.isNotBlank() }?.let { id ->
-                putString("$PREF_MA_URL_SERVER_PREFIX$id", serverUrl)
+                putString(scopedKey("$PREF_MA_URL_SERVER_PREFIX$id"), serverUrl)
             }
         }.apply()
     }
 
     private fun musicAssistantPrefs(): SharedPreferences =
         getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
+
+    /**
+     * Lazily build (and cache) the MA REST client. The client only needs an
+     * HTTP stack, not the full SendSpin server, so MA config works even when the
+     * receiver hasn't bootstrapped (e.g. first-run onboarding). [base] lets the
+     * bootstrap path reuse the SendSpin OkHttp config; the cold path builds fresh.
+     */
+    private fun ensureMusicAssistantClient(base: OkHttpClient? = null): MusicAssistantGroupClient {
+        musicAssistantClient?.let { return it }
+        val maHttp = (base?.newBuilder() ?: OkHttpClient.Builder())
+            .connectTimeout(java.time.Duration.ofSeconds(15))
+            .readTimeout(java.time.Duration.ofSeconds(60))
+            .writeTimeout(java.time.Duration.ofSeconds(60))
+            .callTimeout(java.time.Duration.ofSeconds(90))
+            .build()
+        return MusicAssistantGroupClient(maHttp).also { musicAssistantClient = it }
+    }
 
     private fun updateControllerState(state: ControllerState) {
         SendspinReceiverSession.update {
@@ -1385,6 +1428,7 @@ class SendspinReceiverService : Service() {
         const val EXTRA_MUSIC_ASSISTANT_PLAYER_ID: String = "sendspin.musicAssistant.playerId"
         const val EXTRA_MUSIC_ASSISTANT_MEMBER_ADD: String = "sendspin.musicAssistant.memberAdd"
         const val EXTRA_MUSIC_ASSISTANT_MEDIA_URI: String = "sendspin.musicAssistant.mediaUri"
+        const val EXTRA_JELLYFIN_USER_ID: String = "sendspin.jellyfin.userId"
 
         internal const val TAG: String = "SendspinService"
         private const val ANDROID_AUDIO_OUTPUT_DELAY_MS = 80
@@ -1449,6 +1493,8 @@ class SendspinReceiverService : Service() {
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_MEMBER"
         private const val ACTION_MUSIC_ASSISTANT_PLAY_MEDIA =
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_PLAY_MEDIA"
+        private const val ACTION_MUSIC_ASSISTANT_SET_USER =
+            "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_USER"
         private const val REQUEST_OPEN_APP = 0x5E01
         private const val PREF_MA = "sendspin_music_assistant"
         private const val PREF_MA_LAST_URL = "last_url"
@@ -1456,6 +1502,18 @@ class SendspinReceiverService : Service() {
         private const val PREF_MA_TOKEN_URL_PREFIX = "token_url:"
         private const val PREF_MA_URL_SERVER_PREFIX = "url_server:"
         private const val PREF_MA_PREFERRED_PLAYER_PREFIX = "preferred_player:"
+
+        /**
+         * Per-Jellyfin-user key namespace for the MA SharedPreferences. Each
+         * Jellyfin user keeps an independent MA URL/token/preferred-player set,
+         * keyed `u:<userId-or-"default">/<base>`. Reads fall back to the legacy
+         * un-prefixed [base] (pre-feature, device-global) when the scoped key is
+         * absent; writes only ever touch the scoped key so users stay isolated.
+         */
+        private fun scopedPrefKey(jellyfinUserId: String?, base: String): String {
+            val scope = jellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
+            return "u:$scope/$base"
+        }
 
         fun start(
             context: Context,
@@ -1503,9 +1561,10 @@ class SendspinReceiverService : Service() {
             context.startService(intent)
         }
 
-        fun refreshMusicAssistantGroups(context: Context) {
+        fun refreshMusicAssistantGroups(context: Context, jellyfinUserId: String?) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_REFRESH
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
         }
@@ -1515,12 +1574,14 @@ class SendspinReceiverService : Service() {
             serverUrl: String,
             username: String,
             password: String,
+            jellyfinUserId: String?,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_LOGIN
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
                 putExtra(EXTRA_MUSIC_ASSISTANT_USERNAME, username)
                 putExtra(EXTRA_MUSIC_ASSISTANT_PASSWORD, password)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
         }
@@ -1529,11 +1590,13 @@ class SendspinReceiverService : Service() {
             context: Context,
             serverUrl: String,
             token: String,
+            jellyfinUserId: String?,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SAVE_TOKEN
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
                 putExtra(EXTRA_MUSIC_ASSISTANT_TOKEN, token)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
         }
@@ -1541,10 +1604,12 @@ class SendspinReceiverService : Service() {
         fun setMusicAssistantServerUrl(
             context: Context,
             serverUrl: String,
+            jellyfinUserId: String?,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_SERVER_URL
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
         }
@@ -1553,33 +1618,78 @@ class SendspinReceiverService : Service() {
             context: Context,
             playerId: String,
             add: Boolean,
+            jellyfinUserId: String?,
         ) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_MEMBER
                 putExtra(EXTRA_MUSIC_ASSISTANT_PLAYER_ID, playerId)
                 putExtra(EXTRA_MUSIC_ASSISTANT_MEMBER_ADD, add)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
         }
 
-        fun playMusicAssistantMedia(context: Context, mediaUri: String) {
+        fun playMusicAssistantMedia(context: Context, mediaUri: String, jellyfinUserId: String?) {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_PLAY_MEDIA
                 putExtra(EXTRA_MUSIC_ASSISTANT_MEDIA_URI, mediaUri)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)
+        }
+
+        /**
+         * Re-scope the receiver's MA config to a (possibly new) Jellyfin user
+         * and reload the session for that user's stored URL/token. Call on every
+         * active-session change so a user switch never leaves another user's MA
+         * token live in the controls UI.
+         */
+        fun setMusicAssistantUser(context: Context, jellyfinUserId: String?) {
+            val intent = Intent(context, SendspinReceiverService::class.java).apply {
+                action = ACTION_MUSIC_ASSISTANT_SET_USER
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
+            }
+            context.startService(intent)
+        }
+
+        /**
+         * Persist per-user MA config straight to SharedPreferences WITHOUT
+         * starting the receiver service — used by companion sync to apply config
+         * for a user who isn't currently casting. Writes the same scoped keys the
+         * running service reads (LAST_URL fallback + per-URL token), so the next
+         * time the service runs as [jellyfinUserId] it picks the config up.
+         */
+        fun storeMusicAssistantConfig(
+            context: Context,
+            jellyfinUserId: String?,
+            serverUrl: String,
+            token: String?,
+        ) {
+            if (serverUrl.isBlank()) return
+            context.getSharedPreferences(PREF_MA, Context.MODE_PRIVATE).edit().apply {
+                putString(scopedPrefKey(jellyfinUserId, PREF_MA_LAST_URL), serverUrl)
+                token?.takeIf { it.isNotBlank() }?.let {
+                    putString(scopedPrefKey(jellyfinUserId, "$PREF_MA_TOKEN_URL_PREFIX$serverUrl"), it)
+                }
+            }.apply()
         }
 
         /**
          * Static prefs writer used by the player picker. Persists into the
          * same SharedPreferences file the resolver reads from, so the next
          * `play_media` call honours the choice without restarting the service.
+         * Scoped to [jellyfinUserId] so each user keeps an independent choice.
          *
          * Pass [playerId] = null to clear (revert to auto-detection).
          */
-        fun setPreferredPlayer(context: Context, serverId: String?, playerId: String?) {
+        fun setPreferredPlayer(
+            context: Context,
+            serverId: String?,
+            playerId: String?,
+            jellyfinUserId: String?,
+        ) {
             val key = serverId?.takeIf { it.isNotBlank() }
-                ?.let { "$PREF_MA_PREFERRED_PLAYER_PREFIX$it" }
+                ?.let { scopedPrefKey(jellyfinUserId, "$PREF_MA_PREFERRED_PLAYER_PREFIX$it") }
                 ?: return
             val editor = context
                 .getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)

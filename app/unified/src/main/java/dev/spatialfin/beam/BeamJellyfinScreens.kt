@@ -3128,7 +3128,11 @@ private fun openServerItem(
                     // Fallback for callers that didn't thread the dispatcher;
                     // the receiver service still works, just no optimistic UI.
                     dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
-                        .playMusicAssistantMedia(context, maUri)
+                        .playMusicAssistantMedia(
+                            context,
+                            maUri,
+                            dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
+                        )
                 }
                 android.widget.Toast.makeText(context, "Queuing in Music Assistant…", android.widget.Toast.LENGTH_SHORT).show()
             } else {
@@ -3374,7 +3378,11 @@ private fun launchServerItem(
                 val maUri = item.originalTitle
                 android.util.Log.e("BeamJellyfinScreens", "launchServerItem: else branch, maUri=$maUri")
                 if (!maUri.isNullOrBlank() && maUri.contains("://")) {
-                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(context, maUri)
+                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(
+                        context,
+                        maUri,
+                        dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
+                    )
                     android.widget.Toast.makeText(context, "Playing on Sendspin...", android.widget.Toast.LENGTH_SHORT).show()
                 }
                 return
@@ -3448,7 +3456,13 @@ private fun buildServerItemSubtitle(item: SpatialFinItem): String =
             }
             else -> Unit
         }
-        item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }?.let(::add)
+        val original = item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }
+        when {
+            // Music Assistant smuggles the play URI in originalTitle; show the
+            // friendly artist/provider line (overview) instead of "library://…".
+            original?.contains("://") == true -> item.overview.takeIf { it.isNotBlank() }?.let(::add)
+            original != null -> add(original)
+        }
         buildProgressLabel(item)?.let(::add)
         buildRemainingLabel(item)?.let(::add)
     }.joinToString(" • ")
@@ -3525,7 +3539,9 @@ private fun buildServerItemMeta(item: SpatialFinItem): List<String> {
         is SpatialFinSeason -> if (item.indexNumber > 0) lines += "Season ${item.indexNumber}"
         else -> Unit
     }
-    item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }?.let { lines += "Original title: $it" }
+    item.originalTitle
+        ?.takeIf { it.isNotBlank() && it != item.name && !it.contains("://") }
+        ?.let { lines += "Original title: $it" }
     formatRuntime(item.runtimeTicks)?.let { lines += "Runtime: $it" }
     if (item.playbackPositionTicks > 0L) {
         formatRuntime(item.playbackPositionTicks)?.let { lines += "Progress: $it watched" }

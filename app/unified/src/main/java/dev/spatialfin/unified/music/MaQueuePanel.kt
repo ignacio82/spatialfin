@@ -161,15 +161,22 @@ private fun QueueRow(
         QueueArtwork(item = item)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.displayTitle(),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold,
-                color = if (isCurrent) MaterialTheme.colorScheme.onSecondaryContainer
-                else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = item.displayTitle(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (isCurrent) MaterialTheme.colorScheme.onSecondaryContainer
+                    else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (item.isHighDefinitionAudio()) {
+                    Spacer(Modifier.width(6.dp))
+                    MaHdBadge()
+                }
+            }
             val subtitle = item.displaySubtitle()
             if (!subtitle.isNullOrBlank()) {
                 Text(
@@ -261,9 +268,13 @@ private fun ServerQueueItem.displayTitle(): String =
         ?: mediaItem?.name?.takeIf { it.isNotBlank() }
         ?: "Unknown track"
 
-private fun ServerQueueItem.displaySubtitle(): String? =
-    mediaItem?.artists?.firstOrNull()?.name?.takeIf { it.isNotBlank() }
+private fun ServerQueueItem.displaySubtitle(): String? {
+    val base = mediaItem?.artists?.firstOrNull()?.name?.takeIf { it.isNotBlank() }
         ?: mediaItem?.album?.name?.takeIf { it.isNotBlank() }
+    return listOfNotNull(base, mediaItem?.providerDisplayName())
+        .joinToString(" • ")
+        .ifBlank { null }
+}
 
 private fun ServerQueueItem.artworkPath(): String? =
     image?.path

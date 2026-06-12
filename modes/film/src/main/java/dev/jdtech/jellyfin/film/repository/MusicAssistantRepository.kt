@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.film.repository
 import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dev.jdtech.jellyfin.data.musicassistant.MusicProviderNames
 import dev.jdtech.jellyfin.models.SpatialFinImages
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinSource
@@ -229,11 +230,19 @@ class MusicAssistantRepository @Inject constructor(
         // Extract artist name from artist metadata
         val artistName = extractArtistName(obj)
 
+        // Friendly subtitle for the home-row card: "Artist • YouTube Music",
+        // or just the source for artist-less items (audiobooks, radio). The raw
+        // URI stays in originalTitle for playback dispatch, never displayed.
+        val subtitle = listOfNotNull(
+            artistName.takeIf { it.isNotBlank() },
+            parseProviderLabel(obj),
+        ).joinToString(" • ")
+
         return object : SpatialFinItem {
             override val id = UUID.nameUUIDFromBytes(id.toByteArray())
             override val name = name
             override val originalTitle = uriStr.takeIf { it.isNotBlank() }
-            override val overview = artistName
+            override val overview = subtitle
             override val played = false
             override val favorite = obj.optBoolean("favorite", false)
             override val canPlay = true
@@ -288,6 +297,23 @@ class MusicAssistantRepository @Inject constructor(
         val base = serverUrl?.trimEnd('/') ?: return path.takeIf { it.startsWith("http") }
         val encodedPath = Uri.encode(path)
         return "$base/imageproxy?path=$encodedPath&provider=$provider"
+    }
+
+    /**
+     * Friendly source label (YouTube Music / Local / Audible …) for the home-row
+     * subtitle. Library items report `provider == "library"`, so we fall back to
+     * the first provider mapping's instance and then the URI scheme.
+     */
+    private fun parseProviderLabel(obj: JSONObject): String? {
+        val mappingInstance = obj.optJSONArray("provider_mappings")
+            ?.optJSONObject(0)
+            ?.optString("provider_instance")
+            ?.takeIf { it.isNotBlank() }
+        return MusicProviderNames.fromProviderOrUri(
+            provider = obj.optString("provider").takeIf { it.isNotBlank() },
+            providerInstance = mappingInstance,
+            uri = obj.optString("uri").takeIf { it.isNotBlank() },
+        )
     }
 
     private fun extractArtistName(obj: JSONObject): String {

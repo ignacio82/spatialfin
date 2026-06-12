@@ -73,7 +73,11 @@ fun dispatchMusicAssistantPlay(
         artworkUrl = item?.preferredImagePath()?.let(serviceClient::rebaseServerImageUrl),
         targetPlayerId = null,
     )
-    SendspinReceiverService.playMusicAssistantMedia(context, uri)
+    SendspinReceiverService.playMusicAssistantMedia(
+        context,
+        uri,
+        dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
+    )
 }
 
 private fun ServerMediaItem.preferredImagePath(): String? =
