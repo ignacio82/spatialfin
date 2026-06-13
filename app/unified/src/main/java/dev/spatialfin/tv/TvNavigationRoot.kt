@@ -1689,14 +1689,15 @@ private fun TvSeasonTabs(
 }
 
 // Rich episode tile (design components/tv/EpisodeCard.jsx): landscape still with
-// the EP badge + focus play overlay, then "n. Title", runtime and a two-line
-// synopsis. Used by the show-detail episode shelf and the season grid.
+// the EP badge + focus play overlay, then title, watched state, runtime, and a
+// two-line synopsis. Used by the show-detail episode shelf and the season grid.
 @Composable
 private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(TV_RADIUS_CARD)
     val runtime = tvRuntimeLabel(episode.runtimeTicks)
     val fraction = buildPlaybackFraction(episode)
+    val episodeNumber = tvEpisodeLabel(episode)
     Column(modifier) {
         Card(
             onClick = onClick,
@@ -1732,9 +1733,10 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
         Row(
             modifier = Modifier.padding(top = 10.dp).fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (episode.indexNumber > 0) "${episode.indexNumber}. ${episode.name}" else episode.name,
+                text = episode.name.ifBlank { episodeNumber },
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = titleColor,
@@ -1742,7 +1744,21 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            TvEpisodeWatchStatusPill(played = episode.played)
+        }
+        Row(
+            modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = episodeNumber,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
             runtime?.let {
+                Text("•", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1756,6 +1772,36 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
                 modifier = Modifier.padding(top = 3.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun TvEpisodeWatchStatusPill(played: Boolean, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(999.dp)
+    val containerColor = if (played) MaterialTheme.colorScheme.primary.copy(alpha = 0.92f) else Color(0xCC0D1824)
+    val contentColor = if (played) MaterialTheme.colorScheme.onPrimary else Color(0xFFD7DEE8)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(containerColor)
+            .border(1.dp, if (played) Color.Transparent else Color.White.copy(alpha = 0.18f), shape)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = if (played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            text = if (played) "Watched" else "Unwatched",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = contentColor,
+            maxLines = 1,
+        )
     }
 }
 
