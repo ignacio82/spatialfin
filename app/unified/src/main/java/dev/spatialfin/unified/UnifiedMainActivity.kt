@@ -993,7 +993,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
                     dispatcher = dispatcher,
-                    serverId = sendspinState.serverId,
                     onDismiss = { showPickerSheet = false },
                 )
             }
@@ -1238,10 +1237,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                             dev.spatialfin.unified.music.MaPlayerPickerContent(
                                 players = state.visiblePlayers,
                                 selectedPlayer = state.selectedPlayer,
-                                onPick = { id ->
-                                    spatialDispatcher.setPreferredPlayer(sendspinState.serverId, id)
-                                    showSpatialPicker = false; showSpatialNowPlaying = true
-                                },
+                                localPlayerId = sendspinState.musicAssistantQueuePlayerId,
+                                playbackActive = state.nowPlaying != null,
                                 onToggleGroupMember = { leaderId, memberId, grouped ->
                                     if (grouped) {
                                         spatialDispatcher.removeFromSyncGroup(leaderId, memberId)

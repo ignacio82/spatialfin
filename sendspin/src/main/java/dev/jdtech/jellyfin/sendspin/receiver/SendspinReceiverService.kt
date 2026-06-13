@@ -14,8 +14,10 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.sendspin.protocol.ArtworkChannel
+import com.sendspin.protocol.AudioChunk
 import com.sendspin.protocol.ClientPreferences
 import com.sendspin.protocol.ClientState
+import com.sendspin.protocol.ClockSync
 import com.sendspin.protocol.ControllerState
 import com.sendspin.protocol.GroupPlaybackState
 import com.sendspin.protocol.JsonOptional
@@ -41,6 +43,7 @@ import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import org.java_websocket.WebSocket
 import timber.log.Timber
+import java.lang.reflect.Field
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -56,13 +59,25 @@ class SendspinReceiverService : Service() {
     private var okHttpClient: OkHttpClient? = null
     private var advertiser: SendspinReceiverAdvertiser? = null
     private var bootstrapJob: Job? = null
+
+    /**
+     * Per-client lifecycle scope: every collector and topology loop tied to the
+     * current [SendSpinClient] instance lives here, so the stall watchdog can
+     * tear the whole connection stack down (dead socket, poisoned clock-sync
+     * filter) and rebuild it without leaking collectors from the old instance.
+     */
+    private var clientScope: CoroutineScope? = null
+    private var watchdogJob: Job? = null
     private var musicAssistantClient: MusicAssistantGroupClient? = null
     private var musicAssistantRefreshJob: Job? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var displayName: String = "SpatialFin"
     private var receiverClientId: String = ""
+    private var lastPort: Int = DEFAULT_PORT
+    private var lastSoftwareVersion: String? = null
     private var smoothedVisualizerLevels: List<Float> = emptyList()
     @Volatile private var lastPlayedServerId: String = ""
+    @Volatile private var lastClockRealignLogUs: Long = 0L
 
     /**
      * The current Jellyfin user, pushed in via Intent extras (the service is
@@ -147,11 +162,16 @@ class SendspinReceiverService : Service() {
         receiverClientId = clientId
         val port = intent?.getIntExtra(EXTRA_PORT, DEFAULT_PORT) ?: DEFAULT_PORT
         val softwareVersion = intent?.getStringExtra(EXTRA_SOFTWARE_VERSION)
+        lastPort = port
+        lastSoftwareVersion = softwareVersion
 
         SendspinReceiverSession.update { it.copy(serviceRunning = true) }
         startForegroundCompat()
 
-        if (bootstrapJob?.isActive == true || serverHost != null) {
+        // `client` covers the outbound-only mode, where the listening host never
+        // bound (serverHost == null) but a dialing client is alive and a second
+        // start intent must not double-bootstrap.
+        if (bootstrapJob?.isActive == true || serverHost != null || client != null) {
             return START_STICKY
         }
         bootstrapJob = scope.launch { startServer(displayName, clientId, port, softwareVersion) }
@@ -169,7 +189,15 @@ class SendspinReceiverService : Service() {
                 .add(JsonOptionalAdapterFactory())
                 .addLast(KotlinJsonAdapterFactory())
                 .build()
-        val http = OkHttpClient.Builder().build()
+        // pingInterval doubles as dead-connection detection: OkHttp fails the
+        // WebSocket if a pong doesn't arrive within the interval. Without it a
+        // Wi-Fi blip leaves the socket in STREAMING forever (writes just queue),
+        // the dial loop sees "connected" and never redials, and MA keeps showing
+        // the track as playing while this device is silent. The official MA app
+        // pings every 5 s for exactly this reason.
+        val http = OkHttpClient.Builder()
+            .pingInterval(java.time.Duration.ofSeconds(WS_PING_INTERVAL_SECONDS))
+            .build()
         // Dedicated client for MA REST: `player_queues/play_media` blocks until
         // the queue is loaded AND the wrapping universal-player has dispatched
         // audio to the underlying SendSpin endpoint. First-cast can take 15+ s;
@@ -186,8 +214,11 @@ class SendspinReceiverService : Service() {
         // discovery wait, so the universal-player wrapper link survives across
         // plays) and the dial loop below re-establishes the connection within
         // seconds after a Wi-Fi blip — the inbound topology could stay silent for
-        // minutes while MA showed the track as "playing".
-        val maOutboundUrl = storedMusicAssistantServerUrl(null)?.toSendspinWsUrl()
+        // minutes while MA showed the track as "playing". This snapshot only
+        // gates the bind-failure decision; the topology loop re-resolves the
+        // URL every tick so config that lands after bootstrap (per-user scoped
+        // writes, onboarding, user switch) still upgrades us to outbound dial.
+        val maOutboundUrl = currentOutboundDialUrl()
         val newClient =
             SendSpinClient(
                 okHttpClient = http,
@@ -223,17 +254,23 @@ class SendspinReceiverService : Service() {
         newClient.onVisualizerFrame = { frame ->
             updateVisualizerState(frame)
         }
+        newClient.onAudioChunk = { chunk ->
+            recoverSendspinClockIfNeeded(newClient, chunk)
+        }
         val createdAudioPlayer = newClient.audioPlayer as AndroidSendspinAudioPlayer
         newClient.setStaticDelayMs(ANDROID_AUDIO_OUTPUT_DELAY_MS)
         newClient.setRequiredLeadTimeMs(REQUIRED_LEAD_TIME_MS)
         newClient.setMinBufferMs(MIN_BUFFER_MS)
+
+        val cs = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        clientScope = cs
 
         val newHost = SendSpinServerHost(
             client = newClient,
             moshi = moshi,
             getLastPlayedServerId = { lastPlayedServerId },
             port = port,
-            scope = scope,
+            scope = cs,
         )
         var hostUsable = true
         try {
@@ -246,6 +283,8 @@ class SendspinReceiverService : Service() {
                 runCatching { newHost.stopServer() }
                 http.dispatcher.executorService.shutdown()
                 http.connectionPool.evictAll()
+                cs.cancel()
+                clientScope = null
                 stopSelf()
                 return
             }
@@ -262,7 +301,7 @@ class SendspinReceiverService : Service() {
         SendspinReceiverSession.update { it.copy(serviceRunning = true) }
         updateNotification()
 
-        scope.launch {
+        cs.launch {
             newClient.serverName.collect { name ->
                 SendspinReceiverSession.update {
                     it.copy(serverName = name.takeIf(String::isNotBlank))
@@ -270,7 +309,7 @@ class SendspinReceiverService : Service() {
                 updateNotification()
             }
         }
-        scope.launch {
+        cs.launch {
             newClient.serverId.collect { id ->
                 // A fresh connection: the next playback-state emission is the
                 // server's restore sync, not a user cast — don't auto-show for it.
@@ -302,7 +341,7 @@ class SendspinReceiverService : Service() {
                 updateNotification()
             }
         }
-        scope.launch {
+        cs.launch {
             newClient.groupPlaybackState.collect { state ->
                 val playbackState = state ?: GroupPlaybackState.STOPPED
                 if (playbackState == GroupPlaybackState.PLAYING) {
@@ -340,13 +379,13 @@ class SendspinReceiverService : Service() {
                 updateNotification()
             }
         }
-        scope.launch {
+        cs.launch {
             newClient.albumArtwork.collect { artwork ->
                 updateAlbumArtwork(artwork)
                 updateNotification()
             }
         }
-        scope.launch {
+        cs.launch {
             newClient.controllerState.collect { state ->
                 if (state != null) {
                     createdAudioPlayer.setVolume(if (state.muted) 0 else state.volume)
@@ -355,7 +394,7 @@ class SendspinReceiverService : Service() {
                 }
             }
         }
-        scope.launch {
+        cs.launch {
             newClient.serverState.collect { state ->
                 state.metadata?.let(::updateMetadataState)
                 state.controller?.let { controller ->
@@ -381,7 +420,7 @@ class SendspinReceiverService : Service() {
         // registers, then health-check and re-publish if it ever drops, so MA
         // can always re-discover us without a manual restart.
         fun launchAdvertiseLoop() {
-            scope.launch {
+            cs.launch {
                 while (true) {
                     // Re-publish if we've never advertised, dropped, OR the device's
                     // LAN IP changed under us (DHCP) — a stale-IP record is as bad as
@@ -396,47 +435,211 @@ class SendspinReceiverService : Service() {
             }
         }
 
-        if (maOutboundUrl != null) {
-            // Outbound dial loop (official MA app topology). While disconnected,
-            // (re)dial the server's /sendspin endpoint every few seconds; while
-            // connected this is just a cheap state check. Deliberately NOT
-            // advertising via mDNS in this mode: the server would also dial in
-            // and the two sessions would fight. If the stored URL turns out to
-            // be stale/unreachable, fall back to the legacy advertise topology
-            // after a few failed dials so MA can still discover us.
-            scope.launch {
-                var disconnectedTicks = 0
-                var advertiseFallbackStarted = false
-                while (true) {
-                    val st = newClient.state.value
-                    val connected = newClient.serverId.value.isNotBlank() &&
-                        st != ClientState.DISCONNECTED && st != ClientState.ERROR
-                    if (connected) {
-                        disconnectedTicks = 0
-                    } else if (st != ClientState.CONNECTING && st != ClientState.HANDSHAKING) {
-                        runCatching { newClient.connect(maOutboundUrl) }
+        // Unified topology loop (official MA app style). The outbound dial URL
+        // is re-resolved from prefs EVERY tick: MA config commonly lands after
+        // bootstrap (companion sync writes per-user scoped keys, onboarding,
+        // user switch), and a one-shot capture left those installs stuck on the
+        // legacy advertise topology — 15 s wrapper waits and minutes-long blip
+        // recovery — even though a dial target was sitting in prefs. While a
+        // URL is known we dial out and deliberately do NOT advertise via mDNS
+        // (the server would also dial in and the two sessions would fight);
+        // the advertise topology engages immediately when no URL is stored, or
+        // as a fallback after a few failed dials to a stale/unreachable URL.
+        cs.launch {
+            var disconnectedTicks = 0
+            var advertiseStarted = false
+            fun ensureAdvertising(reason: String) {
+                if (advertiseStarted || !hostUsable) return
+                Timber.tag(TAG).i("Enabling mDNS advertise topology: %s", reason)
+                advertiseStarted = true
+                launchAdvertiseLoop()
+            }
+            while (true) {
+                val st = newClient.state.value
+                val connected = newClient.serverId.value.isNotBlank() &&
+                    st != ClientState.DISCONNECTED && st != ClientState.ERROR
+                if (connected) {
+                    disconnectedTicks = 0
+                } else if (st != ClientState.CONNECTING && st != ClientState.HANDSHAKING) {
+                    val dialUrl = currentOutboundDialUrl()
+                    if (dialUrl != null) {
+                        runCatching { newClient.connect(dialUrl) }
                             .onFailure {
-                                Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", maOutboundUrl)
+                                Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", dialUrl)
                             }
                         disconnectedTicks++
-                        if (
-                            disconnectedTicks >= OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK &&
-                            !advertiseFallbackStarted &&
-                            hostUsable
-                        ) {
-                            Timber.tag(TAG).w(
-                                "Outbound SendSpin dial keeps failing — enabling mDNS advertise fallback",
-                            )
-                            advertiseFallbackStarted = true
-                            launchAdvertiseLoop()
+                        if (disconnectedTicks >= OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK) {
+                            ensureAdvertising("outbound dial keeps failing")
                         }
+                    } else {
+                        ensureAdvertising("no Music Assistant URL stored")
                     }
-                    kotlinx.coroutines.delay(OUTBOUND_DIAL_CHECK_INTERVAL_MS)
+                }
+                kotlinx.coroutines.delay(OUTBOUND_DIAL_CHECK_INTERVAL_MS)
+            }
+        }
+
+        ensureStallWatchdog()
+    }
+
+    /**
+     * The ws(s) URL the topology loop should dial, or null when no MA server is
+     * known. Tries the current user scope first, then ANY user's stored URL:
+     * the service usually bootstraps before an MA intent has delivered the
+     * active Jellyfin user id, so a scoped-only read missed every per-user
+     * config (`u:<userId>/…`) and silently degraded to the advertise topology.
+     */
+    private fun currentOutboundDialUrl(): String? =
+        (storedMusicAssistantServerUrl(null) ?: anyStoredMusicAssistantUrl())?.toSendspinWsUrl()
+
+    /**
+     * Guard against SendSpin clock discontinuities that map fresh audio chunks
+     * outside [AudioBuffer]'s playable window. The library invokes
+     * [SendSpinClient.onAudioChunk] immediately before `AudioBuffer.offer()`,
+     * so a realignment here lets the same chunk be queued instead of dropped.
+     */
+    private fun recoverSendspinClockIfNeeded(client: SendSpinClient, chunk: AudioChunk) {
+        val nowUs = ClockSync.Companion.localMicros()
+        val mappedUs = client.toLocalMicros(chunk.serverTimestampMicros)
+        val skewUs = mappedUs - nowUs
+        val needsRecovery =
+            skewUs < -CLOCK_REALIGN_LATE_THRESHOLD_US ||
+                skewUs > CLOCK_REALIGN_FUTURE_THRESHOLD_US
+        if (!needsRecovery) return
+
+        val targetLocalUs = nowUs + CLOCK_REALIGN_TARGET_LEAD_US
+        val targetOffsetUs = chunk.serverTimestampMicros - targetLocalUs
+        runCatching {
+            ClockSyncReflection.realign(
+                clockSync = client.clockSync,
+                offsetMicros = targetOffsetUs,
+                localNowMicros = nowUs,
+            )
+            client.audioBuffer.flush()
+        }.onSuccess {
+            if (abs(nowUs - lastClockRealignLogUs) >= CLOCK_REALIGN_LOG_INTERVAL_US) {
+                lastClockRealignLogUs = nowUs
+                Timber.tag(TAG).w(
+                    "Sendspin clock realigned for audio: chunkTs=%d skew=%.1f ms offset=%.1f ms",
+                    chunk.serverTimestampMicros,
+                    skewUs / 1_000.0,
+                    targetOffsetUs / 1_000.0,
+                )
+            }
+        }.onFailure { error ->
+            if (abs(nowUs - lastClockRealignLogUs) >= CLOCK_REALIGN_LOG_INTERVAL_US) {
+                lastClockRealignLogUs = nowUs
+                Timber.tag(TAG).w(
+                    error,
+                    "Sendspin clock realign failed: chunkTs=%d skew=%.1f ms",
+                    chunk.serverTimestampMicros,
+                    skewUs / 1_000.0,
+                )
+            }
+        }
+    }
+
+    private fun anyStoredMusicAssistantUrl(): String? {
+        val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
+        return all.entries.asSequence()
+            .filter { (key, _) ->
+                key == PREF_MA_LAST_URL ||
+                    (key.startsWith("u:") && key.endsWith("/$PREF_MA_LAST_URL"))
+            }
+            .mapNotNull { (_, value) -> (value as? String)?.takeIf { it.isNotBlank() } }
+            .firstOrNull()
+            ?.let { normalizeMusicAssistantUrl(it) }
+    }
+
+    /**
+     * Backstop for "MA says PLAYING but this device renders nothing". The
+     * WebSocket ping catches dead sockets, but a live socket can still go
+     * silent: a clock discontinuity after device suspend makes every chunk
+     * look far-future (the library's Kalman filter has no discontinuity reset
+     * and takes minutes to re-converge), or the server-side stream stalls.
+     * Watching the renderer's monotonic byte counter catches all of those.
+     * After [STALL_TICKS_MARK_UI] silent ticks the session is flagged so the
+     * UI stops claiming playback; after [STALL_TICKS_REBUILD] the entire
+     * client stack is rebuilt — fresh socket, fresh clock-sync filter — and
+     * the server late-joins us back into the running stream.
+     */
+    private fun ensureStallWatchdog() {
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = scope.launch {
+            var lastRendered = -1L
+            var stalledTicks = 0
+            while (true) {
+                kotlinx.coroutines.delay(STALL_CHECK_INTERVAL_MS)
+                val session = SendspinReceiverSession.state.value
+                val playing = session.connected &&
+                    session.playbackState == SendspinReceiverPlaybackState.PLAYING
+                val rendered = audioPlayer?.totalBytesRendered ?: -1L
+                if (rendered < 0L) {
+                    // Rebuild in progress (no audio player yet) — keep the
+                    // stalled flag up; audio genuinely isn't flowing.
+                    lastRendered = -1L
+                    stalledTicks = 0
+                    continue
+                }
+                if (!playing || rendered != lastRendered) {
+                    lastRendered = rendered
+                    stalledTicks = 0
+                    if (session.audioStalled) {
+                        SendspinReceiverSession.update { it.copy(audioStalled = false) }
+                        updateNotification()
+                    }
+                    continue
+                }
+                stalledTicks++
+                if (stalledTicks == STALL_TICKS_MARK_UI) {
+                    Timber.tag(TAG).w(
+                        "Sendspin audio stalled while PLAYING (%d ms without rendered PCM)",
+                        stalledTicks * STALL_CHECK_INTERVAL_MS,
+                    )
+                    SendspinReceiverSession.update { it.copy(audioStalled = true) }
+                    updateNotification()
+                }
+                if (stalledTicks >= STALL_TICKS_REBUILD) {
+                    Timber.tag(TAG).w(
+                        "Sendspin audio stalled for %d ms — rebuilding client (fresh socket + clock sync)",
+                        stalledTicks * STALL_CHECK_INTERVAL_MS,
+                    )
+                    stalledTicks = 0
+                    lastRendered = -1L
+                    bootstrapJob?.cancel()
+                    bootstrapJob = scope.launch {
+                        teardownClient("stall_recovery")
+                        startServer(displayName, receiverClientId, lastPort, lastSoftwareVersion)
+                    }
                 }
             }
-        } else if (hostUsable) {
-            launchAdvertiseLoop()
         }
+    }
+
+    /**
+     * Tear down everything [startServer] built (socket, host, audio, per-client
+     * collectors, MA REST client) so it can be rebuilt or the service stopped.
+     * Returns the async advertiser-unregister job so [onDestroy] can sequence
+     * scope cancellation after it.
+     */
+    private fun teardownClient(reason: String): Job {
+        runCatching { client?.disconnect(reason) }
+        runCatching { serverHost?.stopServer() }
+        audioPlayer?.close()
+        okHttpClient?.dispatcher?.executorService?.shutdown()
+        okHttpClient?.connectionPool?.evictAll()
+        clientScope?.cancel()
+        clientScope = null
+        client = null
+        serverHost = null
+        audioPlayer = null
+        okHttpClient = null
+        // The MA REST client shares the torn-down OkHttp dispatcher; drop it so
+        // the next ensureMusicAssistantClient() builds a working one.
+        musicAssistantClient = null
+        val ad = advertiser
+        advertiser = null
+        return scope.launch { ad?.unregister() }
     }
 
     /** `http(s)://host:port` MA base URL → `ws(s)://host:port/sendspin`. */
@@ -448,22 +651,14 @@ class SendspinReceiverService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         bootstrapJob?.cancel()
-        runCatching { client?.disconnect("service_stop") }
-        runCatching { serverHost?.stopServer() }
-        audioPlayer?.close()
-        okHttpClient?.dispatcher?.executorService?.shutdown()
-        okHttpClient?.connectionPool?.evictAll()
-        client = null
-        serverHost = null
-        audioPlayer = null
-        okHttpClient = null
-        musicAssistantClient = null
+        watchdogJob?.cancel()
+        watchdogJob = null
+        val unregisterJob = teardownClient("service_stop")
         musicAssistantRefreshJob?.cancel()
         musicAssistantRefreshJob = null
         SendspinReceiverSession.reset()
         releaseWifiLock()
-        scope.launch { advertiser?.unregister() }
-            .invokeOnCompletion { scope.cancel() }
+        unregisterJob.invokeOnCompletion { scope.cancel() }
     }
 
     private fun handleControllerCommand(intent: Intent) {
@@ -733,7 +928,7 @@ class SendspinReceiverService : Service() {
                 }
 
                 val client = requireNotNull(musicAssistantClient)
-                val target = resolvePlayMediaTarget(client, serverUrl, token, serverId)
+                val target = resolvePlayMediaTarget(client, serverUrl, token)
                 if (target == null) {
                     Timber.tag(TAG).w("MA play_media: no usable target")
                     // Tell the user *why* we refused to play. The most common
@@ -745,14 +940,10 @@ class SendspinReceiverService : Service() {
                     )
                     return@launch
                 }
-                // Do NOT persist auto-resolved targets. Persisting the result of
-                // [resolvePlayMediaTarget] turned a transient "MA hasn't seen our
-                // SendSpin endpoint yet" fallback (step 3 → any usable player)
-                // into a permanent stickiness: the random player got saved as the
-                // preferred one and every later play short-circuited to it via
-                // step 1, even after MA re-discovered this device. Only an
-                // explicit picker choice ([setPreferredPlayer]) should persist;
-                // auto-detection re-runs each play and self-heals.
+                // Fresh playback always resolves the current device's wrapper.
+                // Other speakers join through MA sync grouping after playback
+                // starts; a saved picker target from an older build must never
+                // make a new tap start silently in another room.
                 Timber.tag(TAG).i(
                     "MA play_media: uri=%s queue_id=%s (player_name=%s type=%s provider=%s)",
                     mediaUri, target.id, target.name, target.type, target.provider,
@@ -786,23 +977,17 @@ class SendspinReceiverService : Service() {
      * (20+ players) it's a privacy bug too.
      *
      * Order, with no implicit cross-device fallback:
-     *   1) The user's previously-chosen player (per server), if still usable.
-     *   2) Our SendSpin endpoint's Universal-Player wrapper, found via
+     *   1) Our SendSpin endpoint's Universal-Player wrapper, found via
      *      `active_source` / `protocol_parent_id` / `linked_output_protocols`.
      *      Polls briefly so MA's 15 s auto-link timer can catch up — but
      *      ONLY if we have a SendSpin endpoint to wrap.
-     *   3) If our SendSpin endpoint exists but the wrapper never appears:
+     *   2) If our SendSpin endpoint exists but the wrapper never appears:
      *      return null with a clear error. Do NOT pick a different player.
-     *   4) If we have NO SendSpin endpoint at all (pure-controller use,
-     *      receiver not started): fall back to any usable universal_player,
-     *      then any usable player. That's the only case where picking
-     *      something else is appropriate.
      */
     private suspend fun resolvePlayMediaTarget(
         client: MusicAssistantGroupClient,
         serverUrl: String,
         token: String,
-        serverId: String?,
     ): MusicAssistantPlayerState? {
         val start = System.currentTimeMillis()
         val deadline = start + WRAPPER_POLL_TIMEOUT_MS
@@ -813,19 +998,10 @@ class SendspinReceiverService : Service() {
             val usable = all.filter { player ->
                 !player.type.equals("protocol", ignoreCase = true) &&
                     player.available &&
-                    player.enabled &&
-                    !player.hideInUi
+                    player.enabled
             }
 
-            // 1) Saved choice — covers explicit picker selections too.
-            preferredPlayerId(serverId)?.let { saved ->
-                usable.firstOrNull { it.id == saved }?.let {
-                    Timber.tag(TAG).d("MA play_media: using saved player_id=%s", saved)
-                    return it
-                }
-            }
-
-            // 2) Find our SendSpin endpoint's wrapper.
+            // Find our SendSpin endpoint's wrapper.
             val ourSendspin = all.firstOrNull { it.id == receiverClientId }
                 ?: all.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
             if (ourSendspin != null) {
@@ -859,9 +1035,8 @@ class SendspinReceiverService : Service() {
             }
 
             // Neither our wrapper nor our endpoint resolved this pass. Poll
-            // until the deadline, then refuse — we only ever target this
-            // device's wrapper or an explicit picker choice, never a random
-            // player.
+            // until the deadline, then refuse — fresh playback only targets
+            // this device's wrapper.
             if (System.currentTimeMillis() < deadline) {
                 val nextDelay = if (attempt < FAST_POLLS) FAST_POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS
                 kotlinx.coroutines.delay(nextDelay)
@@ -901,14 +1076,6 @@ class SendspinReceiverService : Service() {
             candidate.provider.equals("universal_player", ignoreCase = true) &&
                 protocolPlayer.id in candidate.linkedOutputProtocols
         }?.id
-    }
-
-    private fun preferredPlayerId(serverId: String?): String? {
-        val id = serverId?.takeIf { it.isNotBlank() } ?: return null
-        val base = "$PREF_MA_PREFERRED_PLAYER_PREFIX$id"
-        val prefs = musicAssistantPrefs()
-        prefs.getString(scopedKey(base), null)?.takeIf { it.isNotBlank() }?.let { return it }
-        return prefs.getString(base, null)?.takeIf { it.isNotBlank() } // legacy
     }
 
     private fun showToast(message: String) {
@@ -1311,12 +1478,16 @@ class SendspinReceiverService : Service() {
     }
 
     private fun notificationTitle(state: SendspinReceiverUiState): String =
-        state.title?.takeIf(String::isNotBlank)
-            ?: if (state.connected) {
-                "Receiving Sendspin audio"
-            } else {
-                "SpatialFin is ready to receive"
-            }
+        when {
+            state.audioStalled && state.isPlaying -> "Reconnecting to Music Assistant…"
+            else ->
+                state.title?.takeIf(String::isNotBlank)
+                    ?: if (state.connected) {
+                        "Receiving Sendspin audio"
+                    } else {
+                        "SpatialFin is ready to receive"
+                    }
+        }
 
     private fun notificationText(state: SendspinReceiverUiState): String {
         val parts = listOfNotNull(
@@ -1511,6 +1682,41 @@ class SendspinReceiverService : Service() {
         nm.createNotificationChannel(channel)
     }
 
+    private object ClockSyncReflection {
+        private val lockField = ClockSync::class.java.privateField("lock")
+        private val xOffsetField = ClockSync::class.java.privateField("xOffset")
+        private val xDriftField = ClockSync::class.java.privateField("xDrift")
+        private val p00Field = ClockSync::class.java.privateField("p00")
+        private val p01Field = ClockSync::class.java.privateField("p01")
+        private val p10Field = ClockSync::class.java.privateField("p10")
+        private val p11Field = ClockSync::class.java.privateField("p11")
+        private val lastPredictTimeMicrosField = ClockSync::class.java.privateField("lastPredictTimeMicros")
+        private val sampleCountField = ClockSync::class.java.privateField("sampleCount")
+        private val lastOffsetMicrosField = ClockSync::class.java.privateField("lastOffsetMicros")
+        private val lastDriftPpmField = ClockSync::class.java.privateField("lastDriftPpm")
+        private val lastRttMicrosField = ClockSync::class.java.privateField("lastRttMicros")
+
+        fun realign(clockSync: ClockSync, offsetMicros: Long, localNowMicros: Long) {
+            val lock = lockField.get(clockSync) ?: clockSync
+            synchronized(lock) {
+                xOffsetField.setDouble(clockSync, offsetMicros.toDouble())
+                xDriftField.setDouble(clockSync, 0.0)
+                p00Field.setDouble(clockSync, CLOCK_REALIGN_P00)
+                p01Field.setDouble(clockSync, 0.0)
+                p10Field.setDouble(clockSync, 0.0)
+                p11Field.setDouble(clockSync, CLOCK_REALIGN_P11)
+                lastPredictTimeMicrosField.setLong(clockSync, localNowMicros)
+                sampleCountField.setInt(clockSync, 0)
+                lastOffsetMicrosField.setDouble(clockSync, offsetMicros.toDouble())
+                lastDriftPpmField.setDouble(clockSync, 0.0)
+                lastRttMicrosField.setLong(clockSync, 0L)
+            }
+        }
+
+        private fun Class<*>.privateField(name: String): Field =
+            getDeclaredField(name).apply { isAccessible = true }
+    }
+
     companion object {
         const val NOTIFICATION_CHANNEL_ID: String = "sendspin_receiver"
         const val NOTIFICATION_ID: Int = 0x5E2D // "SEND"
@@ -1536,6 +1742,12 @@ class SendspinReceiverService : Service() {
         private const val ANDROID_AUDIO_OUTPUT_DELAY_MS = 80
         private const val REQUIRED_LEAD_TIME_MS = 120
         private const val MIN_BUFFER_MS = 120
+        private const val CLOCK_REALIGN_LATE_THRESHOLD_US = 1_000_000L
+        private const val CLOCK_REALIGN_FUTURE_THRESHOLD_US = 5_000_000L
+        private const val CLOCK_REALIGN_TARGET_LEAD_US = 200_000L
+        private const val CLOCK_REALIGN_LOG_INTERVAL_US = 5_000_000L
+        private const val CLOCK_REALIGN_P00 = 1.0E12
+        private const val CLOCK_REALIGN_P11 = 1.0E-6
         private const val VISUALIZER_BUFFER_CAPACITY_BYTES = 4096
         private const val VISUALIZER_RATE_MAX = 15
         private const val VISUALIZER_BIN_COUNT = 16
@@ -1570,6 +1782,21 @@ class SendspinReceiverService : Service() {
 
         /** Failed dials before the legacy mDNS advertise fallback is enabled. */
         private const val OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK = 6
+
+        /**
+         * WebSocket ping cadence for the outbound dial. OkHttp fails the socket
+         * when a pong is missed, which is the ONLY client-side way to notice a
+         * dead path (writes merely queue) — matches the official MA app's 5 s.
+         */
+        private const val WS_PING_INTERVAL_SECONDS = 5L
+
+        // Stall watchdog: with PLAYING state and zero rendered PCM, mark the UI
+        // stalled after 2 ticks (4 s) and rebuild the client stack after 5
+        // ticks (10 s). 10 s sits safely above the library's 500 ms track-handoff
+        // gap and one-off network hiccups the buffer absorbs on its own.
+        private const val STALL_CHECK_INTERVAL_MS = 2_000L
+        private const val STALL_TICKS_MARK_UI = 2
+        private const val STALL_TICKS_REBUILD = 5
         private val VISUALIZER_SCALAR_SHAPE =
             listOf(
                 0.18f,
@@ -1613,11 +1840,10 @@ class SendspinReceiverService : Service() {
         private const val PREF_MA_TOKEN_SERVER_PREFIX = "token_server:"
         private const val PREF_MA_TOKEN_URL_PREFIX = "token_url:"
         private const val PREF_MA_URL_SERVER_PREFIX = "url_server:"
-        private const val PREF_MA_PREFERRED_PLAYER_PREFIX = "preferred_player:"
 
         /**
          * Per-Jellyfin-user key namespace for the MA SharedPreferences. Each
-         * Jellyfin user keeps an independent MA URL/token/preferred-player set,
+         * Jellyfin user keeps an independent MA URL/token set,
          * keyed `u:<userId-or-"default">/<base>`. Reads fall back to the legacy
          * un-prefixed [base] (pre-feature, device-global) when the scoped key is
          * absent; writes only ever touch the scoped key so users stay isolated.
@@ -1800,28 +2026,5 @@ class SendspinReceiverService : Service() {
             }.apply()
         }
 
-        /**
-         * Static prefs writer used by the player picker. Persists into the
-         * same SharedPreferences file the resolver reads from, so the next
-         * `play_media` call honours the choice without restarting the service.
-         * Scoped to [jellyfinUserId] so each user keeps an independent choice.
-         *
-         * Pass [playerId] = null to clear (revert to auto-detection).
-         */
-        fun setPreferredPlayer(
-            context: Context,
-            serverId: String?,
-            playerId: String?,
-            jellyfinUserId: String?,
-        ) {
-            val key = serverId?.takeIf { it.isNotBlank() }
-                ?.let { scopedPrefKey(jellyfinUserId, "$PREF_MA_PREFERRED_PLAYER_PREFIX$it") }
-                ?: return
-            val editor = context
-                .getSharedPreferences(PREF_MA, Context.MODE_PRIVATE)
-                .edit()
-            if (playerId.isNullOrBlank()) editor.remove(key) else editor.putString(key, playerId)
-            editor.apply()
-        }
     }
 }

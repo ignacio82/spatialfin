@@ -181,7 +181,11 @@ fun SendspinFullscreenPlayer(
                 val wide = maxWidth >= 720.dp
                 val title = state.title?.takeIf(String::isNotBlank) ?: "SendSpin audio"
                 val subtitle = sendspinSubtitle(state.artist, state.album, state.serverName)
-                val status = if (state.isPlaying) "Receiving from SendSpin" else "Paused"
+                val status = when {
+                    state.audioStalled && state.isPlaying -> "Reconnecting…"
+                    state.isPlaying -> "Receiving from SendSpin"
+                    else -> "Paused"
+                }
                 val controls: @Composable () -> Unit = {
                     SendspinControls(
                         isPlaying = state.isPlaying,

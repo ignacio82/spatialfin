@@ -53,6 +53,14 @@ data class SendspinReceiverUiState(
      * cold launch that only replayed last session's stale metadata.
      */
     val playbackStarted: Boolean = false,
+    /**
+     * True while the server reports PLAYING but this device has stopped
+     * rendering audio (dead socket pending redial, clock discontinuity, server
+     * stall). Set by the receiver service's stall watchdog so every playback
+     * surface (mini player, controls, notification) can show "Reconnecting…"
+     * instead of pretending audio is flowing.
+     */
+    val audioStalled: Boolean = false,
     val supportedCommands: Set<String> = emptySet(),
     val volume: Int = 100,
     val muted: Boolean = false,

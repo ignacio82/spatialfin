@@ -1189,7 +1189,6 @@ fun BeamNavigationRoot(
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
                     dispatcher = maPlayDispatcher,
-                    serverId = sendspinState.serverId,
                     onDismiss = { showPlayerPicker = false },
                 )
             }

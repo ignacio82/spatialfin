@@ -128,10 +128,14 @@ fun SendspinMiniPlayer(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val subtitle = state.artist?.takeIf(String::isNotBlank)
-                        ?: state.album?.takeIf(String::isNotBlank)
-                        ?: state.serverName?.takeIf(String::isNotBlank)
-                        ?: "SendSpin"
+                    val subtitle = if (state.audioStalled && state.isPlaying) {
+                        "Reconnecting…"
+                    } else {
+                        state.artist?.takeIf(String::isNotBlank)
+                            ?: state.album?.takeIf(String::isNotBlank)
+                            ?: state.serverName?.takeIf(String::isNotBlank)
+                            ?: "SendSpin"
+                    }
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,

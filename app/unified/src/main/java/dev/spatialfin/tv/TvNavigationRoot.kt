@@ -545,7 +545,6 @@ fun TvNavigationRoot(
                 dev.spatialfin.unified.music.MaPlayerPickerSheet(
                     session = maSession,
                     dispatcher = maDispatcher,
-                    serverId = sendspinState.serverId,
                     onDismiss = { showPickerSheet = false },
                 )
             }

@@ -509,10 +509,22 @@ private fun NowPlayingBody(
             modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
             enabled = onPickPlayer != null,
             label = {
+                // When the selected player is THIS device's wrapper and the
+                // local receiver has stopped rendering, say so — the server
+                // keeps reporting "playing" regardless of client health.
+                val receiverState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+                    .state.collectAsStateWithLifecycle()
+                val selected = state.selectedPlayer
+                val stalledHere = selected != null &&
+                    receiverState.audioStalled &&
+                    receiverState.musicAssistantQueuePlayerId != null &&
+                    selected.id == receiverState.musicAssistantQueuePlayerId
                 Text(
-                    text = state.selectedPlayer
-                        ?.let { "Playing on ${it.name}" }
-                        ?: "Choose a player",
+                    text = when {
+                        selected == null -> "Choose a player"
+                        stalledHere -> "Reconnecting to ${selected.name}…"
+                        else -> "Playing on ${selected.name}"
+                    },
                 )
             },
             colors = AssistChipDefaults.assistChipColors(),

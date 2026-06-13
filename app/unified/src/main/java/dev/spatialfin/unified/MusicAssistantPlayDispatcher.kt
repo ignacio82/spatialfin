@@ -298,26 +298,6 @@ class MaPlayDispatcher(
             )
     }
 
-    /**
-     * Override which MA player future `play` calls target. Persists per MA
-     * server id so the choice survives process death. Pass [playerId] = null
-     * to clear the override and return to auto-detection (which prefers the
-     * Universal-Player wrapper for THIS device's SendSpin endpoint).
-     *
-     * Writes to both the in-memory session (so UI surfaces reflect the
-     * choice immediately) and SendSpin's shared prefs (so the next
-     * `play_media` resolver pass honours it without restarting the service).
-     */
-    fun setPreferredPlayer(serverId: String?, playerId: String?) {
-        session.setSelectedPlayer(playerId)
-        dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
-            .setPreferredPlayer(
-                context,
-                serverId,
-                playerId,
-                dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
-            )
-    }
 }
 
 /**

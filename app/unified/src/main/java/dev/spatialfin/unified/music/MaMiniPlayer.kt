@@ -128,7 +128,16 @@ private fun MaMiniPlayerContent(
                         overflow = TextOverflow.Ellipsis,
                     )
                     val selectedPlayerName = state.selectedPlayer?.name
+                    // The server keeps reporting "playing" even when this
+                    // device's receiver has stopped rendering — surface the
+                    // local stall instead of pretending audio is flowing.
+                    val receiverState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+                        .state.collectAsStateWithLifecycle()
+                    val stalledHere = receiverState.audioStalled &&
+                        receiverState.musicAssistantQueuePlayerId != null &&
+                        state.selectedPlayer?.id == receiverState.musicAssistantQueuePlayerId
                     val subtitle = when {
+                        stalledHere -> "Reconnecting…"
                         state.playbackPhase == PlaybackPhase.Preparing -> "Preparing audio…"
                         !track.artist.isNullOrBlank() -> track.artist
                         selectedPlayerName != null -> "On $selectedPlayerName"

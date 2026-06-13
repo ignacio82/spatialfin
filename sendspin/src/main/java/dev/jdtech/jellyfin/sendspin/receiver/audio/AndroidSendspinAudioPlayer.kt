@@ -37,6 +37,15 @@ class AndroidSendspinAudioPlayer(
     @Volatile override var droppedDecodeFrames: Long = 0L
         private set
 
+    /**
+     * Monotonic count of PCM bytes handed to the AudioTrack. Unlike
+     * [pcmBytesWritten] it is never reset on flush/track-rebuild, so the
+     * service's stall watchdog can detect "server says PLAYING but nothing is
+     * being rendered" by watching it for forward progress.
+     */
+    @Volatile var totalBytesRendered: Long = 0L
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Any()
 
@@ -247,6 +256,7 @@ class AndroidSendspinAudioPlayer(
             }
             offset += written
             pcmBytesWritten += written
+            totalBytesRendered += written
         }
     }
 
