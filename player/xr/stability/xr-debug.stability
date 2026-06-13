@@ -144,7 +144,7 @@ internal fun dev.jdtech.jellyfin.player.xr.SectionHeader(text: kotlin.String): k
     - text: STABLE (String is immutable)
 
 @Composable
-public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, session: androidx.xr.runtime.Session, initialStereoMode: kotlin.String, itemId: java.util.UUID?, localMediaId: kotlin.Long?, networkVideoId: kotlin.String?, itemKind: kotlin.String, startFromBeginning: kotlin.Boolean, mediaSourceIndex: kotlin.Int?, maxBitrate: kotlin.Long?, openSyncPlayDialogOnStart: kotlin.Boolean, libassRenderer: dev.jdtech.jellyfin.player.xr.LibassRenderer?, onSearchQuery: kotlin.coroutines.SuspendFunction1<kotlin.String, kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>>, onLaunchSearchResult: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, telemetryStore: dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore, fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController, onBackClick: kotlin.Function0<kotlin.Unit>, splitAvVideoRole: kotlin.Boolean, onEndSplitAvFromMaster: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, session: androidx.xr.runtime.Session, initialStereoMode: kotlin.String, itemId: java.util.UUID?, localMediaId: kotlin.Long?, networkVideoId: kotlin.String?, universalPluginId: kotlin.String?, universalItemId: kotlin.String?, universalVideoUrl: kotlin.String?, universalTitle: kotlin.String?, itemKind: kotlin.String, startFromBeginning: kotlin.Boolean, mediaSourceIndex: kotlin.Int?, maxBitrate: kotlin.Long?, openSyncPlayDialogOnStart: kotlin.Boolean, libassRenderer: dev.jdtech.jellyfin.player.xr.LibassRenderer?, onSearchQuery: kotlin.coroutines.SuspendFunction1<kotlin.String, kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>>, onLaunchSearchResult: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, telemetryStore: dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore, fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController, onBackClick: kotlin.Function0<kotlin.Unit>, splitAvVideoRole: kotlin.Boolean, onEndSplitAvFromMaster: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -154,6 +154,10 @@ public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdte
     - itemId: UNSTABLE (has mutable properties or unstable members)
     - localMediaId: STABLE (class with no mutable properties)
     - networkVideoId: STABLE (class with no mutable properties)
+    - universalPluginId: STABLE (class with no mutable properties)
+    - universalItemId: STABLE (class with no mutable properties)
+    - universalVideoUrl: STABLE (class with no mutable properties)
+    - universalTitle: STABLE (class with no mutable properties)
     - itemKind: STABLE (String is immutable)
     - startFromBeginning: STABLE (primitive type)
     - mediaSourceIndex: STABLE (class with no mutable properties)

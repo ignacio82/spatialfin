@@ -139,6 +139,10 @@ data class TvShowState(
     val nextUp: SpatialFinEpisode? = null,
     val isLoading: Boolean = false,
     val error: Throwable? = null,
+    /** Season whose episodes are shown inline under the hero (design SeasonTabs). */
+    val selectedSeasonId: UUID? = null,
+    val episodes: List<SpatialFinEpisode> = emptyList(),
+    val episodesLoading: Boolean = false,
 )
 
 @HiltViewModel
@@ -161,6 +165,9 @@ constructor(
                     repository.getNextUp(showId).firstOrNull(),
                 )
             }.onSuccess { (show, seasons, nextUp) ->
+                // Open on the season the user is mid-way through (Next Up), else
+                // the first season — mirrors the design's "Resume SxEy" default.
+                val initialSeason = nextUp?.seasonId ?: seasons.firstOrNull()?.id
                 _state.emit(
                     TvShowState(
                         show = show,
@@ -168,10 +175,39 @@ constructor(
                         people = show.people,
                         nextUp = nextUp,
                         isLoading = false,
+                        selectedSeasonId = initialSeason,
+                        episodesLoading = initialSeason != null,
                     )
                 )
+                initialSeason?.let { loadEpisodes(it) }
             }.onFailure { error ->
                 _state.emit(TvShowState(isLoading = false, error = error))
+            }
+        }
+    }
+
+    fun selectSeason(seasonId: UUID) {
+        if (_state.value.selectedSeasonId == seasonId) return
+        _state.update {
+            it.copy(selectedSeasonId = seasonId, episodes = emptyList(), episodesLoading = true)
+        }
+        loadEpisodes(seasonId)
+    }
+
+    private fun loadEpisodes(seasonId: UUID) {
+        val seriesId = _state.value.show?.id ?: return
+        viewModelScope.launch {
+            val episodes =
+                runCatching {
+                    repository.getEpisodes(seriesId = seriesId, seasonId = seasonId, limit = 200)
+                }.getOrDefault(emptyList())
+            // Ignore a stale load if the user switched seasons mid-flight.
+            _state.update {
+                if (it.selectedSeasonId == seasonId) {
+                    it.copy(episodes = episodes, episodesLoading = false)
+                } else {
+                    it
+                }
             }
         }
     }

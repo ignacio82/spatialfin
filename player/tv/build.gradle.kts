@@ -55,6 +55,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.session)
     implementation(libs.hilt.android)
+    implementation(libs.kotlinx.collections.immutable)
     implementation(libs.timber)
 
     ksp(libs.hilt.compiler)

@@ -1,16 +1,20 @@
 package dev.jdtech.jellyfin.player.tv
 
+import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Looper
 import android.util.Rational
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.lazy.items
@@ -19,6 +23,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,6 +73,7 @@ import androidx.compose.runtime.setValue
 import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -81,8 +87,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.ContentScale
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -111,6 +119,7 @@ import dev.jdtech.jellyfin.player.beam.LibassSubtitleHelper
 import dev.jdtech.jellyfin.player.beam.LibassTextRenderer
 import dev.jdtech.jellyfin.player.xr.ProgressSection
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
+import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -132,6 +141,10 @@ class TvPlayerActivity : AppCompatActivity() {
         private const val EXTRA_START_FROM_BEGINNING = "startFromBeginning"
         private const val EXTRA_LOCAL_MEDIA_ID = "localMediaId"
         private const val EXTRA_NETWORK_VIDEO_ID = "networkVideoId"
+        private const val EXTRA_UNIVERSAL_PLUGIN_ID = "universalPluginId"
+        private const val EXTRA_UNIVERSAL_ITEM_ID = "universalItemId"
+        private const val EXTRA_UNIVERSAL_VIDEO_URL = "universalVideoUrl"
+        private const val EXTRA_UNIVERSAL_TITLE = "universalTitle"
         private const val EXTRA_MEDIA_SOURCE_INDEX = "mediaSourceIndex"
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
         private const val EXTRA_TRAILER = "trailer"
@@ -181,6 +194,20 @@ class TvPlayerActivity : AppCompatActivity() {
             Intent(context, TvPlayerActivity::class.java).apply {
                 putExtra(EXTRA_NETWORK_VIDEO_ID, networkVideoId)
                 putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            }
+
+        fun createIntentForUniversalMedia(
+            context: Context,
+            pluginId: String,
+            itemId: String,
+            videoUrl: String,
+            title: String,
+        ): Intent =
+            Intent(context, TvPlayerActivity::class.java).apply {
+                putExtra(EXTRA_UNIVERSAL_PLUGIN_ID, pluginId)
+                putExtra(EXTRA_UNIVERSAL_ITEM_ID, itemId)
+                putExtra(EXTRA_UNIVERSAL_VIDEO_URL, videoUrl)
+                putExtra(EXTRA_UNIVERSAL_TITLE, title)
             }
 
         fun createIntentForSpatialItem(
@@ -240,6 +267,10 @@ class TvPlayerActivity : AppCompatActivity() {
         val itemKind = deepLink?.kind ?: intent.getStringExtra(EXTRA_ITEM_KIND)
         val localMediaId = intent.getLongExtra(EXTRA_LOCAL_MEDIA_ID, 0L).takeIf { it > 0L }
         val networkVideoId = intent.getStringExtra(EXTRA_NETWORK_VIDEO_ID)
+        val universalPluginId = intent.getStringExtra(EXTRA_UNIVERSAL_PLUGIN_ID)
+        val universalItemId = intent.getStringExtra(EXTRA_UNIVERSAL_ITEM_ID)
+        val universalVideoUrl = intent.getStringExtra(EXTRA_UNIVERSAL_VIDEO_URL)
+        val universalTitle = intent.getStringExtra(EXTRA_UNIVERSAL_TITLE)
         val mediaSourceIndex =
             if (intent.hasExtra(EXTRA_MEDIA_SOURCE_INDEX)) {
                 intent.getIntExtra(EXTRA_MEDIA_SOURCE_INDEX, -1).takeIf { it >= 0 }
@@ -261,11 +292,13 @@ class TvPlayerActivity : AppCompatActivity() {
                 }
 
         Timber.i(
-            "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s",
+            "TvPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s universalPluginId=%s universalItemId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s",
             itemIdString,
             itemKind,
             localMediaId,
             networkVideoId,
+            universalPluginId,
+            universalItemId,
             startFromBeginning,
             mediaSourceIndex,
             maxBitrate,
@@ -284,6 +317,16 @@ class TvPlayerActivity : AppCompatActivity() {
                 viewModel.initializeNetworkPlayer(
                     networkVideoId = networkVideoId,
                     startFromBeginning = startFromBeginning,
+                )
+            }
+            !universalPluginId.isNullOrBlank() &&
+                !universalItemId.isNullOrBlank() &&
+                !universalVideoUrl.isNullOrBlank() -> {
+                viewModel.initializePlayerForUniversal(
+                    pluginId = universalPluginId,
+                    itemId = universalItemId,
+                    videoUrl = universalVideoUrl,
+                    title = universalTitle ?: "Unknown",
                 )
             }
             !itemIdString.isNullOrBlank() && !itemKind.isNullOrBlank() -> {
@@ -673,6 +716,70 @@ private fun TvPlayerScreen(
         }
     }
 
+    // --- Voice assistant (design ui_kits/tv/TvPlayerScreen.jsx) ---
+    // Brings the same assistant the phone + XR players have to the 10-foot
+    // surface: the mic control captures speech, commands act on the player, and
+    // questions are answered by the on-device/cloud chat engine + spoken back.
+    var voiceSearchResults by remember { mutableStateOf<Pair<String, List<SpatialFinItem>>?>(null) }
+    val voice = remember(viewModel, player) {
+        TvPlayerVoiceController(
+            appContext = context.applicationContext,
+            viewModel = viewModel,
+            player = player,
+            scope = scope,
+            onNavigateBack = { latestOnBack() },
+            onControlsVisibility = { vis -> controlsVisible = vis },
+            onLaunchItem = { item ->
+                TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
+            },
+            onShowSearchResults = { query, results -> voiceSearchResults = query to results },
+            onOpenSyncPlay = { activeDialog = TvPlayerDialog.SyncPlay; viewModel.refreshSyncPlayGroups() },
+        )
+    }
+    DisposableEffect(voice) { onDispose { voice.destroy() } }
+    val voiceUi by voice.ui.collectAsStateWithLifecycle()
+    val voicePartial by voice.partialTranscript.collectAsStateWithLifecycle()
+    val latestStartVoice by rememberUpdatedState({
+        voice.toggle(buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible))
+    })
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) latestStartVoice() }
+    val onVoice = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            latestStartVoice()
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // --- Up Next autoplay card (design components/tv/UpNextCard.jsx) ---
+    // Mirrors the XR next-episode panel: offered during the last 2 minutes of an
+    // episode when the playlist has a queued next item. "Play Now" skips ahead
+    // immediately; "Cancel" dismisses (ExoPlayer still auto-advances at the
+    // natural end — the existing behavior is untouched). Re-arms on item change.
+    var nextUpDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) { nextUpDismissed = false }
+    val nextEpisode = uiState.nextEpisode
+    val upNextRemainingMs = (duration - currentPosition).coerceAtLeast(0L)
+    val showUpNext =
+        !nextUpDismissed &&
+            nextEpisode != null &&
+            duration > TV_NEXT_EPISODE_THRESHOLD_MS &&
+            upNextRemainingMs in 0L..TV_NEXT_EPISODE_THRESHOLD_MS
+    val upNextFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(showUpNext, controlsVisible) {
+        if (showUpNext && !controlsVisible) {
+            delay(50L)
+            runCatching { upNextFocusRequester.requestFocus() }
+        }
+    }
+    BackHandler(enabled = showUpNext && activeDialog == null && !controlsVisible) {
+        nextUpDismissed = true
+    }
+
     BackHandler(enabled = activeDialog != null || controlsVisible) {
         when {
             activeDialog != null -> activeDialog = null
@@ -871,6 +978,8 @@ private fun TvPlayerScreen(
                 onSelectQuality = onSelectQuality,
                 onSelectSource = onSelectSource,
                 onInteraction = ::revealControls,
+                voiceAvailable = voice.isAvailable(),
+                onVoice = { revealControls(); onVoice() },
             )
         }
 
@@ -902,7 +1011,7 @@ private fun TvPlayerScreen(
         )
 
         AnimatedVisibility(
-            visible = !controlsVisible && !isPipMode && uiState.currentSegment != null,
+            visible = !controlsVisible && !isPipMode && uiState.currentSegment != null && !showUpNext,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -925,6 +1034,53 @@ private fun TvPlayerScreen(
                     )
                 }
             }
+        }
+
+        AnimatedVisibility(
+            visible = showUpNext && !isPipMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 48.dp, end = 48.dp),
+        ) {
+            nextEpisode?.let { ep ->
+                TvUpNextCard(
+                    nextEpisode = ep,
+                    secondsRemaining = kotlin.math.ceil(upNextRemainingMs / 1000.0).toInt(),
+                    fraction = (upNextRemainingMs.toFloat() / TV_NEXT_EPISODE_THRESHOLD_MS).coerceIn(0f, 1f),
+                    onPlayNow = {
+                        viewModel.skipToNextItem()
+                        nextUpDismissed = true
+                    },
+                    onCancel = { nextUpDismissed = true },
+                    playNowFocusRequester = upNextFocusRequester,
+                )
+            }
+        }
+
+        // Voice feedback overlay — top-center, parity with phone + XR.
+        if (!isPipMode) {
+            TvVoiceFeedbackOverlay(
+                ui = voiceUi,
+                partial = voicePartial,
+                onDismiss = { voice.dismiss() },
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 120.dp),
+            )
+        }
+
+        // Voice "search for…" results — a focusable list that plays on select.
+        voiceSearchResults?.takeIf { !isPipMode }?.let { (query, results) ->
+            TvVoiceSearchOverlay(
+                query = query,
+                results = results,
+                onPlay = { item ->
+                    voiceSearchResults = null
+                    TvPlayerActivity.createIntentForSpatialItem(context, item)?.let(context::startActivity)
+                },
+                onDismiss = { voiceSearchResults = null },
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
     }
 
@@ -1019,6 +1175,171 @@ private enum class TvPlayerDialog {
     SyncPlay,
 }
 
+// Offer the Up Next card in the last 2 minutes of an episode — same window the
+// XR next-episode panel uses (SpatialPlayerScreen.NEXT_EPISODE_THRESHOLD_MS), so
+// the autoplay affordance is consistent across surfaces.
+private const val TV_NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L
+
+/**
+ * UpNextCard (design components/tv/UpNextCard.jsx): a glass card that slides in
+ * over the player bottom-right as an episode ends. Shows the next item's still,
+ * an "UP NEXT" eyebrow, the title + series/episode line, and a Play Now button
+ * wrapping a countdown ring (fills as the remaining time drops), plus Cancel.
+ * The host owns the timer (`secondsRemaining` / `fraction`) and the actions.
+ */
+@Composable
+private fun TvUpNextCard(
+    nextEpisode: PlayerItem,
+    secondsRemaining: Int,
+    fraction: Float,
+    onPlayNow: () -> Unit,
+    onCancel: () -> Unit,
+    playNowFocusRequester: FocusRequester,
+) {
+    val episodeLabel =
+        nextEpisode.parentIndexNumber?.let { s ->
+            nextEpisode.indexNumber?.let { ep -> "S${s}E$ep" }
+        }
+    val supporting =
+        listOfNotNull(nextEpisode.seriesName, episodeLabel)
+            .joinToString("  ·  ")
+            .takeIf { it.isNotBlank() }
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xF20D1824),
+        modifier = Modifier.width(468.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(150.dp)
+                    .height(84.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF0F1720)),
+            ) {
+                nextEpisode.backdropImageUri?.let { uri ->
+                    coil3.compose.AsyncImage(
+                        model = uri,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "UP NEXT",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
+                Text(
+                    text = nextEpisode.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                supporting?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TvUpNextPlayButton(
+                        secondsRemaining = secondsRemaining,
+                        fraction = fraction,
+                        onClick = onPlayNow,
+                        modifier = Modifier.focusRequester(playNowFocusRequester),
+                    )
+                    TvOverlayTextButton(label = "Cancel", onClick = onCancel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvUpNextPlayButton(
+    secondsRemaining: Int,
+    fraction: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val container = if (isFocused) Color.White else MaterialTheme.colorScheme.primary
+    val content = if (isFocused) Color.Black else MaterialTheme.colorScheme.onPrimary
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .height(48.dp)
+            .focusable(interactionSource = interactionSource),
+        shape = RoundedCornerShape(999.dp),
+        color = container,
+        contentColor = content,
+        interactionSource = interactionSource,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 6.dp, end = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                Canvas(modifier = Modifier.size(36.dp)) {
+                    val stroke = 3.dp.toPx()
+                    drawArc(
+                        color = content.copy(alpha = 0.25f),
+                        startAngle = -90f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                    )
+                    drawArc(
+                        color = content,
+                        startAngle = -90f,
+                        sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+                        useCenter = false,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                    )
+                }
+                Icon(
+                    painter = painterResource(CoreR.drawable.ic_play),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Text(
+                text = "Play Now · ${secondsRemaining}s",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
 @Composable
 private fun TvControllerOverlay(
     player: Player,
@@ -1035,6 +1356,8 @@ private fun TvControllerOverlay(
     onSelectQuality: (Long) -> Unit,
     onSelectSource: (Int) -> Unit,
     onInteraction: () -> Unit,
+    voiceAvailable: Boolean,
+    onVoice: () -> Unit,
 ) {
     val overlayAlpha by animateFloatAsState(targetValue = 1f, label = "tvControlsAlpha")
     Box(
@@ -1100,69 +1423,16 @@ private fun TvControllerOverlay(
             }
         }
 
-        Column(
-            modifier = Modifier.align(Alignment.Center),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (uiState.currentChapters.isNotEmpty()) {
-                    TvOverlayTextButton(
-                        label = "Prev Chapter",
-                        onClick = {
-                            onInteraction()
-                            viewModel.seekToPreviousChapter()
-                        },
-                    )
-                }
-                TvTransportIconButton(
-                    iconRes = CoreR.drawable.ic_rewind,
-                    contentDescription = "Rewind",
-                    onClick = {
-                        onInteraction()
-                        player.seekBack()
-                    },
-                )
-                TvTransportIconButton(
-                    iconRes = if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    modifier = Modifier.focusRequester(playPauseFocusRequester),
-                    large = true,
-                    onClick = {
-                        onInteraction()
-                        if (isPlaying) player.pause() else player.play()
-                    },
-                )
-                TvTransportIconButton(
-                    iconRes = CoreR.drawable.ic_fast_forward,
-                    contentDescription = "Forward",
-                    onClick = {
-                        onInteraction()
-                        player.seekForward()
-                    },
-                )
-                if (uiState.currentChapters.isNotEmpty()) {
-                    TvOverlayTextButton(
-                        label = "Next Chapter",
-                        onClick = {
-                            onInteraction()
-                            viewModel.seekToNextChapter()
-                        },
-                    )
-                }
-            }
-        }
-
+        // Bottom transport (design ui_kits/tv/TvPlayerScreen.jsx): the scrubber
+        // with timecodes, then one control row — left transport cluster, right
+        // options cluster — all circular glass icon buttons.
         Column(
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 56.dp, vertical = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             uiState.currentSegment?.let { segment ->
                 TvOverlayTextButton(
@@ -1175,74 +1445,6 @@ private fun TvControllerOverlay(
                 )
             }
 
-            // Centralized action bar above progress
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TvOverlayTextButton(
-                    label = "Audio",
-                    onClick = {
-                        onInteraction()
-                        onOpenDialog(TvPlayerDialog.Audio)
-                    },
-                )
-                TvOverlayTextButton(
-                    label = "Subtitles",
-                    onClick = {
-                        onInteraction()
-                        onOpenDialog(TvPlayerDialog.Subtitle)
-                    },
-                )
-                if (uiState.currentChapters.isNotEmpty()) {
-                    TvOverlayTextButton(
-                        label = "Chapters",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Chapters)
-                        },
-                    )
-                }
-                if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
-                    TvOverlayTextButton(
-                        label = "Quality",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Quality)
-                        },
-                    )
-                }
-                if (sourcesLoading || availableSources.size > 1) {
-                    TvOverlayTextButton(
-                        label = "Source",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Source)
-                        },
-                    )
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                if (availableSources.size > 1) {
-                    TvOverlayTextButton(
-                        label = "Switch Source",
-                        onClick = {
-                            onInteraction()
-                            onOpenDialog(TvPlayerDialog.Source)
-                        },
-                    )
-                }
-                TvOverlayTextButton(
-                    label = "Auto Quality",
-                    onClick = {
-                        onInteraction()
-                        onSelectQuality(0L)
-                    },
-                )
-            }
-
             ProgressSection(
                 uiState = uiState,
                 player = player,
@@ -1250,6 +1452,133 @@ private fun TvControllerOverlay(
                 duration = duration,
                 resetAutoHide = onInteraction,
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Left: transport cluster
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (uiState.currentChapters.isNotEmpty()) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_skip_back,
+                            contentDescription = "Previous chapter",
+                            onClick = {
+                                onInteraction()
+                                viewModel.seekToPreviousChapter()
+                            },
+                        )
+                    }
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_rewind,
+                        contentDescription = "Rewind",
+                        onClick = {
+                            onInteraction()
+                            player.seekBack()
+                        },
+                    )
+                    TvTransportIconButton(
+                        iconRes = if (isPlaying) CoreR.drawable.ic_pause else CoreR.drawable.ic_play,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        modifier = Modifier.focusRequester(playPauseFocusRequester),
+                        large = true,
+                        onClick = {
+                            onInteraction()
+                            if (isPlaying) player.pause() else player.play()
+                        },
+                    )
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_fast_forward,
+                        contentDescription = "Forward",
+                        onClick = {
+                            onInteraction()
+                            player.seekForward()
+                        },
+                    )
+                    if (uiState.currentChapters.isNotEmpty()) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_skip_forward,
+                            contentDescription = "Next chapter",
+                            onClick = {
+                                onInteraction()
+                                viewModel.seekToNextChapter()
+                            },
+                        )
+                    }
+                }
+
+                // Right: options cluster — same dialogs as before, now icons
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (voiceAvailable) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_microphone,
+                            contentDescription = "Voice",
+                            onClick = onVoice,
+                        )
+                    }
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_closed_caption,
+                        contentDescription = "Subtitles",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Subtitle)
+                        },
+                    )
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_volume,
+                        contentDescription = "Audio track",
+                        onClick = {
+                            onInteraction()
+                            onOpenDialog(TvPlayerDialog.Audio)
+                        },
+                    )
+                    if (uiState.currentChapters.isNotEmpty()) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_logs,
+                            contentDescription = "Chapters",
+                            onClick = {
+                                onInteraction()
+                                onOpenDialog(TvPlayerDialog.Chapters)
+                            },
+                        )
+                    }
+                    if (!uiState.currentItemId.isNullOrBlank() && !uiState.currentItemKind.isNullOrBlank()) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_gauge,
+                            contentDescription = "Quality",
+                            onClick = {
+                                onInteraction()
+                                onOpenDialog(TvPlayerDialog.Quality)
+                            },
+                        )
+                    }
+                    if (sourcesLoading || availableSources.size > 1) {
+                        TvTransportIconButton(
+                            iconRes = CoreR.drawable.ic_film,
+                            contentDescription = "Media source",
+                            onClick = {
+                                onInteraction()
+                                onOpenDialog(TvPlayerDialog.Source)
+                            },
+                        )
+                    }
+                    TvTransportIconButton(
+                        iconRes = CoreR.drawable.ic_sparkles,
+                        contentDescription = "Auto quality",
+                        onClick = {
+                            onInteraction()
+                            onSelectQuality(0L)
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -1313,6 +1642,127 @@ private fun TvTransportIconButton(
                 modifier = Modifier.size(iconSize),
             )
         }
+    }
+}
+
+@Composable
+private fun TvVoiceFeedbackOverlay(
+    ui: TvVoiceUi,
+    partial: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LaunchedEffect(ui) {
+        if (ui is TvVoiceUi.Answered || ui is TvVoiceUi.Error) {
+            delay(6000L)
+            onDismiss()
+        }
+    }
+    AnimatedVisibility(
+        visible = ui !is TvVoiceUi.Idle,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier,
+    ) {
+        val accent = if (ui is TvVoiceUi.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        val label = when (ui) {
+            is TvVoiceUi.Listening -> "Listening…"
+            is TvVoiceUi.Processing -> "Thinking…"
+            else -> null
+        }
+        val body = when (ui) {
+            is TvVoiceUi.Listening -> partial.takeIf { it.isNotBlank() }
+            is TvVoiceUi.Answered -> ui.text
+            is TvVoiceUi.Error -> ui.text
+            else -> null
+        }
+        Surface(shape = RoundedCornerShape(28.dp), color = Color(0xF20D1824), modifier = Modifier.widthIn(max = 760.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (ui is TvVoiceUi.Processing) {
+                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(30.dp), color = accent, strokeWidth = 3.dp)
+                } else {
+                    Box(
+                        modifier = Modifier.size(42.dp).clip(androidx.compose.foundation.shape.CircleShape).background(accent.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(painterResource(CoreR.drawable.ic_microphone), contentDescription = null, modifier = Modifier.size(22.dp), tint = accent)
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    label?.let { Text(it, color = accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold) }
+                    body?.let { Text(it, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 4, overflow = TextOverflow.Ellipsis) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvVoiceSearchOverlay(
+    query: String,
+    results: List<SpatialFinItem>,
+    onPlay: (SpatialFinItem) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BackHandler(onBack = onDismiss)
+    val firstRowFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(80L)
+        runCatching { firstRowFocus.requestFocus() }
+    }
+    Surface(
+        modifier = modifier.widthIn(max = 720.dp).heightIn(max = 560.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xF20D1824),
+    ) {
+        Column(modifier = Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Results for “$query”", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
+            if (results.isEmpty()) {
+                Text("No matches.", color = Color.White.copy(alpha = 0.7f))
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(results.take(20)) { item ->
+                        val isFirst = item.id == results.first().id
+                        TvVoiceSearchRow(
+                            item = item,
+                            modifier = if (isFirst) Modifier.focusRequester(firstRowFocus) else Modifier,
+                            onClick = { onPlay(item) },
+                        )
+                    }
+                }
+            }
+            TvOverlayTextButton(label = "Close", onClick = onDismiss, modifier = Modifier.align(Alignment.End))
+        }
+    }
+}
+
+@Composable
+private fun TvVoiceSearchRow(item: SpatialFinItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .focusable(interactionSource = interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .background(
+                if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.05f),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(painterResource(CoreR.drawable.ic_play), contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)
+        Text(item.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

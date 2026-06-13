@@ -16,15 +16,19 @@ plugins {
 
 allprojects {
     repositories {
-        google()
-        mavenCentral()
         maven {
-            url = uri("https://download.dcache.org/nexus/repository/public/")
+            url = uri("${rootDir}/third_party/maven")
             content {
-                includeGroup("com.sleepycat")
-                includeGroup("org.dcache")
+                includeModule("com.sleepycat", "je")
+                includeModule("org.dcache", "nfs4j")
+                includeModule("org.dcache", "nfs4j-basic-client")
+                includeModule("org.dcache", "nfs4j-core")
+                includeModule("org.dcache", "oncrpc4j")
+                includeModule("org.dcache", "oncrpc4j-core")
             }
         }
+        google()
+        mavenCentral()
         maven { url = uri("https://jitpack.io") }
     }
 }

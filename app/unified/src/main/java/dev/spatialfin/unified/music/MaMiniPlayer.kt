@@ -94,9 +94,7 @@ private fun MaMiniPlayerContent(
 ) {
     val track = state.nowPlaying ?: return
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onExpand),
+        modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 8.dp,
         shape = RoundedCornerShape(16.dp),
@@ -117,6 +115,17 @@ private fun MaMiniPlayerContent(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Tap-to-expand is its own focus target on TV so the D-pad can
+                // open Now Playing distinctly from the transport buttons.
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onExpand)
+                        .maFocusHighlight(RoundedCornerShape(12.dp))
+                        .padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 MiniArtwork(artworkUrl = track.artworkUrl)
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -153,6 +162,7 @@ private fun MaMiniPlayerContent(
                         )
                     }
                 }
+                }
                 // Transport buttons. Disabled during Preparing because MA
                 // can't react until the queue is loaded.
                 val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
@@ -160,6 +170,7 @@ private fun MaMiniPlayerContent(
                 IconButton(
                     onClick = { dispatcher?.playPause() },
                     enabled = transportEnabled,
+                    modifier = Modifier.maFocusHighlight(),
                 ) {
                     Icon(
                         imageVector = if (state.playbackPhase == PlaybackPhase.Playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -169,6 +180,7 @@ private fun MaMiniPlayerContent(
                 IconButton(
                     onClick = { dispatcher?.next() },
                     enabled = transportEnabled,
+                    modifier = Modifier.maFocusHighlight(),
                 ) {
                     Icon(Icons.Filled.SkipNext, contentDescription = "Next")
                 }
@@ -176,6 +188,7 @@ private fun MaMiniPlayerContent(
                 IconButton(
                     onClick = { dispatcher?.stop() },
                     enabled = dispatcher != null,
+                    modifier = Modifier.maFocusHighlight(),
                 ) {
                     Icon(Icons.Filled.Stop, contentDescription = "Stop")
                 }

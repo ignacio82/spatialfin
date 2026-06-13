@@ -1,0 +1,340 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <description>
+    Pure Java implementation of ONC RPC protocol specification
+    (http://www.ietf.org/rfc/rfc1831.txt)
+  </description>
+
+  <groupId>org.dcache</groupId>
+  <artifactId>oncrpc4j</artifactId>
+  <version>3.3.0</version>
+  <name>ONCRPC4J parent project</name>
+  <packaging>pom</packaging>
+
+  <url>http://www.dCache.ORG</url>
+
+    <scm>
+        <url>https://github.com/dCache/oncrpc4j.git</url>
+        <connection>scm:git:https://github.com/dCache/oncrpc4j.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/dCache/oncrpc4j.git</developerConnection>
+        <tag>oncrpc4j-3.3.0</tag>
+    </scm>
+
+  <!--
+    CODE LICENSE
+  -->
+  <licenses>
+    <license>
+      <name>
+        GNU Lesser General Public License
+      </name>
+      <url>
+        http://www.fsf.org/licensing/licenses/lgpl.txt
+      </url>
+    </license>
+  </licenses>
+
+  <modules>
+      <module>oncrpc4j-core</module>
+      <module>oncrpc4j-spring</module>
+      <module>oncrpc4j-rpcgen</module>
+      <module>oncrpc4j-portmapdaemon</module>
+      <module>oncrpc4j-benchmark</module>
+  </modules>
+
+  <properties>
+
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <java.version>11</java.version>
+
+    <!--  PROPERTIES FOR DEPENDENCIES
+	 Each property is constructed from the artifact name
+	 They are in alphabetical order for each subsection
+    -->
+
+    <!--  version of plugins in pluginManagement -->
+    <build-helper-maven-plugin.version>1.9.1</build-helper-maven-plugin.version>
+    <exec-maven-plugin.version>1.6.0</exec-maven-plugin.version>
+    <maven-pmd-plugin.version>3.0.1</maven-pmd-plugin.version>
+
+    <!--  version of other plugins-->
+    <animal-sniffer-maven-plugin>1.18</animal-sniffer-maven-plugin>
+    <maven-compiler-plugin.version>3.8.1</maven-compiler-plugin.version>
+    <maven-jar-plugin.version>2.4</maven-jar-plugin.version>
+    <maven-release-plugin>2.4.2</maven-release-plugin>
+
+    <!--  version of dependencies-->
+    <dcache-auth.version>0.0.11</dcache-auth.version>
+    <grizzly-framework.version>4.0.0</grizzly-framework.version>
+    <guava.version>31.1-jre</guava.version>
+    <slf4j-api.version>1.7.25</slf4j-api.version>
+    <spring-context.version>5.1.0.RELEASE</spring-context.version>
+    <bc.version>1.67</bc.version>
+
+    <!--  version of test dependencies  -->
+    <junit.version>4.13.1</junit.version>
+    <mockito-core.version>3.6.0</mockito-core.version>
+    <logback-classic.version>1.2.3</logback-classic.version>
+    <jmh.version>1.35</jmh.version>
+  </properties>
+
+
+  <build>
+
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-pmd-plugin</artifactId>
+          <version>${maven-pmd-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>${build-helper-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${maven-jar-plugin.version}</version>
+	</plugin>
+        <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>0.8.7</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${maven-compiler-plugin.version}</version>
+          <configuration>
+              <showDeprecation>true</showDeprecation>
+              <release>${java.version}</release>
+              <!-- without forking compilation happens in the
+              same process, so no arguments are applied -->
+              <fork>true</fork>
+          </configuration>
+      </plugin>
+
+      <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <version>${maven-release-plugin}</version>
+          <dependencies>
+              <dependency>
+                  <groupId>org.apache.maven.scm</groupId>
+                  <artifactId>maven-scm-provider-gitexe</artifactId>
+                  <version>1.9</version>
+              </dependency>
+          </dependencies>
+      </plugin>
+      <plugin>
+          <groupId>com.github.spotbugs</groupId>
+          <artifactId>spotbugs-maven-plugin</artifactId>
+          <version>3.1.12</version>
+      </plugin>
+      <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <executions>
+              <!--
+                  Prepares the property pointing to the JaCoCo runtime agent which
+                  is passed as VM argument when Maven the Surefire plugin is executed.
+              -->
+              <execution>
+                  <id>pre-unit-test</id>
+                  <goals>
+                      <goal>prepare-agent</goal>
+                  </goals>
+                  <configuration>
+                      <!-- Sets the path to the file which contains the execution data. -->
+                      <destFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</destFile>
+                  </configuration>
+              </execution>
+              <!--
+                  Ensures that the code coverage report for unit tests is created after
+                  unit tests have been run.
+              -->
+              <execution>
+                  <id>post-unit-test</id>
+                  <phase>test</phase>
+                  <goals>
+                      <goal>report</goal>
+                  </goals>
+                  <configuration>
+                      <!-- Sets the path to the file which contains the execution data. -->
+                      <dataFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</dataFile>
+                      <!-- Sets the output directory for the code coverage report. -->
+                      <outputDirectory>${project.reporting.outputDirectory}/jacoco-ut</outputDirectory>
+                  </configuration>
+              </execution>
+          </executions>
+      </plugin>
+
+    </plugins>
+  </build>
+
+  <!--
+    EXTERNAL DEPENDENCIES
+  -->
+  <dependencyManagement>
+      <dependencies>
+          <dependency>
+              <groupId>org.glassfish.grizzly</groupId>
+              <artifactId>grizzly-framework</artifactId>
+              <version>${grizzly-framework.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.springframework</groupId>
+              <artifactId>spring-context</artifactId>
+              <version>${spring-context.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>junit</groupId>
+              <artifactId>junit</artifactId>
+              <version>${junit.version}</version>
+              <scope>test</scope>
+          </dependency>
+          <dependency>
+              <groupId>org.mockito</groupId>
+              <artifactId>mockito-core</artifactId>
+              <version>${mockito-core.version}</version>
+              <scope>test</scope>
+          </dependency>
+          <dependency>
+              <groupId>org.hamcrest</groupId>
+              <artifactId>hamcrest</artifactId>
+              <version>2.2</version>
+              <scope>test</scope>
+          </dependency>
+          <dependency>
+              <groupId>com.google.guava</groupId>
+              <artifactId>guava</artifactId>
+              <version>${guava.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.slf4j</groupId>
+              <artifactId>slf4j-api</artifactId>
+              <version>${slf4j-api.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>ch.qos.logback</groupId>
+              <artifactId>logback-classic</artifactId>
+              <version>${logback-classic.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.slf4j</groupId>
+              <artifactId>slf4j-simple</artifactId>
+              <version>${slf4j-api.version}</version>
+          </dependency>
+
+          <dependency>
+              <groupId>org.bouncycastle</groupId>
+              <artifactId>bcprov-jdk15on</artifactId>
+              <version>${bc.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.bouncycastle</groupId>
+              <artifactId>bcprov-ext-jdk15on</artifactId>
+              <version>${bc.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.bouncycastle</groupId>
+              <artifactId>bcpkix-jdk15on</artifactId>
+              <version>${bc.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.bouncycastle</groupId>
+              <artifactId>bctls-jdk15on</artifactId>
+              <version>${bc.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.openjdk.jmh</groupId>
+              <artifactId>jmh-core</artifactId>
+              <version>${jmh.version}</version>
+          </dependency>
+          <dependency>
+              <groupId>org.openjdk.jmh</groupId>
+              <artifactId>jmh-generator-annprocess</artifactId>
+              <version>${jmh.version}</version>
+          </dependency>
+      </dependencies>
+  </dependencyManagement>
+
+  <!--
+    MAVEN REPOSITORIES
+  -->
+  <repositories>
+    <repository>
+      <id>maven2-repository.dcache.org</id>
+      <name>dCache.ORG Repository for Maven</name>
+      <url>https://download.dcache.org/nexus/content/groups/public/</url>
+      <layout>default</layout>
+    </repository>
+    <repository>
+      <id>dcache-snapshots</id>
+      <name>dCache.ORG snapshots repository</name>
+      <url>https://download.dcache.org/nexus/content/repositories/snapshots</url>
+      <layout>default</layout>
+    </repository>
+  </repositories>
+
+    <!--
+                 MAVEN DEPLOYMENT REPOSITORY
+    -->
+  <distributionManagement>
+      <repository>
+          <id>dcache.org</id>
+          <url>https://download.dcache.org/nexus/content/repositories/releases</url>
+      </repository>
+      <snapshotRepository>
+          <id>dcache.org-snapshot</id>
+          <url>https://download.dcache.org/nexus/content/repositories/snapshots</url>
+      </snapshotRepository>
+  </distributionManagement>
+
+  <profiles>
+      <profile>
+          <id>sign-artifacts</id>
+          <activation>
+              <property>
+                  <name>performRelease</name>
+                  <value>true</value>
+              </property>
+          </activation>
+          <build>
+              <plugins>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-gpg-plugin</artifactId>
+                      <version>1.6</version>
+                      <configuration>
+                          <passphrase>${gpg.passphrase}</passphrase>
+                      </configuration>
+                      <executions>
+                          <execution>
+                              <id>sign-artifacts</id>
+                              <phase>verify</phase>
+                              <goals>
+                                  <goal>sign</goal>
+                              </goals>
+                          </execution>
+                      </executions>
+                  </plugin>
+              </plugins>
+          </build>
+      </profile>
+    </profiles>
+
+</project>

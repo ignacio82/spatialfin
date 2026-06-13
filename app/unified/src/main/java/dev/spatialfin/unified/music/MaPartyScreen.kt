@@ -457,6 +457,7 @@ private fun JoinQr(joinUrl: String, centered: Boolean) {
         // Hand the link to the system share sheet too — not everyone is in the
         // room to scan (and TV/XR can't be pointed at a camera easily).
         FilledTonalButton(
+            modifier = Modifier.maFocusHighlight(RoundedCornerShape(20.dp)),
             onClick = {
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"

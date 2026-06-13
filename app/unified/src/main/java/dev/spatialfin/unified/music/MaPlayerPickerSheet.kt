@@ -168,9 +168,9 @@ fun MaPlayerPickerContent(
                                 onCheckedChange = { onToggleGroupMember(leader.id, player.id, grouped) },
                             )
                         },
-                        modifier = Modifier.fillMaxWidth().clickable(
-                            onClick = { onToggleGroupMember(leader.id, player.id, grouped) },
-                        ),
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable(onClick = { onToggleGroupMember(leader.id, player.id, grouped) })
+                            .maFocusHighlight(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
                     )
                 }

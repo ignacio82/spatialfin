@@ -87,6 +87,7 @@ import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverUiState
 import dev.jdtech.jellyfin.sendspin.R as SendspinR
+import dev.spatialfin.unified.music.maFocusHighlight
 
 @Composable
 fun SendspinFullscreenPlayer(
@@ -438,21 +439,21 @@ private fun SendspinTopBar(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onGroupClick, modifier = Modifier.size(48.dp)) {
+            IconButton(onClick = onGroupClick, modifier = Modifier.size(48.dp).maFocusHighlight()) {
                 Icon(
                     painter = painterResource(CoreR.drawable.ic_speaker),
                     contentDescription = "SendSpin speakers",
                     tint = Color.White,
                 )
             }
-            IconButton(onClick = onQueueClick, modifier = Modifier.size(48.dp)) {
+            IconButton(onClick = onQueueClick, modifier = Modifier.size(48.dp).maFocusHighlight()) {
                 Icon(
                     painter = painterResource(CoreR.drawable.ic_library),
                     contentDescription = "Queue",
                     tint = Color.White,
                 )
             }
-            IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp).maFocusHighlight()) {
                 Icon(
                     painter = painterResource(CoreR.drawable.ic_x),
                     contentDescription = "Close SendSpin player",
@@ -577,7 +578,7 @@ private fun SendspinControls(
                 IconButton(
                     onClick = onMute,
                     enabled = supportsMute,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(48.dp).maFocusHighlight(),
                 ) {
                     Icon(
                         painter =
@@ -695,7 +696,7 @@ private fun SendspinGroupOverlay(
                             strokeWidth = 2.dp,
                         )
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp).maFocusHighlight()) {
                         Icon(
                             painter = painterResource(CoreR.drawable.ic_x),
                             contentDescription = "Close speakers",
@@ -887,6 +888,7 @@ private fun SendspinGroupPlayerRow(
                     }
                 )
                 .clickable(enabled = enabled, onClick = onToggle)
+                .maFocusHighlight(RoundedCornerShape(8.dp))
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -988,7 +990,7 @@ private fun PlayerControlButton(
     onClick: () -> Unit,
 ) {
     Surface(
-        modifier = modifier.size(size),
+        modifier = modifier.size(size).maFocusHighlight(),
         shape = CircleShape,
         color =
             if (prominent) {

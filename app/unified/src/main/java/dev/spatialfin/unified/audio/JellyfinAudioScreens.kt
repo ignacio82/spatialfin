@@ -90,6 +90,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.toAudioQueueItems
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.spatialfin.unified.music.maFocusHighlight
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -313,7 +314,7 @@ fun JellyfinAudioDetailScreen(
                                         onClick = {
                                             dispatcher?.playQueue(state.tracks.toAudioQueueItems())
                                         },
-                                        modifier = Modifier.size(48.dp),
+                                        modifier = Modifier.size(48.dp).maFocusHighlight(),
                                     ) {
                                         Icon(Icons.Filled.PlayArrow, contentDescription = "Play All")
                                     }
@@ -323,7 +324,7 @@ fun JellyfinAudioDetailScreen(
                                                 state.tracks.shuffled().toAudioQueueItems()
                                             )
                                         },
-                                        modifier = Modifier.size(48.dp),
+                                        modifier = Modifier.size(48.dp).maFocusHighlight(),
                                     ) {
                                         Icon(Icons.Filled.Shuffle, contentDescription = "Shuffle")
                                     }
@@ -370,7 +371,7 @@ fun JellyfinAudioMiniPlayer(
     ) {
         if (item != null) {
             Surface(
-                modifier = modifier.fillMaxWidth().clickable(onClick = onExpand),
+                modifier = modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 tonalElevation = 8.dp,
                 shape = RoundedCornerShape(16.dp),
@@ -383,6 +384,15 @@ fun JellyfinAudioMiniPlayer(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onExpand)
+                                .maFocusHighlight(RoundedCornerShape(12.dp))
+                                .padding(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                         AudioArtwork(item = item, size = 44)
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -403,7 +413,8 @@ fun JellyfinAudioMiniPlayer(
                                 )
                             }
                         }
-                        IconButton(onClick = { dispatcher.playPause() }) {
+                        }
+                        IconButton(onClick = { dispatcher.playPause() }, modifier = Modifier.maFocusHighlight()) {
                             Icon(
                                 imageVector =
                                     if (state.phase == AudioPlaybackPhase.Playing) Icons.Filled.Pause
@@ -412,10 +423,10 @@ fun JellyfinAudioMiniPlayer(
                                     if (state.phase == AudioPlaybackPhase.Playing) "Pause" else "Play",
                             )
                         }
-                        IconButton(onClick = { dispatcher.next() }) {
+                        IconButton(onClick = { dispatcher.next() }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.SkipNext, contentDescription = "Next")
                         }
-                        IconButton(onClick = { dispatcher.stop() }) {
+                        IconButton(onClick = { dispatcher.stop() }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Stop, contentDescription = "Stop")
                         }
                     }
@@ -492,21 +503,21 @@ fun JellyfinAudioNowPlayingScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
                     Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Row {
                     if (item?.chapters?.isNotEmpty() == true) {
-                        IconButton(onClick = { showChapters = true }) {
+                        IconButton(onClick = { showChapters = true }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Chapters")
                         }
                     }
                     if (!lyrics.isNullOrBlank()) {
-                        IconButton(onClick = { showLyrics = true }) {
+                        IconButton(onClick = { showLyrics = true }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
                         }
                     }
-                    IconButton(onClick = { showQueue = true }) {
+                    IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
                         Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
                     }
                 }
@@ -565,7 +576,7 @@ private fun AudioTopBar(title: String, onBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        IconButton(onClick = onBack) {
+        IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
             Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
         }
         Text(
@@ -595,7 +606,7 @@ private fun AudioCardGrid(items: List<SpatialFinItem>, onClick: (SpatialFinItem)
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         items(items, key = { it.id }) { item ->
-            ElevatedCard(onClick = { onClick(item) }, shape = RoundedCornerShape(8.dp)) {
+            ElevatedCard(onClick = { onClick(item) }, shape = RoundedCornerShape(8.dp), modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp))) {
                 Column(modifier = Modifier.padding(10.dp)) {
                     ArtworkBox(item = item, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
                     Spacer(Modifier.height(10.dp))
@@ -637,7 +648,8 @@ private fun TrackList(tracks: List<SpatialFinAudioTrack>, onTrackClick: (Int) ->
 @Composable
 private fun TrackRow(track: SpatialFinAudioTrack, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+            .maFocusHighlight(RoundedCornerShape(8.dp)),
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Row(
@@ -743,10 +755,10 @@ private fun NowPlayingControls(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = dispatcher::previous) {
+            IconButton(onClick = dispatcher::previous, modifier = Modifier.maFocusHighlight()) {
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous")
             }
-            FilledIconButton(onClick = dispatcher::playPause, modifier = Modifier.size(64.dp)) {
+            FilledIconButton(onClick = dispatcher::playPause, modifier = Modifier.size(64.dp).maFocusHighlight()) {
                 Icon(
                     imageVector =
                         if (state.phase == AudioPlaybackPhase.Playing) Icons.Filled.Pause
@@ -755,10 +767,10 @@ private fun NowPlayingControls(
                         if (state.phase == AudioPlaybackPhase.Playing) "Pause" else "Play",
                 )
             }
-            IconButton(onClick = dispatcher::next) {
+            IconButton(onClick = dispatcher::next, modifier = Modifier.maFocusHighlight()) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next")
             }
-            IconButton(onClick = dispatcher::stop) {
+            IconButton(onClick = dispatcher::stop, modifier = Modifier.maFocusHighlight()) {
                 Icon(Icons.Filled.Stop, contentDescription = "Stop")
             }
         }
@@ -768,6 +780,7 @@ private fun NowPlayingControls(
                 FilterChip(
                     selected = state.shuffleEnabled,
                     onClick = dispatcher::toggleShuffle,
+                    modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
                     label = { Text("Shuffle") },
                     leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
                 )
@@ -776,6 +789,7 @@ private fun NowPlayingControls(
                 FilterChip(
                     selected = state.repeatMode != AudioRepeatMode.Off,
                     onClick = dispatcher::cycleRepeatMode,
+                    modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
                     label = {
                         Text(
                             when (state.repeatMode) {
@@ -797,6 +811,7 @@ private fun NowPlayingControls(
             item {
                 AssistChip(
                     onClick = { dispatcher.setPlaybackSpeed(nextSpeed(state.playbackSpeed)) },
+                    modifier = Modifier.maFocusHighlight(RoundedCornerShape(8.dp)),
                     label = { Text("${formatSpeed(state.playbackSpeed)}x") },
                 )
             }
@@ -820,7 +835,8 @@ private fun QueuePanel(
                         modifier =
                             Modifier.fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelect(index) },
+                                .clickable { onSelect(index) }
+                                .maFocusHighlight(RoundedCornerShape(8.dp)),
                         color =
                             if (index == state.currentIndex) MaterialTheme.colorScheme.primaryContainer
                             else MaterialTheme.colorScheme.surfaceContainer,
@@ -884,7 +900,8 @@ private fun ChapterPanel(
                         modifier =
                             Modifier.fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelect(chapter.startPosition) },
+                                .clickable { onSelect(chapter.startPosition) }
+                                .maFocusHighlight(RoundedCornerShape(8.dp)),
                         color = MaterialTheme.colorScheme.surfaceContainer,
                     ) {
                         Row(

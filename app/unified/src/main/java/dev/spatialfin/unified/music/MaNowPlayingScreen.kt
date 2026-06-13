@@ -80,6 +80,7 @@ import dev.jdtech.jellyfin.data.musicassistant.repository.MaSession
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -127,6 +128,15 @@ fun MaNowPlayingScreen(
     var lyrics by remember { mutableStateOf<String?>(null) }
     var chapters by remember {
         mutableStateOf<List<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerMediaItemChapter>>(emptyList())
+    }
+    // Land D-pad focus on play/pause when the screen opens so a TV remote has an
+    // immediate anchor (and the user isn't pressing into a void).
+    val playPauseFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(state.nowPlaying?.uri, showQueue, showLyrics, showChapters) {
+        if (state.nowPlaying != null && !showQueue && !showLyrics && !showChapters) {
+            delay(120)
+            runCatching { playPauseFocus.requestFocus() }
+        }
     }
     val currentUri = state.nowPlaying?.uri
     LaunchedEffect(currentUri, dispatcher) {
@@ -182,7 +192,7 @@ fun MaNowPlayingScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
                     Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -191,25 +201,25 @@ fun MaNowPlayingScreen(
                     // party screen itself loads the guest QR via `party/url` and
                     // simply omits it when the plugin isn't present.
                     if (onOpenParty != null) {
-                        IconButton(onClick = onOpenParty) {
+                        IconButton(onClick = onOpenParty, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
                         }
                     }
                     if (chapters.isNotEmpty()) {
-                        IconButton(onClick = { showChapters = true }) {
+                        IconButton(onClick = { showChapters = true }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Chapters")
                         }
                     }
                     if (!lyrics.isNullOrBlank()) {
-                        IconButton(onClick = { showLyrics = true }) {
+                        IconButton(onClick = { showLyrics = true }, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
                         }
                     }
-                    IconButton(onClick = { showQueue = true }) {
+                    IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
                         Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
                     }
                     if (onOpenSearch != null) {
-                        IconButton(onClick = onOpenSearch) {
+                        IconButton(onClick = onOpenSearch, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Search, contentDescription = "Search Music Assistant")
                         }
                     }
@@ -233,6 +243,7 @@ fun MaNowPlayingScreen(
                     NowPlayingBody(
                         state = state,
                         wideLayout = wideBody,
+                        playPauseFocus = playPauseFocus,
                         onPickPlayer = onPickPlayer,
                         onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
                         onPrevious = dispatcher?.let { { it.previous() } },
@@ -284,7 +295,7 @@ private fun NowPlayingTrackMenu(
         )
     }
     Box {
-        IconButton(onClick = { expanded = true }) {
+        IconButton(onClick = { expanded = true }, modifier = Modifier.maFocusHighlight()) {
             Icon(Icons.Filled.MoreVert, contentDescription = "Track actions")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -314,6 +325,7 @@ private fun NowPlayingBody(
     state: MaSession,
     modifier: Modifier = Modifier,
     wideLayout: Boolean = false,
+    playPauseFocus: androidx.compose.ui.focus.FocusRequester? = null,
     onPickPlayer: (() -> Unit)? = null,
     onToggleParty: (() -> Unit)? = null,
     onPrevious: (() -> Unit)? = null,
@@ -434,7 +446,8 @@ private fun NowPlayingBody(
             }
             FilledIconButton(
                 onClick = { onPlayPause?.invoke() },
-                modifier = Modifier.size(64.dp).maFocusHighlight(),
+                modifier = Modifier.size(64.dp).maFocusHighlight()
+                    .then(playPauseFocus?.let { Modifier.focusRequester(it) } ?: Modifier),
                 enabled = onPlayPause != null && state.playbackPhase != PlaybackPhase.Preparing,
             ) {
                 Icon(
@@ -773,7 +786,7 @@ private fun MaLyricsPanel(
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).maFocusHighlight()) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
             }
             Column(
@@ -817,7 +830,7 @@ private fun MaChaptersPanel(
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).maFocusHighlight()) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
             }
             LazyColumn(
@@ -838,8 +851,10 @@ private fun MaChaptersPanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
                             .clickable { onSelect(chapter) }
-                            .padding(vertical = 12.dp),
+                            .maFocusHighlight(RoundedCornerShape(10.dp))
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(

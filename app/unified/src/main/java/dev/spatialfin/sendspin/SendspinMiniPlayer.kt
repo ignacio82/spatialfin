@@ -45,6 +45,7 @@ import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverPlaybackState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+import dev.spatialfin.unified.music.maFocusHighlight
 
 /**
  * Mini-player that takes over when SendSpin is receiving audio but the user
@@ -107,9 +108,7 @@ fun SendspinMiniPlayer(
             SendspinControllerCommands.PLAY
         }
         Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .clickable { SendspinReceiverSession.restoreControls() },
+            modifier = modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 8.dp,
             shape = RoundedCornerShape(16.dp),
@@ -118,6 +117,16 @@ fun SendspinMiniPlayer(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Tap-to-restore-fullscreen is its own focus target on TV.
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { SendspinReceiverSession.restoreControls() }
+                        .maFocusHighlight(RoundedCornerShape(12.dp))
+                        .padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 Artwork(bitmap = bitmap, artworkUrl = state.artworkUrl)
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -144,6 +153,7 @@ fun SendspinMiniPlayer(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                }
                 if (state.supports(playPauseCommand)) {
                     IconButton(
                         onClick = {
@@ -152,6 +162,7 @@ fun SendspinMiniPlayer(
                                 command = playPauseCommand,
                             )
                         },
+                        modifier = Modifier.maFocusHighlight(),
                     ) {
                         Icon(
                             imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -167,6 +178,7 @@ fun SendspinMiniPlayer(
                                 command = SendspinControllerCommands.NEXT,
                             )
                         },
+                        modifier = Modifier.maFocusHighlight(),
                     ) {
                         Icon(Icons.Filled.SkipNext, contentDescription = "Next")
                     }
