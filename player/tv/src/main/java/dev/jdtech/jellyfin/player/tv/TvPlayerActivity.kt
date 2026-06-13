@@ -787,6 +787,14 @@ private fun TvPlayerScreen(
         }
     }
 
+    val visibleSkipPromptSegment =
+        uiState.currentSegment.takeIf {
+            !controlsVisible &&
+                activeDialog == null &&
+                !isPipMode &&
+                !showUpNext
+        }
+
     BoxWithConstraints(
         modifier =
             Modifier
@@ -838,7 +846,14 @@ private fun TvPlayerScreen(
                         AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
                         AndroidKeyEvent.KEYCODE_SPACE -> {
                             if (!controlsVisible && activeDialog == null) {
-                                if (native.repeatCount == 0) togglePlaybackFromRemote()
+                                if (native.repeatCount == 0) {
+                                    val segment = visibleSkipPromptSegment
+                                    if (segment != null) {
+                                        viewModel.skipSegment(segment)
+                                    } else {
+                                        togglePlaybackFromRemote()
+                                    }
+                                }
                                 true
                             } else {
                                 false
