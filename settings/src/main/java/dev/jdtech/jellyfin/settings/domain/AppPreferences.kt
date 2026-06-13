@@ -120,6 +120,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // ground truth once the user explicitly writes the toggle — explicit value always wins.
     val fcastSenderEnabled = Preference("pref_fcast_sender_enabled", true)
     val fcastReceiverEnabled = Preference("pref_fcast_receiver_enabled", false)
+    val castAutoStart = Preference("pref_cast_auto_start", false)
     val fcastReceiverDisplayName = Preference("pref_fcast_receiver_display_name", "SpatialFin")
     // On XR, route an inbound FCast video Play into the dedicated Full Space receiver player.
     // Off retains flat inbound playback. Non-XR and split audio receiver playback ignore this.

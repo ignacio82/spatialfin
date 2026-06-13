@@ -448,6 +448,11 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.cast_incoming_full_space_summary,
                                                     backendPreference = appPreferences.fcastReceiverAutopromote,
                                                 ),
+                                                PreferenceSwitch(
+                                                    nameStringResource = R.string.cast_auto_start,
+                                                    descriptionStringRes = R.string.cast_auto_start_summary,
+                                                    backendPreference = appPreferences.castAutoStart,
+                                                ),
                                                 PreferenceCategory(
                                                     nameStringResource = R.string.settings_subtitles_system_captioning,
                                                     descriptionStringRes = R.string.settings_subtitles_system_captioning_summary,

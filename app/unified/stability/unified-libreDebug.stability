@@ -3117,7 +3117,7 @@ public fun dev.spatialfin.tv.TvCompanionScreen(onBack: kotlin.Function0<kotlin.U
     - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
-private fun dev.spatialfin.tv.TvContentShelf(title: kotlin.String, items: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>, showProgress: kotlin.Boolean, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.tv.TvContentShelf(title: kotlin.String, items: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>, showProgress: kotlin.Boolean, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, actionLabel: kotlin.String?, onAction: kotlin.Function0<kotlin.Unit>?, portrait: kotlin.Boolean): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3125,6 +3125,9 @@ private fun dev.spatialfin.tv.TvContentShelf(title: kotlin.String, items: kotlin
     - items: RUNTIME (requires runtime check)
     - showProgress: STABLE (primitive type)
     - onOpenItem: STABLE (function type)
+    - actionLabel: STABLE (class with no mutable properties)
+    - onAction: STABLE (function type)
+    - portrait: STABLE (primitive type)
 
 @Composable
 private fun dev.spatialfin.tv.TvDetailHeroCard(item: dev.jdtech.jellyfin.models.SpatialFinItem, eyebrow: kotlin.String, supportingLine: kotlin.String?, metadata: kotlin.collections.List<kotlin.String>, overview: kotlin.String, onBack: kotlin.Function0<kotlin.Unit>?, actions: @[Composable] androidx.compose.runtime.internal.ComposableFunction0<kotlin.Unit>): kotlin.Unit
@@ -3147,12 +3150,29 @@ private fun dev.spatialfin.tv.TvDiagnosticsPrefs(appPreferences: dev.jdtech.jell
     - appPreferences: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
+private fun dev.spatialfin.tv.TvEpisodeCard(episode: dev.jdtech.jellyfin.models.SpatialFinEpisode, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - episode: UNSTABLE (has mutable properties or unstable members)
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - onClick: STABLE (function type)
+
+@Composable
 private fun dev.spatialfin.tv.TvEpisodeHighlightCard(episode: dev.jdtech.jellyfin.models.SpatialFinEpisode, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - episode: UNSTABLE (has mutable properties or unstable members)
     - onClick: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.tv.TvEpisodeStillOverlay(episode: dev.jdtech.jellyfin.models.SpatialFinEpisode, isFocused: kotlin.Boolean): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - episode: UNSTABLE (has mutable properties or unstable members)
+    - isFocused: STABLE (primitive type)
 
 @Composable
 private fun dev.spatialfin.tv.TvHeroButton(label: kotlin.String, icon: androidx.compose.ui.graphics.vector.ImageVector?, primary: kotlin.Boolean, selected: kotlin.Boolean, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -3191,7 +3211,7 @@ private fun dev.spatialfin.tv.TvHomeHeroCard(item: dev.jdtech.jellyfin.models.Sp
     - onDetails: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.presentation.home.HomeState, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onOpenLibrary: kotlin.Function1<dev.jdtech.jellyfin.models.View, kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onOpenCompanion: kotlin.Function0<kotlin.Unit>, onOpenSearch: kotlin.Function0<kotlin.Unit>, onRefresh: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.presentation.home.HomeState, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onOpenLibrary: kotlin.Function1<dev.jdtech.jellyfin.models.View, kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenCompanion: kotlin.Function0<kotlin.Unit>, onOpenSearch: kotlin.Function0<kotlin.Unit>, onRefresh: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3200,9 +3220,18 @@ private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.p
     - appPreferences: UNSTABLE (has mutable properties or unstable members)
     - onOpenLibrary: STABLE (function type)
     - onOpenItem: STABLE (function type)
+    - onOpenPluginBrowse: STABLE (function type)
     - onOpenCompanion: STABLE (function type)
     - onOpenSearch: STABLE (function type)
     - onRefresh: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.tv.TvHomeStatusCard(model: dev.spatialfin.tv.TvHomeStatusModel, onReconnect: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - model: STABLE (class with no mutable properties)
+    - onReconnect: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.tv.TvIconHeroButton(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDescription: kotlin.String, selected: kotlin.Boolean, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -3234,6 +3263,17 @@ private fun dev.spatialfin.tv.TvItemDetailScreen(itemId: java.util.UUID?, onBack
     - onOpenShow: STABLE (function type)
     - onOpenSeason: STABLE (function type)
     - viewModel: RUNTIME (requires runtime check)
+
+@Composable
+private fun dev.spatialfin.tv.TvKeyboardKey(modifier: androidx.compose.ui.Modifier, label: kotlin.String?, icon: androidx.compose.ui.graphics.vector.ImageVector?, contentDescription: kotlin.String?, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - label: STABLE (class with no mutable properties)
+    - icon: STABLE (marked @Stable or @Immutable)
+    - contentDescription: STABLE (class with no mutable properties)
+    - onClick: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.tv.TvLanguagePrefs(appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences): kotlin.Unit
@@ -3272,13 +3312,14 @@ private fun dev.spatialfin.tv.TvLibraryShelf(title: kotlin.String, views: kotlin
     - onOpenLibrary: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.tv.TvMediaCard(item: dev.jdtech.jellyfin.models.SpatialFinItem, showProgress: kotlin.Boolean, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.tv.TvMediaCard(item: dev.jdtech.jellyfin.models.SpatialFinItem, showProgress: kotlin.Boolean, modifier: androidx.compose.ui.Modifier, portrait: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - item: RUNTIME (requires runtime check)
     - showProgress: STABLE (primitive type)
     - modifier: STABLE (marked @Stable or @Immutable)
+    - portrait: STABLE (primitive type)
     - onClick: STABLE (function type)
 
 @Composable
@@ -3308,6 +3349,17 @@ private fun dev.spatialfin.tv.TvNetworkPrefs(appPreferences: dev.jdtech.jellyfin
   restartable: true
   params:
     - appPreferences: UNSTABLE (has mutable properties or unstable members)
+
+@Composable
+private fun dev.spatialfin.tv.TvOnScreenKeyboard(onKey: kotlin.Function1<kotlin.Char, kotlin.Unit>, onSpace: kotlin.Function0<kotlin.Unit>, onDelete: kotlin.Function0<kotlin.Unit>, onClear: kotlin.Function0<kotlin.Unit>, firstKeyFocusRequester: androidx.compose.ui.focus.FocusRequester?): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - onKey: STABLE (function type)
+    - onSpace: STABLE (function type)
+    - onDelete: STABLE (function type)
+    - onClear: STABLE (function type)
+    - firstKeyFocusRequester: STABLE (marked @Stable or @Immutable)
 
 @Composable
 private fun dev.spatialfin.tv.TvOnboardingHero(companionReady: kotlin.Boolean, onOpenCompanion: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -3395,14 +3447,6 @@ private fun dev.spatialfin.tv.TvSearchScreen(onOpenItem: kotlin.Function1<dev.jd
     - viewModel: RUNTIME (requires runtime check)
 
 @Composable
-private fun dev.spatialfin.tv.TvSeasonCard(season: dev.jdtech.jellyfin.models.SpatialFinSeason, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - season: UNSTABLE (has mutable properties or unstable members)
-    - onClick: STABLE (function type)
-
-@Composable
 private fun dev.spatialfin.tv.TvSeasonScreen(seasonId: java.util.UUID?, onBack: kotlin.Function0<kotlin.Unit>, onOpenEpisode: kotlin.Function1<java.util.UUID, kotlin.Unit>, viewModel: dev.spatialfin.tv.TvSeasonViewModel): kotlin.Unit
   skippable: false
   restartable: true
@@ -3413,12 +3457,14 @@ private fun dev.spatialfin.tv.TvSeasonScreen(seasonId: java.util.UUID?, onBack: 
     - viewModel: RUNTIME (requires runtime check)
 
 @Composable
-private fun dev.spatialfin.tv.TvSeasonStrip(seasons: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinSeason>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.tv.TvSeasonTabs(seasons: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinSeason>, selectedId: java.util.UUID?, onSelect: kotlin.Function1<java.util.UUID, kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - seasons: RUNTIME (requires runtime check)
-    - onOpenSeason: STABLE (function type)
+    - selectedId: UNSTABLE (has mutable properties or unstable members)
+    - onSelect: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
 private fun dev.spatialfin.tv.TvSecurityPrefs(appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences): kotlin.Unit
@@ -3466,6 +3512,18 @@ private fun dev.spatialfin.tv.TvSettingsScreen(state: dev.jdtech.jellyfin.viewmo
     - onOpenUsers: STABLE (function type)
 
 @Composable
+private fun dev.spatialfin.tv.TvShowEpisodesSection(seasons: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinSeason>, selectedSeasonId: java.util.UUID?, episodes: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinEpisode>, loading: kotlin.Boolean, onSelectSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenEpisode: kotlin.Function1<java.util.UUID, kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - seasons: RUNTIME (requires runtime check)
+    - selectedSeasonId: UNSTABLE (has mutable properties or unstable members)
+    - episodes: RUNTIME (requires runtime check)
+    - loading: STABLE (primitive type)
+    - onSelectSeason: STABLE (function type)
+    - onOpenEpisode: STABLE (function type)
+
+@Composable
 private fun dev.spatialfin.tv.TvShowScreen(showId: java.util.UUID?, onBack: kotlin.Function0<kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenEpisode: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenPerson: kotlin.Function1<java.util.UUID, kotlin.Unit>, viewModel: dev.spatialfin.tv.TvShowViewModel): kotlin.Unit
   skippable: false
   restartable: true
@@ -3476,6 +3534,16 @@ private fun dev.spatialfin.tv.TvShowScreen(showId: java.util.UUID?, onBack: kotl
     - onOpenEpisode: STABLE (function type)
     - onOpenPerson: STABLE (function type)
     - viewModel: RUNTIME (requires runtime check)
+
+@Composable
+private fun dev.spatialfin.tv.TvSourcesScreen(sections: kotlin.collections.List<dev.jdtech.jellyfin.models.HomeItem.Section>, onBackToHome: kotlin.Function0<kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - sections: RUNTIME (requires runtime check)
+    - onBackToHome: STABLE (function type)
+    - onOpenItem: STABLE (function type)
+    - onOpenPluginBrowse: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.tv.TvStatusCard(title: kotlin.String, value: kotlin.String, detail: kotlin.String, modifier: androidx.compose.ui.Modifier): kotlin.Unit
@@ -3558,6 +3626,34 @@ private fun dev.spatialfin.tv.rememberTvShelfListState(): androidx.compose.found
   skippable: true
   restartable: true
   params:
+
+@Composable
+private fun dev.spatialfin.tv.tvCardBorder(shape: androidx.compose.ui.graphics.Shape): androidx.tv.material3.CardBorder
+  skippable: true
+  restartable: true
+  params:
+    - shape: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.tv.tvCardGlow(): androidx.tv.material3.CardGlow
+  skippable: true
+  restartable: true
+  params:
+
+@Composable
+private fun dev.spatialfin.tv.tvCardScale(): androidx.tv.material3.CardScale
+  skippable: true
+  restartable: true
+  params:
+
+@Composable
+private fun dev.spatialfin.tv.tvFocus(focused: kotlin.Boolean, shape: androidx.compose.ui.graphics.Shape, scaleOnFocus: kotlin.Boolean): androidx.compose.ui.Modifier
+  skippable: true
+  restartable: true
+  params:
+    - focused: STABLE (primitive type)
+    - shape: STABLE (marked @Stable or @Immutable)
+    - scaleOnFocus: STABLE (primitive type)
 
 @Composable
 private fun dev.spatialfin.unified.DisambiguationCard(index: kotlin.Int, item: dev.jdtech.jellyfin.models.SpatialFinItem, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -4245,13 +4341,14 @@ private fun dev.spatialfin.unified.music.MiniArtwork(artworkUrl: kotlin.String?)
     - artworkUrl: STABLE (class with no mutable properties)
 
 @Composable
-private fun dev.spatialfin.unified.music.NowPlayingBody(state: dev.jdtech.jellyfin.data.musicassistant.repository.MaSession, modifier: androidx.compose.ui.Modifier, wideLayout: kotlin.Boolean, onPickPlayer: kotlin.Function0<kotlin.Unit>?, onToggleParty: kotlin.Function0<kotlin.Unit>?, onPrevious: kotlin.Function0<kotlin.Unit>?, onPlayPause: kotlin.Function0<kotlin.Unit>?, onNext: kotlin.Function0<kotlin.Unit>?, onStop: kotlin.Function0<kotlin.Unit>?, onCycleRepeat: kotlin.Function0<kotlin.Unit>?, onToggleShuffle: kotlin.Function0<kotlin.Unit>?, onSeek: kotlin.Function1<kotlin.Long, kotlin.Unit>?, onSetVolume: kotlin.Function1<kotlin.Int, kotlin.Unit>?, onToggleMute: kotlin.Function0<kotlin.Unit>?, onToggleDontStop: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
+private fun dev.spatialfin.unified.music.NowPlayingBody(state: dev.jdtech.jellyfin.data.musicassistant.repository.MaSession, modifier: androidx.compose.ui.Modifier, wideLayout: kotlin.Boolean, playPauseFocus: androidx.compose.ui.focus.FocusRequester?, onPickPlayer: kotlin.Function0<kotlin.Unit>?, onToggleParty: kotlin.Function0<kotlin.Unit>?, onPrevious: kotlin.Function0<kotlin.Unit>?, onPlayPause: kotlin.Function0<kotlin.Unit>?, onNext: kotlin.Function0<kotlin.Unit>?, onStop: kotlin.Function0<kotlin.Unit>?, onCycleRepeat: kotlin.Function0<kotlin.Unit>?, onToggleShuffle: kotlin.Function0<kotlin.Unit>?, onSeek: kotlin.Function1<kotlin.Long, kotlin.Unit>?, onSetVolume: kotlin.Function1<kotlin.Int, kotlin.Unit>?, onToggleMute: kotlin.Function0<kotlin.Unit>?, onToggleDontStop: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - state: UNSTABLE (has mutable properties or unstable members)
     - modifier: STABLE (marked @Stable or @Immutable)
     - wideLayout: STABLE (primitive type)
+    - playPauseFocus: STABLE (marked @Stable or @Immutable)
     - onPickPlayer: STABLE (function type)
     - onToggleParty: STABLE (function type)
     - onPrevious: STABLE (function type)

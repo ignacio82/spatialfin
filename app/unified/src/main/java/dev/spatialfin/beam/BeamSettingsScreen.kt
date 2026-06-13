@@ -1150,6 +1150,9 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
     var enabled by rememberSaveable {
         mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
     }
+    var autoStart by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
+    }
     // Initialise from the resolved name (which falls back to Build.MODEL when the pref is
     // unset) so the field is never blank — first-edit overwrites the default cleanly.
     var name by rememberSaveable {
@@ -1180,6 +1183,31 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
                     enabled = it
                     appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
                     dirty = true
+                },
+            )
+        }
+
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Start receivers on device boot",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    "Launch background receivers automatically when the device turns on.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = autoStart,
+                onCheckedChange = {
+                    autoStart = it
+                    appPreferences.setValue(appPreferences.castAutoStart, it)
                 },
             )
         }

@@ -852,6 +852,9 @@ private fun TvCastPrefs(appPreferences: AppPreferences) {
     var enabled by rememberSaveable {
         mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
     }
+    var autoStart by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
+    }
     var name by rememberSaveable {
         mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.resolveDisplayName(appPreferences))
     }
@@ -864,6 +867,14 @@ private fun TvCastPrefs(appPreferences: AppPreferences) {
             enabled = it
             appPreferences.setValue(appPreferences.fcastReceiverEnabled, it)
             dirty = true
+        },
+    )
+    TvPrefSwitchRow(
+        title = "Start receivers on device boot",
+        checked = autoStart,
+        onCheckedChange = {
+            autoStart = it
+            appPreferences.setValue(appPreferences.castAutoStart, it)
         },
     )
     TvPrefTextField(
