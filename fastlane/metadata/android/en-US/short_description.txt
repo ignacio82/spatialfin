@@ -1,1 +1,1 @@
-Immersive Jellyfin client for Android XR, TV, and mobile.
+Immersive media player designed for your personal Jellyfin server
