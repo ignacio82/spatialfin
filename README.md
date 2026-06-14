@@ -350,7 +350,7 @@ SpatialFin keeps prebuilt `libass_jni.so` binaries under `player/xr/src/main/jni
 ./player/xr/build_native.sh /path/to/android-ndk
 ```
 
-`build_native_work/` is reproducible scratch output for the subtitle toolchain and is not required in Git.
+The rebuild script emits 16 KB page-size-compatible shared libraries for Play Store bundles. `build_native_work/` is reproducible scratch output for the subtitle toolchain and is not required in Git.
 
 ### Versioning
 

@@ -16,18 +16,67 @@ TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/$HOST_OS-x86_64"
 
 BUILD_DIR="$(pwd)/build_native_work"
 OUT_DIR="$(pwd)/player/xr/src/main/jniLibs"
+LINKER_PAGE_SIZE_FLAGS=(
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
+
+meson_setup() {
+    local build_dir="$1"
+    local source_dir="$2"
+    shift 2
+
+    if [ -d "$build_dir" ]; then
+        meson setup --wipe "$build_dir" "$source_dir" "$@"
+    else
+        meson setup "$build_dir" "$source_dir" "$@"
+    fi
+}
+
+prepare_source() {
+    local dir="$1"
+    local version="$2"
+    local archive_dir="$3"
+    local url="$4"
+    local marker="$dir/.spatialfin-version"
+
+    if [ -f "$marker" ] && [ "$(cat "$marker")" = "$version" ]; then
+        return
+    fi
+
+    rm -rf "$dir" "$archive_dir"
+    wget -qO- "$url" | tar xJ
+    mv "$archive_dir" "$dir"
+    echo "$version" > "$marker"
+}
 
 FREETYPE_VER="2.14.3"
 FRIBIDI_VER="1.0.16"
 HARFBUZZ_VER="14.1.0"
 LIBASS_VER="0.17.4"
 
-[ ! -d freetype ] && wget -qO- https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VER}.tar.xz | tar xJ && mv freetype-${FREETYPE_VER} freetype
-[ ! -d fribidi ] && wget -qO- https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VER}/fribidi-${FRIBIDI_VER}.tar.xz | tar xJ && mv fribidi-${FRIBIDI_VER} fribidi
-[ ! -d harfbuzz ] && wget -qO- https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VER}/harfbuzz-${HARFBUZZ_VER}.tar.xz | tar xJ && mv harfbuzz-${HARFBUZZ_VER} harfbuzz
-[ ! -d libass ] && wget -qO- https://github.com/libass/libass/releases/download/${LIBASS_VER}/libass-${LIBASS_VER}.tar.xz | tar xJ && mv libass-${LIBASS_VER} libass
+prepare_source \
+    freetype \
+    "$FREETYPE_VER" \
+    "freetype-$FREETYPE_VER" \
+    "https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE_VER}.tar.xz"
+prepare_source \
+    fribidi \
+    "$FRIBIDI_VER" \
+    "fribidi-$FRIBIDI_VER" \
+    "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VER}/fribidi-${FRIBIDI_VER}.tar.xz"
+prepare_source \
+    harfbuzz \
+    "$HARFBUZZ_VER" \
+    "harfbuzz-$HARFBUZZ_VER" \
+    "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VER}/harfbuzz-${HARFBUZZ_VER}.tar.xz"
+prepare_source \
+    libass \
+    "$LIBASS_VER" \
+    "libass-$LIBASS_VER" \
+    "https://github.com/libass/libass/releases/download/${LIBASS_VER}/libass-${LIBASS_VER}.tar.xz"
 
 for ABI in $ABIS; do
     echo "Building for $ABI..."
@@ -69,27 +118,27 @@ endian = 'little'
 [built-in options]
 c_args = ['--sysroot=$TOOLCHAIN/sysroot']
 cpp_args = ['--sysroot=$TOOLCHAIN/sysroot']
-c_link_args = ['--sysroot=$TOOLCHAIN/sysroot']
-cpp_link_args = ['--sysroot=$TOOLCHAIN/sysroot']
+c_link_args = ['--sysroot=$TOOLCHAIN/sysroot', '-Wl,-z,max-page-size=16384', '-Wl,-z,common-page-size=16384']
+cpp_link_args = ['--sysroot=$TOOLCHAIN/sysroot', '-Wl,-z,max-page-size=16384', '-Wl,-z,common-page-size=16384']
 
 [properties]
 pkg_config_libdir = '$PREFIX/lib/pkgconfig'
 EOF
 
     # FreeType
-    meson setup freetype/build_$ABI freetype --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dzlib=disabled -Dpng=disabled -Dharfbuzz=disabled -Dbrotli=disabled -Dbzip2=disabled
+    meson_setup freetype/build_$ABI freetype --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dzlib=disabled -Dpng=disabled -Dharfbuzz=disabled -Dbrotli=disabled -Dbzip2=disabled
     ninja -C freetype/build_$ABI install
     
     # FriBidi
-    meson setup fribidi/build_$ABI fribidi --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Ddocs=false -Dtests=false
+    meson_setup fribidi/build_$ABI fribidi --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Ddocs=false -Dtests=false
     ninja -C fribidi/build_$ABI install
     
     # HarfBuzz
-    meson setup harfbuzz/build_$ABI harfbuzz --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled -Dcairo=disabled -Dicu=disabled -Dtests=disabled -Ddocs=disabled --pkg-config-path="$PREFIX/lib/pkgconfig"
+    meson_setup harfbuzz/build_$ABI harfbuzz --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled -Dcairo=disabled -Dicu=disabled -Dtests=disabled -Ddocs=disabled --pkg-config-path="$PREFIX/lib/pkgconfig"
     ninja -C harfbuzz/build_$ABI install
     
     # Libass
-    meson setup libass/build_$ABI libass --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dfontconfig=disabled -Dasm=auto -Drequire-system-font-provider=false --pkg-config-path="$PREFIX/lib/pkgconfig"
+    meson_setup libass/build_$ABI libass --cross-file cross_file_$ABI.txt --prefix="$PREFIX" -Ddefault_library=static -Dfontconfig=disabled -Dasm=auto -Drequire-system-font-provider=false --pkg-config-path="$PREFIX/lib/pkgconfig"
     ninja -C libass/build_$ABI install
 
     # Compile libass_jni.so
@@ -98,6 +147,7 @@ EOF
         -shared -fPIC -O3 \
         -I$PREFIX/include \
         -L$PREFIX/lib \
+        "${LINKER_PAGE_SIZE_FLAGS[@]}" \
         "$(pwd)/../player/xr/src/main/cpp/libass_jni.c" \
         -lass -lharfbuzz -lfribidi -lfreetype \
         -landroid -llog -lm -lz \

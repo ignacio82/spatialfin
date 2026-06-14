@@ -176,7 +176,7 @@ Prebuilt `libass_jni.so` lives in `player/xr/src/main/jniLibs`. To rebuild from 
 ./player/xr/build_native.sh /path/to/android-ndk
 ```
 
-`build_native_work/` is build scratch — reproducible, do not edit by hand.
+The rebuild script emits 16 KB page-size-compatible shared libraries for Play Store bundles. `build_native_work/` is build scratch — reproducible, do not edit by hand.
 
 ---
 
