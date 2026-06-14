@@ -1817,6 +1817,14 @@ private fun dev.spatialfin.beam.BeamBulkDownloadDialog(title: kotlin.String, des
     - onDismiss: STABLE (function type)
 
 @Composable
+private fun dev.spatialfin.beam.BeamCastAndCrew(actors: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItemPerson>, onOpenPerson: kotlin.Function1<java.util.UUID, kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - actors: RUNTIME (requires runtime check)
+    - onOpenPerson: STABLE (function type)
+
+@Composable
 private fun dev.spatialfin.beam.BeamCastOverflowItems(onItemSelected: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
@@ -1970,7 +1978,7 @@ private fun dev.spatialfin.beam.BeamHeroCard(item: dev.jdtech.jellyfin.models.Sp
     - actions: STABLE (composable function type)
 
 @Composable
-public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, onOpenLibrary: kotlin.Function3<java.util.UUID, kotlin.String, dev.jdtech.jellyfin.models.CollectionType, kotlin.Unit>, onOpenShow: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenItem: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenJellyfinAudioDetail: kotlin.Function3<java.util.UUID, kotlin.String, dev.spatialfin.unified.audio.JellyfinAudioDetailType, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenMaSearch: kotlin.Function0<kotlin.Unit>, onOpenMaBrowse: kotlin.Function2<kotlin.String, kotlin.String, kotlin.Unit>): kotlin.Unit
+public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, onOpenLibrary: kotlin.Function3<java.util.UUID, kotlin.String, dev.jdtech.jellyfin.models.CollectionType, kotlin.Unit>, onOpenShow: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenItem: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenJellyfinAudioDetail: kotlin.Function3<java.util.UUID, kotlin.String, dev.spatialfin.unified.audio.JellyfinAudioDetailType, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenMaSearch: kotlin.Function0<kotlin.Unit>, onOpenMaBrowse: kotlin.Function2<kotlin.String, kotlin.String, kotlin.Unit>, userName: kotlin.String?, onOpenServer: kotlin.Function0<kotlin.Unit>, onOpenUser: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
   params:
@@ -1983,6 +1991,9 @@ public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.f
     - onOpenPluginBrowse: STABLE (function type)
     - onOpenMaSearch: STABLE (function type)
     - onOpenMaBrowse: STABLE (function type)
+    - userName: STABLE (class with no mutable properties)
+    - onOpenServer: STABLE (function type)
+    - onOpenUser: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.beam.BeamHomeSectionHeader(title: kotlin.String, actionLabel: kotlin.String?, onAction: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
@@ -1992,6 +2003,16 @@ private fun dev.spatialfin.beam.BeamHomeSectionHeader(title: kotlin.String, acti
     - title: STABLE (String is immutable)
     - actionLabel: STABLE (class with no mutable properties)
     - onAction: STABLE (function type)
+
+@Composable
+public fun dev.spatialfin.beam.BeamHomeTopAppBar(serverName: kotlin.String, userName: kotlin.String?, onOpenServer: kotlin.Function0<kotlin.Unit>, onOpenUser: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - serverName: STABLE (String is immutable)
+    - userName: STABLE (class with no mutable properties)
+    - onOpenServer: STABLE (function type)
+    - onOpenUser: STABLE (function type)
 
 @Composable
 public fun dev.spatialfin.beam.BeamItemDetailScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, itemId: java.util.UUID, onBack: kotlin.Function0<kotlin.Unit>, onOpenLibrary: kotlin.Function3<java.util.UUID, kotlin.String, dev.jdtech.jellyfin.models.CollectionType, kotlin.Unit>, onOpenShow: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenPerson: kotlin.Function1<java.util.UUID, kotlin.Unit>, viewModel: dev.spatialfin.beam.BeamItemDetailViewModel, downloaderViewModel: dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel): kotlin.Unit
@@ -2052,6 +2073,16 @@ private fun dev.spatialfin.beam.BeamMediaFeatureCard(item: dev.jdtech.jellyfin.m
   params:
     - item: RUNTIME (requires runtime check)
     - actions: STABLE (composable function type)
+
+@Composable
+private fun dev.spatialfin.beam.BeamNavCell(icon: @[Composable] androidx.compose.runtime.internal.ComposableFunction1<@[ParameterName(name = \, label: kotlin.String, selected: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - icon: STABLE (composable function type)
+    - label: STABLE (String is immutable)
+    - selected: STABLE (primitive type)
+    - onClick: STABLE (function type)
 
 @Composable
 public fun dev.spatialfin.beam.BeamNavigationRoot(state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, repository: dev.jdtech.jellyfin.repository.JellyfinRepository, llmModelManager: dev.jdtech.jellyfin.core.llm.LlmModelManager, voiceTelemetryStore: dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore, fcastSession: dev.spatialfin.fcast.session.CastSessionManager, musicAssistantRepository: dev.jdtech.jellyfin.data.musicassistant.repository.MusicAssistantRepository, maSession: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository, maServiceClient: dev.jdtech.jellyfin.data.musicassistant.api.ServiceClient, onReconnect: kotlin.Function0<kotlin.Unit>, onFinishApp: kotlin.Function0<kotlin.Unit>, maDeepLink: kotlinx.coroutines.flow.StateFlow<dev.jdtech.jellyfin.deeplink.MaDeepLink.Parsed?>?, onMaDeepLinkHandled: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -2841,201 +2872,6 @@ public fun dev.spatialfin.presentation.theme.SpatialFinTheme(darkTheme: kotlin.B
     - content: STABLE (composable function type)
 
 @Composable
-private fun dev.spatialfin.sendspin.Artwork(bitmap: androidx.compose.ui.graphics.ImageBitmap?, artworkUrl: kotlin.String?): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - bitmap: RUNTIME (requires runtime check)
-    - artworkUrl: STABLE (class with no mutable properties)
-
-@Composable
-private fun dev.spatialfin.sendspin.PlayerControlButton(icon: kotlin.Int, contentDescription: kotlin.String, enabled: kotlin.Boolean, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, modifier: androidx.compose.ui.Modifier, prominent: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - icon: STABLE (primitive type)
-    - contentDescription: STABLE (String is immutable)
-    - enabled: STABLE (primitive type)
-    - size: STABLE (marked @Stable or @Immutable)
-    - iconSize: STABLE (marked @Stable or @Immutable)
-    - modifier: STABLE (marked @Stable or @Immutable)
-    - prominent: STABLE (primitive type)
-    - onClick: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinArtwork(bitmap: androidx.compose.ui.graphics.ImageBitmap?, artworkUrl: kotlin.String?, levels: kotlin.collections.List<kotlin.Float>, isPlaying: kotlin.Boolean, modifier: androidx.compose.ui.Modifier): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - bitmap: RUNTIME (requires runtime check)
-    - artworkUrl: STABLE (class with no mutable properties)
-    - levels: RUNTIME (requires runtime check)
-    - isPlaying: STABLE (primitive type)
-    - modifier: STABLE (marked @Stable or @Immutable)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinBackdrop(bitmap: androidx.compose.ui.graphics.ImageBitmap?, artworkUrl: kotlin.String?, levels: kotlin.collections.List<kotlin.Float>, isPlaying: kotlin.Boolean): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - bitmap: RUNTIME (requires runtime check)
-    - artworkUrl: STABLE (class with no mutable properties)
-    - levels: RUNTIME (requires runtime check)
-    - isPlaying: STABLE (primitive type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinControls(isPlaying: kotlin.Boolean, supportsPrevious: kotlin.Boolean, supportsPlayPause: kotlin.Boolean, supportsNext: kotlin.Boolean, supportsStop: kotlin.Boolean, supportsMute: kotlin.Boolean, supportsVolume: kotlin.Boolean, muted: kotlin.Boolean, sliderVolume: kotlin.Float, onSliderChange: kotlin.Function1<kotlin.Float, kotlin.Unit>, onSliderFinished: kotlin.Function0<kotlin.Unit>, onPrevious: kotlin.Function0<kotlin.Unit>, onPlayPause: kotlin.Function0<kotlin.Unit>, onNext: kotlin.Function0<kotlin.Unit>, onStop: kotlin.Function0<kotlin.Unit>, onMute: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - isPlaying: STABLE (primitive type)
-    - supportsPrevious: STABLE (primitive type)
-    - supportsPlayPause: STABLE (primitive type)
-    - supportsNext: STABLE (primitive type)
-    - supportsStop: STABLE (primitive type)
-    - supportsMute: STABLE (primitive type)
-    - supportsVolume: STABLE (primitive type)
-    - muted: STABLE (primitive type)
-    - sliderVolume: STABLE (primitive type)
-    - onSliderChange: STABLE (function type)
-    - onSliderFinished: STABLE (function type)
-    - onPrevious: STABLE (function type)
-    - onPlayPause: STABLE (function type)
-    - onNext: STABLE (function type)
-    - onStop: STABLE (function type)
-    - onMute: STABLE (function type)
-
-@Composable
-public fun dev.spatialfin.sendspin.SendspinFullscreenPlayer(modifier: androidx.compose.ui.Modifier, suppressed: kotlin.Boolean, queueViewModel: dev.spatialfin.sendspin.SendspinQueueViewModel): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - modifier: STABLE (marked @Stable or @Immutable)
-    - suppressed: STABLE (primitive type)
-    - queueViewModel: UNSTABLE (has mutable properties or unstable members)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinGroupOverlay(state: dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverUiState, onDismiss: kotlin.Function0<kotlin.Unit>, onRefresh: kotlin.Function0<kotlin.Unit>, onSetServerUrl: kotlin.Function1<kotlin.String, kotlin.Unit>, onLogin: kotlin.Function3<kotlin.String, kotlin.String, kotlin.String, kotlin.Unit>, onSaveToken: kotlin.Function2<kotlin.String, kotlin.String, kotlin.Unit>, onTogglePlayer: kotlin.Function2<dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantPlayer, kotlin.Boolean, kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - state: UNSTABLE (has mutable properties or unstable members)
-    - onDismiss: STABLE (function type)
-    - onRefresh: STABLE (function type)
-    - onSetServerUrl: STABLE (function type)
-    - onLogin: STABLE (function type)
-    - onSaveToken: STABLE (function type)
-    - onTogglePlayer: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinGroupPlayerRow(player: dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantPlayer, busy: kotlin.Boolean, onToggle: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - player: UNSTABLE (has mutable properties or unstable members)
-    - busy: STABLE (primitive type)
-    - onToggle: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinMetadata(title: kotlin.String, subtitle: kotlin.String, wide: kotlin.Boolean): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - title: STABLE (String is immutable)
-    - subtitle: STABLE (String is immutable)
-    - wide: STABLE (primitive type)
-
-@Composable
-public fun dev.spatialfin.sendspin.SendspinMiniPlayer(modifier: androidx.compose.ui.Modifier, suppressed: kotlin.Boolean): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - modifier: STABLE (marked @Stable or @Immutable)
-    - suppressed: STABLE (primitive type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinMusicAssistantAuthPanel(serverUrl: kotlin.String, username: kotlin.String, password: kotlin.String, token: kotlin.String, loading: kotlin.Boolean, authState: dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState, onServerUrlChange: kotlin.Function1<kotlin.String, kotlin.Unit>, onUsernameChange: kotlin.Function1<kotlin.String, kotlin.Unit>, onPasswordChange: kotlin.Function1<kotlin.String, kotlin.Unit>, onTokenChange: kotlin.Function1<kotlin.String, kotlin.Unit>, onSetServerUrl: kotlin.Function0<kotlin.Unit>, onLogin: kotlin.Function0<kotlin.Unit>, onSaveToken: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - serverUrl: STABLE (String is immutable)
-    - username: STABLE (String is immutable)
-    - password: STABLE (String is immutable)
-    - token: STABLE (String is immutable)
-    - loading: STABLE (primitive type)
-    - authState: STABLE (class with no mutable properties)
-    - onServerUrlChange: STABLE (function type)
-    - onUsernameChange: STABLE (function type)
-    - onPasswordChange: STABLE (function type)
-    - onTokenChange: STABLE (function type)
-    - onSetServerUrl: STABLE (function type)
-    - onLogin: STABLE (function type)
-    - onSaveToken: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinPhoneLayout(bitmap: androidx.compose.ui.graphics.ImageBitmap?, artworkUrl: kotlin.String?, levels: kotlin.collections.List<kotlin.Float>, isPlaying: kotlin.Boolean, title: kotlin.String, subtitle: kotlin.String, status: kotlin.String, onDismiss: kotlin.Function0<kotlin.Unit>, onGroupClick: kotlin.Function0<kotlin.Unit>, onQueueClick: kotlin.Function0<kotlin.Unit>, controls: @[Composable] androidx.compose.runtime.internal.ComposableFunction0<kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - bitmap: RUNTIME (requires runtime check)
-    - artworkUrl: STABLE (class with no mutable properties)
-    - levels: RUNTIME (requires runtime check)
-    - isPlaying: STABLE (primitive type)
-    - title: STABLE (String is immutable)
-    - subtitle: STABLE (String is immutable)
-    - status: STABLE (String is immutable)
-    - onDismiss: STABLE (function type)
-    - onGroupClick: STABLE (function type)
-    - onQueueClick: STABLE (function type)
-    - controls: STABLE (composable function type)
-
-@Composable
-public fun dev.spatialfin.sendspin.SendspinQueueOverlay(queueItems: kotlin.collections.List<dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueueItem>, onDismiss: kotlin.Function0<kotlin.Unit>, onPlayItem: kotlin.Function1<kotlin.String, kotlin.Unit>, onClearQueue: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - queueItems: RUNTIME (requires runtime check)
-    - onDismiss: STABLE (function type)
-    - onPlayItem: STABLE (function type)
-    - onClearQueue: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinTopBar(status: kotlin.String, onDismiss: kotlin.Function0<kotlin.Unit>, onGroupClick: kotlin.Function0<kotlin.Unit>, onQueueClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: true
-  restartable: true
-  params:
-    - status: STABLE (String is immutable)
-    - onDismiss: STABLE (function type)
-    - onGroupClick: STABLE (function type)
-    - onQueueClick: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinVisualizer(levels: kotlin.collections.List<kotlin.Float>, isPlaying: kotlin.Boolean, modifier: androidx.compose.ui.Modifier): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - levels: RUNTIME (requires runtime check)
-    - isPlaying: STABLE (primitive type)
-    - modifier: STABLE (marked @Stable or @Immutable)
-
-@Composable
-private fun dev.spatialfin.sendspin.SendspinWideLayout(bitmap: androidx.compose.ui.graphics.ImageBitmap?, artworkUrl: kotlin.String?, levels: kotlin.collections.List<kotlin.Float>, isPlaying: kotlin.Boolean, title: kotlin.String, subtitle: kotlin.String, status: kotlin.String, onDismiss: kotlin.Function0<kotlin.Unit>, onGroupClick: kotlin.Function0<kotlin.Unit>, onQueueClick: kotlin.Function0<kotlin.Unit>, controls: @[Composable] androidx.compose.runtime.internal.ComposableFunction0<kotlin.Unit>): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
-    - bitmap: RUNTIME (requires runtime check)
-    - artworkUrl: STABLE (class with no mutable properties)
-    - levels: RUNTIME (requires runtime check)
-    - isPlaying: STABLE (primitive type)
-    - title: STABLE (String is immutable)
-    - subtitle: STABLE (String is immutable)
-    - status: STABLE (String is immutable)
-    - onDismiss: STABLE (function type)
-    - onGroupClick: STABLE (function type)
-    - onQueueClick: STABLE (function type)
-    - controls: STABLE (composable function type)
-
-@Composable
 private fun dev.spatialfin.tv.TvActionTile(title: kotlin.String, body: kotlin.String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
@@ -3167,12 +3003,21 @@ private fun dev.spatialfin.tv.TvEpisodeHighlightCard(episode: dev.jdtech.jellyfi
     - onClick: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.tv.TvEpisodeStillOverlay(episode: dev.jdtech.jellyfin.models.SpatialFinEpisode, isFocused: kotlin.Boolean): kotlin.Unit
+private fun dev.spatialfin.tv.TvEpisodeStillOverlay(episode: dev.jdtech.jellyfin.models.SpatialFinEpisode, isFocused: kotlin.Boolean, showInlineDetails: kotlin.Boolean): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - episode: UNSTABLE (has mutable properties or unstable members)
     - isFocused: STABLE (primitive type)
+    - showInlineDetails: STABLE (primitive type)
+
+@Composable
+private fun dev.spatialfin.tv.TvEpisodeWatchStatusPill(played: kotlin.Boolean, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - played: STABLE (primitive type)
+    - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
 private fun dev.spatialfin.tv.TvHeroButton(label: kotlin.String, icon: androidx.compose.ui.graphics.vector.ImageVector?, primary: kotlin.Boolean, selected: kotlin.Boolean, modifier: androidx.compose.ui.Modifier, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -3368,6 +3213,16 @@ private fun dev.spatialfin.tv.TvOnboardingHero(companionReady: kotlin.Boolean, o
   params:
     - companionReady: STABLE (primitive type)
     - onOpenCompanion: STABLE (function type)
+
+@Composable
+public fun dev.spatialfin.tv.TvOverflowSheet(title: kotlin.String, subtitle: kotlin.String?, actions: kotlin.collections.List<dev.spatialfin.tv.TvOverflowAction>, onDismissRequest: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - title: STABLE (String is immutable)
+    - subtitle: STABLE (class with no mutable properties)
+    - actions: RUNTIME (requires runtime check)
+    - onDismissRequest: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.tv.TvPageHeaderCard(title: kotlin.String, body: kotlin.String): kotlin.Unit
@@ -3570,6 +3425,19 @@ public fun dev.spatialfin.tv.TvTheme(content: @[Composable] androidx.compose.run
     - content: STABLE (composable function type)
 
 @Composable
+internal fun dev.spatialfin.tv.TvTopBar(currentRouteName: kotlin.String, navItems: kotlin.collections.List<kotlin.Pair<kotlin.String, kotlin.Pair<kotlin.String, androidx.compose.ui.graphics.vector.ImageVector>>>, onNavigate: kotlin.Function1<kotlin.String, kotlin.Unit>, user: dev.jdtech.jellyfin.models.User?, serverName: kotlin.String?, serverAddress: kotlin.String?, onUserClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - currentRouteName: STABLE (String is immutable)
+    - navItems: RUNTIME (requires runtime check)
+    - onNavigate: STABLE (function type)
+    - user: UNSTABLE (has mutable properties or unstable members)
+    - serverName: STABLE (class with no mutable properties)
+    - serverAddress: STABLE (class with no mutable properties)
+    - onUserClick: STABLE (function type)
+
+@Composable
 private fun dev.spatialfin.tv.TvUserCard(name: kotlin.String, role: kotlin.String, avatarUri: android.net.Uri?, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
@@ -3578,6 +3446,17 @@ private fun dev.spatialfin.tv.TvUserCard(name: kotlin.String, role: kotlin.Strin
     - role: STABLE (String is immutable)
     - avatarUri: RUNTIME (requires runtime check)
     - onClick: STABLE (function type)
+
+@Composable
+public fun dev.spatialfin.tv.TvUserSwitcherDialog(state: dev.jdtech.jellyfin.viewmodels.MainState, onDismissRequest: kotlin.Function0<kotlin.Unit>, onUserSwitched: kotlin.Function0<kotlin.Unit>, onAddUser: kotlin.Function0<kotlin.Unit>, viewModel: dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - state: UNSTABLE (has mutable properties or unstable members)
+    - onDismissRequest: STABLE (function type)
+    - onUserSwitched: STABLE (function type)
+    - onAddUser: STABLE (function type)
+    - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
 private fun dev.spatialfin.tv.TvUsersScreen(onBack: kotlin.Function0<kotlin.Unit>, onUserSwitched: kotlin.Function0<kotlin.Unit>, viewModel: dev.jdtech.jellyfin.setup.presentation.users.UsersViewModel): kotlin.Unit
@@ -3647,7 +3526,7 @@ private fun dev.spatialfin.tv.tvCardScale(): androidx.tv.material3.CardScale
   params:
 
 @Composable
-private fun dev.spatialfin.tv.tvFocus(focused: kotlin.Boolean, shape: androidx.compose.ui.graphics.Shape, scaleOnFocus: kotlin.Boolean): androidx.compose.ui.Modifier
+internal fun dev.spatialfin.tv.tvFocus(focused: kotlin.Boolean, shape: androidx.compose.ui.graphics.Shape, scaleOnFocus: kotlin.Boolean): androidx.compose.ui.Modifier
   skippable: true
   restartable: true
   params:
@@ -4233,11 +4112,13 @@ public fun dev.spatialfin.unified.music.MaMiniPlayer(session: dev.jdtech.jellyfi
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
-private fun dev.spatialfin.unified.music.MaMiniPlayerContent(state: dev.jdtech.jellyfin.data.musicassistant.repository.MaSession, onExpand: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+private fun dev.spatialfin.unified.music.MaMiniPlayerContent(state: dev.jdtech.jellyfin.data.musicassistant.repository.MaSession, receiverState: dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverUiState, usingSendspinFallback: kotlin.Boolean, onExpand: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - state: UNSTABLE (has mutable properties or unstable members)
+    - receiverState: UNSTABLE (has mutable properties or unstable members)
+    - usingSendspinFallback: STABLE (primitive type)
     - onExpand: STABLE (function type)
     - modifier: STABLE (marked @Stable or @Immutable)
 
