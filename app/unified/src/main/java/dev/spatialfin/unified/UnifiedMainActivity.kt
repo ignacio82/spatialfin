@@ -958,8 +958,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                         .padding(horizontal = 24.dp, vertical = 16.dp),
                 ) {
                     androidx.compose.foundation.layout.Column {
-                    val maNp by maSession.session.collectAsStateWithLifecycle()
-                    dev.spatialfin.sendspin.SendspinMiniPlayer(suppressed = maNp.nowPlaying != null)
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },
@@ -1171,10 +1169,6 @@ class UnifiedMainActivity : AppCompatActivity() {
                         ),
                     ) {
                         androidx.compose.foundation.layout.Column {
-                            val maNpSpatial by maSession.session.collectAsStateWithLifecycle()
-                            dev.spatialfin.sendspin.SendspinMiniPlayer(
-                                suppressed = maNpSpatial.nowPlaying != null,
-                            )
                             dev.spatialfin.unified.music.MaMiniPlayer(
                                 session = maSession,
                                 onExpand = { showSpatialNowPlaying = true },

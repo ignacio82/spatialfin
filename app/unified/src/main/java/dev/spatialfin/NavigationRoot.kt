@@ -923,7 +923,6 @@ fun NavigationRoot(
                 )
             }
         }
-        dev.spatialfin.sendspin.SendspinFullscreenPlayer()
     }
     }
 }

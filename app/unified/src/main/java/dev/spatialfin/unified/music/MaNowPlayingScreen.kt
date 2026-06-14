@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,6 +80,10 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.RepeatMode
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSession
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinControllerCommands
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverPlaybackState
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.scale
@@ -116,7 +121,11 @@ fun MaNowPlayingScreen(
     onOpenSearch: (() -> Unit)? = null,
     onOpenParty: (() -> Unit)? = null,
 ) {
-    val state by session.session.collectAsStateWithLifecycle()
+    val maState by session.session.collectAsStateWithLifecycle()
+    val receiverState by SendspinReceiverSession.state.collectAsStateWithLifecycle()
+    val usingSendspinFallback = maState.shouldUseSendspinFallback(receiverState)
+    val state = maState.withSendspinFallback(receiverState)
+    val context = LocalContext.current
     val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
@@ -138,7 +147,7 @@ fun MaNowPlayingScreen(
             runCatching { playPauseFocus.requestFocus() }
         }
     }
-    val currentUri = state.nowPlaying?.uri
+    val currentUri = if (usingSendspinFallback) null else state.nowPlaying?.uri
     LaunchedEffect(currentUri, dispatcher) {
         lyrics = null
         chapters = emptyList()
@@ -153,11 +162,11 @@ fun MaNowPlayingScreen(
         }
     }
 
-    if (showQueue) {
+    if (showQueue && !usingSendspinFallback) {
         MaQueuePanel(onBack = { showQueue = false }, modifier = modifier)
         return
     }
-    if (showLyrics) {
+    if (showLyrics && !usingSendspinFallback) {
         MaLyricsPanel(
             lyrics = lyrics.orEmpty(),
             title = state.nowPlaying?.title,
@@ -166,7 +175,7 @@ fun MaNowPlayingScreen(
         )
         return
     }
-    if (showChapters) {
+    if (showChapters && !usingSendspinFallback) {
         MaChaptersPanel(
             chapters = chapters,
             title = state.nowPlaying?.title,
@@ -200,7 +209,7 @@ fun MaNowPlayingScreen(
                     // (no player "source"), so we can't gate on partySource — the
                     // party screen itself loads the guest QR via `party/url` and
                     // simply omits it when the plugin isn't present.
-                    if (onOpenParty != null) {
+                    if (!usingSendspinFallback && onOpenParty != null) {
                         IconButton(onClick = onOpenParty, modifier = Modifier.maFocusHighlight()) {
                             Icon(Icons.Filled.Celebration, contentDescription = "Party screen")
                         }
@@ -215,8 +224,10 @@ fun MaNowPlayingScreen(
                             Icon(Icons.Filled.Lyrics, contentDescription = "Lyrics")
                         }
                     }
-                    IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
-                        Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
+                    if (!usingSendspinFallback) {
+                        IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
+                            Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
+                        }
                     }
                     if (onOpenSearch != null) {
                         IconButton(onClick = onOpenSearch, modifier = Modifier.maFocusHighlight()) {
@@ -225,7 +236,7 @@ fun MaNowPlayingScreen(
                     }
                     // Current-track actions (add to queue / playlist) — makes this
                     // the single player with the MA overflow.
-                    state.nowPlaying?.uri?.takeIf { it.isNotBlank() }?.let { uri ->
+                    state.nowPlaying?.uri?.takeIf { !usingSendspinFallback && it.isNotBlank() }?.let { uri ->
                         NowPlayingTrackMenu(uri = uri, title = state.nowPlaying?.title, dispatcher = dispatcher)
                     }
                 }
@@ -239,23 +250,84 @@ fun MaNowPlayingScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 val wideBody = maxWidth >= 720.dp && maxHeight >= 520.dp
+                val sendspinPlayPauseCommand =
+                    if (receiverState.playbackState == SendspinReceiverPlaybackState.PLAYING) {
+                        SendspinControllerCommands.PAUSE
+                    } else {
+                        SendspinControllerCommands.PLAY
+                    }
+                val sendspinRepeatCommand =
+                    when (receiverState.repeat) {
+                        "all" -> SendspinControllerCommands.REPEAT_ONE
+                        "one" -> SendspinControllerCommands.REPEAT_OFF
+                        else -> SendspinControllerCommands.REPEAT_ALL
+                    }
+                val sendspinShuffleCommand =
+                    if (receiverState.shuffle == true) {
+                        SendspinControllerCommands.UNSHUFFLE
+                    } else {
+                        SendspinControllerCommands.SHUFFLE
+                    }
+                fun sendspinCommand(command: String, volume: Int? = null, muted: Boolean? = null) {
+                    SendspinReceiverService.sendControllerCommand(context, command, volume, muted)
+                }
                 val body: @Composable (Modifier) -> Unit = { bodyModifier ->
                     NowPlayingBody(
                         state = state,
                         wideLayout = wideBody,
                         playPauseFocus = playPauseFocus,
-                        onPickPlayer = onPickPlayer,
-                        onToggleParty = dispatcher?.let { { it.togglePartyMode() } },
-                        onPrevious = dispatcher?.let { { it.previous() } },
-                        onPlayPause = dispatcher?.let { { it.playPause() } },
-                        onNext = dispatcher?.let { { it.next() } },
-                        onStop = dispatcher?.let { { it.stop() } },
-                        onCycleRepeat = dispatcher?.let { { it.cycleRepeatMode() } },
-                        onToggleShuffle = dispatcher?.let { { it.toggleShuffle() } },
-                        onSeek = dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
-                        onSetVolume = dispatcher?.let { d -> { v: Int -> d.setVolume(v) } },
-                        onToggleMute = dispatcher?.let { { it.toggleMute() } },
-                        onToggleDontStop = dispatcher?.let { { it.toggleDontStopTheMusic() } },
+                        onPickPlayer = if (usingSendspinFallback) null else onPickPlayer,
+                        onToggleParty = if (usingSendspinFallback) null else dispatcher?.let { { it.togglePartyMode() } },
+                        onPrevious = if (usingSendspinFallback) {
+                            { sendspinCommand(SendspinControllerCommands.PREVIOUS) }
+                                .takeIf { receiverState.supports(SendspinControllerCommands.PREVIOUS) }
+                        } else {
+                            dispatcher?.let { { it.previous() } }
+                        },
+                        onPlayPause = if (usingSendspinFallback) {
+                            { sendspinCommand(sendspinPlayPauseCommand) }
+                                .takeIf { receiverState.supports(sendspinPlayPauseCommand) }
+                        } else {
+                            dispatcher?.let { { it.playPause() } }
+                        },
+                        onNext = if (usingSendspinFallback) {
+                            { sendspinCommand(SendspinControllerCommands.NEXT) }
+                                .takeIf { receiverState.supports(SendspinControllerCommands.NEXT) }
+                        } else {
+                            dispatcher?.let { { it.next() } }
+                        },
+                        onStop = if (usingSendspinFallback) {
+                            { sendspinCommand(SendspinControllerCommands.STOP) }
+                                .takeIf { receiverState.supports(SendspinControllerCommands.STOP) }
+                        } else {
+                            dispatcher?.let { { it.stop() } }
+                        },
+                        onCycleRepeat = if (usingSendspinFallback) {
+                            { sendspinCommand(sendspinRepeatCommand) }
+                                .takeIf { receiverState.supports(sendspinRepeatCommand) }
+                        } else {
+                            dispatcher?.let { { it.cycleRepeatMode() } }
+                        },
+                        onToggleShuffle = if (usingSendspinFallback) {
+                            { sendspinCommand(sendspinShuffleCommand) }
+                                .takeIf { receiverState.supports(sendspinShuffleCommand) }
+                        } else {
+                            dispatcher?.let { { it.toggleShuffle() } }
+                        },
+                        onSeek = if (usingSendspinFallback) null else dispatcher?.let { d -> { ms: Long -> d.seekTo(ms) } },
+                        onSetVolume = if (usingSendspinFallback) {
+                            { v: Int -> sendspinCommand(SendspinControllerCommands.VOLUME, volume = v) }
+                                .takeIf { receiverState.supports(SendspinControllerCommands.VOLUME) }
+                        } else {
+                            dispatcher?.let { d -> { v: Int -> d.setVolume(v) } }
+                        },
+                        onToggleMute = if (usingSendspinFallback) {
+                            { sendspinCommand(SendspinControllerCommands.MUTE, muted = !receiverState.muted) }
+                                .takeIf { receiverState.supports(SendspinControllerCommands.MUTE) }
+                        } else {
+                            dispatcher?.let { { it.toggleMute() } }
+                        },
+                        onToggleDontStop = if (usingSendspinFallback) null else dispatcher?.let { { it.toggleDontStopTheMusic() } },
                         modifier = bodyModifier,
                     )
                 }

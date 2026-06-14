@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +46,11 @@ import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSession
 import dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository
 import dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinControllerCommands
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverPlaybackState
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverUiState
 
 /**
  * Always-visible MA playback bar. Hides itself when there's no track *and*
@@ -70,7 +76,10 @@ fun MaMiniPlayer(
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state by session.session.collectAsStateWithLifecycle()
+    val maState by session.session.collectAsStateWithLifecycle()
+    val receiverState by SendspinReceiverSession.state.collectAsStateWithLifecycle()
+    val usingSendspinFallback = maState.shouldUseSendspinFallback(receiverState)
+    val state = maState.withSendspinFallback(receiverState)
     val visible = state.nowPlaying != null || state.pendingPlayUri != null
 
     AnimatedVisibility(
@@ -80,6 +89,8 @@ fun MaMiniPlayer(
     ) {
         MaMiniPlayerContent(
             state = state,
+            receiverState = receiverState,
+            usingSendspinFallback = usingSendspinFallback,
             onExpand = onExpand,
             modifier = modifier,
         )
@@ -89,10 +100,13 @@ fun MaMiniPlayer(
 @Composable
 private fun MaMiniPlayerContent(
     state: MaSession,
+    receiverState: SendspinReceiverUiState,
+    usingSendspinFallback: Boolean,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val track = state.nowPlaying ?: return
+    val context = LocalContext.current
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -140,11 +154,14 @@ private fun MaMiniPlayerContent(
                     // The server keeps reporting "playing" even when this
                     // device's receiver has stopped rendering — surface the
                     // local stall instead of pretending audio is flowing.
-                    val receiverState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
-                        .state.collectAsStateWithLifecycle()
                     val stalledHere = receiverState.audioStalled &&
-                        receiverState.musicAssistantQueuePlayerId != null &&
-                        state.selectedPlayer?.id == receiverState.musicAssistantQueuePlayerId
+                        (
+                            usingSendspinFallback ||
+                                (
+                                    receiverState.musicAssistantQueuePlayerId != null &&
+                                        state.selectedPlayer?.id == receiverState.musicAssistantQueuePlayerId
+                                )
+                            )
                     val subtitle = when {
                         stalledHere -> "Reconnecting…"
                         state.playbackPhase == PlaybackPhase.Preparing -> "Preparing audio…"
@@ -166,9 +183,26 @@ private fun MaMiniPlayerContent(
                 // Transport buttons. Disabled during Preparing because MA
                 // can't react until the queue is loaded.
                 val dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
-                val transportEnabled = dispatcher != null && state.playbackPhase != PlaybackPhase.Preparing
+                val sendspinPlayPauseCommand =
+                    if (receiverState.playbackState == SendspinReceiverPlaybackState.PLAYING) {
+                        SendspinControllerCommands.PAUSE
+                    } else {
+                        SendspinControllerCommands.PLAY
+                    }
+                val transportEnabled =
+                    if (usingSendspinFallback) {
+                        receiverState.supports(sendspinPlayPauseCommand)
+                    } else {
+                        dispatcher != null && state.playbackPhase != PlaybackPhase.Preparing
+                    }
                 IconButton(
-                    onClick = { dispatcher?.playPause() },
+                    onClick = {
+                        if (usingSendspinFallback) {
+                            SendspinReceiverService.sendControllerCommand(context, sendspinPlayPauseCommand)
+                        } else {
+                            dispatcher?.playPause()
+                        }
+                    },
                     enabled = transportEnabled,
                     modifier = Modifier.maFocusHighlight(),
                 ) {
@@ -178,16 +212,36 @@ private fun MaMiniPlayerContent(
                     )
                 }
                 IconButton(
-                    onClick = { dispatcher?.next() },
-                    enabled = transportEnabled,
+                    onClick = {
+                        if (usingSendspinFallback) {
+                            SendspinReceiverService.sendControllerCommand(context, SendspinControllerCommands.NEXT)
+                        } else {
+                            dispatcher?.next()
+                        }
+                    },
+                    enabled = if (usingSendspinFallback) {
+                        receiverState.supports(SendspinControllerCommands.NEXT)
+                    } else {
+                        transportEnabled
+                    },
                     modifier = Modifier.maFocusHighlight(),
                 ) {
                     Icon(Icons.Filled.SkipNext, contentDescription = "Next")
                 }
                 // Stop — dismisses the bar entirely (distinct from Pause).
                 IconButton(
-                    onClick = { dispatcher?.stop() },
-                    enabled = dispatcher != null,
+                    onClick = {
+                        if (usingSendspinFallback) {
+                            SendspinReceiverService.sendControllerCommand(context, SendspinControllerCommands.STOP)
+                        } else {
+                            dispatcher?.stop()
+                        }
+                    },
+                    enabled = if (usingSendspinFallback) {
+                        receiverState.supports(SendspinControllerCommands.STOP)
+                    } else {
+                        dispatcher != null
+                    },
                     modifier = Modifier.maFocusHighlight(),
                 ) {
                     Icon(Icons.Filled.Stop, contentDescription = "Stop")

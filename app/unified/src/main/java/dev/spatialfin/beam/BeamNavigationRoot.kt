@@ -569,20 +569,10 @@ fun BeamNavigationRoot(
                             sessionManager = fcastSession,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )
-                        // When SendSpin is actively receiving (we're the
-                        // audio output for someone else's cast), its mini-player
-                        // owns the slot — it has the live PCM-side metadata
-                        // and the right transport command surface. Otherwise
-                        // fall through to the MA controller mini-player.
-                        // Unified player: when MA is presenting this playback,
-                        // the MA mini-player (with queue / playlist / party on
-                        // expand) owns the slot and the SendSpin one is hidden.
+                        // Unified music player: MA owns the local SendSpin
+                        // receiver UI through MaLocalPlaybackBridge, so the
+                        // receiver stays headless and never competes here.
                         val maNowPlaying by maSession.session.collectAsStateWithLifecycle()
-                        dev.spatialfin.sendspin.SendspinMiniPlayer(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            suppressed = maNowPlaying.nowPlaying != null ||
-                                maNowPlaying.pendingPlayUri != null,
-                        )
                         dev.spatialfin.unified.music.MaMiniPlayer(
                             session = maSession,
                             onExpand = { showNowPlaying = true },
@@ -1146,10 +1136,6 @@ fun BeamNavigationRoot(
                 }
             }
             dev.spatialfin.fcast.session.FCastGlobalPickerHost(sessionManager = fcastSession)
-            val maNowPlayingFs by maSession.session.collectAsStateWithLifecycle()
-            dev.spatialfin.sendspin.SendspinFullscreenPlayer(
-                suppressed = maNowPlayingFs.nowPlaying != null,
-            )
             var showPlayerPicker by remember { mutableStateOf(false) }
             var showParty by remember { mutableStateOf(false) }
             // Open the right MA overlay when a queue/party deep link arrives.

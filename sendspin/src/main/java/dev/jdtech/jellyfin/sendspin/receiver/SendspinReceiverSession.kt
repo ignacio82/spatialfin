@@ -48,17 +48,17 @@ data class SendspinReceiverUiState(
     /**
      * True once genuine playback has started in THIS session (a real
      * PLAYING transition, not the server's restore sync after a reconnect).
-     * Lets the receiver UI stay up through a pause/stop — where MA reports the
-     * SendSpin endpoint as STOPPED — while still NOT hijacking the screen on a
-     * cold launch that only replayed last session's stale metadata.
+     * Lets the receiver notification stay useful through a pause/stop while
+     * still keeping the headless receiver from presenting stale playback state
+     * after a cold launch.
      */
     val playbackStarted: Boolean = false,
     /**
      * True while the server reports PLAYING but this device has stopped
      * rendering audio (dead socket pending redial, clock discontinuity, server
-     * stall). Set by the receiver service's stall watchdog so every playback
-     * surface (mini player, controls, notification) can show "Reconnecting…"
-     * instead of pretending audio is flowing.
+     * stall). Set by the receiver service's stall watchdog so the unified MA
+     * player and receiver notification can show "Reconnecting..." instead of
+     * pretending audio is flowing.
      */
     val audioStalled: Boolean = false,
     val supportedCommands: Set<String> = emptySet(),
@@ -86,11 +86,10 @@ data class SendspinReceiverUiState(
     val musicAssistantPlayers: List<SendspinMusicAssistantPlayer> = emptyList(),
     val musicAssistantCurrentPlayerId: String? = null,
     /**
-     * The MA Universal-Player wrapper that holds THIS device's queue/now-playing
-     * (resolved from our protocol endpoint). This — not [musicAssistantCurrentPlayerId],
-     * which is the protocol output — is the player the MA session should select so
-     * the unified now-playing surface (queue / party / playlist) tracks local
-     * playback. Null until MA links the wrapper to our endpoint.
+     * The MA queue/player id that represents THIS device. Prefer the
+     * Universal-Player wrapper when MA exposes one; fall back to the raw
+     * protocol endpoint so the unified now-playing surface can still track
+     * local SendSpin playback while wrapper linking is absent or delayed.
      */
     val musicAssistantQueuePlayerId: String? = null,
     val musicAssistantGroupTargetPlayerId: String? = null,
@@ -107,12 +106,10 @@ data class SendspinReceiverUiState(
         get() = albumArtwork?.isNotEmpty() == true || !artworkUrl.isNullOrBlank()
 
     val showControls: Boolean
-        // Surface the receiver UI while playback is live (PLAYING / PAUSED), and
-        // also while STOPPED *if* we've genuinely played this session — so a
-        // pause/stop (which MA reports as STOPPED for a SendSpin endpoint)
-        // doesn't make the controls vanish. A cold launch that only replayed
-        // last session's stale metadata has playbackStarted == false, so it
-        // still won't hijack Home.
+        // Surface receiver notification actions while playback is live
+        // (PLAYING / PAUSED), and also while STOPPED if we've genuinely played
+        // this session. A cold launch that only replayed stale metadata has
+        // playbackStarted == false, so it stays quiet.
         get() =
             connected &&
                 !controlsDismissed &&
@@ -131,16 +128,6 @@ object SendspinReceiverSession {
 
     fun dismissControls() {
         _state.update { it.copy(controlsDismissed = true) }
-    }
-
-    /**
-     * Re-show the SendSpin fullscreen. The fullscreen and the mini-player are
-     * gated on `controlsDismissed`: tapping the mini-player calls this so the
-     * full UI returns. Without this, "X" was a one-way trip — closing the
-     * fullscreen left the user with no playback controls.
-     */
-    fun restoreControls() {
-        _state.update { it.copy(controlsDismissed = false) }
     }
 
     internal fun reset() {

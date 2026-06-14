@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import timber.log.Timber
 
 /**
@@ -222,7 +224,16 @@ class MaSessionRepository(
 
     private suspend fun fetchPlayers(): List<ServerPlayer>? = runCatching {
         serviceClient
-            .sendRequest(Request(command = APICommands.PLAYERS_ALL))
+            .sendRequest(
+                Request(
+                    command = APICommands.PLAYERS_ALL,
+                    args = buildJsonObject {
+                        put("return_unavailable", false)
+                        put("return_disabled", false)
+                        put("return_protocol_players", true)
+                    },
+                ),
+            )
             .getOrThrow()
             .resultAs<List<ServerPlayer>>()
     }.onFailure { Timber.tag(TAG).w(it, "players/all failed") }.getOrNull()

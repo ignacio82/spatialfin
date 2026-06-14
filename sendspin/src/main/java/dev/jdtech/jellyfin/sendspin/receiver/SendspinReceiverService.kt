@@ -93,7 +93,7 @@ class SendspinReceiverService : Service() {
      * Set true whenever the connection (re)establishes, consumed by the first
      * playback-state emission that follows. It marks that emission as the
      * server's restore/catch-up sync rather than a user-initiated cast, so we
-     * don't auto-pop the fullscreen over Home on app launch when the previous
+     * don't surface stale receiver controls on app launch when the previous
      * session's playback state is replayed.
      */
     @Volatile private var pendingConnectionSync: Boolean = false
@@ -348,8 +348,8 @@ class SendspinReceiverService : Service() {
                     lastPlayedServerId = newClient.serverId.value
                 }
                 // The first emission after a (re)connect is the restore sync;
-                // consume the guard so a replayed PLAYING state doesn't auto-pop
-                // the fullscreen on launch. Subsequent starts auto-show normally.
+                // consume the guard so a replayed PLAYING state doesn't surface
+                // stale receiver controls on launch. Subsequent starts are live.
                 val isConnectionSync = pendingConnectionSync
                 pendingConnectionSync = false
                 SendspinReceiverSession.update {
@@ -366,9 +366,8 @@ class SendspinReceiverService : Service() {
                         controlsDismissed =
                             when {
                                 stopped -> it.controlsDismissed
-                                // Restore sync replaying a playing state → keep
-                                // the receiver UI dismissed; user can open it
-                                // from the mini-player if audio is really live.
+                                // Restore sync replaying a playing state: keep
+                                // receiver notification controls dismissed.
                                 startingPlayback && isConnectionSync -> true
                                 startingPlayback -> false
                                 else -> it.controlsDismissed
@@ -940,10 +939,19 @@ class SendspinReceiverService : Service() {
                     )
                     return@launch
                 }
-                // Fresh playback always resolves the current device's wrapper.
-                // Other speakers join through MA sync grouping after playback
-                // starts; a saved picker target from an older build must never
-                // make a new tap start silently in another room.
+                SendspinReceiverSession.update {
+                    it.copy(
+                        musicAssistantServerUrl = serverUrl,
+                        musicAssistantToken = token,
+                        musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
+                        musicAssistantError = null,
+                        musicAssistantQueuePlayerId = target.id,
+                    )
+                }
+                // Fresh playback always resolves the current device's MA queue
+                // target. Other speakers join through MA sync grouping after
+                // playback starts; a saved picker target from an older build
+                // must never make a new tap start silently in another room.
                 Timber.tag(TAG).i(
                     "MA play_media: uri=%s queue_id=%s (player_name=%s type=%s provider=%s)",
                     mediaUri, target.id, target.name, target.type, target.provider,
@@ -969,20 +977,24 @@ class SendspinReceiverService : Service() {
      * Pick the player to send `play_media` to.
      *
      * **Hard rule:** when this device has a SendSpin endpoint registered with
-     * MA, we ALWAYS play through its Universal-Player wrapper — never through
-     * a sibling wrapper for someone else's device. A previous version of this
-     * resolver fell back to "any usable universal_player" if our wrapper
-     * wasn't ready yet, which silently routed playback to whichever room MA
-     * happened to list first. Bad UX, and on a multi-room MA install
-     * (20+ players) it's a privacy bug too.
+     * MA, we ALWAYS target this device's queue/player id — never a sibling
+     * wrapper for someone else's device. A previous version of this resolver
+     * fell back to "any usable universal_player" if our wrapper wasn't ready
+     * yet, which silently routed playback to whichever room MA happened to list
+     * first. Bad UX, and on a multi-room MA install (20+ players) it's a privacy
+     * bug too.
      *
      * Order, with no implicit cross-device fallback:
-     *   1) Our SendSpin endpoint's Universal-Player wrapper, found via
+     *   1) The same-name MA player when MA already exposes it as a usable queue
+     *      target. This covers builds where the name lookup returns the
+     *      Universal-Player itself instead of the raw protocol endpoint.
+     *   2) Our SendSpin endpoint's Universal-Player wrapper, found via
      *      `active_source` / `protocol_parent_id` / `linked_output_protocols`.
      *      Polls briefly so MA's 15 s auto-link timer can catch up — but
      *      ONLY if we have a SendSpin endpoint to wrap.
-     *   2) If our SendSpin endpoint exists but the wrapper never appears:
-     *      return null with a clear error. Do NOT pick a different player.
+     *   3) If our SendSpin endpoint exists but the wrapper never appears:
+     *      try the endpoint itself as a last resort. Do NOT pick a different
+     *      player.
      */
     private suspend fun resolvePlayMediaTarget(
         client: MusicAssistantGroupClient,
@@ -995,16 +1007,21 @@ class SendspinReceiverService : Service() {
 
         while (true) {
             val all = client.fetchPlayers(serverUrl, token)
-            val usable = all.filter { player ->
-                !player.type.equals("protocol", ignoreCase = true) &&
-                    player.available &&
-                    player.enabled
-            }
+            val usable = all.filter { it.isUsableMusicAssistantQueueTarget() }
 
-            // Find our SendSpin endpoint's wrapper.
-            val ourSendspin = all.firstOrNull { it.id == receiverClientId }
-                ?: all.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
+            // Find this device's MA player. Exact id is the raw advertised
+            // SendSpin client id. Name fallback is needed because MA may expose
+            // the same device as a generated Universal-Player id (`up...`).
+            val ourSendspin = thisDeviceMusicAssistantPlayer(all)
             if (ourSendspin != null) {
+                if (ourSendspin.isUsableMusicAssistantQueueTarget()) {
+                    Timber.tag(TAG).d(
+                        "MA play_media: using this device's MA queue target player_id=%s (type=%s provider=%s attempt=%d)",
+                        ourSendspin.id, ourSendspin.type, ourSendspin.provider, attempt,
+                    )
+                    return ourSendspin
+                }
+
                 val wrapperId = thisDeviceWrapperId(ourSendspin, all)
                 if (wrapperId != null) {
                     val wrapper = usable.firstOrNull { it.id == wrapperId }
@@ -1017,8 +1034,8 @@ class SendspinReceiverService : Service() {
                     }
                 }
                 Timber.tag(TAG).d(
-                    "MA play_media: SendSpin endpoint registered (%s) but wrapper not linked yet (attempt=%d, elapsed=%dms)",
-                    ourSendspin.id, attempt, System.currentTimeMillis() - start,
+                    "MA play_media: SendSpin endpoint registered (%s type=%s provider=%s) but wrapper not linked yet (attempt=%d, elapsed=%dms)",
+                    ourSendspin.id, ourSendspin.type, ourSendspin.provider, attempt, System.currentTimeMillis() - start,
                 )
             } else {
                 // MA hasn't registered THIS device's SendSpin endpoint yet.
@@ -1035,21 +1052,42 @@ class SendspinReceiverService : Service() {
             }
 
             // Neither our wrapper nor our endpoint resolved this pass. Poll
-            // until the deadline, then refuse — fresh playback only targets
-            // this device's wrapper.
+            // until the deadline, then try this device's endpoint directly.
             if (System.currentTimeMillis() < deadline) {
                 val nextDelay = if (attempt < FAST_POLLS) FAST_POLL_INTERVAL_MS else SLOW_POLL_INTERVAL_MS
                 kotlinx.coroutines.delay(nextDelay)
                 attempt++
                 continue
             }
+            ourSendspin
+                ?.takeIf { it.available && it.enabled }
+                ?.let {
+                    Timber.tag(TAG).w(
+                        "MA play_media: this device has no usable wrapper after %dms — trying endpoint directly player_id=%s",
+                        WRAPPER_POLL_TIMEOUT_MS, it.id,
+                    )
+                    return it
+                }
             Timber.tag(TAG).w(
-                "MA play_media: this device has no usable wrapper after %dms — refusing to route to another player",
+                "MA play_media: this device has no usable endpoint after %dms — refusing to route to another player",
                 WRAPPER_POLL_TIMEOUT_MS,
             )
             return null
         }
     }
+
+    private fun MusicAssistantPlayerState.isUsableMusicAssistantQueueTarget(): Boolean =
+        !type.equals("protocol", ignoreCase = true) && available && enabled
+
+    private fun thisDeviceMusicAssistantPlayer(
+        players: List<MusicAssistantPlayerState>,
+    ): MusicAssistantPlayerState? =
+        players.firstOrNull { it.id == receiverClientId }
+            ?: players.firstOrNull {
+                it.name.equals(displayName, ignoreCase = true) &&
+                    it.isUsableMusicAssistantQueueTarget()
+            }
+            ?: players.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
 
     /**
      * Reverse lookup: given our protocol player, find the id of the
@@ -1125,13 +1163,19 @@ class SendspinReceiverService : Service() {
         players: List<MusicAssistantPlayerState>,
     ) {
         storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
-        val currentPlayer =
-            players.firstOrNull { it.id == receiverClientId }
-                ?: players.firstOrNull { it.name.equals(displayName, ignoreCase = true) }
-        // The wrapper (universal_player) holds our queue/now-playing; the protocol
-        // `currentPlayer` is just the audio output. The MA session selects the
-        // wrapper so local playback surfaces queue / party / playlist in one player.
-        val queuePlayerId = currentPlayer?.let { thisDeviceWrapperId(it, players) }
+        val currentPlayer = thisDeviceMusicAssistantPlayer(players)
+        // Prefer the MA queue target that represents this device. On some MA
+        // versions the name match is already the Universal-Player; on others
+        // the exact id is the raw protocol endpoint and needs wrapper lookup.
+        // If no wrapper has linked yet, expose the endpoint id so the unified
+        // MA player can still follow local SendSpin playback.
+        val queuePlayerId = currentPlayer?.let { player ->
+            if (player.isUsableMusicAssistantQueueTarget()) {
+                player.id
+            } else {
+                thisDeviceWrapperId(player, players) ?: player.id
+            }
+        }
         val targetPlayerId =
             currentPlayer?.activeGroup
                 ?: currentPlayer?.syncedTo
@@ -1565,8 +1609,8 @@ class SendspinReceiverService : Service() {
                     playbackState = SendspinReceiverPlaybackState.STOPPED,
                     controlsDismissed = true,
                     // Genuine stop ends the session — clear the active flag so the
-                    // controls/mini-player don't linger (a pause keeps it, because
-                    // pause maps to PAUSED here, not STOP).
+                    // notification controls don't linger (a pause keeps it,
+                    // because pause maps to PAUSED here, not STOP).
                     playbackStarted = false,
                     visualizerLevels = emptyList(),
                 )

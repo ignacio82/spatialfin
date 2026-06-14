@@ -517,7 +517,6 @@ fun TvNavigationRoot(
             // before MA echoes nowPlaying.
             val maPresentsPlayback =
                 maNowPlayingTv.nowPlaying != null || maNowPlayingTv.pendingPlayUri != null
-            dev.spatialfin.sendspin.SendspinFullscreenPlayer(suppressed = maPresentsPlayback)
             var showNowPlaying by remember { mutableStateOf(false) }
             var showJellyfinAudioNowPlaying by remember { mutableStateOf(false) }
             // Bottom-of-screen MA mini-player. D-pad reaches it after the
@@ -529,7 +528,6 @@ fun TvNavigationRoot(
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
                 Column {
-                    dev.spatialfin.sendspin.SendspinMiniPlayer(suppressed = maPresentsPlayback)
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },
