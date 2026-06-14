@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lan
@@ -47,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -73,7 +75,12 @@ import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +90,8 @@ import coil3.compose.AsyncImage
 import androidx.compose.runtime.CompositionLocalProvider
 import com.skydoves.compose.stability.runtime.TraceRecomposition
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.llm.VoiceCapability
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -163,7 +172,6 @@ private val primaryTabs =
         BeamTab(BeamRoute.Downloads, "Downloads", Icons.Rounded.CloudDownload),
         BeamTab(BeamRoute.Plugins, "Sources", Icons.Rounded.Apps),
         BeamTab(BeamRoute.Settings, "Settings", Icons.Rounded.Settings),
-        BeamTab(BeamRoute.Users, "Users", Icons.Rounded.People),
     )
 
 val LocalBeamBackground = androidx.compose.runtime.compositionLocalOf<(Any?) -> Unit> { {} }
@@ -728,6 +736,10 @@ fun BeamNavigationRoot(
                                 dev.spatialfin.unified.music.maDetailTargetForUri(uri, name)
                                     ?.let(::openMaBrowse)
                             },
+                            userName = state.currentUser?.name,
+                            onOpenServer = { currentRoute = BeamRoute.Servers },
+                            onOpenUser = { currentRoute = BeamRoute.Users },
+                            onOpenCast = { /* Handle cast later */ },
                         )
                     }
                     currentRoute == BeamRoute.PluginBrowse -> {
@@ -1208,83 +1220,108 @@ private fun BeamBottomNavigationRow(
         primaryTabs
     }
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
+    // Material 3 navigation bar (NavBar.jsx): the active destination gets a tonal
+    // pill indicator behind its icon, accent label below. surfaceContainer ground
+    // with a hairline top divider. The bar scrolls because Beam carries more
+    // destinations (Users + the Cast picker) than the 5-tab design reference.
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f),
-        tonalElevation = 4.dp,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 3.dp,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        Column(modifier = Modifier.fillMaxWidth()) {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                visibleTabs.forEach { tab ->
+                    BeamNavCell(
+                        icon = { tint ->
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                modifier = Modifier.size(22.dp),
+                                tint = tint,
+                            )
+                        },
+                        label = tab.label,
+                        selected = currentRoute == tab.route,
+                        onClick = { onNavigate(tab.route) },
+                    )
+                }
+                // Cast peer — a tab-shaped cell that routes to the global FCast
+                // picker instead of a navigation destination.
+                if (fcastSession != null) {
+                    val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
+                    BeamNavCell(
+                        icon = { tint ->
+                            Icon(
+                                painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
+                                contentDescription = "Cast",
+                                modifier = Modifier.size(22.dp),
+                                tint = tint,
+                            )
+                        },
+                        label = "Cast",
+                        selected = pickedTarget != null,
+                        onClick = { fcastSession.showPicker() },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A single Material-3 bottom-nav cell: pill indicator behind the icon + label. */
+@Composable
+private fun BeamNavCell(
+    icon: @Composable (tint: Color) -> Unit,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val indicatorColor =
+        if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val iconTint =
+        if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    val labelColor =
+        if (selected) MaterialTheme.colorScheme.onSurface
+        else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        onClick = onClick,
+        color = Color.Transparent,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            visibleTabs.forEach { tab ->
-                val selected = currentRoute == tab.route
-                Surface(
-                    onClick = { onNavigate(tab.route) },
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Icon(
-                            imageVector = tab.icon,
-                            contentDescription = tab.label,
-                            modifier = Modifier.size(22.dp),
-                            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                                   else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = tab.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+            Box(
+                modifier = Modifier
+                    .size(width = 56.dp, height = 32.dp)
+                    .clip(CircleShape)
+                    .background(indicatorColor),
+                contentAlignment = Alignment.Center,
+            ) {
+                icon(iconTint)
             }
-            // Cast peer to the Network tab — visually identical "tab cell" so it
-            // sits flush with the rest of the bar but routes to the global FCast
-            // picker instead of a navigation destination.
-            if (fcastSession != null) {
-                val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
-                val castSelected = pickedTarget != null
-                Surface(
-                    onClick = { fcastSession.showPicker() },
-                    color = if (castSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(14.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
-                            contentDescription = "Cast",
-                            modifier = Modifier.size(22.dp),
-                            tint = if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                   else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = "Cast",
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (castSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                softWrap = false,
+                color = labelColor,
+            )
         }
     }
 }
@@ -1707,25 +1744,45 @@ private fun androidx.compose.foundation.layout.BoxScope.BeamVoiceFeedbackOverlay
         isListening && partialTranscript.isNotBlank() -> partialTranscript
         else -> null
     }
+    // Glass pill, top-center, with a state icon chip — VoiceFeedback.jsx. Listening
+    // tints with the accent + mic; a reply uses the soft tertiary + sparkles.
+    val colorScheme = MaterialTheme.colorScheme
+    val tint = if (isListening) colorScheme.primary else colorScheme.tertiary
+    val stateIcon = if (isListening) Icons.Rounded.Mic else Icons.Rounded.AutoAwesome
     androidx.compose.animation.AnimatedVisibility(
         visible = message != null,
         modifier = Modifier
             .align(Alignment.TopCenter)
             .padding(top = 56.dp, start = 24.dp, end = 24.dp),
     ) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
-            shape = RoundedCornerShape(20.dp),
-            tonalElevation = 6.dp,
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(BeamTokens.GlassFillStrong)
+                .border(1.dp, BeamTokens.GlassBorder, CircleShape)
+                .padding(start = 10.dp, top = 10.dp, end = 18.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(tint.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = stateIcon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             Text(
                 text = message.orEmpty(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .widthIn(max = 360.dp)
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                modifier = Modifier.widthIn(max = 340.dp),
             )
         }
     }
@@ -1738,17 +1795,21 @@ private fun BeamVoiceFab(
     partialTranscript: String,
     onClick: () -> Unit,
 ) {
-    val listeningTint = Color(0xFF4FC3F7)
-    val thinkingTint = Color(0xFFFFB74D)
-    val speakingTint = Color(0xFFBA68C8)
-    val errorTint = Color(0xFFEF5350)
-
-    val tint = when {
-        isTtsSpeaking -> speakingTint
-        voiceState == VoiceState.LISTENING -> listeningTint
-        voiceState == VoiceState.PROCESSING -> thinkingTint
-        voiceState == VoiceState.ERROR -> errorTint
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    // Design-system colors only — the mic FAB rests on accent-container and fills
+    // with the accent while listening (VoiceFab.jsx). Neon mascot tints are
+    // reserved for logos/marketing and never appear in UI (DESIGN.md).
+    val colorScheme = MaterialTheme.colorScheme
+    val listening = voiceState == VoiceState.LISTENING
+    val isError = voiceState == VoiceState.ERROR
+    val containerColor = when {
+        listening -> colorScheme.primary
+        isError -> colorScheme.errorContainer
+        else -> colorScheme.primaryContainer
+    }
+    val contentColor = when {
+        listening -> colorScheme.onPrimary
+        isError -> colorScheme.onErrorContainer
+        else -> colorScheme.onPrimaryContainer
     }
     val label = when {
         isTtsSpeaking -> "Tap to stop"
@@ -1757,29 +1818,47 @@ private fun BeamVoiceFab(
         voiceState == VoiceState.PROCESSING -> "Thinking…"
         else -> null
     }
-    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "voiceFabPulse")
+    // Expanding ring while listening (sf-voice-pulse): a stroke that grows out
+    // from the FAB and fades — the one decorative loop the design system allows.
+    val ringFraction by androidx.compose.animation.core.rememberInfiniteTransition(label = "voiceFabPulse")
         .animateFloat(
-            initialValue = 0.85f,
+            initialValue = 0f,
             targetValue = 1f,
             animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                animation = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+                animation = androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.LinearEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Restart,
             ),
             label = "voiceFabPulseValue",
         )
-    val iconAlpha = if (voiceState == VoiceState.LISTENING || voiceState == VoiceState.PROCESSING || isTtsSpeaking) pulse else 1f
+    val ringColor = colorScheme.primary
 
     androidx.compose.material3.FloatingActionButton(
         onClick = onClick,
         shape = RoundedCornerShape(26.dp),
-        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+        containerColor = containerColor,
+        contentColor = contentColor,
         elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(
-            defaultElevation = 1.dp,
-            pressedElevation = 2.dp,
-            hoveredElevation = 2.dp,
-            focusedElevation = 1.dp,
+            defaultElevation = 3.dp,
+            pressedElevation = 4.dp,
+            hoveredElevation = 4.dp,
+            focusedElevation = 3.dp,
         ),
-        modifier = Modifier.height(52.dp).widthIn(min = 52.dp),
+        modifier = Modifier
+            .height(52.dp)
+            .widthIn(min = 52.dp)
+            .drawBehind {
+                if (listening) {
+                    val inset = -((2.dp.toPx()) + 8.dp.toPx() * ringFraction)
+                    val radius = size.height / 2f - inset
+                    drawRoundRect(
+                        color = ringColor.copy(alpha = 0.6f * (1f - ringFraction)),
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - 2f * inset, size.height - 2f * inset),
+                        cornerRadius = CornerRadius(radius, radius),
+                        style = Stroke(width = 3.dp.toPx()),
+                    )
+                }
+            },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = if (label != null) 16.dp else 0.dp),
@@ -1789,14 +1868,14 @@ private fun BeamVoiceFab(
             Icon(
                 imageVector = Icons.Rounded.Mic,
                 contentDescription = "Voice Assistant",
-                tint = tint.copy(alpha = iconAlpha),
+                tint = contentColor,
             )
             androidx.compose.animation.AnimatedVisibility(visible = label != null) {
                 Row(modifier = Modifier.padding(start = 8.dp)) {
                     Text(
                         text = label.orEmpty(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = tint,
+                        color = contentColor,
                         maxLines = 1,
                         softWrap = false,
                         modifier = Modifier.widthIn(max = 200.dp),

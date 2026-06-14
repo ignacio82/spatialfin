@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -165,6 +166,8 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import coil3.compose.AsyncImage
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Person
 
 data class BeamLibraryState(
     val title: String = "",
@@ -528,6 +531,94 @@ constructor(
 }
 
 @Composable
+fun BeamHomeTopAppBar(
+    serverName: String,
+    userName: String?,
+    onOpenServer: () -> Unit,
+    onOpenCast: () -> Unit,
+    onOpenUser: () -> Unit,
+    castActive: Boolean,
+    castLabel: String?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .padding(top = 14.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        AsyncImage(
+            model = dev.spatialfin.R.mipmap.ic_launcher,
+            contentDescription = null,
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { onOpenServer() }
+        ) {
+            Text(
+                text = "SpatialFin",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = serverName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        val castTint = if (castActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+        androidx.compose.material3.IconButton(
+            onClick = onOpenCast,
+            modifier = Modifier.size(34.dp)
+        ) {
+            androidx.compose.material3.Icon(
+                painter = painterResource(id = CoreR.drawable.ic_cast),
+                contentDescription = if (castActive) "Casting to $castLabel" else "Cast",
+                tint = castTint
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { onOpenUser() },
+            contentAlignment = Alignment.Center
+        ) {
+            if (!userName.isNullOrBlank()) {
+                Text(
+                    text = userName.take(1).uppercase(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = "Switch user",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 @com.skydoves.compose.stability.runtime.TraceRecomposition(tag = "beam-home", threshold = 3)
 fun BeamHomeScreen(
     contentPadding: PaddingValues,
@@ -539,9 +630,11 @@ fun BeamHomeScreen(
     onOpenPluginBrowse: (String, String?) -> Unit,
     onOpenMaSearch: () -> Unit = {},
     // Primitive-typed (uri, name) rather than a MaBrowseTarget lambda: the
-    // @TraceRecomposition compiler plugin on this composable mishandles a
-    // sealed-type parameter here. The caller rebuilds the browse target.
     onOpenMaBrowse: (String, String) -> Unit = { _, _ -> },
+    userName: String? = null,
+    onOpenServer: () -> Unit = {},
+    onOpenUser: () -> Unit = {},
+    onOpenCast: () -> Unit = {},
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -579,6 +672,19 @@ fun BeamHomeScreen(
                 )
             }
             else -> {
+                // Top App Bar
+                item {
+                    BeamHomeTopAppBar(
+                        serverName = state.server?.name ?: "Jellyfin",
+                        userName = userName,
+                        onOpenServer = onOpenServer,
+                        onOpenCast = onOpenCast,
+                        onOpenUser = onOpenUser,
+                        castActive = false, // TODO: pass actual cast state
+                        castLabel = null
+                    )
+                }
+
                 // Featured hero card
                 featuredItem?.let { featured ->
                     item {
@@ -879,11 +985,11 @@ private fun BeamPosterCard(
     showProgress: Boolean = false,
 ) {
     val imageModel = item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
-    val cardWidth = if (LocalBeamWidth.current.isCompact) 120.dp else 152.dp
+    val cardWidth = if (showProgress) 150.dp else 132.dp
     Card(
         onClick = onClick,
         modifier = Modifier.width(cardWidth),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp, hoveredElevation = 8.dp, focusedElevation = 8.dp, pressedElevation = 4.dp),
     ) {
@@ -1476,7 +1582,14 @@ fun BeamItemDetailScreen(
         }
     }
 
-    BeamScaffoldBody(contentPadding = contentPadding) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            top = 0.dp,
+            bottom = contentPadding.calculateBottomPadding() + 24.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         when {
             state.isLoading -> item { LoadingCard("Loading...") }
             state.error != null -> item {
@@ -1488,7 +1601,7 @@ fun BeamItemDetailScreen(
             }
             state.item == null -> item { BeamEmptyCard("This item is no longer available.") }
             else -> {
-                val itemData = state.item ?: return@BeamScaffoldBody
+                val itemData = state.item ?: return@LazyColumn
                 val supportingLine =
                     when (itemData) {
                         is SpatialFinMovie ->
@@ -1531,16 +1644,19 @@ fun BeamItemDetailScreen(
                         supportingLine = supportingLine,
                         metadata = metadata,
                         onBack = onBack,
+                        actions = {} // Actions moved below
+                    )
+                }
+                item {
+                    val isResume = itemData.playbackPositionTicks > 0L
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // Single-row by design: extras go in the overflow menu rather than
-                        // wrapping to a second visual row. See BeamCastOverflowItems.
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (itemData.canPlay) {
-                                androidx.compose.material3.FilledIconButton(
-                                    onClick = {
+                        if (itemData.canPlay) {
+                            androidx.compose.material3.Button(
+                                onClick = {
                                         if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
                                             launchServerItem(context, fcastSession, scope, itemData)
                                         }
@@ -1548,52 +1664,58 @@ fun BeamItemDetailScreen(
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                        contentDescription = if (itemData.playbackPositionTicks > 0L) "Resume" else "Play"
+                                        contentDescription = if (isResume) "Resume" else "Play"
                                     )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(if (isResume) "Resume" else "Play")
                                 }
-                                androidx.compose.material3.FilledTonalIconButton(
-                                    onClick = {
-                                        if (
-                                            !playNativeAudioItem(
-                                                itemData,
-                                                jellyfinAudioDispatcher,
-                                                fromStart = true,
-                                            )
-                                        ) {
-                                            launchServerItem(
-                                                context = context,
-                                                fcastSession = fcastSession,
-                                                scope = scope,
-                                                item = itemData,
-                                                startFromBeginning = true,
-                                            )
+                                if (isResume) {
+                                    androidx.compose.material3.FilledTonalIconButton(
+                                        onClick = {
+                                            if (
+                                                !playNativeAudioItem(
+                                                    itemData,
+                                                    jellyfinAudioDispatcher,
+                                                    fromStart = true,
+                                                )
+                                            ) {
+                                                launchServerItem(
+                                                    context = context,
+                                                    fcastSession = fcastSession,
+                                                    scope = scope,
+                                                    item = itemData,
+                                                    startFromBeginning = true,
+                                                )
+                                            }
                                         }
+                                    ) {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                                            contentDescription = "From Start"
+                                        )
                                     }
-                                ) {
-                                    androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
-                                        contentDescription = "From Start"
-                                    )
                                 }
-                            }
-                            androidx.compose.material3.FilledTonalIconButton(
-                                onClick = { viewModel.toggleFavorite() }
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
-                                    contentDescription = if (itemData.favorite) "Favorited" else "Favorite"
-                                )
-                            }
-                            androidx.compose.material3.FilledTonalIconButton(
-                                onClick = { viewModel.togglePlayed() }
-                            ) {
-                                androidx.compose.material3.Icon(
-                                    imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
-                                    contentDescription = if (itemData.played) "Watched" else "Mark watched"
-                                )
-                            }
+                        }
+                        androidx.compose.material3.IconButton(
+                            onClick = { viewModel.toggleFavorite() }
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
+                                contentDescription = if (itemData.favorite) "Favorited" else "Favorite",
+                                tint = if (itemData.favorite) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
+                            )
+                        }
+                        androidx.compose.material3.IconButton(
+                            onClick = { viewModel.togglePlayed() }
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
+                                contentDescription = if (itemData.played) "Watched" else "Mark watched",
+                                tint = if (itemData.played) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
+                            )
+                        }
 
-                            if (itemData.canPlay) {
+                        if (itemData.canPlay) {
                                 BeamDownloadActions(
                                     item = itemData,
                                     downloaderState = downloaderState,
@@ -1728,17 +1850,35 @@ fun BeamItemDetailScreen(
                             }
                         }
                     }
+                item {
+                    val isResume = itemData.playbackPositionTicks > 0L
+                    if (isResume && itemData.runtimeTicks > 0L) {
+                        val progress = itemData.playbackPositionTicks.toFloat() / itemData.runtimeTicks.toFloat()
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+                item {
+                    Text(
+                        text = itemData.overview.ifBlank { "No overview available." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
                 }
                 val actors = beamPeopleOf(itemData).filter { person ->
-                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
                 }
                 if (actors.isNotEmpty()) {
                     item {
-                        dev.jdtech.jellyfin.presentation.film.components.ActorsRow(
-                            actors = actors,
-                            onActorClick = onOpenPerson,
-                            contentPadding = PaddingValues(horizontal = 0.dp),
-                        )
+                        BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
                     }
                 }
                 if (itemData.chapters.isNotEmpty()) {
@@ -2829,9 +2969,9 @@ private fun BeamHeroCard(
     actions: @Composable RowScope.() -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().height(240.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth().height(300.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
@@ -2839,42 +2979,41 @@ private fun BeamHeroCard(
                 contentDescription = item.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
-                alpha = 0.6f,
             )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        androidx.compose.ui.graphics.Brush.horizontalGradient(
-                            colors = listOf(Color(0xDD0F141C), Color.Transparent),
-                            startX = 0f,
-                            endX = 800f,
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color(0xE605070B)),
+                            startY = 0f,
+                            endY = Float.POSITIVE_INFINITY, // Or better let compose determine height automatically
                         )
                     )
             )
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(24.dp)
-                    .fillMaxWidth(0.7f),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     text = item.name,
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = buildServerItemSubtitle(item).ifBlank { item.overview },
+                    text = buildServerItemSubtitle(item),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.LightGray,
-                    maxLines = 2,
+                    color = Color.White.copy(alpha = 0.7f),
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     actions()
                 }
             }
@@ -2891,56 +3030,39 @@ private fun BeamDetailHeroCard(
     onBack: (() -> Unit)? = null,
     actions: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.55f)),
-    ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            AsyncImage(
-                model = beamBackdropArtwork(item),
-                contentDescription = null,
-                modifier = Modifier.matchParentSize(),
-                contentScale = ContentScale.Crop,
-                alpha = 0.45f,
-            )
-            Box(
-                modifier =
-                    Modifier
-                        .matchParentSize()
-                        .background(
-                            androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xF2080A10),
-                                    Color(0xD0080A10),
-                                    Color(0x80080A10),
-                                    Color.Transparent,
-                                ),
-                            )
-                        )
-            )
-            Box(
-                modifier =
-                    Modifier
-                        .matchParentSize()
-                        .background(
-                            androidx.compose.ui.graphics.Brush.verticalGradient(
-                                colors = listOf(Color(0x660C1016), Color.Transparent, Color(0xCC0C1016)),
-                            )
-                        )
-            )
-            if (onBack != null) {
-                androidx.compose.material3.IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.padding(16.dp).align(Alignment.TopStart)
-                ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
+    Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
+        AsyncImage(
+            model = beamBackdropArtwork(item),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+        )
+        // Scrim gradient
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color(0xFF111318)),
+                        startY = 0f,
+                        endY = Float.POSITIVE_INFINITY, // Or better let compose determine height automatically
                     )
-                }
+                )
+        )
+        if (onBack != null) {
+            androidx.compose.material3.IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .padding(12.dp)
+                    .align(Alignment.TopStart)
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
             }
+        }
             val stacked = LocalBeamWidth.current.isCompact
             val info: @Composable ColumnScope.() -> Unit = {
                 BeamBadge(text = eyebrow)
@@ -2972,17 +3094,6 @@ private fun BeamDetailHeroCard(
                         }
                     }
                 }
-                if (item.ratings.isNotEmpty()) {
-                    RatingsRow(ratings = item.ratings)
-                }
-                Text(
-                    text = item.overview.ifBlank { "No overview available." },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFD7DDE6),
-                    maxLines = if (stacked) 6 else 4,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
                 actions()
             }
             if (stacked) {
@@ -3014,6 +3125,64 @@ private fun BeamDetailHeroCard(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) { info() }
+                }
+            }
+        }
+}
+
+@Composable
+private fun BeamCastAndCrew(
+    actors: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson>,
+    onOpenPerson: (UUID) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "CAST & CREW",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            items(actors) { person ->
+                Column(
+                    modifier = Modifier.width(72.dp).clickable { onOpenPerson(person.id) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val colors = listOf(Color(0xFF3C4758), Color(0xFF543F5E), Color(0xFF1F4876))
+                    val color = colors[Math.floorMod(person.name.hashCode(), colors.size)]
+                    if (person.image.uri != null) {
+                        AsyncImage(
+                            model = person.image.uri,
+                            contentDescription = person.name,
+                            modifier = Modifier.size(56.dp).clip(CircleShape).background(color),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.size(56.dp).clip(CircleShape).background(color),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = person.name.take(1).uppercase(),
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    }
+                    Text(
+                        text = person.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

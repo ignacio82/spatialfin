@@ -1,12 +1,15 @@
 package dev.spatialfin.beam
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 private val BeamColorScheme =
     darkColorScheme(
@@ -45,11 +48,49 @@ private val BeamColorScheme =
         scrim = Color(0xFF000000),
     )
 
+/**
+ * Corner-radius scale from the SpatialFin design system (tokens/spacing.css):
+ * 10dp small, 16dp media cards, 32dp dialogs/spatial panels, full-pill for chips.
+ * Wired into [MaterialTheme] so default-shaped M3 components inherit it.
+ */
+private val BeamShapes =
+    Shapes(
+        extraSmall = RoundedCornerShape(10.dp),
+        small = RoundedCornerShape(10.dp),
+        medium = RoundedCornerShape(16.dp),
+        large = RoundedCornerShape(24.dp),
+        extraLarge = RoundedCornerShape(32.dp),
+    )
+
+/**
+ * Design tokens that have no Material3 colorScheme slot — the glass system and the
+ * lone warm accent (rating star). Values mirror the design system's
+ * tokens/colors.css + tokens/spacing.css. Reach for these instead of hardcoding;
+ * neon mascot colors stay out of UI (DESIGN.md: logos & marketing only).
+ */
+object BeamTokens {
+    /** darkSurface @ 62% — glass over passthrough/video. */
+    val GlassFill = Color(0x9E111318)
+
+    /** darkSurface @ 88% — glass for dense controls and dialogs. */
+    val GlassFillStrong = Color(0xE0111318)
+
+    /** Hairline translucent border on glass surfaces. */
+    val GlassBorder = Color(0x24E1E2E8)
+
+    /** Backdrop blur radius for glass surfaces. */
+    val GlassBlur = 24.dp
+
+    /** The only warm accent in normal UI — the IMDb-style rating star. */
+    val RatingStar = Color(0xFFF2C94C)
+}
+
 @Composable
 fun BeamTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = BeamColorScheme,
         typography = MaterialTheme.typography,
+        shapes = BeamShapes,
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
