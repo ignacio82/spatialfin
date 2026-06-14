@@ -58,6 +58,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
@@ -115,6 +116,7 @@ constructor(
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
     private val extrasApplier: CompanionUserExtrasApplier,
+    private val activeSessionBus: ActiveSessionBus,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow<BeamCompanionState>(BeamCompanionState.Idle)
@@ -281,6 +283,14 @@ constructor(
                     runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
                         .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
                 }
+                // The shared JellyfinApi singleton and the current-user row are now
+                // updated, but ViewModels created before this (MainViewModel, etc.)
+                // still hold the pre-setup state with no current user — so navigation
+                // mounts Home while currentUser is null and MainViewModel.check()
+                // wipes the access token, making every Jellyfin read 403 until the
+                // next cold start. Fire the session bus so they re-resolve now, the
+                // same way SetupRepositoryImpl.setCurrentUser does after a manual pick.
+                activeSessionBus.notifyChanged()
             }
         }
 

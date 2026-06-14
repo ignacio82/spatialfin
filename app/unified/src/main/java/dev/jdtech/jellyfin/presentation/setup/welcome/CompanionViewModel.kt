@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
@@ -64,6 +65,7 @@ class CompanionViewModel @Inject constructor(
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
     private val extrasApplier: CompanionUserExtrasApplier,
+    private val activeSessionBus: ActiveSessionBus,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -258,6 +260,12 @@ class CompanionViewModel @Inject constructor(
                 runCatching { extrasApplier.installPlugins(session.userId.toString(), manifestUrls) }
                     .onFailure { Timber.e(it, "COMPANION: Failed to install plugins") }
             }
+            // Notify live ViewModels (MainViewModel, HomeViewModel, …) that the
+            // active session changed so they re-resolve the current user and
+            // re-fetch with valid credentials. Without this the freshly-imported
+            // session stays stale until a cold restart and Home 403s. See the
+            // Beam path for the full rationale.
+            activeSessionBus.notifyChanged()
         }
     }
 

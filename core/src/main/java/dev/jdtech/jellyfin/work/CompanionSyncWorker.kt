@@ -8,6 +8,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
+import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
@@ -43,6 +44,7 @@ class CompanionSyncWorker @AssistedInject constructor(
     private val serverDatabase: ServerDatabaseDao,
     private val jellyfinApi: JellyfinApi,
     private val extrasApplier: CompanionUserExtrasApplier,
+    private val activeSessionBus: ActiveSessionBus,
 ) : CoroutineWorker(context, params) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -193,6 +195,10 @@ class CompanionSyncWorker @AssistedInject constructor(
                         .onFailure { Timber.e(it, "COMPANION SYNC: Failed to install plugins") }
                 }
             }
+            // A background refresh can rebind credentials for the active user;
+            // signal live ViewModels so an open UI re-resolves instead of running
+            // on the pre-sync session. Mirrors the onboarding companion paths.
+            activeSessionBus.notifyChanged()
         }
 
         // Apply Network Shares
