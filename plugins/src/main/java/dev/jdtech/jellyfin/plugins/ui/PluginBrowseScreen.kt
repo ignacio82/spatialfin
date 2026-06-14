@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
@@ -620,6 +621,14 @@ private fun PluginSettingsPanel(
                             }
                         }
                     }
+                    "text", "string", "url", "number", "integer", "int", "password", "secret", null -> {
+                        TextSettingRow(
+                            setting = setting,
+                            key = key,
+                            value = values[key] ?: setting.default.orEmpty(),
+                            onUpdate = onUpdate
+                        )
+                    }
                     else -> {
                         Text(setting.name ?: key, style = MaterialTheme.typography.bodyLarge)
                     }
@@ -672,6 +681,69 @@ private fun AuthSettingRow(
                     Text("Sign out")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TextSettingRow(
+    setting: PluginSetting,
+    key: String,
+    value: String,
+    onUpdate: (String, String) -> Unit
+) {
+    // Keep keystrokes local and only commit on focus loss / IME done, so we
+    // don't reload plugin content (and re-run source.enable) on every character.
+    var text by remember(key, value) { mutableStateOf(value) }
+    val type = setting.type?.lowercase()
+    val isSecret = type == "password" || type == "secret"
+    var revealed by remember(key) { mutableStateOf(false) }
+    val keyboardType = when (type) {
+        "number", "integer", "int" -> androidx.compose.ui.text.input.KeyboardType.Number
+        "url" -> androidx.compose.ui.text.input.KeyboardType.Uri
+        "password", "secret" -> androidx.compose.ui.text.input.KeyboardType.Password
+        else -> androidx.compose.ui.text.input.KeyboardType.Text
+    }
+
+    fun commit() {
+        if (text != value) onUpdate(key, text)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text(setting.name ?: key) },
+            singleLine = true,
+            visualTransformation = if (isSecret && !revealed) {
+                androidx.compose.ui.text.input.PasswordVisualTransformation()
+            } else {
+                androidx.compose.ui.text.input.VisualTransformation.None
+            },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(onDone = { commit() }),
+            trailingIcon = if (isSecret) {
+                {
+                    TextButton(onClick = { revealed = !revealed }) {
+                        Text(if (revealed) "Hide" else "Show")
+                    }
+                }
+            } else null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focusState ->
+                    if (!focusState.isFocused) commit()
+                }
+        )
+        setting.description?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
