@@ -1689,8 +1689,8 @@ private fun TvSeasonTabs(
 }
 
 // Rich episode tile (design components/tv/EpisodeCard.jsx): landscape still with
-// the EP badge + focus play overlay, then title, watched state, runtime, and a
-// two-line synopsis. Used by the show-detail episode shelf and the season grid.
+// episode title and watched state in the visible overlay, then runtime and a
+// two-line synopsis below. Used by the show-detail episode shelf and the season grid.
 @Composable
 private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
@@ -1715,11 +1715,11 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
                 } else {
                     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
                 }
-                TvEpisodeStillOverlay(episode, isFocused)
+                TvEpisodeStillOverlay(episode, isFocused, showInlineDetails = true)
                 fraction?.let {
                     FloatingProgressBar(
                         progress = it,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).align(Alignment.BottomCenter),
+                        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 74.dp).align(Alignment.BottomCenter),
                         progressColor = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -1810,7 +1810,12 @@ private fun TvEpisodeWatchStatusPill(played: Boolean, modifier: Modifier = Modif
 // that appears on focus. Drawn over an episode still so episodes read as
 // playable units distinct from poster tiles. Movies/shows do not get this.
 @Composable
-private fun BoxScope.TvEpisodeStillOverlay(episode: SpatialFinEpisode, isFocused: Boolean) {
+private fun BoxScope.TvEpisodeStillOverlay(
+    episode: SpatialFinEpisode,
+    isFocused: Boolean,
+    showInlineDetails: Boolean = false,
+) {
+    val episodeNumber = tvEpisodeLabel(episode)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1828,6 +1833,44 @@ private fun BoxScope.TvEpisodeStillOverlay(episode: SpatialFinEpisode, isFocused
             fontWeight = FontWeight.Bold,
             color = Color.White,
         )
+    }
+    if (showInlineDetails) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.Transparent, Color(0xE60D1824)),
+                    )
+                )
+                .padding(start = 12.dp, end = 12.dp, top = 30.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = episode.name.ifBlank { episodeNumber },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = episodeNumber,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                TvEpisodeWatchStatusPill(played = episode.played)
+            }
+        }
     }
     if (isFocused) {
         Box(

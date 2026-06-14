@@ -1640,23 +1640,42 @@ private fun TvTransportIconButton(
         if (isFocused) MaterialTheme.colorScheme.primary
         else Color.White.copy(alpha = 0.12f)
     val contentColor = if (isFocused) Color.White else Color.White.copy(alpha = 0.92f)
-    Surface(
-        onClick = onClick,
+    Box(
         modifier = modifier
             .size(size)
-            .focusable(interactionSource = interactionSource),
-        shape = androidx.compose.foundation.shape.CircleShape,
-        color = background,
-        contentColor = contentColor,
-        interactionSource = interactionSource,
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(background)
+            .onPreviewKeyEvent { keyEvent ->
+                val native = keyEvent.nativeKeyEvent
+                if (
+                    native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.repeatCount == 0 &&
+                    (
+                        native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+                            native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                            native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
+                    )
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
+            }
+            .focusable(interactionSource = interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            Icon(
-                painter = painterResource(iconRes),
-                contentDescription = contentDescription,
-                modifier = Modifier.size(iconSize),
-            )
-        }
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(iconSize),
+            tint = contentColor,
+        )
     }
 }
 
