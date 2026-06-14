@@ -1,0 +1,206 @@
+/* SpatialFin — Color System
+ * ===========================================================================
+ * Built on Material 3. SpatialFin ships TWO schemes:
+ *
+ *   1. Shared light/dark scheme  — phone (Beam) + XR. Calming blue primary,
+ *      desaturated secondary/tertiary so attention stays on media artwork.
+ *      Source: core/.../presentation/theme/Color.kt (ColorLight / ColorDark)
+ *
+ *   2. TV scheme — a distinct cyan / amber / mint dark palette tuned for
+ *      10-foot contrast on weak SoCs. Source: tv/TvTheme.kt
+ *
+ * The DEFAULT (:root) is the DARK scheme — it is the hero look (XR-native,
+ * cinematic). Opt into the others with .theme-light or .theme-tv on a wrapper.
+ * ---------------------------------------------------------------------------
+ * Every Material 3 role below is a RAW value. Semantic aliases (--text-*,
+ * --surface-*, --accent-*) live at the bottom and are what you should reach
+ * for in components.
+ */
+
+:root {
+  /* ---- M3 roles · DARK (default) ---- */
+  --primary: #A4C9FE;
+  --on-primary: #00315C;
+  --primary-container: #1F4876;
+  --on-primary-container: #D3E3FF;
+
+  --secondary: #BCC7DB;
+  --on-secondary: #263141;
+  --secondary-container: #3C4758;
+  --on-secondary-container: #D8E3F8;
+
+  --tertiary: #D9BDE3;
+  --on-tertiary: #3C2947;
+  --tertiary-container: #543F5E;
+  --on-tertiary-container: #F5D9FF;
+
+  --error: #FFB4AB;
+  --on-error: #690005;
+  --error-container: #93000A;
+  --on-error-container: #FFDAD6;
+
+  --background: #111318;
+  --on-background: #E1E2E8;
+  --surface: #111318;
+  --on-surface: #E1E2E8;
+  --surface-variant: #43474E;
+  --on-surface-variant: #C3C6CF;
+
+  --outline: #8D9199;
+  --outline-variant: #43474E;
+  --scrim: #000000;
+
+  --inverse-surface: #E1E2E8;
+  --inverse-on-surface: #2E3035;
+  --inverse-primary: #3A608F;
+
+  /* Surface elevation tiers (M3 tonal surfaces) */
+  --surface-dim: #111318;
+  --surface-bright: #37393E;
+  --surface-container-lowest: #0C0E13;
+  --surface-container-low: #191C20;
+  --surface-container: #1D2024;
+  --surface-container-high: #272A2F;
+  --surface-container-highest: #32353A;
+
+  /* Brand utility */
+  --rating-star: #F2C94C;          /* the lone warm accent — IMDb-style star */
+  --brand-cyan: #7DDAFF;           /* mascot neon — logos / marketing only */
+  --brand-purple: #D9BDE3;         /* mascot neon — logos / marketing only */
+
+  /* ===================================================================
+   * SEMANTIC ALIASES — prefer these in components
+   * =================================================================== */
+  --text-primary: var(--on-surface);
+  --text-secondary: var(--on-surface-variant);
+  --text-disabled: #6E7178;
+  --text-on-accent: var(--on-primary);
+
+  --accent: var(--primary);
+  --accent-hover: #BBD6FF;
+  --accent-pressed: #8DB8F2;
+  --accent-container: var(--primary-container);
+  --on-accent-container: var(--on-primary-container);
+
+  --surface-app: var(--background);
+  --surface-card: var(--surface-container);
+  --surface-card-hover: var(--surface-container-high);
+  --surface-raised: var(--surface-container-high);
+  --surface-sunken: var(--surface-container-lowest);
+
+  --border-subtle: var(--outline-variant);
+  --border-strong: var(--outline);
+
+  /* Glass — translucent XR surfaces draw darkSurface at 85–92% opacity so
+     passthrough / video stays perceivable behind orbiters and panels. */
+  --glass-fill: rgba(17, 19, 24, 0.62);
+  --glass-fill-strong: rgba(17, 19, 24, 0.88);
+  --glass-border: rgba(225, 226, 232, 0.14);
+  --glass-blur: 24px;
+
+  /* Pill / metadata chip background (MetadataPill.kt = black @ 28%) */
+  --chip-fill: rgba(0, 0, 0, 0.28);
+
+  /* Scrim gradient for media-over-text protection */
+  --scrim-gradient: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.45) 35%, rgba(0,0,0,0) 70%); /* @kind other */
+}
+
+/* ===========================================================================
+ * LIGHT SCHEME — phone (Beam) when the system is in light mode
+ * =========================================================================== */
+.theme-light {
+  --primary: #3A608F;
+  --on-primary: #FFFFFF;
+  --primary-container: #D3E3FF;
+  --on-primary-container: #001C39;
+
+  --secondary: #545F70;
+  --on-secondary: #FFFFFF;
+  --secondary-container: #D8E3F8;
+  --on-secondary-container: #111C2B;
+
+  --tertiary: #6D5677;
+  --on-tertiary: #FFFFFF;
+  --tertiary-container: #F5D9FF;
+  --on-tertiary-container: #261430;
+
+  --error: #BA1A1A;
+  --on-error: #FFFFFF;
+  --error-container: #FFDAD6;
+  --on-error-container: #410002;
+
+  --background: #F8F9FF;
+  --on-background: #191C20;
+  --surface: #F8F9FF;
+  --on-surface: #191C20;
+  --surface-variant: #DFE2EB;
+  --on-surface-variant: #43474E;
+
+  --outline: #73777F;
+  --outline-variant: #C3C6CF;
+
+  --inverse-surface: #2E3035;
+  --inverse-on-surface: #EFF0F7;
+  --inverse-primary: #A4C9FE;
+
+  --surface-dim: #D8DAE0;
+  --surface-bright: #F8F9FF;
+  --surface-container-lowest: #FFFFFF;
+  --surface-container-low: #F2F3FA;
+  --surface-container: #EDEDF4;
+  --surface-container-high: #E7E8EE;
+  --surface-container-highest: #E1E2E8;
+
+  --text-disabled: #A8ABB2;
+  --accent-hover: #2F527C;
+  --accent-pressed: #244366;
+
+  --glass-fill: rgba(248, 249, 255, 0.66);
+  --glass-fill-strong: rgba(248, 249, 255, 0.9);
+  --glass-border: rgba(25, 28, 32, 0.10);
+}
+
+/* ===========================================================================
+ * TV SCHEME — Android TV / Leanback. Brighter cyan / amber / mint for
+ * 10-foot contrast. Always dark; dynamic color disabled.
+ * =========================================================================== */
+.theme-tv {
+  --primary: #7DDAFF;
+  --on-primary: #072538;
+  --primary-container: #0F3F5D;
+  --on-primary-container: #D9F4FF;
+
+  --secondary: #FFBE74;
+  --on-secondary: #422300;
+  --secondary-container: #5B3611;
+  --on-secondary-container: #FFE5C6;
+
+  --tertiary: #6EE4C5;
+  --on-tertiary: #012B23;
+  --tertiary-container: #0E473B;
+  --on-tertiary-container: #D5FFF3;
+
+  --background: #06111B;
+  --on-background: #E5EEF7;
+  --surface: #0D1824;
+  --on-surface: #E5EEF7;
+  --surface-variant: #223245;
+  --on-surface-variant: #B7C6D8;
+  --outline: #5C7087;
+  --outline-variant: #223245;
+
+  --surface-dim: #06111B;
+  --surface-bright: #1A2A3A;
+  --surface-container-lowest: #040C14;
+  --surface-container-low: #0D1824;
+  --surface-container: #11202E;
+  --surface-container-high: #182B3C;
+  --surface-container-highest: #1F3548;
+
+  --accent-hover: #A2E6FF;
+  --accent-pressed: #5BC8F0;
+
+  --glass-fill: rgba(13, 24, 36, 0.7);
+  --glass-fill-strong: rgba(6, 17, 27, 0.9);
+  --glass-border: rgba(229, 238, 247, 0.16);
+}

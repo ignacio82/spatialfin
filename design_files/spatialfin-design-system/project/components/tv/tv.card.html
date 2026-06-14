@@ -1,0 +1,49 @@
+<!-- @dsCard group="Components" viewport="700x460" name="TV (10-foot)" subtitle="Focus cards · episode cards · season tabs · nav rail — cyan focus ring" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-app); }
+  .frame { padding: 22px; box-sizing: border-box; }
+  .cap { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; margin: 4px 0 12px; }
+  .shelf { display: flex; gap: 18px; padding: 8px 4px 6px; overflow-x: auto; scrollbar-width: none; }
+  .shelf::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body class="theme-tv">
+  <div class="frame" id="root"></div>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="../../_ds_bundle.js"></script>
+  <script type="text/babel">
+    const NS = window.SpatialFinDesignSystem_0d3fe7;
+    const { FocusCard, EpisodeCard, SeasonTabs } = NS;
+    function Demo() {
+      const [season, setSeason] = React.useState(1);
+      return (
+        <div>
+          <div className="cap">Focus cards — portrait (hover/focus to see the cyan ring)</div>
+          <div className="shelf">
+            <FocusCard title="Cosmos Laundromat" subtitle="Series" image="../../assets/tv/poster-cosmos.png" width={150} />
+            <FocusCard title="Caminandes" subtitle="Series" image="../../assets/tv/poster-caminandes.png" width={150} />
+            <FocusCard title="Big Buck Bunny" subtitle="Movie" image="../../assets/media/poster-bbb.png" width={150} progress={79} />
+            <FocusCard title="Spring" subtitle="Movie" image="../../assets/media/poster-spring.png" width={150} />
+          </div>
+          <div className="cap">Season tabs + episode cards</div>
+          <SeasonTabs seasons={[1, 2]} active={season} onChange={setSeason} />
+          <div className="shelf">
+            <EpisodeCard number={1} title="Emo Goes Wild" still="../../assets/tv/ep-cosmos-1.png" runtime="12 min" synopsis="A suicidal sheep named Franck meets his fairy godmother." width={300} progress={100} />
+            <EpisodeCard number={2} title="Wisdom of the Cosmos" still="../../assets/tv/ep-cosmos-2.png" runtime="10 min" synopsis="Franck wakes up in a strange new dimension." width={300} progress={40} />
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!-- @dsCard group="Colors" viewport="700x200" name="Accent — Blue" subtitle="Calming blue primary + container, dark scheme (XR/Beam default)" -->
+<!DOCTYPE html>
+<html lang="en" class="">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; background: var(--surface-app); padding: 20px; box-sizing: border-box; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .sw { width: 150px; border-radius: 12px; overflow: hidden; border: 1px solid var(--glass-border); }
+  .chip { height: 76px; display: flex; align-items: flex-end; padding: 8px 10px; }
+  .meta { padding: 8px 10px; background: var(--surface-card); }
+  .name { color: var(--text-primary); font-weight: 500; }
+  .hex { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="sw">
+      <div class="chip" style="background: var(--primary);"><span class="m3-label-small" style="color: var(--on-primary);">on-primary</span></div>
+      <div class="meta"><div class="name m3-label-large">Primary</div><div class="hex">#A4C9FE</div></div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background: var(--primary-container);"><span class="m3-label-small" style="color: var(--on-primary-container);">on-container</span></div>
+      <div class="meta"><div class="name m3-label-large">Primary container</div><div class="hex">#1F4876</div></div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background: var(--secondary);"><span class="m3-label-small" style="color: var(--on-secondary);">on-secondary</span></div>
+      <div class="meta"><div class="name m3-label-large">Secondary</div><div class="hex">#BCC7DB</div></div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background: var(--tertiary);"><span class="m3-label-small" style="color: var(--on-tertiary);">on-tertiary</span></div>
+      <div class="meta"><div class="name m3-label-large">Tertiary</div><div class="hex">#D9BDE3</div></div>
+    </div>
+  </div>
+</body>
+</html>

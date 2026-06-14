@@ -1,0 +1,23 @@
+<!-- @dsCard group="Spacing" viewport="700x180" name="Elevation — phone (M3)" subtitle="Shadow levels 1–5. On XR depth is physical; on TV use focus-scale, not shadow" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; background: var(--surface-app); padding: 26px; box-sizing: border-box; }
+  .row { display: flex; gap: 22px; align-items: center; }
+  .item { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .box { width: 100px; height: 70px; background: var(--surface-container-high); border-radius: 12px; }
+  .lbl { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="item"><div class="box" style="box-shadow: var(--elevation-1);"></div><span class="lbl">level 1</span></div>
+    <div class="item"><div class="box" style="box-shadow: var(--elevation-2);"></div><span class="lbl">level 2 · app bar</span></div>
+    <div class="item"><div class="box" style="box-shadow: var(--elevation-3);"></div><span class="lbl">level 3 · dialog/FAB</span></div>
+    <div class="item"><div class="box" style="box-shadow: var(--elevation-5);"></div><span class="lbl">level 5</span></div>
+  </div>
+</body>
+</html>

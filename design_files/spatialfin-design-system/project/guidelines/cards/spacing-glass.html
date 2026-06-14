@@ -1,0 +1,42 @@
+<!-- @dsCard group="Spacing" viewport="700x200" name="Glassmorphic XR surface" subtitle="darkSurface @ 62–88% + 24px blur, hairline border — the spatial panel look" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 0; }
+  .stage {
+    min-height: 200px; box-sizing: border-box; padding: 26px;
+    display: flex; gap: 18px; align-items: center;
+    /* faux passthrough: a soft sky/desert gradient so the glass reads */
+    background: linear-gradient(160deg, #9db4cf 0%, #b9bfc0 45%, #8c7f6f 100%);
+  }
+  .glass {
+    flex: 1; height: 130px; border-radius: var(--radius-lg);
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass);
+    padding: 18px; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .glass.strong { background: var(--glass-fill-strong); }
+  .t { color: var(--text-primary); }
+  .s { color: var(--text-secondary); }
+  .pill { align-self: flex-start; background: var(--accent); color: var(--on-primary); padding: 7px 16px; border-radius: var(--radius-full); font-size: 13px; font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="glass">
+      <div><div class="m3-title-medium t">Spatial panel · 62%</div><div class="m3-body-small s">passthrough stays perceivable behind</div></div>
+      <span class="pill">▶ Play</span>
+    </div>
+    <div class="glass strong">
+      <div><div class="m3-title-medium t">Orbiter / dialog · 88%</div><div class="m3-body-small s">for dense controls & legibility</div></div>
+      <span class="pill">SyncPlay</span>
+    </div>
+  </div>
+</body>
+</html>

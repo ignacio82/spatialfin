@@ -1,0 +1,13 @@
+/* SpatialFin webfonts
+ * ---------------------------------------------------------------------------
+ * SpatialFin uses the default Android system font (Roboto) on every form
+ * factor to stay consistent with each platform's OS conventions. On the web we
+ * load Roboto + Roboto Mono from Google Fonts. This is the genuine product
+ * face, not a substitute.
+ *
+ * NOTE: fonts are loaded from the Google Fonts CDN rather than self-hosted
+ * binaries. If you need an offline / self-hosted build, drop the woff2 files
+ * into assets/fonts/ and replace the @import below with @font-face rules.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap');

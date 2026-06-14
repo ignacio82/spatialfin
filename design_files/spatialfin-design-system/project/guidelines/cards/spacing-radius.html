@@ -1,0 +1,25 @@
+<!-- @dsCard group="Spacing" viewport="700x170" name="Corner radius" subtitle="10 small · 16 cards · 32 dialogs & spatial panels · full pills" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; background: var(--surface-app); padding: 22px; box-sizing: border-box; }
+  .row { display: flex; gap: 18px; align-items: flex-end; }
+  .item { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .box { width: 96px; height: 70px; background: var(--surface-container-high); border: 1px solid var(--border-subtle); }
+  .lbl { color: var(--text-primary); font-size: 12px; font-weight: 500; }
+  .px { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }
+  .pill { width: 120px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--on-primary); font-size: 12px; font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="item"><div class="box" style="border-radius: var(--radius-sm);"></div><span class="lbl">sm</span><span class="px">10</span></div>
+    <div class="item"><div class="box" style="border-radius: var(--radius-md);"></div><span class="lbl">md · card</span><span class="px">16</span></div>
+    <div class="item"><div class="box" style="border-radius: var(--radius-lg);"></div><span class="lbl">lg · dialog</span><span class="px">32</span></div>
+    <div class="item"><div class="pill" style="border-radius: var(--radius-full);">Play</div><span class="lbl">full · pill</span><span class="px">9999</span></div>
+  </div>
+</body>
+</html>

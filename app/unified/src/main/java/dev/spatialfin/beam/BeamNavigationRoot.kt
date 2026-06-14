@@ -729,7 +729,6 @@ fun BeamNavigationRoot(
                             userName = state.currentUser?.name,
                             onOpenServer = { currentRoute = BeamRoute.Servers },
                             onOpenUser = { currentRoute = BeamRoute.Users },
-                            onOpenCast = { /* Handle cast later */ },
                         )
                     }
                     currentRoute == BeamRoute.PluginBrowse -> {

@@ -54,7 +54,9 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.automirrored.rounded.ManageSearch
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CloudDone
@@ -358,64 +360,33 @@ fun TvNavigationRoot(
     ) {
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             TvAmbientBackground(backgroundModel = focusedBackgroundUrl)
-            NavigationDrawer(
-                drawerContent = { _ ->
-                    Column(
-                        modifier = Modifier.fillMaxHeight().padding(vertical = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        androidx.compose.foundation.Image(
-                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                            contentDescription = "SpatialFin",
-                            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        val visibleNavItems = if (state.isOfflineMode) tvNavItems.filter { it.route != TvRoute.Home && it.route != TvRoute.Search } else tvNavItems
-                        visibleNavItems.forEach { item ->
-                            NavigationDrawerItem(
-                                selected = currentRoute == item.route,
-                                onClick = { if (item.route == TvRoute.Library) selectedView = null; navigate(item.route) },
-                                leadingContent = { Icon(imageVector = item.icon, contentDescription = null) },
-                            ) { Text(text = item.label) }
-                        }
+            val showTopBar = currentRoute in listOf(TvRoute.Home, TvRoute.Search, TvRoute.MaSearch, TvRoute.Library, TvRoute.Plugins, TvRoute.Companion, TvRoute.Settings)
+            var showUserSwitcher by remember { mutableStateOf(false) }
 
-                        val user = state.currentUser
-                        if (user != null) {
-                            Spacer(Modifier.weight(1f))
-                            NavigationDrawerItem(
-                                selected = currentRoute == TvRoute.Users,
-                                onClick = { navigate(TvRoute.Users) },
-                                leadingContent = {
-                                    val avatarUri = userPrimaryImageUri(state.currentServerAddress, user.id)
-                                    if (avatarUri != null) {
-                                        AsyncImage(
-                                            model = avatarUri,
-                                            contentDescription = "Profile",
-                                            modifier = Modifier.size(24.dp).clip(RoundedCornerShape(12.dp)),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        val initial = user.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
-                                        Box(
-                                            modifier = Modifier.size(24.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.secondaryContainer),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(initial, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        }
-                                    }
-                                },
-                            ) { Text(text = user.name) }
-                        }
-                    }
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (showTopBar) {
+                    val visibleNavItems = if (state.isOfflineMode) tvNavItems.filter { it.route != TvRoute.Home && it.route != TvRoute.Search } else tvNavItems
+                    TvTopBar(
+                        currentRouteName = currentRoute.name,
+                        navItems = visibleNavItems.map { it.route.name to (it.label to it.icon) },
+                        onNavigate = { routeName ->
+                            val itemRoute = TvRoute.valueOf(routeName)
+                            if (itemRoute == TvRoute.Library) selectedView = null
+                            navigate(itemRoute)
+                        },
+                        user = state.currentUser,
+                        serverName = homeState.server?.name,
+                        serverAddress = state.currentServerAddress,
+                        onUserClick = { showUserSwitcher = true }
+                    )
                 }
-            ) {
+
                 val contentFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
                 LaunchedEffect(currentRoute) {
                     kotlinx.coroutines.delay(50)
                     try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
                 }
-                Box(modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
@@ -512,6 +483,16 @@ fun TvNavigationRoot(
                     }
                 }
             }
+
+            if (showUserSwitcher) {
+                TvUserSwitcherDialog(
+                    state = state,
+                    onDismissRequest = { showUserSwitcher = false },
+                    onUserSwitched = { showUserSwitcher = false; navigate(TvRoute.Home) },
+                    onAddUser = { showUserSwitcher = false; navigate(TvRoute.Users) }
+                )
+            }
+
             val maNowPlayingTv by maSession.session.collectAsStateWithLifecycle()
             // pendingPlayUri covers the optimistic window after an MA play tap,
             // before MA echoes nowPlaying.
@@ -1213,17 +1194,28 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                         if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity) }
                         TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (item.played) "Watched" else "Mark watched", item.played) { viewModel.togglePlayed() }
                         TvIconHeroButton(if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (item.favorite) "Favorited" else "Favorite", item.favorite) { viewModel.toggleFavorite() }
+                        TvIconHeroButton(Icons.Rounded.CloudDownload, "Download") { }
+                        
                         Box {
                             var menuOpen by remember { mutableStateOf(false) }
                             TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { menuOpen = true }
-                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(text = { androidx.compose.material3.Text("SyncPlay") }, leadingIcon = { androidx.compose.material3.Icon(painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity) })
-                                DropdownMenuItem(text = { androidx.compose.material3.Text("Auto Quality") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Refresh, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity) })
-                                if (trailerUrl != null) DropdownMenuItem(text = { androidx.compose.material3.Text("Trailer") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity) })
-                                if (i is SpatialFinEpisode) {
-                                    DropdownMenuItem(text = { androidx.compose.material3.Text("Series") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; onOpenShow(i.seriesId) })
-                                    DropdownMenuItem(text = { androidx.compose.material3.Text("Season") }, leadingIcon = { androidx.compose.material3.Icon(Icons.AutoMirrored.Rounded.List, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; onOpenSeason(i.seasonId) })
+                            if (menuOpen) {
+                                val actions = buildList {
+                                    add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("syncplay", null, { Icon(painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), null, Modifier.size(24.dp), tint = Color.White) }, "SyncPlay", "Watch together with others", onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity) }))
+                                    add(TvOverflowAction("playback_options", Icons.Rounded.Refresh, null, "Playback options", "Auto Quality", onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity) }))
+                                    if (trailerUrl != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity) }))
+                                    if (i is SpatialFinEpisode) {
+                                        add(TvOverflowAction("go_to_series", Icons.Rounded.Tv, null, "Go to series", onClick = { menuOpen = false; onOpenShow(i.seriesId) }))
+                                        add(TvOverflowAction("go_to_season", Icons.AutoMirrored.Rounded.List, null, "Go to season", onClick = { menuOpen = false; onOpenSeason(i.seasonId) }))
+                                    }
+                                    add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("cast", Icons.Rounded.Tv, null, "Cast & audio output", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("share", Icons.Rounded.Share, null, "Share", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("delete", Icons.AutoMirrored.Rounded.Backspace, null, "Delete", danger = true, onClick = { menuOpen = false }))
                                 }
+                                TvOverflowSheet("More actions", item.name, actions) { menuOpen = false }
                             }
                         }
                     }
@@ -1271,14 +1263,20 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
                     }
                     TvIconHeroButton(if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (show.played) "Watched" else "Mark watched", show.played) { viewModel.togglePlayed() }
                     TvIconHeroButton(if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (show.favorite) "Favorited" else "Favorite", show.favorite) { viewModel.toggleFavorite() }
-                    val showTrailer = show.trailer
-                    if (showTrailer != null) {
-                        Box {
-                            var menuOpen by remember { mutableStateOf(false) }
-                            TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { menuOpen = true }
-                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(text = { androidx.compose.material3.Text("Trailer") }, leadingIcon = { androidx.compose.material3.Icon(Icons.Rounded.Tv, null, Modifier.size(20.dp)) }, onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true)?.let(context::startActivity) })
+                    Box {
+                        var menuOpen by remember { mutableStateOf(false) }
+                        TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { menuOpen = true }
+                        if (menuOpen) {
+                            val actions = buildList {
+                                val showTrailer = show.trailer
+                                if (showTrailer != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true)?.let(context::startActivity) }))
+                                add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = { menuOpen = false }))
+                                add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
+                                add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false }))
+                                add(TvOverflowAction("share", Icons.Rounded.Share, null, "Share", onClick = { menuOpen = false }))
+                                add(TvOverflowAction("delete", Icons.AutoMirrored.Rounded.Backspace, null, "Delete", danger = true, onClick = { menuOpen = false }))
                             }
+                            TvOverflowSheet("More actions", show.name, actions) { menuOpen = false }
                         }
                     }
                 })
@@ -1415,8 +1413,29 @@ private fun TvHomeHeroCard(item: SpatialFinItem, eyebrow: String, parkInitialFoc
                     Text(text = item.overview, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.82f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    TvHeroButton(if (item.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(primaryFocus), onClick = onPrimaryAction)
-                    TvHeroButton("Details", Icons.Rounded.Info, false, onClick = onDetails)
+                    TvHeroButton(if (item.playbackPositionTicks > 0L) "Resume" else "Play S1 E1", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(primaryFocus), onClick = onPrimaryAction)
+                    TvHeroButton("More info", Icons.Rounded.Info, false, onClick = onDetails)
+                    
+                    val detailViewModel: dev.spatialfin.tv.TvItemDetailViewModel = hiltViewModel(key = item.id.toString())
+                    LaunchedEffect(item.id) { detailViewModel.load(item.id) }
+                    
+                    TvIconHeroButton(if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite") { detailViewModel.toggleFavorite() }
+                    TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, "Mark watched") { detailViewModel.togglePlayed() }
+
+                    var showOverflow by remember { mutableStateOf(false) }
+                    TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { showOverflow = true }
+                    
+                    if (showOverflow) {
+                        val actions = buildList {
+                            add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = {}))
+                        }
+                        TvOverflowSheet(
+                            title = "More actions",
+                            subtitle = item.name,
+                            actions = actions,
+                            onDismissRequest = { showOverflow = false }
+                        )
+                    }
                 }
             }
         }
@@ -2114,7 +2133,7 @@ private val TvFocusTween = tween<Float>(durationMillis = 120)
 
 /** Cyan glow + ring + scale for non-Card focusables (clickable / Surface). */
 @Composable
-private fun Modifier.tvFocus(focused: Boolean, shape: Shape, scaleOnFocus: Boolean = true): Modifier {
+internal fun Modifier.tvFocus(focused: Boolean, shape: Shape, scaleOnFocus: Boolean = true): Modifier {
     val target = if (focused && scaleOnFocus) TV_FOCUS_SCALE else 1f
     val scale by animateFloatAsState(target, TvFocusTween, label = "tvFocusScale")
     val primary = MaterialTheme.colorScheme.primary

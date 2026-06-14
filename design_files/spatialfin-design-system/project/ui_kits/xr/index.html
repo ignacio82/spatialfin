@@ -1,0 +1,39 @@
+<!-- @dsCard group="XR (spatial)" viewport="1280x720" name="XR spatial app" subtitle="Galaxy XR — glass spatial panel over passthrough, floating orbiter, voice" -->
+<!-- @startingPoint section="SpatialFin screens" subtitle="Android XR spatial media browser — glass panel + orbiter" viewport="1280x720" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SpatialFin — XR (spatial)</title>
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: #000; font-family: var(--font-sans); }
+  .xr-stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+  .xr-env { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .xr-panel-wrap { position: absolute; top: 50%; left: 50%; transform: translate(-54%, -50%);
+    width: min(82vw, 1180px); }
+  .xr-orbiter { position: absolute; top: 50%; transform: translateY(-50%);
+    left: calc(50% + min(41vw, 590px) + 20px); z-index: 7; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  @media (max-width: 900px) {
+    .xr-panel-wrap { transform: translate(-50%, -50%); width: 92vw; }
+    .xr-orbiter { left: auto; right: 12px; }
+  }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="../../_ds_bundle.js"></script>
+  <script src="../beam/data.js"></script>
+  <script type="text/babel" src="XrApp.jsx"></script>
+  <script type="text/babel">
+    ReactDOM.createRoot(document.getElementById("root")).render(<window.XrApp />);
+  </script>
+</body>
+</html>

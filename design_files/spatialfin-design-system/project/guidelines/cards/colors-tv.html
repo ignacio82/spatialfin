@@ -1,0 +1,26 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="TV scheme" subtitle="Cyan / amber / mint — tuned for 10-foot contrast on weak SoCs" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; padding: 0; }
+  .frame { background: var(--surface-app); padding: 20px; box-sizing: border-box; min-height: 150px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .sw { width: 158px; height: 88px; border-radius: 12px; display: flex; flex-direction: column; justify-content: space-between; padding: 10px; }
+  .lbl { font-size: 12px; font-weight: 500; }
+  .hex { font-family: var(--font-mono); font-size: 10px; opacity: 0.8; }
+</style>
+</head>
+<body class="theme-tv">
+  <div class="frame">
+    <div class="row">
+      <div class="sw" style="background: var(--primary);"><span class="lbl" style="color: var(--on-primary);">Primary · cyan</span><span class="hex" style="color: var(--on-primary);">#7DDAFF</span></div>
+      <div class="sw" style="background: var(--secondary);"><span class="lbl" style="color: var(--on-secondary);">Secondary · amber</span><span class="hex" style="color: var(--on-secondary);">#FFBE74</span></div>
+      <div class="sw" style="background: var(--tertiary);"><span class="lbl" style="color: var(--on-tertiary);">Tertiary · mint</span><span class="hex" style="color: var(--on-tertiary);">#6EE4C5</span></div>
+      <div class="sw" style="background: var(--surface); border: 1px solid var(--outline);"><span class="lbl" style="color: var(--on-surface);">Surface</span><span class="hex" style="color: var(--on-surface-variant);">#0D1824</span></div>
+    </div>
+  </div>
+</body>
+</html>

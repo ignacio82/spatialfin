@@ -1,0 +1,28 @@
+<!-- @dsCard group="Colors" viewport="700x170" name="Semantic & status" subtitle="Text roles, error, and the lone warm accent — the rating star" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../../styles.css" />
+<style>
+  body { margin: 0; background: var(--surface-app); padding: 20px; box-sizing: border-box; display: flex; gap: 28px; align-items: center; }
+  .stack { display: flex; flex-direction: column; gap: 6px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 8px; }
+  .line { display: flex; align-items: center; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; }
+  .hex { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <div class="m3-title-medium" style="color: var(--text-primary);">Primary text · on-surface</div>
+    <div class="m3-body-medium" style="color: var(--text-secondary);">Secondary · on-surface-variant</div>
+    <div class="m3-body-medium" style="color: var(--text-disabled);">Disabled text</div>
+  </div>
+  <div class="stack">
+    <div class="line"><span class="dot" style="background: var(--error);"></span><span class="m3-body-medium" style="color: var(--text-primary);">Error</span><span class="hex" style="margin-left:8px;">#FFB4AB</span></div>
+    <div class="pill" style="background: var(--error-container);"><span class="m3-label-medium" style="color: var(--on-error-container);">Error container</span></div>
+    <div class="line"><span style="color: var(--rating-star); font-size: 18px;">★</span><span class="m3-body-medium" style="color: var(--text-primary); margin-left:6px;">Rating star</span><span class="hex" style="margin-left:8px;">#F2C94C</span></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,75 @@
+/* SpatialFin — Typography
+ * ===========================================================================
+ * The Material 3 type scale, rendered in Roboto (the Android system face).
+ * The Android tokens are in `sp`; the px values below are the 1:1 web mapping
+ * (1sp ≈ 1px at baseline density). On the 10-foot TV surface, Display and
+ * Headline scale up to ~1.25x — see --tv-scale.
+ *
+ * Usage: apply a role class (.m3-display-large, .m3-title-medium, …) OR pull
+ * the individual --font-size-* / --line-height-* tokens.
+ */
+
+:root {
+  --font-sans: 'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Weights */
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+
+  /* ---- M3 type scale (size / line-height / tracking) ---- */
+  --display-large-size: 57px;     --display-large-line: 64px;   --display-large-track: -0.25px;
+  --display-medium-size: 45px;    --display-medium-line: 52px;  --display-medium-track: 0px;
+  --display-small-size: 36px;     --display-small-line: 44px;   --display-small-track: 0px;
+
+  --headline-large-size: 32px;    --headline-large-line: 40px;  --headline-large-track: 0px;
+  --headline-medium-size: 28px;   --headline-medium-line: 36px; --headline-medium-track: 0px;
+  --headline-small-size: 24px;    --headline-small-line: 32px;  --headline-small-track: 0px;
+
+  --title-large-size: 22px;       --title-large-line: 28px;     --title-large-track: 0px;
+  --title-medium-size: 16px;      --title-medium-line: 24px;    --title-medium-track: 0.15px;
+  --title-small-size: 14px;       --title-small-line: 20px;     --title-small-track: 0.1px;
+
+  --body-large-size: 16px;        --body-large-line: 24px;      --body-large-track: 0.5px;
+  --body-medium-size: 14px;       --body-medium-line: 20px;     --body-medium-track: 0.25px;
+  --body-small-size: 12px;        --body-small-line: 16px;      --body-small-track: 0.4px;
+
+  --label-large-size: 14px;       --label-large-line: 20px;     --label-large-track: 0.1px;
+  --label-medium-size: 12px;      --label-medium-line: 16px;    --label-medium-track: 0.5px;
+  --label-small-size: 11px;       --label-small-line: 16px;     --label-small-track: 0.5px;
+
+  /* 10-foot upscale multiplier for Display/Headline on TV */
+  --tv-scale: 1.25; /* @kind other */
+}
+
+/* Base */
+body {
+  font-family: var(--font-sans);
+  font-weight: var(--weight-regular);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- Role classes ---- */
+.m3-display-large  { font: var(--weight-regular) var(--display-large-size)/var(--display-large-line) var(--font-sans); letter-spacing: var(--display-large-track); }
+.m3-display-medium { font: var(--weight-regular) var(--display-medium-size)/var(--display-medium-line) var(--font-sans); letter-spacing: var(--display-medium-track); }
+.m3-display-small  { font: var(--weight-regular) var(--display-small-size)/var(--display-small-line) var(--font-sans); letter-spacing: var(--display-small-track); }
+
+.m3-headline-large  { font: var(--weight-regular) var(--headline-large-size)/var(--headline-large-line) var(--font-sans); }
+.m3-headline-medium { font: var(--weight-regular) var(--headline-medium-size)/var(--headline-medium-line) var(--font-sans); }
+.m3-headline-small  { font: var(--weight-regular) var(--headline-small-size)/var(--headline-small-line) var(--font-sans); }
+
+.m3-title-large  { font: var(--weight-medium) var(--title-large-size)/var(--title-large-line) var(--font-sans); }
+.m3-title-medium { font: var(--weight-medium) var(--title-medium-size)/var(--title-medium-line) var(--font-sans); letter-spacing: var(--title-medium-track); }
+.m3-title-small  { font: var(--weight-medium) var(--title-small-size)/var(--title-small-line) var(--font-sans); letter-spacing: var(--title-small-track); }
+
+.m3-body-large  { font: var(--weight-regular) var(--body-large-size)/var(--body-large-line) var(--font-sans); letter-spacing: var(--body-large-track); }
+.m3-body-medium { font: var(--weight-regular) var(--body-medium-size)/var(--body-medium-line) var(--font-sans); letter-spacing: var(--body-medium-track); }
+.m3-body-small  { font: var(--weight-regular) var(--body-small-size)/var(--body-small-line) var(--font-sans); letter-spacing: var(--body-small-track); }
+
+.m3-label-large  { font: var(--weight-medium) var(--label-large-size)/var(--label-large-line) var(--font-sans); letter-spacing: var(--label-large-track); }
+.m3-label-medium { font: var(--weight-medium) var(--label-medium-size)/var(--label-medium-line) var(--font-sans); letter-spacing: var(--label-medium-track); }
+.m3-label-small  { font: var(--weight-medium) var(--label-small-size)/var(--label-small-line) var(--font-sans); letter-spacing: var(--label-small-track); }

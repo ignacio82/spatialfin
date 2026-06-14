@@ -75,7 +75,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
@@ -535,10 +534,7 @@ fun BeamHomeTopAppBar(
     serverName: String,
     userName: String?,
     onOpenServer: () -> Unit,
-    onOpenCast: () -> Unit,
     onOpenUser: () -> Unit,
-    castActive: Boolean,
-    castLabel: String?,
 ) {
     Row(
         modifier = Modifier
@@ -582,17 +578,6 @@ fun BeamHomeTopAppBar(
                 )
             }
         }
-        val castTint = if (castActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-        androidx.compose.material3.IconButton(
-            onClick = onOpenCast,
-            modifier = Modifier.size(34.dp)
-        ) {
-            androidx.compose.material3.Icon(
-                painter = painterResource(id = CoreR.drawable.ic_cast),
-                contentDescription = if (castActive) "Casting to $castLabel" else "Cast",
-                tint = castTint
-            )
-        }
         Box(
             modifier = Modifier
                 .size(34.dp)
@@ -634,7 +619,6 @@ fun BeamHomeScreen(
     userName: String? = null,
     onOpenServer: () -> Unit = {},
     onOpenUser: () -> Unit = {},
-    onOpenCast: () -> Unit = {},
 ) {
     val viewModel: HomeViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -678,10 +662,7 @@ fun BeamHomeScreen(
                         serverName = state.server?.name ?: "Jellyfin",
                         userName = userName,
                         onOpenServer = onOpenServer,
-                        onOpenCast = onOpenCast,
                         onOpenUser = onOpenUser,
-                        castActive = false, // TODO: pass actual cast state
-                        castLabel = null
                     )
                 }
 
