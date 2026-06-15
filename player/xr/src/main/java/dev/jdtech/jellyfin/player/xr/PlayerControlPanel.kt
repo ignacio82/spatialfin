@@ -35,9 +35,11 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 
 /**
- * Main playback control panel — the primary Surface the user looks at while
- * playing. Audio/subtitle/speed/quality live in [SecondaryControlsOrbiter]
- * so this surface stays focused on play/pause + seek + scale handles.
+ * Bottom playback cluster — the glass scrubber-and-transport panel that floats
+ * below the cinema screen. Screen controls (size / passthrough / lock) live in
+ * [StageControlsOrbiter] (top), track options in [TrackOptionsOrbiter] (left),
+ * and cast / SyncPlay / voice in [SessionOrbiter] (right), so this surface
+ * stays focused on title + seek + play/pause (cinema principle: screen first).
  *
  * Extracted from SpatialPlayerScreen.kt.
  */
@@ -50,16 +52,11 @@ internal fun ControlPanelUI(
     duration: Long,
     isLocked: Boolean,
     spatialAudioAvailable: Boolean,
-    onLockToggle: () -> Unit,
     onControlInputActiveChange: (Boolean) -> Unit,
-    onMoveCloser: () -> Unit,
-    onMoveFurther: () -> Unit,
     onChaptersClick: () -> Unit,
     onBackClick: () -> Unit,
     resetAutoHide: () -> Unit,
     showChaptersButton: Boolean = true,
-    onFCastClick: () -> Unit = {},
-    fcastActive: Boolean = false,
 ) {
     Surface(
         shape = RoundedCornerShape(48.dp),
@@ -124,55 +121,6 @@ internal fun ControlPanelUI(
                             )
                         }
                     }
-                }
-                if (!isLocked) {
-                    IconButton(
-                        onClick = { onFCastClick(); resetAutoHide() },
-                        modifier = Modifier.size(100.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_cast),
-                            contentDescription = "Cast",
-                            tint = if (fcastActive) Color(0xFF4FC3F7) else Color.White,
-                            modifier = Modifier.size(64.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = { onMoveCloser(); resetAutoHide() },
-                        modifier = Modifier.size(100.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_plus),
-                            contentDescription = "Bigger",
-                            tint = Color.White,
-                            modifier = Modifier.size(64.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = { onMoveFurther(); resetAutoHide() },
-                        modifier = Modifier.size(100.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(CoreR.drawable.ic_minus_fat),
-                            contentDescription = "Smaller",
-                            tint = Color.White,
-                            modifier = Modifier.size(64.dp),
-                        )
-                    }
-                }
-                IconButton(
-                    onClick = { onLockToggle(); resetAutoHide() },
-                    modifier = Modifier.size(100.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (isLocked) CoreR.drawable.ic_lock else CoreR.drawable.ic_unlock,
-                        ),
-                        contentDescription =
-                            if (isLocked) "Unlock controls and screen" else "Lock controls and screen",
-                        tint = if (isLocked) Color.Red else Color.White,
-                        modifier = Modifier.size(64.dp),
-                    )
                 }
             }
 

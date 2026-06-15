@@ -20,10 +20,18 @@ class PluginEngine @Inject constructor(
     private val domParserBridge: DOMParserBridge,
     private val utilitiesBridge: UtilitiesBridge
 ) {
-    private val jsDispatcher = Executors.newFixedThreadPool(8).asCoroutineDispatcher()
-
     suspend fun createRuntime(): PluginRuntime {
-        val quickJs = QuickJs.create(jsDispatcher)
+        // QuickJS is single-threaded: an engine's create / evaluate / close must
+        // all run on ONE dedicated thread. The old shared 8-thread pool let
+        // parallel plugin runtimes (e.g. concurrent home-row loads, or a reload
+        // triggered by the XR Home↔Full space transition) stomp each other's JNI
+        // global refs — "jobject is an invalid global reference (stale reference
+        // serial N v. M)" → native SIGABRT. Give every runtime its own
+        // single-thread dispatcher, shut down in PluginRuntime.close().
+        val runtimeDispatcher = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "PluginJs").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+        val quickJs = QuickJs.create(runtimeDispatcher)
         
         // Bind bridges with explicit thread switching for safety
         quickJs.define("httpBridge") {
@@ -71,7 +79,7 @@ class PluginEngine @Inject constructor(
             function("log") { args -> utilitiesBridge.log(args[0].toString()) }
         }
 
-        val runtime = PluginRuntime(quickJs, jsDispatcher)
+        val runtime = PluginRuntime(quickJs, runtimeDispatcher)
         
         // Inject JS shims
         try {
@@ -481,7 +489,10 @@ class PluginEngine @Inject constructor(
     }
 }
 
-class PluginRuntime(val quickJs: QuickJs, private val dispatcher: kotlinx.coroutines.CoroutineDispatcher) {
+class PluginRuntime(
+    val quickJs: QuickJs,
+    private val dispatcher: kotlinx.coroutines.ExecutorCoroutineDispatcher,
+) {
     suspend fun evaluate(script: String): Any? {
         return withContext(dispatcher) {
             try {
@@ -494,6 +505,14 @@ class PluginRuntime(val quickJs: QuickJs, private val dispatcher: kotlinx.corout
     }
 
     fun close() {
-        quickJs.close()
+        // Close the engine on its own JS thread (single-thread confinement),
+        // then shut that thread down so it isn't leaked per runtime.
+        try {
+            kotlinx.coroutines.runBlocking(dispatcher) { quickJs.close() }
+        } catch (e: Exception) {
+            android.util.Log.e("CRITICAL_JS", "QuickJS close failed", e)
+        } finally {
+            dispatcher.close()
+        }
     }
 }

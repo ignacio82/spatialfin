@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,110 +33,212 @@ import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import java.util.UUID
 
 /**
- * Secondary control cluster that floats beside the main playback panel
- * (audio / subtitles / speed / quality / SyncPlay / cast-crew / voice),
- * plus the SyncPlay group-management dialog.
+ * Floating glass control clusters that orbit the cinema screen, plus the
+ * SyncPlay group-management dialog.
  *
- * Both are pure presentation with callbacks — the parent screen owns state.
+ * The player chrome follows the XR design system's "one job per orbiter"
+ * model so nothing covers the picture and the user's mental map is stable:
+ *   • [StageControlsOrbiter] (top)   — the screen itself: size, passthrough, lock.
+ *   • [TrackOptionsOrbiter]  (left)  — what you hear/read: subtitles, audio, quality, speed.
+ *   • [SessionOrbiter]       (right) — where it plays / who with: cast, SyncPlay, cast & crew, voice.
+ * Transport + scrubber live in the bottom glass panel ([ControlPanelUI]).
+ *
+ * All are pure presentation with callbacks — the parent screen owns state.
  */
 
+internal val OrbiterAccent = Color(0xFF4FC3F7)
+private val OrbiterGlass = Color.Black.copy(alpha = 0.9f)
+
+/** A 100×100 dp glass-orbiter icon button matching the player control sizing. */
 @Composable
-internal fun SecondaryControlsOrbiter(
-    onAudioClick: () -> Unit,
-    onSubtitleClick: () -> Unit,
-    onSpeedClick: () -> Unit,
-    onQualityClick: () -> Unit,
-    onSyncPlayClick: () -> Unit,
-    onCastCrewClick: () -> Unit,
-    onVoiceClick: () -> Unit,
-    voiceControlEnabled: Boolean,
-    voiceAvailable: Boolean,
-    voiceState: VoiceState,
-    syncPlayActive: Boolean,
-    showSyncPlayButton: Boolean = true,
-    showCastCrewButton: Boolean = true,
+private fun OrbiterIconButton(
+    iconRes: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+    tint: Color = Color.White,
+    enabled: Boolean = true,
+) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(100.dp)) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = if (enabled) tint else tint.copy(alpha = 0.4f),
+            modifier = Modifier.size(64.dp),
+        )
+    }
+}
+
+/**
+ * Top orbiter — controls for the cinema screen itself. Kept distinct from the
+ * playback transport so "screen controls up top, playback controls down below".
+ * The lock button is always present (even while locked) so the screen can be
+ * unlocked again; size/passthrough collapse away while locked.
+ */
+@Composable
+internal fun StageControlsOrbiter(
+    isLocked: Boolean,
+    sizeLabel: String,
+    smallerEnabled: Boolean,
+    biggerEnabled: Boolean,
+    onSmaller: () -> Unit,
+    onResetSize: () -> Unit,
+    onBigger: () -> Unit,
+    passthroughEnabled: Boolean = false,
+    onPassthroughToggle: (() -> Unit)? = null,
+    onLockToggle: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
         shape = RoundedCornerShape(40.dp),
-        color = Color.Black.copy(alpha = 0.9f),
+        color = OrbiterGlass,
         tonalElevation = 4.dp,
+        modifier = modifier,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!isLocked) {
+                OrbiterIconButton(
+                    iconRes = CoreR.drawable.ic_minus_fat,
+                    contentDescription = "Smaller screen",
+                    enabled = smallerEnabled,
+                    onClick = onSmaller,
+                )
+                TextButton(
+                    onClick = onResetSize,
+                    modifier = Modifier.heightIn(min = 100.dp).widthIn(min = 140.dp),
+                ) {
+                    Text(
+                        text = sizeLabel,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White,
+                    )
+                }
+                OrbiterIconButton(
+                    iconRes = CoreR.drawable.ic_plus,
+                    contentDescription = "Bigger screen",
+                    enabled = biggerEnabled,
+                    onClick = onBigger,
+                )
+                if (onPassthroughToggle != null) {
+                    OrbiterIconButton(
+                        iconRes = if (passthroughEnabled) CoreR.drawable.ic_eye else CoreR.drawable.ic_eye_off,
+                        contentDescription = if (passthroughEnabled) "Passthrough on" else "Theater (passthrough off)",
+                        tint = if (passthroughEnabled) Color.White else OrbiterAccent,
+                        onClick = onPassthroughToggle,
+                    )
+                }
+            }
+            if (onLockToggle != null) {
+                OrbiterIconButton(
+                    iconRes = if (isLocked) CoreR.drawable.ic_lock else CoreR.drawable.ic_unlock,
+                    contentDescription = if (isLocked) "Unlock controls and screen" else "Lock controls and screen",
+                    tint = if (isLocked) Color.Red else Color.White,
+                    onClick = onLockToggle,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Left orbiter — track / playback options. Subtitles, audio, quality, and
+ * (when available) speed. Speed is omitted for receivers that can't retime.
+ */
+@Composable
+internal fun TrackOptionsOrbiter(
+    onSubtitleClick: () -> Unit,
+    onAudioClick: () -> Unit,
+    onQualityClick: () -> Unit,
+    onSpeedClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(40.dp),
+        color = OrbiterGlass,
+        tonalElevation = 4.dp,
+        modifier = modifier,
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            IconButton(onClick = onAudioClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_speaker),
-                    contentDescription = "Audio track",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
+            OrbiterIconButton(CoreR.drawable.ic_closed_caption, "Subtitle track", onSubtitleClick)
+            OrbiterIconButton(CoreR.drawable.ic_speaker, "Audio track", onAudioClick)
+            OrbiterIconButton(CoreR.drawable.ic_sparkles, "Playback quality", onQualityClick)
+            if (onSpeedClick != null) {
+                OrbiterIconButton(CoreR.drawable.ic_gauge, "Playback speed", onSpeedClick)
             }
-            IconButton(onClick = onSubtitleClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_closed_caption),
-                    contentDescription = "Subtitle track",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-            IconButton(onClick = onSpeedClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_gauge),
-                    contentDescription = "Playback speed",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-            IconButton(onClick = onQualityClick, modifier = Modifier.size(100.dp)) {
-                Icon(
-                    painterResource(CoreR.drawable.ic_sparkles),
-                    contentDescription = "Playback quality",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
+        }
+    }
+}
+
+/**
+ * Right orbiter — session / sharing. Cast (+ split audio), SyncPlay, cast &
+ * crew, voice assistant. Active states tint cyan; voice tracks its own state.
+ */
+@Composable
+internal fun SessionOrbiter(
+    onCastClick: () -> Unit,
+    castActive: Boolean,
+    onSyncPlayClick: () -> Unit,
+    syncPlayActive: Boolean,
+    onCastCrewClick: () -> Unit,
+    onVoiceClick: () -> Unit,
+    voiceControlEnabled: Boolean,
+    voiceAvailable: Boolean,
+    voiceState: VoiceState,
+    showSyncPlayButton: Boolean = true,
+    showCastCrewButton: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(40.dp),
+        color = OrbiterGlass,
+        tonalElevation = 4.dp,
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            OrbiterIconButton(
+                iconRes = CoreR.drawable.ic_cast,
+                contentDescription = "Cast & audio output",
+                tint = if (castActive) OrbiterAccent else Color.White,
+                onClick = onCastClick,
+            )
             if (showSyncPlayButton) {
-                IconButton(onClick = onSyncPlayClick, modifier = Modifier.size(100.dp)) {
-                    Icon(
-                        painterResource(CoreR.drawable.ic_tv),
-                        contentDescription = "SyncPlay",
-                        tint = if (syncPlayActive) Color(0xFF4FC3F7) else Color.White,
-                        modifier = Modifier.size(64.dp),
-                    )
-                }
+                OrbiterIconButton(
+                    iconRes = CoreR.drawable.ic_tv,
+                    contentDescription = "SyncPlay",
+                    tint = if (syncPlayActive) OrbiterAccent else Color.White,
+                    onClick = onSyncPlayClick,
+                )
             }
             if (showCastCrewButton) {
-                IconButton(onClick = onCastCrewClick, modifier = Modifier.size(100.dp)) {
-                    Icon(
-                        painterResource(CoreR.drawable.ic_user),
-                        contentDescription = "Cast & crew",
-                        tint = Color.White,
-                        modifier = Modifier.size(64.dp),
-                    )
-                }
+                OrbiterIconButton(CoreR.drawable.ic_user, "Cast & crew", onCastCrewClick)
             }
             if (voiceControlEnabled) {
-                IconButton(onClick = onVoiceClick, modifier = Modifier.size(100.dp)) {
-                    Icon(
-                        painterResource(CoreR.drawable.ic_microphone),
-                        contentDescription = "Voice command",
-                        tint =
-                            if (!voiceAvailable) {
-                                Color.White.copy(alpha = 0.45f)
-                            } else {
-                                when (voiceState) {
-                                    VoiceState.LISTENING -> Color(0xFF4FC3F7)
-                                    VoiceState.PROCESSING -> Color(0xFFFFA726)
-                                    VoiceState.ERROR -> Color(0xFFEF5350)
-                                    VoiceState.IDLE -> Color.White
-                                }
-                            },
-                        modifier = Modifier.size(64.dp),
-                    )
-                }
+                OrbiterIconButton(
+                    iconRes = CoreR.drawable.ic_microphone,
+                    contentDescription = "Voice command",
+                    tint = if (!voiceAvailable) {
+                        Color.White.copy(alpha = 0.45f)
+                    } else {
+                        when (voiceState) {
+                            VoiceState.LISTENING -> OrbiterAccent
+                            VoiceState.PROCESSING -> Color(0xFFFFA726)
+                            VoiceState.ERROR -> Color(0xFFEF5350)
+                            VoiceState.IDLE -> Color.White
+                        }
+                    },
+                    onClick = onVoiceClick,
+                )
             }
         }
     }

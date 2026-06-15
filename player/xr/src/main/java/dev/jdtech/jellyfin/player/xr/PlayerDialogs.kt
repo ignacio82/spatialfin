@@ -1,6 +1,5 @@
 package dev.jdtech.jellyfin.player.xr
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,14 +8,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,11 +22,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.R as LocalR
@@ -158,97 +154,52 @@ internal fun TrackSelectionDialogContent(
     // selected, suppress Media3's own highlight so the radio buttons are mutually exclusive.
     val effectiveMediaSelected = if (extraSelectedIndex >= 0) -1 else mediaSelectedIndex
     val noneSelected = effectiveMediaSelected == -1 && extraSelectedIndex == -1
+    val rowIcon = if (trackType == C.TRACK_TYPE_TEXT) CoreR.drawable.ic_closed_caption else CoreR.drawable.ic_speaker
+    val sheetSubtitle = if (trackType == C.TRACK_TYPE_TEXT) "Subtitle track" else "Audio track"
 
-    Surface(
-        modifier = Modifier
-            .width(600.dp)
-            .heightIn(max = 560.dp),
-        shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 12.dp,
+    XrGlassSheet(
+        title = title,
+        subtitle = sheetSubtitle,
+        onDismiss = onDismiss,
+        width = 600.dp,
     ) {
-        Column(modifier = Modifier.padding(32.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(24.dp))
-            Column(
-                modifier = Modifier
-                    .height(400.dp)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onTrackSelected(-1); onDismiss() }
-                        .padding(vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = noneSelected,
-                        onClick = { onTrackSelected(-1); onDismiss() },
-                        modifier = Modifier.size(48.dp),
-                    )
-                    Spacer(Modifier.width(16.dp))
-                    Text(stringResource(LocalR.string.none), style = MaterialTheme.typography.titleLarge)
-                }
-                trackNames.forEachIndexed { index, name ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onTrackSelected(index); onDismiss() }
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = index == effectiveMediaSelected,
-                            onClick = { onTrackSelected(index); onDismiss() },
-                            modifier = Modifier.size(48.dp),
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text(
-                            name,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                    }
-                }
-                extraTrackNames.forEachIndexed { index, name ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onExtraTrackSelected(index); onDismiss() }
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = index == extraSelectedIndex,
-                            onClick = { onExtraTrackSelected(index); onDismiss() },
-                            modifier = Modifier.size(48.dp),
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text(
-                            name,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                    }
-                }
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .height(400.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            XrOptionRow(
+                title = stringResource(LocalR.string.none),
+                icon = rowIcon,
+                selected = noneSelected,
+                onClick = { onTrackSelected(-1); onDismiss() },
+            )
+            trackNames.forEachIndexed { index, name ->
+                XrOptionRow(
+                    title = name,
+                    icon = rowIcon,
+                    selected = index == effectiveMediaSelected,
+                    onClick = { onTrackSelected(index); onDismiss() },
+                )
             }
-            Spacer(Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                if (trackType == C.TRACK_TYPE_TEXT && onSearchSubtitles != null) {
-                    TextButton(onClick = {
-                        onDismiss()
-                        onSearchSubtitles()
-                    }) {
-                        Text("SEARCH SUBTITLES", style = MaterialTheme.typography.labelLarge)
-                    }
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+            extraTrackNames.forEachIndexed { index, name ->
+                XrOptionRow(
+                    title = name,
+                    icon = rowIcon,
+                    selected = index == extraSelectedIndex,
+                    onClick = { onExtraTrackSelected(index); onDismiss() },
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (trackType == C.TRACK_TYPE_TEXT && onSearchSubtitles != null) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                TextButton(onClick = {
+                    onDismiss()
+                    onSearchSubtitles()
+                }) {
+                    Text("SEARCH SUBTITLES", style = MaterialTheme.typography.labelLarge, color = Color(0xFF4FC3F7))
                 }
             }
         }
@@ -262,41 +213,21 @@ internal fun SpeedDialogContent(
     onDismiss: () -> Unit,
 ) {
     val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
-    Surface(
-        modifier = Modifier.width(400.dp).heightIn(max = 560.dp),
-        shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 12.dp,
+    XrGlassSheet(
+        title = stringResource(LocalR.string.select_playback_speed),
+        subtitle = "Playback speed",
+        onDismiss = onDismiss,
+        width = 440.dp,
     ) {
-        Column(modifier = Modifier.padding(32.dp)) {
-            Text(
-                stringResource(LocalR.string.select_playback_speed),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(24.dp))
-            Column {
-                speeds.forEach { speed ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSpeedSelected(speed); onDismiss() }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = currentSpeed == speed,
-                            onClick = { onSpeedSelected(speed); onDismiss() },
-                            modifier = Modifier.size(48.dp),
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text("${speed}x", style = MaterialTheme.typography.titleLarge)
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        Column {
+            speeds.forEach { speed ->
+                XrOptionRow(
+                    title = if (speed == 1f) "Normal (1x)" else "${speed}x",
+                    icon = CoreR.drawable.ic_gauge,
+                    selected = currentSpeed == speed,
+                    onClick = { onSpeedSelected(speed); onDismiss() },
+                )
             }
         }
     }
@@ -309,45 +240,25 @@ internal fun QualityDialogContent(
     onDismiss: () -> Unit,
 ) {
     val currentOption = QualityOption.fromBps(currentMaxBitrate)
-    Surface(
-        modifier = Modifier.width(400.dp).heightIn(max = 560.dp),
-        shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 12.dp,
+    XrGlassSheet(
+        title = "Quality",
+        subtitle = "Streaming resolution & bitrate",
+        onDismiss = onDismiss,
+        width = 480.dp,
     ) {
-        Column(modifier = Modifier.padding(32.dp)) {
-            Text(
-                "Select Playback Quality",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(24.dp))
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 400.dp)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                QualityOption.entries.forEach { option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onQualitySelected(option.bps); onDismiss() }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = currentOption == option,
-                            onClick = { onQualitySelected(option.bps); onDismiss() },
-                            modifier = Modifier.size(48.dp),
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Text(stringResource(option.labelRes), style = MaterialTheme.typography.titleLarge)
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                Text("CLOSE", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        Column(
+            modifier = Modifier
+                .heightIn(max = 440.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            QualityOption.entries.forEach { option ->
+                XrOptionRow(
+                    title = stringResource(option.labelRes),
+                    icon = CoreR.drawable.ic_gauge,
+                    selected = currentOption == option,
+                    onClick = { onQualitySelected(option.bps); onDismiss() },
+                )
             }
         }
     }

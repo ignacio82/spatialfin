@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.xr.compose.spatial.SpatialDialog
@@ -593,7 +594,15 @@ fun NavigationRoot(
                     }
                 )
             }
-            composable<HomeRoute> {
+            composable<HomeRoute> { entry ->
+                // Guard against the Navigation-Compose race where the outgoing
+                // start destination recomposes after its NavBackStackEntry is
+                // destroyed — re-evaluating HomeScreen's `hiltViewModel()` default
+                // on a dead entry throws IllegalStateException. Observing the
+                // entry's lifecycle stops composing Home (and touching its
+                // ViewModel) the moment it's destroyed.
+                val homeLifecycleState by entry.lifecycle.currentStateAsState()
+                if (homeLifecycleState != Lifecycle.State.DESTROYED) {
                 HomeScreen(
                     appPreferences = appPreferences,
                     onLibraryClick = {
@@ -642,6 +651,7 @@ fun NavigationRoot(
                         navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId, rowId = rowId))
                     },
                 )
+                }
             }
             composable<MediaRoute> {
                 MediaScreen(

@@ -84,7 +84,6 @@ import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
-import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import timber.log.Timber
@@ -572,24 +571,30 @@ internal fun XrFCastInboundPlayerScreen(
                         resizePolicy = androidx.xr.compose.subspace.ResizePolicy(),
                     ) {
                         if (controlsVisible || !playing) {
+                            // Stage orbiter (top) — screen size for the incoming theater video.
                             Orbiter(
-                                anchorPoint = OrbiterAnchorPoint.End,
+                                anchorPoint = OrbiterAnchorPoint.Top,
+                                offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
+                            ) {
+                                StageControlsOrbiter(
+                                    isLocked = false,
+                                    sizeLabel = "${Math.round(panelScale / DEFAULT_VIDEO_PANEL_SCALE * 100f)}%",
+                                    smallerEnabled = panelScale > 0.2f + 1e-3f,
+                                    biggerEnabled = panelScale < 2.5f - 1e-3f,
+                                    onSmaller = { panelScale = (panelScale - 0.08f).coerceAtLeast(0.2f) },
+                                    onResetSize = { panelScale = DEFAULT_VIDEO_PANEL_SCALE },
+                                    onBigger = { panelScale = (panelScale + 0.08f).coerceAtMost(2.5f) },
+                                )
+                            }
+                            // Track-options orbiter (left) — audio / subtitles / quality.
+                            Orbiter(
+                                anchorPoint = OrbiterAnchorPoint.Start,
                                 offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                             ) {
-                                SecondaryControlsOrbiter(
-                                    onAudioClick = { TrackSelectionDialogBuilder(context, "Audio", player, C.TRACK_TYPE_AUDIO).build().show() },
+                                TrackOptionsOrbiter(
                                     onSubtitleClick = { TrackSelectionDialogBuilder(context, "Subtitles", player, C.TRACK_TYPE_TEXT).build().show() },
-                                    onSpeedClick = { },
+                                    onAudioClick = { TrackSelectionDialogBuilder(context, "Audio", player, C.TRACK_TYPE_AUDIO).build().show() },
                                     onQualityClick = { TrackSelectionDialogBuilder(context, "Quality", player, C.TRACK_TYPE_VIDEO).build().show() },
-                                    onSyncPlayClick = { },
-                                    onCastCrewClick = { },
-                                    onVoiceClick = { },
-                                    voiceControlEnabled = false,
-                                    voiceAvailable = false,
-                                    voiceState = VoiceState.IDLE,
-                                    syncPlayActive = false,
-                                    showSyncPlayButton = false,
-                                    showCastCrewButton = false,
                                 )
                             }
                         }
@@ -619,14 +624,7 @@ internal fun XrFCastInboundPlayerScreen(
                                     duration = durationMs,
                                     isLocked = false,
                                     spatialAudioAvailable = false,
-                                    onLockToggle = { },
                                     onControlInputActiveChange = { controlsInputActive = it },
-                                    onMoveCloser = {
-                                        panelScale = (panelScale + 0.08f).coerceAtMost(2.5f)
-                                    },
-                                    onMoveFurther = {
-                                        panelScale = (panelScale - 0.08f).coerceAtLeast(0.2f)
-                                    },
                                     onChaptersClick = { },
                                     onBackClick = onExit,
                                     resetAutoHide = { resetAutoHide() },

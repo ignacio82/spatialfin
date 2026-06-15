@@ -1728,6 +1728,9 @@ fun SpatialPlayerScreen(
         movableComponent.value,
         isLocked,
         controlsInputActive,
+        controlsVisible,
+        isActuallyPaused,
+        moveInProgress,
     ) {
         val videoSurface = videoEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
@@ -1740,9 +1743,15 @@ fun SpatialPlayerScreen(
                 Timber.d(it, "Unable to inspect XR screen movable component state")
                 false
             }
-        // A control press must not be interpreted as a grab on the video surface underneath.
-        // Keep movement available while controls are merely displayed.
-        val allowMovement = !isLocked && !controlsInputActive
+        // A control press must not be interpreted as a grab on the video surface
+        // underneath. The floating orbiters overlap the video's move-affordance
+        // region, so while *any* chrome is on screen we detach the movable entirely
+        // — otherwise a tap on the (top) orbiter grabs the screen instead of the
+        // button. An in-progress grab keeps the movable attached so an active move
+        // isn't cancelled when it reveals the controls. With chrome hidden the
+        // movable returns, so the user grabs the picture to reposition it.
+        val chromeShown = controlsVisible || isActuallyPaused
+        val allowMovement = !isLocked && !controlsInputActive && (!chromeShown || moveInProgress)
 
         runCatching {
             if (!allowMovement && hasMovable) {
@@ -2037,31 +2046,98 @@ fun SpatialPlayerScreen(
                         .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
                     resizePolicy = ResizePolicy(),
                 ) {
-                    if ((controlsVisible || isActuallyPaused) && !isLocked) {
+                    if (controlsVisible || isActuallyPaused) {
+                        // Pointing at an orbiter keeps the chrome from auto-hiding —
+                        // the orbiters sit outside the bottom panel's own hover area,
+                        // so without this they'd vanish mid-aim.
+                        val keepControlsAlive = Modifier.pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    if (ev.type == PointerEventType.Enter ||
+                                        ev.type == PointerEventType.Move ||
+                                        ev.type == PointerEventType.Press
+                                    ) {
+                                        resetAutoHide()
+                                    }
+                                }
+                            }
+                        }
+                        // ── Stage orbiter (top) — controls for the cinema screen itself.
+                        // Size −/reset/+, passthrough (theater) toggle, and lock. The lock
+                        // stays reachable even while locked; the rest collapse away.
                         Orbiter(
-                            anchorPoint = OrbiterAnchorPoint.End,
-                            offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                            anchorPoint = OrbiterAnchorPoint.Top,
+                            offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
                         ) {
-                            SecondaryControlsOrbiter(
-                                onAudioClick = { activeDialog = "audio"; resetAutoHide() },
-                                onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
-                                onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
-                                onQualityClick = { activeDialog = "quality"; resetAutoHide() },
-                                onSyncPlayClick = {
-                                    activeDialog = "syncplay"
-                                    viewModel.refreshSyncPlayGroups()
+                            StageControlsOrbiter(
+                                isLocked = isLocked,
+                                sizeLabel = "${Math.round(videoPanelScale / DEFAULT_VIDEO_PANEL_SCALE * 100f)}%",
+                                smallerEnabled = videoPanelScale > 0.75f + 1e-3f,
+                                biggerEnabled = videoPanelScale < 2.5f - 1e-3f,
+                                passthroughEnabled = passthroughEnabled,
+                                onSmaller = {
+                                    videoPanelScale = (videoPanelScale - 0.08f).coerceAtLeast(0.75f)
+                                    savePlayerRootScale(viewModel, videoPanelScale)
                                     resetAutoHide()
                                 },
-                                onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
-                                onVoiceClick = {
-                                    requestVoiceCommand()
+                                onResetSize = {
+                                    resetScreenPlacementToDefault()
                                     resetAutoHide()
                                 },
-                                voiceControlEnabled = voiceControlEnabled,
-                                voiceAvailable = voiceService.isAvailable(),
-                                voiceState = voiceState,
-                                syncPlayActive = syncPlayState.activeGroup != null,
+                                onBigger = {
+                                    videoPanelScale = (videoPanelScale + 0.08f).coerceAtMost(2.5f)
+                                    savePlayerRootScale(viewModel, videoPanelScale)
+                                    resetAutoHide()
+                                },
+                                onPassthroughToggle = {
+                                    passthroughOverrideEnabled = !passthroughEnabled
+                                    resetAutoHide()
+                                },
+                                onLockToggle = { isLocked = !isLocked; resetAutoHide() },
+                                modifier = keepControlsAlive,
                             )
+                        }
+                        if (!isLocked) {
+                            // ── Track-options orbiter (left) — subtitles / audio / quality / speed.
+                            Orbiter(
+                                anchorPoint = OrbiterAnchorPoint.Start,
+                                offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                            ) {
+                                TrackOptionsOrbiter(
+                                    onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
+                                    onAudioClick = { activeDialog = "audio"; resetAutoHide() },
+                                    onQualityClick = { activeDialog = "quality"; resetAutoHide() },
+                                    onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
+                                    modifier = keepControlsAlive,
+                                )
+                            }
+                            // ── Session orbiter (right) — cast / SyncPlay / cast & crew / voice.
+                            Orbiter(
+                                anchorPoint = OrbiterAnchorPoint.End,
+                                offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                            ) {
+                                SessionOrbiter(
+                                    onCastClick = { activeDialog = "fcast"; resetAutoHide() },
+                                    castActive = fcastCastingState ==
+                                        dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
+                                    onSyncPlayClick = {
+                                        activeDialog = "syncplay"
+                                        viewModel.refreshSyncPlayGroups()
+                                        resetAutoHide()
+                                    },
+                                    syncPlayActive = syncPlayState.activeGroup != null,
+                                    onCastCrewClick = { activeDialog = "cast_crew"; resetAutoHide() },
+                                    onVoiceClick = {
+                                        requestVoiceCommand()
+                                        resetAutoHide()
+                                    },
+                                    voiceControlEnabled = voiceControlEnabled,
+                                    voiceAvailable = voiceService.isAvailable(),
+                                    voiceState = voiceState,
+                                    modifier = keepControlsAlive,
+                                )
+                            }
                         }
                     }
 
@@ -2079,27 +2155,13 @@ fun SpatialPlayerScreen(
                                 duration = duration,
                                 isLocked = isLocked,
                                 spatialAudioAvailable = spatialAudioAvailable,
-                                onLockToggle = { isLocked = !isLocked },
                                 onControlInputActiveChange = { controlsInputActive = it },
-                                onMoveCloser = {
-                                    videoPanelScale = (videoPanelScale + 0.08f).coerceAtMost(2.5f)
-                                    savePlayerRootScale(viewModel, videoPanelScale)
-                                    resetAutoHide()
-                                },
-                                onMoveFurther = {
-                                    videoPanelScale = (videoPanelScale - 0.08f).coerceAtLeast(0.75f)
-                                    savePlayerRootScale(viewModel, videoPanelScale)
-                                    resetAutoHide()
-                                },
                                 onChaptersClick = {
                                     activeDialog = "chapters"
                                     resetAutoHide()
                                 },
                                 onBackClick = { requestExit("controls-back") },
                                 resetAutoHide = { resetAutoHide() },
-                                onFCastClick = { activeDialog = "fcast"; resetAutoHide() },
-                                fcastActive = fcastCastingState ==
-                                    dev.jdtech.jellyfin.fcast.sender.FCastCastingController.Status.Casting,
                             )
                         }
 
@@ -2469,7 +2531,7 @@ fun SpatialPlayerScreen(
     }
 }
 
-// SecondaryControlsOrbiter / SyncPlayDialogContent → PlayerSecondaryControls.kt
+// StageControlsOrbiter / TrackOptionsOrbiter / SessionOrbiter / SyncPlayDialogContent → PlayerSecondaryControls.kt
 
 // startVoiceCapture / dispatchVoiceParseResult / shouldSpeakVoiceFeedback → PlayerVoiceCapture.kt
 
