@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -260,6 +261,7 @@ fun NavigationRoot(
      * navigation is skipped. Null on surfaces with no MA wiring.
      */
     onMaItemTap: ((dev.jdtech.jellyfin.models.SpatialFinItem) -> Boolean)? = null,
+    onVoiceClick: (() -> Unit)? = null,
 ) {
     val isOfflineMode = LocalOfflineMode.current
 
@@ -337,128 +339,173 @@ fun NavigationRoot(
     androidx.compose.runtime.CompositionLocalProvider(
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
     ) {
-    Box(
-        modifier = Modifier
+    val panelModifier = if (xrSpaceMode != null) {
+        Modifier
+            .fillMaxSize()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(32.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.62f))
+            .border(
+                1.dp,
+                androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f),
+                androidx.compose.foundation.shape.RoundedCornerShape(32.dp)
+            )
+    } else {
+        Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
-    ) {
+    }
+
+    val railContent = @Composable {
+        NavigationRail(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent
+        ) {
+            navigationItems.forEach { item ->
+                NavigationRailItem(
+                    selected = currentRoute == item.route::class.qualifiedName,
+                    onClick = {
+                        if (
+                            item.route is MediaRoute &&
+                                currentRoute == MediaRoute::class.qualifiedName
+                        ) {
+                            searchExpanded = true
+                        }
+
+                        navController.navigate(item.route) {
+                            popUpTo(navController.graph.startDestinationId) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    icon = {
+                        Icon(
+                            painter = painterResource(item.icon),
+                            contentDescription = stringResource(item.title),
+                        )
+                    },
+                    enabled = item.enabled,
+                    label = { Text(text = stringResource(item.title)) },
+                )
+            }
+            if (isOfflineMode) {
+                Spacer(modifier = Modifier.weight(1f))
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.WifiOff,
+                        contentDescription = "Offline",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Offline",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FilledTonalButton(
+                        onClick = onReconnect,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+            }
+            // XR-only footer: cast button sits directly above the
+            // profile/switch-user avatar, which stacks above the space-mode
+            // toggle. The group shares a single Spacer.weight(1f) so it
+            // floats to the bottom of the rail.
+            if (xrSpaceMode != null) {
+                if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
+                if (onVoiceClick != null) {
+                    NavigationRailItem(
+                        selected = false,
+                        onClick = onVoiceClick,
+                        icon = {
+                            Icon(
+                                painter = painterResource(CoreR.drawable.ic_microphone),
+                                contentDescription = "Voice command",
+                            )
+                        },
+                        label = { Text(text = "Voice") },
+                    )
+                }
+                if (fcastSession != null) {
+                    // `pickedTarget` covers all protocols (FCast + Cast + future AirPlay)
+                    // so the XR nav-rail "selected" state lights up for any picked device.
+                    val pickedTarget by fcastSession.pickedTarget.collectAsState()
+                    NavigationRailItem(
+                        selected = pickedTarget != null,
+                        onClick = { fcastSession.showPicker() },
+                        icon = {
+                            Icon(
+                                painter = painterResource(CoreR.drawable.ic_cast),
+                                contentDescription = "Cast",
+                            )
+                        },
+                        label = { Text(text = "Cast") },
+                    )
+                }
+                if (currentUser != null) {
+                    XrProfileRailButton(
+                        user = currentUser,
+                        serverAddress = currentServerAddress,
+                        onClick = { navController.safeNavigate(UsersRoute) },
+                    )
+                }
+                val (toggleLabel, toggleAction) = when (xrSpaceMode) {
+                    XrSpaceMode.HOME -> "Immersive" to onEnterFullSpace
+                    XrSpaceMode.FULL -> "Multitask" to onEnterHomeSpace
+                }
+                NavigationRailItem(
+                    selected = false,
+                    onClick = { toggleAction?.invoke() },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Rounded.ViewInAr,
+                            contentDescription = toggleLabel,
+                        )
+                    },
+                    label = { Text(text = toggleLabel) },
+                )
+            }
+        }
+    }
+
+    Box(modifier = panelModifier) {
+        if (xrSpaceMode != null && showBottomBar) {
+            androidx.xr.compose.spatial.Orbiter(
+                anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.End,
+                offset = androidx.xr.compose.unit.DpVolumeOffset(x = 24.dp)
+            ) {
+                androidx.compose.material3.Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(32.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                ) {
+                    railContent()
+                }
+            }
+        }
         Row(
             modifier = Modifier
                 .widthIn(max = 1920.dp)
                 .fillMaxHeight()
                 .align(Alignment.Center)
         ) {
-            AnimatedVisibility(visible = showBottomBar) {
-            NavigationRail(
-                containerColor = androidx.compose.ui.graphics.Color.Transparent
-            ) {
-                navigationItems.forEach { item ->
-                    NavigationRailItem(
-                        selected = currentRoute == item.route::class.qualifiedName,
-                        onClick = {
-                            if (
-                                item.route is MediaRoute &&
-                                    currentRoute == MediaRoute::class.qualifiedName
-                            ) {
-                                searchExpanded = true
-                            }
-
-                            navController.navigate(item.route) {
-                                popUpTo(navController.graph.startDestinationId) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = {
-                            Icon(
-                                painter = painterResource(item.icon),
-                                contentDescription = stringResource(item.title),
-                            )
-                        },
-                        enabled = item.enabled,
-                        label = { Text(text = stringResource(item.title)) },
-                    )
-                }
-                if (isOfflineMode) {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Column(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.WifiOff,
-                            contentDescription = "Offline",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = "Offline",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        FilledTonalButton(
-                            onClick = onReconnect,
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
-                }
-                // XR-only footer: cast button sits directly above the
-                // profile/switch-user avatar, which stacks above the space-mode
-                // toggle. The group shares a single Spacer.weight(1f) so it
-                // floats to the bottom of the rail.
-                if (xrSpaceMode != null) {
-                    if (!isOfflineMode) Spacer(modifier = Modifier.weight(1f))
-                    if (fcastSession != null) {
-                        // `pickedTarget` covers all protocols (FCast + Cast + future AirPlay)
-                        // so the XR nav-rail "selected" state lights up for any picked device.
-                        val pickedTarget by fcastSession.pickedTarget.collectAsState()
-                        NavigationRailItem(
-                            selected = pickedTarget != null,
-                            onClick = { fcastSession.showPicker() },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(CoreR.drawable.ic_cast),
-                                    contentDescription = "Cast",
-                                )
-                            },
-                            label = { Text(text = "Cast") },
-                        )
-                    }
-                    if (currentUser != null) {
-                        XrProfileRailButton(
-                            user = currentUser,
-                            serverAddress = currentServerAddress,
-                            onClick = { navController.safeNavigate(UsersRoute) },
-                        )
-                    }
-                    val (toggleLabel, toggleAction) = when (xrSpaceMode) {
-                        XrSpaceMode.HOME -> "Immersive" to onEnterFullSpace
-                        XrSpaceMode.FULL -> "Multitask" to onEnterHomeSpace
-                    }
-                    NavigationRailItem(
-                        selected = false,
-                        onClick = { toggleAction?.invoke() },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Rounded.ViewInAr,
-                                contentDescription = toggleLabel,
-                            )
-                        },
-                        label = { Text(text = toggleLabel) },
-                    )
+            if (xrSpaceMode == null) {
+                AnimatedVisibility(visible = showBottomBar) {
+                    railContent()
                 }
             }
-        }
             NavHost(
                 modifier = Modifier
                     .weight(1f)

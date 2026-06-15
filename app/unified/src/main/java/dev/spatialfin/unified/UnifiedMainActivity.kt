@@ -816,6 +816,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 onDismissRecommendation = onDismissRecommendation,
                 onReconnect = viewModel::reconnect,
                 onEnterHomeSpace = { spaceController.enterHomeSpace() },
+                onVoiceClick = { startVoiceCommand("orbiter") },
             )
         } else {
             HomeSpaceContent(
@@ -836,6 +837,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 onDismissRecommendation = onDismissRecommendation,
                 onReconnect = viewModel::reconnect,
                 onEnterFullSpace = { spaceController.enterFullSpace() },
+                onVoiceClick = { startVoiceCommand("orbiter") },
             )
         }
     }
@@ -863,6 +865,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         onDismissRecommendation: () -> Unit,
         onReconnect: () -> Unit,
         onEnterFullSpace: () -> Unit,
+        onVoiceClick: (() -> Unit)? = null,
     ) {
         val surfaceAlpha by animateFloatAsState(
             targetValue = if (transitioning) 0f else 1f,
@@ -906,6 +909,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                         },
                     )
                 },
+                onVoiceClick = onVoiceClick,
             )
             VoiceControlOverlay(
                 state = voiceState,
@@ -1048,6 +1052,7 @@ class UnifiedMainActivity : AppCompatActivity() {
         onDismissRecommendation: () -> Unit,
         onReconnect: () -> Unit,
         onEnterHomeSpace: () -> Unit,
+        onVoiceClick: (() -> Unit)? = null,
     ) {
         // Full Space entry deliberately doesn't animate alpha on its inner Box:
         // applying Modifier.alpha to a child of an XR SpatialPanel raced the
@@ -1126,6 +1131,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                                 onOpenDetail = null,
                             )
                         },
+                        onVoiceClick = onVoiceClick,
                     )
                     VoiceControlOverlay(
                         state = voiceState,
