@@ -339,7 +339,7 @@ fun NavigationRoot(
     androidx.compose.runtime.CompositionLocalProvider(
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
     ) {
-    val panelModifier = if (xrSpaceMode != null) {
+    val panelModifier = if (xrSpaceMode == XrSpaceMode.FULL) {
         Modifier
             .fillMaxSize()
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(32.dp))
@@ -481,7 +481,7 @@ fun NavigationRoot(
     }
 
     Box(modifier = panelModifier) {
-        if (xrSpaceMode != null && showBottomBar) {
+        if (xrSpaceMode == XrSpaceMode.FULL && showBottomBar) {
             androidx.xr.compose.spatial.Orbiter(
                 anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.End,
                 offset = androidx.xr.compose.unit.DpVolumeOffset(x = 24.dp)
@@ -501,7 +501,7 @@ fun NavigationRoot(
                 .fillMaxHeight()
                 .align(Alignment.Center)
         ) {
-            if (xrSpaceMode == null) {
+            if (xrSpaceMode != XrSpaceMode.FULL) {
                 AnimatedVisibility(visible = showBottomBar) {
                     railContent()
                 }
