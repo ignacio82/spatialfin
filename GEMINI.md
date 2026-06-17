@@ -4,7 +4,7 @@ This document is the canonical context for any AI assistant working on SpatialFi
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
 >
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.18 (119)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000119`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.21 (122)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000122`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -534,6 +534,11 @@ Bundle outputs:
 **Hard rule — do not flip `android.software.leanback` to `required="true"` in the main `AndroidManifest.xml`.** It is a `${leanbackRequired}` manifest placeholder. `libre` leaves it `"false"` (installs on every form factor); `tv` overrides it to `"true"` via `manifestPlaceholders` in its flavor block. Making it unconditionally required would make the `libre` bundle install only on TV devices, silently breaking XR and Beam Pro. Play's TV track is the one place that *demands* it be required.
 
 Same rule for the `xrSpatialFeatureRequired` placeholder — default stays `"false"` unless you have a concrete reason to gate on XR capability.
+
+**TV launcher banner & icon (Play TV quality reject trap).** The Leanback home screen renders the entry point's `android:banner`, **not** its icon. Two hard requirements Google's TV review enforces: the banner must live in `drawable-xhdpi` at exactly **320×180** (1080p = xhdpi) and *fill the whole 16:9 frame* (no letterbox bars), and the launcher icon must be a **512×512** asset. The dedicated TV entry point is the `.unified.TvLauncherActivity` activity-alias (`LEANBACK_LAUNCHER`); it sets `android:banner="@drawable/ic_tv_banner"` + `android:icon="@drawable/ic_tv_icon"`. <!-- updated 2026-06-16: TV banner/icon reject fix -->
+
+- `ic_tv_banner` = `drawable-xhdpi/ic_tv_banner.png` (320×180), the canonical full-bleed 16:9 launcher banner (alien + "SpatialFin / for Jellyfin" wordmark) lifted byte-for-byte from the SpatialFin Design System handoff (`project/assets/tv/banner_xhdpi.png`). The design ships xhdpi only — that is exactly the bucket Google targets for 1080p, so do not invent other density variants. **Do not point `android:banner` at `@drawable/ic_banner`** — that is the wide **2950×1440** in-app *hero* logo (used by `CoreR.drawable.ic_banner` on Login/About/Servers/Users/AddServer via `painterResource`); its 2.05 aspect letterboxes in the 16:9 banner slot, which is exactly what got version `1000121` rejected. Keep the two resources decoupled and never shadow `ic_banner` with a `drawable-xhdpi` override (it would also shrink the in-app hero).
+- `ic_tv_icon` (512×512, `drawable-xhdpi`) is byte-identical to the Play listing's `store_icon_512.png`. The Play Console listing assets (`store_icon_512.png` 512×512, `store_tv_banner_1280x720.png` 1280×720) are uploaded in the Console, not in the AAB — they are separate from these in-APK drawables.
 
 ---
 

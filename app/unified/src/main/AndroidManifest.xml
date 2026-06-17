@@ -63,7 +63,7 @@
     <application
         android:name=".unified.UnifiedApplication"
         android:allowBackup="false"
-        android:banner="@drawable/ic_banner"
+        android:banner="@drawable/ic_tv_banner"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -97,7 +97,7 @@
         <activity
             android:name=".unified.UnifiedMainActivity"
             android:exported="true"
-            android:banner="@drawable/ic_banner"
+            android:banner="@drawable/ic_tv_banner"
             android:label="@string/app_name"
             android:theme="@style/Theme.SpatialFin"
             android:windowSoftInputMode="adjustResize">
@@ -106,12 +106,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <!-- TV / Leanback launcher -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
             <!-- XR / spatial launcher -->
@@ -138,6 +132,18 @@
                 android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
                 android:value="XR_ACTIVITY_START_MODE_HOME_SPACE" />
         </activity>
+
+        <activity-alias
+            android:name=".unified.TvLauncherActivity"
+            android:targetActivity=".unified.UnifiedMainActivity"
+            android:exported="true"
+            android:banner="@drawable/ic_tv_banner"
+            android:icon="@drawable/ic_tv_icon">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <receiver
             android:name="dev.jdtech.jellyfin.utils.DownloadReceiver"
