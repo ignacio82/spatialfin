@@ -22,6 +22,7 @@ internal object PlayerTrackHeuristics {
      * "Forced", "English (Forced)", "Signs", "Signs & Songs", "Songs".
      */
     private val FORCED_LABEL_PATTERN = Regex("""\b(forced|signs?|songs?)\b""", RegexOption.IGNORE_CASE)
+    private val FULL_DIALOGUE_LABEL_PATTERN = Regex("""\b(full|dialogue?|subtitles?)\b""", RegexOption.IGNORE_CASE)
 
     /**
      * Returns true when a subtitle track is marked forced or is clearly a signs/songs-only
@@ -40,8 +41,15 @@ internal object PlayerTrackHeuristics {
      * Full Dialogue / Forced / Signs without setting the selection flag correctly.
      */
     fun isForcedOrSignsOnly(label: String?, selectionFlags: Int): Boolean {
-        if ((selectionFlags and C.SELECTION_FLAG_FORCED) != 0) return true
         val normalized = label.orEmpty()
+        if (
+            normalized.isNotBlank() &&
+                FULL_DIALOGUE_LABEL_PATTERN.containsMatchIn(normalized) &&
+                !FORCED_LABEL_PATTERN.containsMatchIn(normalized)
+        ) {
+            return false
+        }
+        if ((selectionFlags and C.SELECTION_FLAG_FORCED) != 0) return true
         if (normalized.isEmpty()) return false
         return FORCED_LABEL_PATTERN.containsMatchIn(normalized)
     }

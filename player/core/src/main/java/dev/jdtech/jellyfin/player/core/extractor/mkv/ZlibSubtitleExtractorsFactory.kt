@@ -3,8 +3,11 @@ package dev.jdtech.jellyfin.player.core.extractor.mkv
 import androidx.media3.common.C
 import androidx.media3.common.DataReader
 import androidx.media3.common.Format
+import androidx.media3.common.MediaItem
 import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorInput
@@ -14,6 +17,9 @@ import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 
 /**
  * ExtractorsFactory that drops embedded MKV text tracks so only sideloaded subtitle
@@ -70,6 +76,57 @@ class ZlibSubtitleExtractorsFactory(
             DropTextTracksExtractor(extractor)
         } else {
             extractor
+        }
+    }
+}
+
+/**
+ * Routes only MediaItems with sideloaded subtitle files through [ZlibSubtitleExtractorsFactory].
+ *
+ * Jellyfin playback supplies decompressed subtitle delivery URLs via
+ * [MediaItem.SubtitleConfiguration], so dropping embedded MKV text tracks avoids Media3's zlib
+ * ASS/SSA bug without losing subtitles. Local and network-share MKVs do not have those sidecars;
+ * they must use the normal extractor so their embedded text tracks remain visible.
+ */
+@UnstableApi
+class SideloadedSubtitleMediaSourceFactory(
+    dataSourceFactory: DataSource.Factory,
+    parseSubtitlesDuringExtraction: Boolean,
+) : MediaSource.Factory {
+
+    private val defaultFactory =
+        DefaultMediaSourceFactory(dataSourceFactory)
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    private val sideloadedSubtitleFactory =
+        DefaultMediaSourceFactory(dataSourceFactory, ZlibSubtitleExtractorsFactory())
+            .experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
+
+    override fun setDrmSessionManagerProvider(
+        drmSessionManagerProvider: DrmSessionManagerProvider,
+    ): MediaSource.Factory {
+        defaultFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
+        sideloadedSubtitleFactory.setDrmSessionManagerProvider(drmSessionManagerProvider)
+        return this
+    }
+
+    override fun setLoadErrorHandlingPolicy(
+        loadErrorHandlingPolicy: LoadErrorHandlingPolicy,
+    ): MediaSource.Factory {
+        defaultFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+        sideloadedSubtitleFactory.setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+        return this
+    }
+
+    override fun getSupportedTypes(): IntArray = defaultFactory.supportedTypes
+
+    override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+        val hasSideloadedSubtitles =
+            mediaItem.localConfiguration?.subtitleConfigurations?.isNotEmpty() == true
+        return if (hasSideloadedSubtitles) {
+            sideloadedSubtitleFactory.createMediaSource(mediaItem)
+        } else {
+            defaultFactory.createMediaSource(mediaItem)
         }
     }
 }

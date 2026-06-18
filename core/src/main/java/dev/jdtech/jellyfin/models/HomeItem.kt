@@ -17,5 +17,14 @@ sealed class HomeItem {
         override val id = view.id
     }
 
+    /**
+     * A configured network share (SMB/NFS) surfaced as a home row. Carries the
+     * backing [shareId] so a "See all" affordance can open the share's full
+     * content listing.
+     */
+    data class NetworkShareSection(val shareId: String, val homeSection: HomeSection) : HomeItem() {
+        override val id = homeSection.id
+    }
+
     abstract val id: UUID
 }

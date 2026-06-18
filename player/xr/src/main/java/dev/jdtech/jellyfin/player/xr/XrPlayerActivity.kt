@@ -23,7 +23,6 @@ import androidx.media3.common.C
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
@@ -37,6 +36,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvBridgeIpcClient
@@ -297,19 +297,19 @@ class XrPlayerActivity : AppCompatActivity() {
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
          .setEnableDecoderFallback(true)
 
-        // Subtitles are sideloaded via MediaItem.SubtitleConfiguration using Jellyfin's
-        // per-stream delivery URL (see PlaylistManager). The custom ExtractorsFactory drops
-        // embedded text tracks inside MKV containers so Media3's buggy zlib handling never
-        // surfaces as garbage subtitles on screen.
-        val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
+        // Jellyfin subtitles are sideloaded via MediaItem.SubtitleConfiguration using
+        // per-stream delivery URLs (see PlaylistManager). Only those items drop embedded MKV
+        // text tracks; local/network MKVs need embedded tracks because they have no sidecars.
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
                 delegate = androidx.media3.datasource.DefaultDataSource.Factory(this, dev.jdtech.jellyfin.player.core.external.PluginHttpDataSourceFactory.create()),
                 contentKeyManager = contentKeyManager,
                 database = serverDatabase,
             )
-        val mediaSourceFactory = DefaultMediaSourceFactory(encryptedDataSourceFactory, extractorsFactory)
-            .experimentalParseSubtitlesDuringExtraction(stereoPlayback)
+        val mediaSourceFactory = SideloadedSubtitleMediaSourceFactory(
+            dataSourceFactory = encryptedDataSourceFactory,
+            parseSubtitlesDuringExtraction = stereoPlayback,
+        )
         if (stereoPlayback) {
             Timber.i("subtitle: stereo playback — using Media3 subtitle parsing/transcoding for fallback renderer")
         } else {

@@ -18,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +57,7 @@ fun NetworkScreen(
         onItemClick = onItemClick,
         onSettingsClick = onSettingsClick,
         onRetry = { viewModel.loadShares() },
+        onShowOnHomeChange = viewModel::setShareVisibleOnHome,
     )
 }
 
@@ -67,6 +69,7 @@ private fun NetworkScreenLayout(
     onItemClick: (NetworkVideoItem) -> Unit,
     onSettingsClick: () -> Unit,
     onRetry: () -> Unit,
+    onShowOnHomeChange: (shareId: String, visible: Boolean) -> Unit,
 ) {
     val contentPadding = PaddingValues(24.dp)
 
@@ -152,7 +155,11 @@ private fun NetworkScreenLayout(
                     items(state.shares, key = { it.id }) { share ->
                         ShareCard(
                             share = share,
+                            showOnHome = state.homeVisibilityByShareId[share.id] ?: true,
                             onClick = { onShareClick(share) },
+                            onShowOnHomeChange = { visible ->
+                                onShowOnHomeChange(share.id, visible)
+                            },
                         )
                     }
                 }
@@ -173,23 +180,40 @@ private fun NetworkScreenLayout(
 @Composable
 private fun ShareCard(
     share: NetworkShareDto,
+    showOnHome: Boolean,
     onClick: () -> Unit,
+    onShowOnHomeChange: (Boolean) -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(
+        Row(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = share.displayName ?: share.shareName,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                text = "${share.protocol.uppercase()}://${share.host}/${share.shareName}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column(
+                modifier = Modifier.weight(1f).clickable(onClick = onClick),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = share.displayName ?: share.shareName,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "${share.protocol.uppercase()}://${share.host}/${share.shareName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Show on Home",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = showOnHome,
+                onCheckedChange = onShowOnHomeChange,
             )
         }
     }

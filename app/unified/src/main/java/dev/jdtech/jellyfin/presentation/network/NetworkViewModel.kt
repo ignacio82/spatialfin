@@ -5,8 +5,8 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
-import dev.jdtech.jellyfin.network.DiscoveredShare
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 data class NetworkState(
     val shares: List<NetworkShareDto> = emptyList(),
     val resumeItems: List<NetworkVideoItem> = emptyList(),
+    val homeVisibilityByShareId: Map<String, Boolean> = emptyMap(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
 )
@@ -22,6 +23,7 @@ data class NetworkState(
 @HiltViewModel
 class NetworkViewModel @Inject constructor(
     private val repository: NetworkMediaRepository,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(NetworkState())
     val state = _state.asStateFlow()
@@ -36,6 +38,9 @@ class NetworkViewModel @Inject constructor(
                     _state.value.copy(
                         shares = shares,
                         resumeItems = resumeItems,
+                        homeVisibilityByShareId = shares.associate { share ->
+                            share.id to appPreferences.isNetworkShareHomeVisible(share.id)
+                        },
                         isLoading = false,
                     )
                 )
@@ -50,5 +55,12 @@ class NetworkViewModel @Inject constructor(
             repository.removeShare(shareId)
             loadShares()
         }
+    }
+
+    fun setShareVisibleOnHome(shareId: String, visible: Boolean) {
+        appPreferences.setNetworkShareHomeVisible(shareId, visible)
+        _state.value = _state.value.copy(
+            homeVisibilityByShareId = _state.value.homeVisibilityByShareId + (shareId to visible),
+        )
     }
 }

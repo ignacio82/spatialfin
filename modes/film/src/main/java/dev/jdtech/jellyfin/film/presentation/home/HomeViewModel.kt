@@ -55,6 +55,7 @@ constructor(
     private val pluginContentRepository: PluginContentRepository,
     private val pluginRepository: PluginRepository,
     private val musicAssistantRepository: dev.jdtech.jellyfin.film.repository.MusicAssistantRepository,
+    private val networkMediaRepository: dev.jdtech.jellyfin.repository.NetworkMediaRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
@@ -91,6 +92,14 @@ constructor(
             appPreferences.displayRatings.backendName,
             appPreferences.displayExtraInfo.backendName -> {
                 loadData(forceRefresh = true)
+            }
+            else -> {
+                if (appPreferences.isNetworkShareHomeVisiblePreferenceKey(key)) {
+                    viewModelScope.launch(Dispatchers.Default) {
+                        loadNetworkShareSections()
+                        cacheCurrentHome(appPreferences.getValue(appPreferences.currentServer))
+                    }
+                }
             }
         }
     }
@@ -144,6 +153,8 @@ constructor(
                     } catch (e: Exception) {
                         Timber.w(e, "loadMusicAssistantItems failed after first paint (cached)")
                     }
+                    loadNetworkShareSections()
+                    cacheCurrentHome(serverId)
                     return@launch
                 }
             } else {
@@ -163,6 +174,7 @@ constructor(
                         _state.update { it.copy(suggestionsSection = null, views = persistentListOf()) }
                         loadOfflineLibrarySections()
                         _state.emit(_state.value.copy(isLoading = false))
+                        loadNetworkShareSections()
                         cacheCurrentHome(serverId)
                     } else {
                         loadSuggestions()
@@ -197,6 +209,8 @@ constructor(
                         } catch (e: Exception) {
                             Timber.w(e, "loadViews failed after first paint")
                         }
+                        loadNetworkShareSections()
+                        cacheCurrentHome(serverId)
 
                         if (!connectionMonitor.state.value.serverAccessible) {
                             loadOfflineLibrarySections()
@@ -222,9 +236,12 @@ constructor(
                     // doesn't mask the original error.
                     runCatching { loadOfflineLibrarySections() }
                         .onFailure { Timber.w(it, "offline fallback also failed") }
+                    runCatching { loadNetworkShareSections() }
+                        .onFailure { Timber.w(it, "network share fallback also failed") }
                     val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
+                    val fallbackState = fallback?.copy(networkShareSections = _state.value.networkShareSections)
                     _state.emit(
-                        (fallback ?: _state.value).copy(
+                        (fallbackState ?: _state.value).copy(
                             error = HomeLoadError(e.message ?: "Failed to load home content."),
                             isLoading = false,
                         )
@@ -237,9 +254,12 @@ constructor(
                 connectionMonitor.markServerInaccessible()
                 runCatching { loadOfflineLibrarySections() }
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
+                runCatching { loadNetworkShareSections() }
+                    .onFailure { Timber.w(it, "network share fallback after watchdog failed") }
                 val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
+                val fallbackState = fallback?.copy(networkShareSections = _state.value.networkShareSections)
                 _state.emit(
-                    (fallback ?: _state.value).copy(
+                    (fallbackState ?: _state.value).copy(
                         error = HomeLoadError("Server didn't respond. Pull to retry."),
                         isLoading = false,
                     )
@@ -579,6 +599,36 @@ constructor(
                 }
             } catch (e: Exception) {
                 Timber.w(e, "Error loading music assistant items")
+            }
+        }
+    }
+
+    /**
+     * Surface configured network shares (SMB/NFS) as home rows. The data is
+     * device-local (Room), independent of the Jellyfin connection, so this runs
+     * in both the online and offline paths.
+     */
+    private suspend fun loadNetworkShareSections() {
+        withContext(Dispatchers.IO) {
+            try {
+                val sections = networkMediaRepository.getShares().mapNotNull { share ->
+                    if (!appPreferences.isNetworkShareHomeVisible(share.id)) {
+                        return@mapNotNull null
+                    }
+                    val videos = networkMediaRepository.getVideosByShare(share.id)
+                        .distinctBy { it.networkVideoId }
+                    HomeItem.NetworkShareSection(
+                        shareId = share.id,
+                        homeSection = HomeSection(
+                            id = UUID.nameUUIDFromBytes("network-share:${share.id}".toByteArray()),
+                            name = UiText.DynamicString(share.displayName ?: share.shareName),
+                            items = videos,
+                        ),
+                    )
+                }
+                _state.update { it.copy(networkShareSections = sections.toImmutableList()) }
+            } catch (e: Exception) {
+                Timber.w(e, "Error loading network share sections")
             }
         }
     }

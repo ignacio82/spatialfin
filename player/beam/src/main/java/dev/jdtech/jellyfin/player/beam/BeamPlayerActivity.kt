@@ -97,7 +97,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.CaptionStyleCompat
@@ -115,6 +114,7 @@ import dev.jdtech.jellyfin.models.SyncPlayGroup
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
+import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
@@ -323,7 +323,7 @@ class BeamPlayerActivity : AppCompatActivity() {
 
     private val viewModel: PlayerViewModel by viewModels()
     private var mediaSession: MediaSession? = null
-    private var libassRenderer: LibassRenderer? = null
+    private var libassRenderer by mutableStateOf<LibassRenderer?>(null)
     private var pendingAudioPermissionResult: ((Boolean) -> Unit)? = null
     private val recordAudioPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -651,10 +651,10 @@ class BeamPlayerActivity : AppCompatActivity() {
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
 
-        val extractorsFactory = dev.jdtech.jellyfin.player.core.extractor.mkv.ZlibSubtitleExtractorsFactory()
         // Disable Media3 in-pipeline subtitle transcoding so raw ASS/SSA bytes reach libass.
-        // Transcoding converts tracks to application/x-media3-cues, which libass rejects —
-        // the result was plain white text with no colors/fonts/typesetting on anime subs.
+        // Transcoding converts tracks to application/x-media3-cues, which libass rejects.
+        // Only sideloaded Jellyfin subtitle items drop embedded Matroska text; network/local
+        // MKVs need embedded tracks to remain visible because they have no Jellyfin sidecars.
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(
                 delegate = androidx.media3.datasource.DefaultDataSource.Factory(
@@ -665,8 +665,10 @@ class BeamPlayerActivity : AppCompatActivity() {
                 database = serverDatabase,
             )
         val mediaSourceFactory =
-            DefaultMediaSourceFactory(encryptedDataSourceFactory, extractorsFactory)
-                .experimentalParseSubtitlesDuringExtraction(false)
+            SideloadedSubtitleMediaSourceFactory(
+                dataSourceFactory = encryptedDataSourceFactory,
+                parseSubtitlesDuringExtraction = false,
+            )
 
         val trackSelector = DefaultTrackSelector(this)
         trackSelector.setParameters(
@@ -1069,6 +1071,9 @@ private fun BeamPlayerScreen(
                 }
 
                 override fun onTracksChanged(tracks: Tracks) {
+                    val libassPref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
+                    useLibass = LibassSubtitleHelper.shouldUseLibass(player, libassPref)
+
                     // Audio-only stream: no frame will ever render, so release
                     // the gate as soon as we know there is no video track.
                     // We require non-empty groups and at least one supported audio
@@ -1155,7 +1160,7 @@ private fun BeamPlayerScreen(
     ) {
         val renderWidth = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1280)
         val renderHeight = with(density) { maxHeight.roundToPx() }.coerceAtLeast(720)
-        LaunchedEffect(renderWidth, renderHeight, player.videoSize.width, player.videoSize.height) {
+        LaunchedEffect(libassRenderer, renderWidth, renderHeight, player.videoSize.width, player.videoSize.height) {
             val renderer = libassRenderer ?: return@LaunchedEffect
             renderer.resize(
                 renderWidth,
@@ -1165,7 +1170,7 @@ private fun BeamPlayerScreen(
             )
         }
 
-        LaunchedEffect(useLibass) {
+        LaunchedEffect(useLibass, libassRenderer) {
             val renderer = libassRenderer ?: return@LaunchedEffect
             while (useLibass) {
                 val result = renderer.renderFrame(player.currentPosition)

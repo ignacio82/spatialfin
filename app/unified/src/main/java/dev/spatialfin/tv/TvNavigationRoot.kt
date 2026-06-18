@@ -180,6 +180,8 @@ private enum class TvRoute {
     MaSearch, MaDetail,
     /** Native Jellyfin albums/artists/playlists/books. */
     AudioDetail,
+    /** Network share (SMB/NFS) content browser. */
+    NetworkShare,
 }
 
 private data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
@@ -248,6 +250,7 @@ fun TvNavigationRoot(
     var selectedAudioParentId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedNetworkShareId by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     // Make the MA session track local SendSpin playback → one unified player.
@@ -322,6 +325,14 @@ fun TvNavigationRoot(
                     )
                 )
             }
+            is dev.jdtech.jellyfin.models.NetworkVideoItem -> {
+                tvAppContext.startActivity(
+                    TvPlayerActivity.createIntentForNetworkMedia(
+                        context = tvAppContext,
+                        networkVideoId = item.networkVideoId,
+                    )
+                )
+            }
             is SpatialFinShow -> { selectedShowId = item.id.toString(); navigate(TvRoute.Show) }
             is SpatialFinSeason -> { selectedSeasonId = item.id.toString(); navigate(TvRoute.Season) }
             is SpatialFinCollection -> Unit
@@ -388,7 +399,7 @@ fun TvNavigationRoot(
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
-                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) })
+                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) }, { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
                         TvRoute.Library -> {
                             val view = selectedView
@@ -480,6 +491,10 @@ fun TvNavigationRoot(
                                 )
                             }
                         }
+                        TvRoute.NetworkShare ->
+                            selectedNetworkShareId?.let { shareId ->
+                                TvNetworkShareScreen(shareId = shareId, onBack = { popBack() }, onOpenItem = ::openItem)
+                            } ?: popBack()
                     }
                 }
             }
@@ -609,6 +624,7 @@ private fun TvHomeScreen(
     onOpenCompanion: () -> Unit,
     onOpenSearch: () -> Unit,
     onRefresh: () -> Unit,
+    onOpenNetworkShare: (String) -> Unit = {},
 ) {
     var heroFocusParked by rememberSaveable { mutableStateOf(false) }
     if (!state.hasCurrentUser || !state.hasServers) {
@@ -693,6 +709,19 @@ private fun TvHomeScreen(
                     } else {
                         null
                     },
+                )
+            }
+            // Network share (SMB/NFS) rows — one per configured share with
+            // scanned content. "See all" opens the full share browser; tapping a
+            // card plays it (openItem routes NetworkVideoItem to TvPlayerActivity).
+            items(homeState.networkShareSections, key = { it.id }) { section ->
+                TvContentShelf(
+                    title = section.homeSection.name.asString(),
+                    items = section.homeSection.items,
+                    showProgress = false,
+                    onOpenItem = onOpenItem,
+                    actionLabel = "See all",
+                    onAction = { onOpenNetworkShare(section.shareId) },
                 )
             }
             if (homeState.views.isNotEmpty()) item { TvLibraryShelf("Library Hub", homeState.views.map { it.view }, onOpenLibrary) }
@@ -992,6 +1021,47 @@ private fun TvLibraryScreen(view: View?, availableViews: List<View>, onBackToHom
         }
         if (filteredItems.isEmpty()) item(span = { GridItemSpan(6) }) { TvPlaceholderScreen("No titles", "This library is empty.") }
         else gridItems(filteredItems, key = { it.id }) { TvMediaCard(it, false, Modifier.fillMaxWidth(), portrait = true) { onOpenItem(it) } }
+    }
+}
+
+@Composable
+private fun TvNetworkShareScreen(
+    shareId: String,
+    onBack: () -> Unit,
+    onOpenItem: (SpatialFinItem) -> Unit,
+    viewModel: dev.jdtech.jellyfin.presentation.network.NetworkShareViewModel = hiltViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(shareId) { viewModel.load(shareId) }
+
+    val title = state.share?.let { it.displayName ?: it.shareName } ?: "Network share"
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(Modifier.width(4.dp).height(28.dp).clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.primary))
+                Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                TvHeroButton("Back home", Icons.Rounded.Home, false, onClick = onBack)
+                TvHeroButton(if (state.isScanning) "Scanning…" else "Rescan", Icons.Rounded.Refresh, false, onClick = { if (!state.isScanning) viewModel.scanShare(shareId) })
+            }
+        }
+        when {
+            state.isLoading -> item { TvPlaceholderScreen("Loading share", "Reading content from this network share.") }
+            state.error != null -> item { TvPlaceholderScreen("Share unavailable", state.error?.message ?: "Failed to read this network share.") }
+            state.movies.isEmpty() && state.tvShows.isEmpty() && state.uncategorized.isEmpty() ->
+                item { TvPlaceholderScreen("Nothing here yet", "No videos found on this share. Try Rescan.") }
+            else -> {
+                if (state.movies.isNotEmpty()) item { TvContentShelf("Movies", state.movies, onOpenItem = onOpenItem) }
+                state.tvShows.forEach { (series, episodes) ->
+                    if (episodes.isNotEmpty()) item(key = "series:$series") { TvContentShelf(series, episodes, onOpenItem = onOpenItem) }
+                }
+                if (state.uncategorized.isNotEmpty()) item { TvContentShelf("All videos", state.uncategorized, onOpenItem = onOpenItem) }
+            }
+        }
     }
 }
 

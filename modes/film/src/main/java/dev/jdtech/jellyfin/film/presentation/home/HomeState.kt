@@ -16,6 +16,7 @@ data class HomeState(
     val universalPluginSections: ImmutableList<HomeItem.Section> = persistentListOf(),
     val musicAssistantSections: ImmutableList<HomeItem.Section> = persistentListOf(),
     val offlineLibrarySections: ImmutableList<HomeItem.Section> = persistentListOf(),
+    val networkShareSections: ImmutableList<HomeItem.NetworkShareSection> = persistentListOf(),
 
     val views: ImmutableList<HomeItem.ViewItem> = persistentListOf(),
     val isOfflineMode: Boolean = false,

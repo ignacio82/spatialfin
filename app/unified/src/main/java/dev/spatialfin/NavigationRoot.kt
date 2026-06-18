@@ -697,6 +697,9 @@ fun NavigationRoot(
                     onPluginBrowse = { pluginId, rowId ->
                         navController.safeNavigate(PluginBrowseRoute(pluginId = pluginId, rowId = rowId))
                     },
+                    onNetworkShareSeeAll = { shareId ->
+                        navController.safeNavigate(NetworkShareRoute(shareId = shareId))
+                    },
                 )
                 }
             }

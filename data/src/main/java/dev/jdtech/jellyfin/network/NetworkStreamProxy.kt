@@ -28,7 +28,12 @@ class NetworkStreamProxy(
     @Synchronized
     fun start() {
         if (serverSocket != null) return
-        val socket = ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        // Bind to the IPv4 loopback explicitly rather than InetAddress.getLoopbackAddress():
+        // on devices/networks where the IPv6 stack is preferred the latter resolves to ::1, so
+        // the socket would listen only on the IPv6 loopback while getStreamUrl() hands ExoPlayer
+        // an http://127.0.0.1 URL — the IPv4 connect is then refused and playback silently fails.
+        // The bind host and the advertised URL host MUST be the same address (see LOOPBACK_HOST).
+        val socket = ServerSocket(0, 50, java.net.InetAddress.getByName(LOOPBACK_HOST))
         serverSocket = socket
         port = socket.localPort
         Timber.d("NetworkStreamProxy started on port $port")
@@ -56,7 +61,7 @@ class NetworkStreamProxy(
 
     fun getStreamUrl(shareId: String, filePath: String): String {
         if (serverSocket == null) start()
-        return "http://127.0.0.1:$port/stream?shareId=$shareId&path=${
+        return "http://$LOOPBACK_HOST:$port/stream?shareId=$shareId&path=${
             java.net.URLEncoder.encode(filePath, "UTF-8")
         }"
     }
@@ -205,5 +210,8 @@ class NetworkStreamProxy(
 
     private companion object {
         private const val BUFFER_SIZE = 64 * 1024 // 64KB
+        // Single source of truth for the proxy host. Used for both the ServerSocket bind
+        // address and the URL handed to ExoPlayer — they must never diverge (IPv4 vs IPv6).
+        private const val LOOPBACK_HOST = "127.0.0.1"
     }
 }

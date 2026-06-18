@@ -38,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +55,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.NetworkShareDto
 import dev.jdtech.jellyfin.models.NetworkVideoItem
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +64,7 @@ import kotlinx.coroutines.launch
 data class BeamNetworkState(
     val shares: List<NetworkShareDto> = emptyList(),
     val resumeItems: List<NetworkVideoItem> = emptyList(),
+    val homeVisibilityByShareId: Map<String, Boolean> = emptyMap(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
 )
@@ -77,6 +80,7 @@ class BeamNetworkViewModel
 @Inject
 constructor(
     private val repository: NetworkMediaRepository,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(BeamNetworkState())
     val state = _state.asStateFlow()
@@ -89,6 +93,9 @@ constructor(
                 BeamNetworkState(
                     shares = shares,
                     resumeItems = dedupeNetworkVideos(repository.getResumeItems()),
+                    homeVisibilityByShareId = shares.associate { share ->
+                        share.id to appPreferences.isNetworkShareHomeVisible(share.id)
+                    },
                     isLoading = false,
                 )
             }.onSuccess { _state.emit(it) }
@@ -101,6 +108,13 @@ constructor(
             repository.removeShare(shareId)
             loadShares()
         }
+    }
+
+    fun setShareVisibleOnHome(shareId: String, visible: Boolean) {
+        appPreferences.setNetworkShareHomeVisible(shareId, visible)
+        _state.value = _state.value.copy(
+            homeVisibilityByShareId = _state.value.homeVisibilityByShareId + (shareId to visible),
+        )
     }
 }
 
@@ -251,6 +265,23 @@ fun BeamNetworkScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Show on Home",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Switch(
+                                    checked = state.homeVisibilityByShareId[share.id] ?: true,
+                                    onCheckedChange = { visible ->
+                                        viewModel.setShareVisibleOnHome(share.id, visible)
+                                    },
+                                )
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Button(onClick = { onShareClick(share.id) }) {
                                     Text("Open Share")

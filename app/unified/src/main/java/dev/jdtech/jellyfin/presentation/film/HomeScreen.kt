@@ -87,6 +87,7 @@ fun HomeScreen(
     onLanguageSettingsClick: () -> Unit,
     onItemClick: (item: SpatialFinItem) -> Unit,
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
+    onNetworkShareSeeAll: (shareId: String) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -117,6 +118,7 @@ fun HomeScreen(
             viewModel.onAction(action)
         },
         onPluginBrowse = onPluginBrowse,
+        onNetworkShareSeeAll = onNetworkShareSeeAll,
     )
 }
 
@@ -129,6 +131,7 @@ private fun HomeScreenLayout(
     onLanguageSettingsClick: () -> Unit,
     onAction: (HomeAction) -> Unit,
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
+    onNetworkShareSeeAll: (shareId: String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -274,6 +277,16 @@ private fun HomeScreenLayout(
                         modifier = Modifier.animateItem(),
                     )
                 }
+                items(state.networkShareSections, key = { it.id }) { section ->
+                    HomeSection(
+                        section = section.homeSection,
+                        displayRatings = displayRatings,
+                        itemsPadding = itemsPadding,
+                        onAction = onAction,
+                        modifier = Modifier.animateItem(),
+                        onSeeAll = { onNetworkShareSeeAll(section.shareId) },
+                    )
+                }
                 items(visibleHomeSections.universalPluginSections, key = { it.id }) { section ->
                     val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
                     val pluginId = firstItem?.universalMediaItem?.pluginId
@@ -368,6 +381,7 @@ private fun HomeScreenLayoutPreview() {
             onLanguageSettingsClick = {},
             onAction = {},
             onPluginBrowse = { _, _ -> },
+            onNetworkShareSeeAll = {},
         )
     }
 }

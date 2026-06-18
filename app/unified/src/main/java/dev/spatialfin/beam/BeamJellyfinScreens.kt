@@ -613,6 +613,7 @@ fun BeamHomeScreen(
     onOpenItem: (UUID) -> Unit,
     onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
+    onOpenNetworkShare: (String) -> Unit = {},
     onOpenMaSearch: () -> Unit = {},
     // Primitive-typed (uri, name) rather than a MaBrowseTarget lambda: the
     onOpenMaBrowse: (String, String) -> Unit = { _, _ -> },
@@ -892,6 +893,32 @@ fun BeamHomeScreen(
                                     audioDispatcher = jellyfinAudioDispatcher,
                                     onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
                                 )
+                            },
+                        )
+                    }
+                }
+
+                // Network share (SMB/NFS) rows — one per configured share that
+                // has scanned content. "See All" opens the full share browser;
+                // tapping a card plays it straight through the network proxy.
+                items(state.networkShareSections) { section ->
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        BeamHomeSectionHeader(
+                            title = section.homeSection.name.asString(),
+                            actionLabel = "See All",
+                            onAction = { onOpenNetworkShare(section.shareId) },
+                        )
+                        BeamPosterCarousel(
+                            items = section.homeSection.items,
+                            onItemClick = { item ->
+                                (item as? dev.jdtech.jellyfin.models.NetworkVideoItem)?.let { video ->
+                                    context.startActivity(
+                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForNetworkMedia(
+                                            context = context,
+                                            networkVideoId = video.networkVideoId,
+                                        )
+                                    )
+                                }
                             },
                         )
                     }

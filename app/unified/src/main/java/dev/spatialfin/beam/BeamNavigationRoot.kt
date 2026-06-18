@@ -699,6 +699,10 @@ fun BeamNavigationRoot(
                                 selectedPluginRowId = rowId
                                 currentRoute = BeamRoute.PluginBrowse
                             },
+                            onOpenNetworkShare = { shareId ->
+                                selectedNetworkShareId = shareId
+                                currentRoute = BeamRoute.NetworkShare
+                            },
                             onOpenMaBrowse = { uri, name ->
                                 dev.spatialfin.unified.music.maDetailTargetForUri(uri, name)
                                     ?.let(::openMaBrowse)

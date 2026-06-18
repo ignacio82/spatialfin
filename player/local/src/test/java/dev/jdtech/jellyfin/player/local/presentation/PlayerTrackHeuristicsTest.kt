@@ -62,8 +62,29 @@ class PlayerTrackHeuristicsTest {
     fun `full dialogue label is not flagged`() {
         assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("Full Dialogue", 0))
         assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("Dialogue", 0))
+        assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("Full Subtitles [sam]", 0))
         assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("English", 0))
         assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("Spain", 0))
+    }
+
+    @Test
+    fun `full subtitle label wins over bad forced flag`() {
+        assertFalse(
+            PlayerTrackHeuristics.isForcedOrSignsOnly(
+                label = "Full Subtitles [sam]",
+                selectionFlags = C.SELECTION_FLAG_FORCED or C.SELECTION_FLAG_DEFAULT,
+            ),
+        )
+    }
+
+    @Test
+    fun `forced label still wins when full is also present`() {
+        assertTrue(
+            PlayerTrackHeuristics.isForcedOrSignsOnly(
+                label = "Full Forced",
+                selectionFlags = C.SELECTION_FLAG_FORCED or C.SELECTION_FLAG_DEFAULT,
+            ),
+        )
     }
 
     @Test

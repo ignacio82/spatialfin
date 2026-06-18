@@ -39,6 +39,19 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val displayExtraInfo = Preference("pref_display_extra_info", false)
     val displayRatings = Preference("pref_display_ratings", true)
 
+    fun networkShareHomeVisiblePreference(shareId: String) =
+        Preference("${NETWORK_SHARE_HOME_VISIBLE_PREFIX}$shareId", true)
+
+    fun isNetworkShareHomeVisible(shareId: String): Boolean =
+        getValue(networkShareHomeVisiblePreference(shareId))
+
+    fun setNetworkShareHomeVisible(shareId: String, visible: Boolean) {
+        setValue(networkShareHomeVisiblePreference(shareId), visible)
+    }
+
+    fun isNetworkShareHomeVisiblePreferenceKey(key: String?): Boolean =
+        key?.startsWith(NETWORK_SHARE_HOME_VISIBLE_PREFIX) == true
+
     // Player - seeking
     val playerSeekBackInc = Preference("pref_player_seek_back_inc", 5_000L)
     val playerSeekForwardInc = Preference("pref_player_seek_forward_inc", 15_000L)
@@ -397,5 +410,9 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
                     .onFailure { Timber.w(it, "Failed to parse series language overrides") }
                     .getOrNull()
             }
+    }
+
+    companion object {
+        private const val NETWORK_SHARE_HOME_VISIBLE_PREFIX = "pref_network_share_home_visible_"
     }
 }
