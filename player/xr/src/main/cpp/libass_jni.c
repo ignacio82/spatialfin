@@ -13,6 +13,10 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
+#ifndef LIBASS_RENDER_TRACE
+#define LIBASS_RENDER_TRACE 0
+#endif
+
 // Libass message callback — forwards libass's internal diagnostics (font
 // fallback, glyph substitution, parse errors) into logcat so we can see
 // exactly what it does during rendering. Filtered to INFO and more severe.
@@ -234,7 +238,9 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeRenderFrame(JNIEnv *env,
     int img_count = 0;
     ASS_Image *tmp = img;
     while (tmp) { img_count++; tmp = tmp->next; }
+#if LIBASS_RENDER_TRACE
     LOGD("renderFrame: t=%lldms changed=%d images=%d", (long long)timeMs, changed, img_count);
+#endif
 
     // No content
     if (img == NULL) {
@@ -273,8 +279,10 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeRenderFrame(JNIEnv *env,
         uint8_t b = (cur->color >> 8)  & 0xFF;
         uint8_t a = 255 - (cur->color & 0xFF);
 
-        LOGI("renderFrame: color r=%d g=%d b=%d a=%d raw=0x%08X pos=(%d,%d) size=%dx%d",
+#if LIBASS_RENDER_TRACE
+        LOGD("renderFrame: color r=%d g=%d b=%d a=%d raw=0x%08X pos=(%d,%d) size=%dx%d",
              r, g, b, a, cur->color, cur->dst_x, cur->dst_y, cur->w, cur->h);
+#endif
 
         for (int y = 0; y < cur->h; y++) {
             int dst_y = cur->dst_y + y;
@@ -312,12 +320,14 @@ Java_dev_jdtech_jellyfin_player_xr_LibassRenderer_nativeRenderFrame(JNIEnv *env,
     }
 
     if (has_content) {
+#if LIBASS_RENDER_TRACE
         LOGD("renderFrame: dirty (%d,%d) %dx%d in frame %dx%d (bottom=%d)",
              dirty_x1, dirty_y1,
              dirty_x2 > dirty_x1 ? dirty_x2 - dirty_x1 : 0,
              dirty_y2 > dirty_y1 ? dirty_y2 - dirty_y1 : 0,
              ctx->frame_w, ctx->frame_h,
              ctx->frame_h - dirty_y2);
+#endif
     }
 
     ctx->has_cached_frame = has_content;
