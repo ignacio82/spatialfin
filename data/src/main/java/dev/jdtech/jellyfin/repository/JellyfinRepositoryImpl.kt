@@ -1449,6 +1449,8 @@ class JellyfinRepositoryImpl(
 
     override fun getAccessToken(): String? = jellyfinApi.api.accessToken
 
+    override fun getDeviceId(): String? = jellyfinApi.jellyfin.deviceInfo?.id
+
     override suspend fun updateDeviceName(name: String) {
         withContext(Dispatchers.IO) {
             jellyfinApi.jellyfin.deviceInfo?.id?.let { id ->

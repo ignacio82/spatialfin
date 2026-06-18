@@ -233,11 +233,6 @@ fun BeamNavigationRoot(
     val isTtsSpeaking by voiceController.tts.isSpeaking.collectAsStateWithLifecycle()
     val voiceCapability by llmModelManager.voiceCapability.collectAsStateWithLifecycle()
 
-    val remoteControlViewModel: dev.spatialfin.unified.RemoteControlViewModel =
-        androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
-    val activeRemoteSessions by remoteControlViewModel.activeRemoteSessions.collectAsStateWithLifecycle()
-    val activeRemoteSession by remoteControlViewModel.activeRemoteSession.collectAsStateWithLifecycle()
-    val activeMediaStreams by remoteControlViewModel.activeMediaStreams.collectAsStateWithLifecycle()
 
     // Show voice UI whenever the device can run a usable backend (AICore / NPU / GPU)
     // or the user has a cloud API key. Hide it on CPU-only LiteRT — the experience
@@ -590,25 +585,7 @@ fun BeamNavigationRoot(
                                     maNowPlaying.pendingPlayUri != null,
                             )
                         }
-                        dev.spatialfin.unified.RemoteControlMiniPlayer(
-                            session = activeRemoteSession,
-                            availableSessions = activeRemoteSessions,
-                            baseUrl = repository.getBaseUrl(),
-                            accessToken = repository.getAccessToken(),
-                            mediaStreams = activeMediaStreams,
-                            onSelectSession = { sessionId ->
-                                remoteControlViewModel.selectRemoteSession(sessionId)
-                            },
-                            onPlayStateCommand = { cmd ->
-                                activeRemoteSession?.id?.let {
-                                    remoteControlViewModel.sendCommand(it, cmd)
-                                }
-                            },
-                            onGeneralCommand = { cmd, args ->
-                                activeRemoteSession?.id?.let {
-                                    remoteControlViewModel.sendGeneralCommand(it, cmd, args)
-                                }
-                            },
+                        dev.spatialfin.unified.RemoteControlMiniPlayerHost(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
                         if (useBottomNav) {

@@ -761,4 +761,6 @@ constructor(
     }
 
     override fun getAccessToken(): String? = onlineRepository.getAccessToken()
+
+    override fun getDeviceId(): String? = onlineRepository.getDeviceId()
 }

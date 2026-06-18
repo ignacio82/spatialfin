@@ -509,6 +509,8 @@ fun TvNavigationRoot(
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             ) {
                 Column {
+                    // Network remote: control any other SpatialFin instance playing on the LAN.
+                    dev.spatialfin.unified.RemoteControlMiniPlayerHost()
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },

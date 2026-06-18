@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.jdtech.jellyfin.fcast.discovery.FCastDiscovery
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.toSpatialFinMediaStream
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -13,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,40 +27,42 @@ class RemoteControlViewModel @Inject constructor(
     private val repository: JellyfinRepository,
 ) : AndroidViewModel(application) {
 
-    private val fcastDiscovery = FCastDiscovery(application)
+    /** Our own Jellyfin device id, so the controlling instance is never listed as a target. */
+    private val ownDeviceId: String? = repository.getDeviceId()
 
-    private val activeSessions = repository.observeSessions()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /** Base URL of the connected Jellyfin server, for building remote cover-art URLs. */
+    val baseUrl: String get() = repository.getBaseUrl()
 
-    private val localReceivers = fcastDiscovery.browseFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /** Access token for the connected Jellyfin server, for authenticated cover-art requests. */
+    val accessToken: String? get() = repository.getAccessToken()
 
     private val selectedRemoteSessionId = MutableStateFlow<String?>(null)
 
-    val activeRemoteSessions: StateFlow<List<SessionInfoDto>> = combine(
-        activeSessions,
-        localReceivers,
-    ) { sessions, receivers ->
-        // localReceivers automatically filters out the current device in FCastDiscovery.kt
-        val localDeviceNames = receivers.mapNotNull { it.name }.toSet()
-
-        sessions
-            .filter { session ->
-                !session.id.isNullOrBlank() &&
-                    session.client?.contains("SpatialFin", ignoreCase = true) == true &&
-                    session.nowPlayingItem != null &&
-                    session.deviceName?.let { deviceName ->
-                        localDeviceNames.any { localName ->
-                            localName.contains(deviceName, ignoreCase = true) ||
-                                deviceName.contains(localName, ignoreCase = true)
-                        }
-                    } == true
-            }
-            .sortedWith(
-                compareBy<SessionInfoDto> { it.deviceName.orEmpty().lowercase() }
-                    .thenBy { it.nowPlayingItem?.name.orEmpty().lowercase() }
-            )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /**
+     * Every SpatialFin instance on the network that is currently playing something and is
+     * remotely controllable, reported authoritatively by the Jellyfin server's live session
+     * feed. The previous implementation additionally gated on a fuzzy name-match against
+     * FCast mDNS discovery, which silently hid controllable sessions whenever discovery did
+     * not see the device — the most common cause of an "invisible" remote. Commands reach the
+     * target through the Jellyfin WebSocket relay (handled by SyncPlayCoordinator), so the
+     * server's `supportsRemoteControl` flag is the correct, reliable signal.
+     */
+    val activeRemoteSessions: StateFlow<List<SessionInfoDto>> = repository.observeSessions()
+        .map { sessions ->
+            sessions
+                .filter { session ->
+                    !session.id.isNullOrBlank() &&
+                        session.supportsRemoteControl &&
+                        session.nowPlayingItem != null &&
+                        session.client?.contains("SpatialFin", ignoreCase = true) == true &&
+                        (ownDeviceId == null || session.deviceId != ownDeviceId)
+                }
+                .sortedWith(
+                    compareBy<SessionInfoDto> { it.deviceName.orEmpty().lowercase() }
+                        .thenBy { it.nowPlayingItem?.name.orEmpty().lowercase() }
+                )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val activeRemoteSession: StateFlow<SessionInfoDto?> = combine(
         activeRemoteSessions,

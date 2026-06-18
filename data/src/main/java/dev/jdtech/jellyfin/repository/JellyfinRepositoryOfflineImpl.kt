@@ -582,4 +582,6 @@ class JellyfinRepositoryOfflineImpl(
     }
 
     override fun getAccessToken(): String? = null
+
+    override fun getDeviceId(): String? = null
 }

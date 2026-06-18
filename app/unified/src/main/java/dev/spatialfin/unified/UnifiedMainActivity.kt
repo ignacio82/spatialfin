@@ -962,6 +962,8 @@ class UnifiedMainActivity : AppCompatActivity() {
                         .padding(horizontal = 24.dp, vertical = 16.dp),
                 ) {
                     androidx.compose.foundation.layout.Column {
+                    // Network remote: control any other SpatialFin instance playing on the LAN.
+                    dev.spatialfin.unified.RemoteControlMiniPlayerHost()
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },

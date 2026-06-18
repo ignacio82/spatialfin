@@ -271,6 +271,13 @@ interface JellyfinRepository {
 
     fun getAccessToken(): String?
 
+    /**
+     * The Jellyfin device id for this client, matching the `deviceId` of our own
+     * SessionInfoDto. Used by the network remote control to exclude the controlling device
+     * from the list of controllable sessions. Null when offline / not yet connected.
+     */
+    fun getDeviceId(): String?
+
     suspend fun updateDeviceName(name: String)
 
     suspend fun getUserConfiguration(): UserConfiguration?

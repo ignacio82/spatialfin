@@ -28,6 +28,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -283,6 +285,37 @@ fun RemoteControlView(
             }
         }
     }
+}
+
+/**
+ * Self-contained network-remote entry point: pulls the shared [RemoteControlViewModel],
+ * observes the controllable SpatialFin sessions on the network, and renders the
+ * [RemoteControlMiniPlayer] (which stays hidden until something is controllable). Drop this
+ * into any form factor's chrome — phone (Beam), XR Home Space, and TV all use the same host so
+ * the remote behaves identically everywhere. Renders nothing when no remote session exists.
+ */
+@Composable
+fun RemoteControlMiniPlayerHost(modifier: Modifier = Modifier) {
+    val viewModel: RemoteControlViewModel = hiltViewModel()
+    val activeSession by viewModel.activeRemoteSession.collectAsStateWithLifecycle()
+    val availableSessions by viewModel.activeRemoteSessions.collectAsStateWithLifecycle()
+    val mediaStreams by viewModel.activeMediaStreams.collectAsStateWithLifecycle()
+
+    RemoteControlMiniPlayer(
+        session = activeSession,
+        availableSessions = availableSessions,
+        baseUrl = viewModel.baseUrl,
+        accessToken = viewModel.accessToken,
+        mediaStreams = mediaStreams,
+        onSelectSession = viewModel::selectRemoteSession,
+        onPlayStateCommand = { cmd ->
+            activeSession?.id?.let { viewModel.sendCommand(it, cmd) }
+        },
+        onGeneralCommand = { cmd, args ->
+            activeSession?.id?.let { viewModel.sendGeneralCommand(it, cmd, args) }
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable
