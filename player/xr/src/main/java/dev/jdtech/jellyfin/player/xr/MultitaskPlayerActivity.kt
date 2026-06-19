@@ -467,7 +467,7 @@ private fun TrackSelectionDialogContent(
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
 ) {
-    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
     val trackNames = trackGroups.getTrackNames()
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 

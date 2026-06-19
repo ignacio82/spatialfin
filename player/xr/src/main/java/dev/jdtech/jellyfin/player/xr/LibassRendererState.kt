@@ -144,7 +144,7 @@ internal fun rememberLibassRenderer(
                 val selected =
                     tracks.groups.any { group ->
                         group.type == C.TRACK_TYPE_TEXT &&
-                            group.isSupported &&
+                            (group.type == C.TRACK_TYPE_TEXT || group.isSupported) &&
                             groupIsSelected(group)
                     }
 
@@ -153,7 +153,7 @@ internal fun rememberLibassRenderer(
                 // cues (e.g. [Door Slams]).
                 val aiTrack =
                     tracks.groups
-                        .filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+                        .filter { it.type == C.TRACK_TYPE_TEXT }
                         .sortedByDescending { group ->
                             val label = group.mediaTrackGroup.getFormat(0).label?.lowercase() ?: ""
                             val roleFlags = group.mediaTrackGroup.getFormat(0).roleFlags

@@ -54,7 +54,7 @@ internal class PlayerTrackSelector(
             player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
         if (audioGroups.isEmpty()) return
         val subtitleGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
 
         val isAnime =
             currentItem.genres.any { genre -> genre.contains("anime", ignoreCase = true) } ||
@@ -195,7 +195,7 @@ internal class PlayerTrackSelector(
 
     fun switchToTrack(trackType: @C.TrackType Int, index: Int) {
         val player = host.player
-        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+        val groups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
 
         if (trackType == C.TRACK_TYPE_TEXT) {
             host.setVisualSubtitlesEnabled(index != -1)
@@ -261,7 +261,7 @@ internal class PlayerTrackSelector(
 
         val player = host.player
         val subtitleGroups =
-            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+            player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
         val selectedSubtitleGroup =
             spokenLanguages.firstNotNullOfOrNull { preferredCode ->
                 autoPickDialogueSubtitle(subtitleGroups, preferredCode)

@@ -143,7 +143,7 @@ internal fun TrackSelectionDialogContent(
     /** Invoked when the user picks one of [extraTrackNames]. */
     onExtraTrackSelected: (Int) -> Unit = {},
 ) {
-    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
     val trackNames = trackGroups.getTrackNames()
     val mediaSelectedIndex = if (trackType == C.TRACK_TYPE_TEXT && !visualSubtitlesEnabled) {
         -1

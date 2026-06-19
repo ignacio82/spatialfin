@@ -36,7 +36,7 @@ object LibassSubtitleHelper {
 
         val selectedTextGroups =
             textGroups.filter { group ->
-                group.isSupported && (0 until group.length).any(group::isTrackSelected)
+                (0 until group.length).any(group::isTrackSelected)
             }
         if (selectedTextGroups.isEmpty()) {
             Timber.i("subtitle: useLibass=false — subtitles not currently selected")
@@ -45,7 +45,6 @@ object LibassSubtitleHelper {
 
         // Check for any text tracks that we can handle via libass
         val hasCompatibleTrack = selectedTextGroups.any { group ->
-            group.isSupported &&
             (0 until group.length).any { i ->
                 val mime = group.getTrackFormat(i).sampleMimeType
                 // We now allow ASS/SSA and SRT/VTT fallback to libass for consistent styling

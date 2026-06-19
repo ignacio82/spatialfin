@@ -39,7 +39,7 @@ internal fun currentChapterName(
 
 internal fun trackNames(player: Player, trackType: @C.TrackType Int): List<String> {
     return player.currentTracks.groups
-        .filter { it.type == trackType && it.isSupported }
+        .filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
         .map { group ->
             val format = group.getTrackFormat(0)
             val label = format.label
@@ -63,7 +63,7 @@ internal fun trackNames(player: Player, trackType: @C.TrackType Int): List<Strin
 
 internal fun selectedTrackName(player: Player, trackType: @C.TrackType Int): String? {
     return player.currentTracks.groups
-        .firstOrNull { it.type == trackType && it.isSupported && groupIsSelected(it) }
+        .firstOrNull { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) && groupIsSelected(it) }
         ?.let { group ->
             val format = group.getTrackFormat(0)
             val label = format.label ?: format.language ?: "Unknown"
@@ -85,7 +85,7 @@ internal fun selectedTrackName(player: Player, trackType: @C.TrackType Int): Str
 
 internal fun selectedTrackLanguage(player: Player, trackType: @C.TrackType Int): String? {
     return player.currentTracks.groups
-        .firstOrNull { it.type == trackType && it.isSupported && groupIsSelected(it) }
+        .firstOrNull { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) && groupIsSelected(it) }
         ?.getTrackFormat(0)
         ?.language
         ?.takeUnless { it.equals("und", ignoreCase = true) }

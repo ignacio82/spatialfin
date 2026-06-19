@@ -893,9 +893,20 @@ private fun TvPlayerScreen(
             )
         }
 
-        LaunchedEffect(useLibass) {
+        // Subtitles are visible only when libass is the active renderer AND the user hasn't
+        // turned captions off ("None" in the CC dialog → visualSubtitlesEnabled=false). libass
+        // retains the parsed track in native memory, so deselecting the ExoPlayer text track does
+        // NOT stop it drawing — we must gate the overlay (and render loop) on this flag. Without
+        // it, captions can never be turned off. (Same fix as Beam / XR.)
+        val subtitlesVisible = useLibass && uiState.visualSubtitlesEnabled
+        LaunchedEffect(subtitlesVisible) {
             val renderer = libassRenderer ?: return@LaunchedEffect
-            while (useLibass) {
+            if (!subtitlesVisible) {
+                // Captions off: drop any lingering frame so the retained track stops showing.
+                libassBitmap = null
+                return@LaunchedEffect
+            }
+            while (true) {
                 val result = renderer.renderFrame(player.currentPosition)
                 libassBitmap =
                     if (result.hasContent) {
@@ -953,7 +964,7 @@ private fun TvPlayerScreen(
                     ),
         )
 
-        if (useLibass) {
+        if (subtitlesVisible) {
             libassBitmap?.let { bitmap ->
                 Image(
                     bitmap = bitmap.asImageBitmap(),

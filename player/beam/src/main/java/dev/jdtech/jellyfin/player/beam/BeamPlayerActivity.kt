@@ -1226,9 +1226,20 @@ private fun BeamPlayerScreen(
             )
         }
 
-        LaunchedEffect(useLibass, libassRenderer) {
+        // Subtitles are visible only when libass is the active renderer AND the user hasn't
+        // turned captions off ("None" in the CC dialog → visualSubtitlesEnabled=false). libass
+        // retains the parsed track in native memory, so deselecting the ExoPlayer text track does
+        // NOT stop it drawing — we must gate the overlay (and the render loop) on this flag, the
+        // same way SpatialPlayerScreen does on XR. Without it, captions can never be turned off.
+        val subtitlesVisible = useLibass && uiState.visualSubtitlesEnabled
+        LaunchedEffect(subtitlesVisible, libassRenderer) {
             val renderer = libassRenderer ?: return@LaunchedEffect
-            while (useLibass) {
+            if (!subtitlesVisible) {
+                // Captions off: drop any lingering frame so the retained track stops showing.
+                libassBitmap = null
+                return@LaunchedEffect
+            }
+            while (true) {
                 val result = renderer.renderFrame(player.currentPosition)
                 if (result.hasContent) {
                     result.bitmap?.let {
@@ -1286,7 +1297,9 @@ private fun BeamPlayerScreen(
                                     },
                                     modifier = Modifier.fillMaxSize(),
                                 )
-                                if (useLibass) {
+                                // Inline read (not the captured `subtitlesVisible` val) so this
+                                // separate Presentation composition reacts to the flag changing.
+                                if (useLibass && uiState.visualSubtitlesEnabled) {
                                     libassBitmap?.let { bitmap ->
                                         Image(
                                             bitmap = bitmap.asImageBitmap(),
@@ -1350,7 +1363,7 @@ private fun BeamPlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
 
-                if (useLibass) {
+                if (subtitlesVisible) {
                     libassBitmap?.let { bitmap ->
                         Image(
                             bitmap = bitmap.asImageBitmap(),

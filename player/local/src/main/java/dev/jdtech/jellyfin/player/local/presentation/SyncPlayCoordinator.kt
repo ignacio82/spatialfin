@@ -419,7 +419,7 @@ internal class SyncPlayCoordinator(
         if (candidateStreams.isEmpty()) return false
 
         val targetOrder = candidateStreams.indexOfFirst { it.index == streamIndex }
-        val groups = host.player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+        val groups = host.player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
         if (targetOrder !in groups.indices) {
             Timber.w(
                 "Remote stream selection failed type=%d streamIndex=%d candidateStreams=%s groups=%d",

@@ -533,7 +533,7 @@ class PlayerSessionController(
         language: String?,
         directIndex: Int?,
     ): Int? {
-        val groups = player.currentTracks.groups.filter { it.type == trackType && it.isSupported }
+        val groups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
         if (directIndex != null) return directIndex.takeIf { it in groups.indices }
         if (language == null) {
             val selectedIndex = groups.indexOfFirst(::groupIsSelected)

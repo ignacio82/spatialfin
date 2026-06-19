@@ -226,7 +226,16 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         }
         subtitleTicker = lifecycleScope.launch {
             while (isActive) {
-                val rendered = libassRenderer?.renderFrame(exo.currentPosition)
+                // libass keeps the parsed track in native memory, so deselecting the text track in
+                // the Media3 dialog ("None") stops new samples but the renderer keeps drawing the
+                // retained track. Gate the overlay on whether a text track is actually selected so
+                // captions can be turned off. This player has no PlayerViewModel/visualSubtitlesEnabled
+                // flag (theater-only), so ExoPlayer's own selection is the signal.
+                val subtitleSelected = exo.currentTracks.groups.any {
+                    it.type == C.TRACK_TYPE_TEXT && it.isSelected
+                }
+                val rendered =
+                    if (subtitleSelected) libassRenderer?.renderFrame(exo.currentPosition) else null
                 val newBitmap = rendered?.bitmap?.takeIf { rendered.hasContent }
                 if (newBitmap != null) {
                     libassBitmapState.value = newBitmap
@@ -284,7 +293,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         val audio = mutableListOf<SpatialFinTrack>()
         val subtitles = mutableListOf<SpatialFinTrack>()
         tracks.groups.forEachIndexed { index, group ->
-            if (!group.isSupported || (group.type != C.TRACK_TYPE_AUDIO && group.type != C.TRACK_TYPE_TEXT)) {
+            if ((!group.isSupported && group.type != C.TRACK_TYPE_TEXT) || (group.type != C.TRACK_TYPE_AUDIO && group.type != C.TRACK_TYPE_TEXT)) {
                 return@forEachIndexed
             }
             val format = group.getTrackFormat(0)

@@ -26,7 +26,6 @@ object LibassSubtitleHelper {
         }
 
         val hasCompatibleTrack = textGroups.any { group ->
-            group.isSupported &&
                 (0 until group.length).any { index ->
                     when (group.getTrackFormat(index).sampleMimeType) {
                         MimeTypes.TEXT_SSA,

@@ -695,6 +695,19 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                     delay(120L)
                     continue
                 }
+                // libass keeps the parsed track in native memory, so deselecting the text track
+                // ("None") stops new samples but the renderer keeps drawing the retained track.
+                // Gate on whether a text track is actually selected so captions can be turned off.
+                // (Theater receiver — no PlayerViewModel/visualSubtitlesEnabled, so ExoPlayer's own
+                // selection is the signal.)
+                val subtitleSelected = p.currentTracks.groups.any {
+                    it.type == C.TRACK_TYPE_TEXT && it.isSelected
+                }
+                if (!subtitleSelected) {
+                    if (libassBitmapState.value != null) libassBitmapState.value = null
+                    delay(120L)
+                    continue
+                }
                 val result = r.renderFrame(p.currentPosition)
                 if (result.hasContent && result.bitmap != null) {
                     libassBitmapState.value = result.bitmap
