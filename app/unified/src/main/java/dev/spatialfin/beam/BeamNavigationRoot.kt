@@ -209,6 +209,10 @@ fun BeamNavigationRoot(
     val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
 
     val sendspinState by dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession.state.collectAsStateWithLifecycle()
+    // Off-LAN the Jellyfin server may be unreachable (isOfflineMode) while Music Assistant is
+    // reachable over WebRTC. Keep Home available in that case so the MA rows still render — only
+    // fall back to the Downloads-only offline experience when MA is unavailable too.
+    val effectiveOffline = state.isOfflineMode && !sendspinState.musicAssistantRemoteReady
     // Make the MA session track local SendSpin playback → one unified player.
     dev.spatialfin.unified.music.MaLocalPlaybackBridge(maSession)
     val musicAssistantSubtitle = when (sendspinState.musicAssistantAuthState) {
@@ -486,7 +490,7 @@ fun BeamNavigationRoot(
                 !onboardingCompleted && currentRoute == BeamRoute.Companion -> BeamRoute.Companion
                 !onboardingCompleted -> BeamRoute.Welcome
                 state.hasServers && state.hasCurrentServer && state.hasCurrentUser ->
-                    if (state.isOfflineMode) BeamRoute.Downloads else BeamRoute.Home
+                    if (effectiveOffline) BeamRoute.Downloads else BeamRoute.Home
                 state.hasServers && state.hasCurrentServer -> BeamRoute.Users
                 state.hasServers -> BeamRoute.Servers
                 else -> BeamRoute.Local
@@ -495,13 +499,14 @@ fun BeamNavigationRoot(
         currentRoute = newRoute
     }
 
-    // When going offline, redirect away from Home/Search (unusable without server).
-    // When coming back online, return to Home.
-    LaunchedEffect(state.isOfflineMode) {
+    // When going offline (and MA isn't reachable either), redirect away from Home/Search
+    // (unusable without a server). When coming back online — or once MA remote becomes
+    // reachable — return to Home so the MA rows show.
+    LaunchedEffect(effectiveOffline) {
         if (!state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)) {
-            if (state.isOfflineMode && (currentRoute == BeamRoute.Home || currentRoute == BeamRoute.Search)) {
+            if (effectiveOffline && (currentRoute == BeamRoute.Home || currentRoute == BeamRoute.Search)) {
                 currentRoute = BeamRoute.Downloads
-            } else if (!state.isOfflineMode && currentRoute == BeamRoute.Downloads) {
+            } else if (!effectiveOffline && currentRoute == BeamRoute.Downloads) {
                 currentRoute = BeamRoute.Home
             }
         }
@@ -516,7 +521,7 @@ fun BeamNavigationRoot(
     val sidebarContent: @Composable () -> Unit = {
         BeamSidebar(
             currentRoute = currentRoute,
-            isOfflineMode = state.isOfflineMode,
+            isOfflineMode = effectiveOffline,
             onNavigate = { route -> currentRoute = route },
             onReconnect = onReconnect,
             voiceState = voiceState,
@@ -591,7 +596,7 @@ fun BeamNavigationRoot(
                         if (useBottomNav) {
                             BeamBottomNavigationRow(
                                 currentRoute = currentRoute,
-                                isOfflineMode = state.isOfflineMode,
+                                isOfflineMode = effectiveOffline,
                                 onNavigate = { currentRoute = it },
                             )
                         }

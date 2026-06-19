@@ -121,7 +121,7 @@ private fun LoginScreenLayout(
                     .verticalScroll(scrollState),
         ) {
             Image(
-                painter = painterResource(id = CoreR.drawable.ic_banner),
+                painter = painterResource(id = dev.spatialfin.R.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )

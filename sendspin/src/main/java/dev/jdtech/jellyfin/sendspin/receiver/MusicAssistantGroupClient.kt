@@ -9,9 +9,27 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 
+/**
+ * Transport for Music Assistant JSON-RPC commands. The REST path (default) POSTs to `/api`;
+ * the WebRTC remote path ([dev.jdtech.jellyfin.sendspin.receiver.remote.MaApiChannelClient])
+ * sends the same `{command, args, message_id}` over the `ma-api` data channel and returns the
+ * `{message_id, result}` response. `execute` returns the raw response JSON (a bare array or a
+ * `{result|data: [...]}` object — both handled by `asArrayResult`).
+ */
+internal fun interface MaRpcTransport {
+    fun execute(command: String, args: JSONObject?): String
+}
+
 internal class MusicAssistantGroupClient(
     private val httpClient: OkHttpClient,
 ) {
+    /**
+     * When non-null, JSON-RPC commands route through this transport (off-LAN WebRTC remote)
+     * instead of REST `/api`. `login` / `fetchInfo` always use REST — they are LAN-only
+     * discovery/token acquisition and are not used in remote mode. Set/cleared by the service.
+     */
+    @Volatile
+    var rpcTransport: MaRpcTransport? = null
     fun fetchInfo(baseUrl: String): MusicAssistantServerInfo? {
         val request =
             Request.Builder()
@@ -89,6 +107,9 @@ internal class MusicAssistantGroupClient(
         command: String,
         args: JSONObject? = null,
     ): String {
+        // WebRTC remote: tunnel the same command over the ma-api data channel. baseUrl/token
+        // are unused here (auth is connection-level on the channel).
+        rpcTransport?.let { return it.execute(command, args) }
         val payload = JSONObject()
             .put("message_id", java.util.UUID.randomUUID().toString())
             .put("command", command)

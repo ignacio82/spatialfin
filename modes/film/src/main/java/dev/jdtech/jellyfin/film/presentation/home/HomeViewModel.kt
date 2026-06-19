@@ -26,10 +26,13 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,7 +113,27 @@ constructor(
         observeRealtimeEvents()
         observeSessionChanges()
         observePluginSettingsChanges()
+        observeMusicAssistantRemote()
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
+    }
+
+    /**
+     * When off-LAN Music Assistant control becomes reachable over WebRTC (a few seconds after
+     * launch on cellular), the home MA rows that came up empty against the unreachable LAN
+     * server can finally be fetched — reload just those rows.
+     */
+    private fun observeMusicAssistantRemote() {
+        viewModelScope.launch {
+            SendspinReceiverSession.state
+                .map { it.musicAssistantRemoteReady }
+                .distinctUntilChanged()
+                .collect { ready ->
+                    if (ready && hasLoadedData) {
+                        runCatching { loadMusicAssistantItems() }
+                            .onFailure { Timber.w(it, "MA home rows reload on remote-ready failed") }
+                    }
+                }
+        }
     }
 
     private fun observePluginSettingsChanges() {
@@ -175,6 +198,14 @@ constructor(
                         loadOfflineLibrarySections()
                         _state.emit(_state.value.copy(isLoading = false))
                         loadNetworkShareSections()
+                        // Music Assistant is independent of Jellyfin connectivity: when the
+                        // Jellyfin server is unreachable but MA is reachable (LAN, or off-LAN
+                        // over the WebRTC ma-api channel), still populate the MA home rows.
+                        try {
+                            loadMusicAssistantItems()
+                        } catch (e: Exception) {
+                            Timber.w(e, "loadMusicAssistantItems failed in offline mode")
+                        }
                         cacheCurrentHome(serverId)
                     } else {
                         loadSuggestions()

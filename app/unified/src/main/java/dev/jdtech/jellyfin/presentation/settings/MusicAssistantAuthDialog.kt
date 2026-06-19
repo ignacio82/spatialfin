@@ -28,6 +28,7 @@ import dev.jdtech.jellyfin.api.JellyfinApi
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinMusicAssistantAuthState
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
+import dev.jdtech.jellyfin.sendspin.receiver.remote.RemoteId
 
 /**
  * Self-contained Music Assistant credential fields (server URL + username/password
@@ -48,6 +49,7 @@ fun MusicAssistantAuthFields(
         JellyfinApi.getInstance(context.applicationContext).userId?.toString()
 
     var serverUrl by remember(state.musicAssistantServerUrl) { mutableStateOf(state.musicAssistantServerUrl.orEmpty()) }
+    var remoteId by remember(state.musicAssistantRemoteId) { mutableStateOf(state.musicAssistantRemoteId.orEmpty()) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
@@ -87,6 +89,38 @@ fun MusicAssistantAuthFields(
                 enabled = !loading && serverUrl.isNotBlank(),
             ) {
                 Text("Use server")
+            }
+        }
+        HorizontalDivider()
+        Text(
+            text = "Remote access (away from home)",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = "Enable Remote Access in Music Assistant → Settings → Remote Access, then paste " +
+                "the Remote ID here to connect over the internet via WebRTC.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = remoteId,
+            onValueChange = { remoteId = it },
+            singleLine = true,
+            label = { Text("Remote ID") },
+            placeholder = { Text("PGSVX-KGZJC-FA6MO-H4UPB-H5Q9H-Y") },
+            isError = remoteId.isNotBlank() && !RemoteId.isValid(remoteId),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            TextButton(
+                onClick = {
+                    SendspinReceiverService.setMusicAssistantRemoteId(
+                        context.applicationContext, remoteId, jellyfinUserId(),
+                    )
+                },
+                enabled = !loading && RemoteId.isValid(remoteId),
+            ) {
+                Text("Save Remote ID")
             }
         }
         HorizontalDivider()

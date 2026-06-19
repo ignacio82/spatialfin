@@ -28,5 +28,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.org.json)
     implementation(libs.sendspin.jvm)
+    // Google libwebrtc prebuilt (org.webrtc.*) for off-LAN Music Assistant remote
+    // access: the SendSpin protocol is tunnelled over a WebRTC data channel via an
+    // in-process loopback relay (see receiver/remote/). 16 KB page-size aligned.
+    implementation(libs.stream.webrtc.android)
     implementation(libs.timber)
 }

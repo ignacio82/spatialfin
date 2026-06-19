@@ -73,6 +73,10 @@ data class SendspinReceiverUiState(
     val repeat: String? = null,
     val shuffle: Boolean? = null,
     val musicAssistantServerUrl: String? = null,
+    /** Music Assistant Remote ID for off-LAN WebRTC remote access (null = LAN-only). */
+    val musicAssistantRemoteId: String? = null,
+    /** True while the WebRTC ma-api channel is up — MA control/browse routes over it off-LAN. */
+    val musicAssistantRemoteReady: Boolean = false,
     /**
      * The Bearer token the receiver authenticated with. Exposed (in-memory only,
      * never persisted here) so the app-side MA WebSocket client can reuse it —

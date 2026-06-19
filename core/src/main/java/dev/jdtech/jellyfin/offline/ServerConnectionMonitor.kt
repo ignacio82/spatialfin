@@ -206,20 +206,29 @@ constructor(
             return
         }
 
-        val serverAddress = database.getServerCurrentAddress(serverId)
-        if (serverAddress == null || serverAddress.address.isBlank()) {
+        val addresses = database.getServerAddresses(serverId).filter { it.address.isNotBlank() }
+        if (addresses.isEmpty()) {
             updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
-        repairCurrentServerAddress(serverId, serverAddress)
 
         if (!hasActiveNetwork()) {
             updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
             return
         }
 
-        val accessible = probeServer(serverAddress.address)
-        updateAccessibility(accessible = accessible, manualOfflineMode = manualOffline)
+        // Probe the current address first, then any alternates (LAN / remote / Tailscale).
+        // Switch the current address to whichever responds, so reconnecting on a different
+        // network (Wi-Fi ⇄ Tailscale ⇄ cellular) recovers without manual reconfiguration.
+        // MainViewModel re-applies the (possibly switched) current address to the live API
+        // when serverAccessible flips back on.
+        val reachable = addresses.firstOrNull { probeServer(it.address) }
+        if (reachable != null) {
+            repairCurrentServerAddress(serverId, reachable)
+            updateAccessibility(accessible = true, manualOfflineMode = manualOffline)
+        } else {
+            updateAccessibility(accessible = false, manualOfflineMode = manualOffline)
+        }
     }
 
     private fun repairCurrentServerAddress(serverId: String, address: ServerAddress) {

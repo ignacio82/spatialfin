@@ -102,10 +102,19 @@ constructor(
 
     private fun observeOfflineState() {
         viewModelScope.launch {
+            var previousAccessible = connectionMonitor.state.value.serverAccessible
             connectionMonitor.state.collect { connectionState ->
                 _state.update {
                     it.copy(isOfflineMode = connectionState.effectiveOfflineMode)
                 }
+                // When the server becomes reachable again — possibly via a different address
+                // (after connecting to Wi-Fi or Tailscale) that the monitor just switched to —
+                // re-apply the current address + token to the live API and refresh session
+                // state, so content reloads against the working address without a manual tap.
+                if (!previousAccessible && connectionState.serverAccessible) {
+                    check()
+                }
+                previousAccessible = connectionState.serverAccessible
             }
         }
     }

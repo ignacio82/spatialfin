@@ -61,6 +61,7 @@ org-json = "20240303"
 quickjs-kt = "1.0.5"
 robolectric = "4.16.1"
 sendspin-jvm = "v0.2.3"
+stream-webrtc-android = "1.3.10"
 smbj = "0.14.0"
 tflite-gpu = "16.5.0"
 timber = "5.0.1"
@@ -156,6 +157,7 @@ quickjs-kt = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs-kt
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 sendspin-jvm = { module = "com.github.OnFreund:sendspin-jvm", version.ref = "sendspin-jvm" }
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+stream-webrtc-android = { module = "io.getstream:stream-webrtc-android", version.ref = "stream-webrtc-android" }
 tflite-gpu = { module = "com.google.android.gms:play-services-tflite-gpu", version.ref = "tflite-gpu" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }

@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -33,6 +35,8 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import dev.jdtech.jellyfin.sendspin.R
 import dev.jdtech.jellyfin.sendspin.discovery.SendspinReceiverAdvertiser
 import dev.jdtech.jellyfin.sendspin.receiver.audio.AndroidSendspinAudioPlayer
+import dev.jdtech.jellyfin.sendspin.receiver.remote.MaWebRtcConnection
+import dev.jdtech.jellyfin.sendspin.receiver.remote.RemoteId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,6 +74,22 @@ class SendspinReceiverService : Service() {
     private var watchdogJob: Job? = null
     private var musicAssistantClient: MusicAssistantGroupClient? = null
     private var musicAssistantRefreshJob: Job? = null
+
+    /**
+     * Off-LAN remote access: when a Music Assistant Remote ID is configured and no LAN
+     * dial succeeds, the SendSpin protocol is tunnelled over a WebRTC data channel. The
+     * connection drives the stock [SendSpinClient] through a loopback relay — see
+     * [ensureWebRtcRemote] and the `remote/` package. Null when running LAN-direct.
+     */
+    @Volatile private var webRtcConnection: MaWebRtcConnection? = null
+    @Volatile private var webRtcRemoteId: String? = null
+
+    /**
+     * When the WebRTC `ma-api` channel is up, this routes MA control JSON-RPC (player list,
+     * group membership, play_media) over it instead of REST — making in-app MA control work
+     * off-LAN. Applied to [musicAssistantClient] via [applyMaApiTransport].
+     */
+    @Volatile private var maApiTransport: MaRpcTransport? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var displayName: String = "SpatialFin"
     private var receiverClientId: String = ""
@@ -139,6 +159,7 @@ class SendspinReceiverService : Service() {
             intent?.action == ACTION_MUSIC_ASSISTANT_LOGIN ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SAVE_TOKEN ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SET_SERVER_URL ||
+            intent?.action == ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SET_MEMBER ||
             intent?.action == ACTION_MUSIC_ASSISTANT_PLAY_MEDIA ||
             intent?.action == ACTION_MUSIC_ASSISTANT_SET_USER
@@ -197,6 +218,11 @@ class SendspinReceiverService : Service() {
         // pings every 5 s for exactly this reason.
         val http = OkHttpClient.Builder()
             .pingInterval(java.time.Duration.ofSeconds(WS_PING_INTERVAL_SECONDS))
+            // Short connect timeout so an off-LAN dial to a stale URL fails fast and the
+            // topology loop can fall back to the WebRTC remote tunnel within seconds rather
+            // than hanging on the OkHttp default (10 s) per attempt. Loopback + MA REST use
+            // their own clients/timeouts, so this only bounds the LAN /sendspin dial.
+            .connectTimeout(java.time.Duration.ofSeconds(WS_DIAL_CONNECT_TIMEOUT_SECONDS))
             .build()
         // Dedicated client for MA REST: `player_queues/play_media` blocks until
         // the queue is loaded AND the wrapping universal-player has dispatched
@@ -461,17 +487,31 @@ class SendspinReceiverService : Service() {
                     disconnectedTicks = 0
                 } else if (st != ClientState.CONNECTING && st != ClientState.HANDSHAKING) {
                     val dialUrl = currentOutboundDialUrl()
-                    if (dialUrl != null) {
-                        runCatching { newClient.connect(dialUrl) }
-                            .onFailure {
-                                Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", dialUrl)
-                            }
-                        disconnectedTicks++
-                        if (disconnectedTicks >= OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK) {
-                            ensureAdvertising("outbound dial keeps failing")
-                        }
+                    val remoteId = currentMusicAssistantRemoteId()
+                    val onLan = isOnLocalNetwork()
+                    // Network-aware topology selection (the LAN /sendspin outbound dial can't
+                    // be used as a reachability probe — MA 2.9+ rejects it with `4001 first
+                    // message must be auth`, so it "fails" even at home):
+                    //   • Off Wi-Fi/Ethernet (cellular only) + a Remote ID  → WebRTC tunnel.
+                    //   • On Wi-Fi/Ethernet → LAN paths (outbound dial, then mDNS advertise so
+                    //     MA connects in), exactly as before — never relay audio when home.
+                    val useWebRtc = remoteId != null && !onLan
+                    if (useWebRtc) {
+                        ensureWebRtcRemote(remoteId)
                     } else {
-                        ensureAdvertising("no Music Assistant URL stored")
+                        stopWebRtcRemote("on local network")
+                        if (dialUrl != null) {
+                            runCatching { newClient.connect(dialUrl) }
+                                .onFailure {
+                                    Timber.tag(TAG).d(it, "Outbound SendSpin dial to %s failed", dialUrl)
+                                }
+                            disconnectedTicks++
+                            if (disconnectedTicks >= OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK) {
+                                ensureAdvertising("outbound dial keeps failing")
+                            }
+                        } else {
+                            ensureAdvertising("no Music Assistant URL stored")
+                        }
                     }
                 }
                 kotlinx.coroutines.delay(OUTBOUND_DIAL_CHECK_INTERVAL_MS)
@@ -490,6 +530,120 @@ class SendspinReceiverService : Service() {
      */
     private fun currentOutboundDialUrl(): String? =
         (storedMusicAssistantServerUrl(null) ?: anyStoredMusicAssistantUrl())?.toSendspinWsUrl()
+
+    /** The Music Assistant Remote ID to reach off-LAN, or null when none is configured. */
+    private fun currentMusicAssistantRemoteId(): RemoteId? =
+        RemoteId.parse(storedMusicAssistantRemoteId() ?: anyStoredMusicAssistantRemoteId())
+
+    /**
+     * Bring up (or keep) the WebRTC remote tunnel to [remoteId]. Idempotent: a no-op when a
+     * connection for the same Remote ID is already live. Once the `sendspin` data channel
+     * opens, the stock [SendSpinClient] is dialed at the loopback relay so the rest of the
+     * receiver pipeline is identical to a LAN connection. Called from the topology loop, so
+     * a dropped connection (onClosed clears the field) is retried on the next tick.
+     */
+    private fun ensureWebRtcRemote(remoteId: RemoteId) {
+        if (webRtcConnection != null && webRtcRemoteId == remoteId.rawId) return
+        stopWebRtcRemote("remote id changed")
+        val http = okHttpClient ?: return
+        webRtcRemoteId = remoteId.rawId
+        val conn = MaWebRtcConnection(
+            appContext = applicationContext,
+            httpClient = http,
+            remoteId = remoteId,
+            deviceName = displayName,
+            tokenProvider = { currentMusicAssistantToken() },
+            onSendspinReady = { loopbackUrl ->
+                val c = client
+                if (c == null) {
+                    Timber.tag(TAG).w("WebRTC sendspin ready but SendSpinClient is null; cannot dial loopback")
+                } else {
+                    Timber.tag(TAG).i("WebRTC sendspin ready; dialing SendSpinClient at %s", loopbackUrl)
+                    runCatching { c.connect(loopbackUrl) }
+                        .onFailure { Timber.tag(TAG).w(it, "SendSpin loopback dial failed") }
+                }
+            },
+            onMaApiTransport = { transport ->
+                maApiTransport = transport
+                applyMaApiTransport()
+                // Surface the remote players once control is reachable.
+                if (transport != null) refreshMusicAssistantPlayers(discoverServerUrl = false)
+            },
+            onClosed = { reason ->
+                Timber.tag(TAG).i("WebRTC remote closed (%s); topology loop will retry", reason)
+                webRtcConnection = null
+                webRtcRemoteId = null
+                maApiTransport = null
+                applyMaApiTransport()
+            },
+        )
+        webRtcConnection = conn
+        Timber.tag(TAG).i("Starting WebRTC remote to Music Assistant (remoteId=%s)", remoteId.rawId)
+        conn.start()
+    }
+
+    private fun stopWebRtcRemote(reason: String) {
+        val conn = webRtcConnection ?: return
+        webRtcConnection = null
+        webRtcRemoteId = null
+        maApiTransport = null
+        applyMaApiTransport()
+        runCatching { conn.close(reason) }
+    }
+
+    /** Point the MA control client at the WebRTC ma-api transport (or back to REST when null). */
+    private fun applyMaApiTransport() {
+        val transport = maApiTransport
+        if (transport != null) {
+            // Make sure a client exists to carry the transport (the WebRTC path can become
+            // ready before any MA intent has lazily built one).
+            ensureMusicAssistantClient().rpcTransport = transport
+            // Expose the transport to other modules (e.g. the :modes:film home rows) so their
+            // MA API calls also work off-LAN.
+            MusicAssistantRemoteBridge.remoteExecutor = { command, argsJson ->
+                transport.execute(command, argsJson?.let { org.json.JSONObject(it) })
+            }
+        } else {
+            musicAssistantClient?.rpcTransport = null
+            MusicAssistantRemoteBridge.remoteExecutor = null
+        }
+        SendspinReceiverSession.update { it.copy(musicAssistantRemoteReady = transport != null) }
+    }
+
+    /** True when MA control is reachable only over the WebRTC ma-api channel (no LAN URL). */
+    private fun maRemoteControlActive(): Boolean = maApiTransport != null
+
+    /**
+     * True when the device is on Wi-Fi/Ethernet (LAN paths viable), false on cellular-only or
+     * no network. Used to decide LAN vs WebRTC remote: the LAN /sendspin dial can't probe
+     * reachability because MA 2.9+ rejects it (`4001`) even at home. Defaults to true (LAN)
+     * if connectivity can't be read, so we never spuriously relay when home.
+     */
+    private fun isOnLocalNetwork(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    /**
+     * Best available stored MA token for [currentJellyfinUserId] (any URL/server), used to
+     * authenticate the WebRTC ma-api channel. The token from a prior LAN login/paste is reused.
+     */
+    private fun currentMusicAssistantToken(): String? {
+        val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
+        val scope = currentJellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
+        fun pick(predicate: (String) -> Boolean): String? =
+            all.entries.asSequence()
+                .filter { (key, value) -> predicate(key) && value is String && (value as String).isNotBlank() }
+                .map { it.value as String }
+                .firstOrNull()
+        // Prefer the active user's token, then any stored token, then a legacy global one.
+        return pick { it.startsWith("u:$scope/") && it.contains("/$PREF_MA_TOKEN_URL_PREFIX") }
+            ?: pick { it.startsWith("u:$scope/") && it.contains("/$PREF_MA_TOKEN_SERVER_PREFIX") }
+            ?: pick { it.contains("/$PREF_MA_TOKEN_URL_PREFIX") || it.contains("/$PREF_MA_TOKEN_SERVER_PREFIX") }
+            ?: pick { it.startsWith(PREF_MA_TOKEN_URL_PREFIX) || it.startsWith(PREF_MA_TOKEN_SERVER_PREFIX) }
+    }
 
     /**
      * Guard against SendSpin clock discontinuities that map fresh audio chunks
@@ -548,6 +702,49 @@ class SendspinReceiverService : Service() {
             .mapNotNull { (_, value) -> (value as? String)?.takeIf { it.isNotBlank() } }
             .firstOrNull()
             ?.let { normalizeMusicAssistantUrl(it) }
+    }
+
+    /** Current user's stored Remote ID (scoped, falling back to a legacy global key). */
+    private fun storedMusicAssistantRemoteId(): String? {
+        val prefs = musicAssistantPrefs()
+        prefs.getString(scopedKey(PREF_MA_REMOTE_ID), null)?.takeIf { it.isNotBlank() }?.let { return it }
+        return prefs.getString(PREF_MA_REMOTE_ID, null)?.takeIf { it.isNotBlank() } // legacy/global
+    }
+
+    /** Any user's stored Remote ID — the service often bootstraps before the user id lands. */
+    private fun anyStoredMusicAssistantRemoteId(): String? {
+        val all = runCatching { musicAssistantPrefs().all }.getOrNull() ?: return null
+        return all.entries.asSequence()
+            .filter { (key, _) ->
+                key == PREF_MA_REMOTE_ID ||
+                    (key.startsWith("u:") && key.endsWith("/$PREF_MA_REMOTE_ID"))
+            }
+            .mapNotNull { (_, value) -> (value as? String)?.takeIf { it.isNotBlank() } }
+            .firstOrNull()
+    }
+
+    private fun storeMusicAssistantRemoteId(remoteId: String) {
+        musicAssistantPrefs().edit()
+            .putString(scopedKey(PREF_MA_REMOTE_ID), remoteId)
+            .apply()
+    }
+
+    private fun setMusicAssistantRemoteId(rawRemoteId: String) {
+        val parsed = RemoteId.parse(rawRemoteId)
+        if (parsed == null) {
+            Timber.tag(TAG).w("Ignoring invalid Music Assistant Remote ID")
+            SendspinReceiverSession.update {
+                it.copy(musicAssistantError = "Invalid Remote ID — expected 26 characters from Music Assistant → Remote Access.")
+            }
+            return
+        }
+        storeMusicAssistantRemoteId(parsed.rawId)
+        SendspinReceiverSession.update {
+            it.copy(musicAssistantRemoteId = parsed.rawId, musicAssistantError = null)
+        }
+        // A new Remote ID may change the reachable transport — drop any stale tunnel so the
+        // topology loop re-evaluates (LAN vs WebRTC) on its next tick.
+        stopWebRtcRemote("remote id updated")
     }
 
     /**
@@ -622,6 +819,7 @@ class SendspinReceiverService : Service() {
      * scope cancellation after it.
      */
     private fun teardownClient(reason: String): Job {
+        stopWebRtcRemote("teardown: $reason")
         runCatching { client?.disconnect(reason) }
         runCatching { serverHost?.stopServer() }
         audioPlayer?.close()
@@ -697,6 +895,12 @@ class SendspinReceiverService : Service() {
                 setMusicAssistantServerUrl(serverUrl)
                 return
             }
+            ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID -> {
+                setMusicAssistantRemoteId(
+                    intent.getStringExtra(EXTRA_MUSIC_ASSISTANT_REMOTE_ID).orEmpty(),
+                )
+                return
+            }
             ACTION_MUSIC_ASSISTANT_SET_MEMBER -> {
                 val playerId = intent.getStringExtra(EXTRA_MUSIC_ASSISTANT_PLAYER_ID).orEmpty()
                 val add = intent.getBooleanExtra(EXTRA_MUSIC_ASSISTANT_MEMBER_ADD, false)
@@ -712,6 +916,12 @@ class SendspinReceiverService : Service() {
                 // currentJellyfinUserId was already updated in onStartCommand;
                 // reload the session for the new user's stored URL/token so the
                 // controls UI reflects the switched user (or shows unconfigured).
+                SendspinReceiverSession.update {
+                    it.copy(musicAssistantRemoteId = storedMusicAssistantRemoteId())
+                }
+                // The reachable transport may differ for the new user; drop any tunnel
+                // scoped to the previous user so the topology loop re-resolves.
+                stopWebRtcRemote("user switched")
                 refreshMusicAssistantPlayers(discoverServerUrl = true)
                 return
             }
@@ -751,6 +961,17 @@ class SendspinReceiverService : Service() {
                 }
                 val currentState = SendspinReceiverSession.state.value
                 val serverId = currentState.serverId
+                if (maRemoteControlActive()) {
+                    // Off-LAN: control routes over the ma-api channel; REST URL/token and the
+                    // HTTP discovery step don't apply (and would just time out off-LAN).
+                    runCatching {
+                        val players = requireNotNull(musicAssistantClient).fetchPlayers("", "")
+                        updateMusicAssistantPlayers(currentState.musicAssistantServerUrl, null, players)
+                    }.onFailure { error ->
+                        handleMusicAssistantError(currentState.musicAssistantServerUrl, error)
+                    }
+                    return@launch
+                }
                 val serverUrl =
                     when {
                         discoverServerUrl -> discoverMusicAssistantServerUrl(serverId)
@@ -869,14 +1090,18 @@ class SendspinReceiverService : Service() {
     private fun setMusicAssistantGroupMember(playerId: String, add: Boolean) {
         if (playerId.isBlank()) return
         val state = SendspinReceiverSession.state.value
+        val remote = maRemoteControlActive()
         val serverUrl = state.musicAssistantServerUrl
         val targetPlayer = state.musicAssistantGroupTargetPlayerId
         val token = musicAssistantToken(state.serverId, serverUrl)
-        if (serverUrl.isNullOrBlank() || token.isNullOrBlank() || targetPlayer.isNullOrBlank()) {
+        // Over ma-api the URL/token aren't needed (the transport ignores them); on LAN both are.
+        val ready = !targetPlayer.isNullOrBlank() &&
+            (remote || (!serverUrl.isNullOrBlank() && !token.isNullOrBlank()))
+        if (!ready) {
             SendspinReceiverSession.update {
                 it.copy(
                     musicAssistantAuthState =
-                        if (token.isNullOrBlank()) {
+                        if (!remote && token.isNullOrBlank()) {
                             SendspinMusicAssistantAuthState.MISSING
                         } else {
                             it.musicAssistantAuthState
@@ -886,6 +1111,8 @@ class SendspinReceiverService : Service() {
             }
             return
         }
+        val callUrl = serverUrl.orEmpty()
+        val callToken = token.orEmpty()
         scope.launch {
             SendspinReceiverSession.update {
                 it.copy(
@@ -895,14 +1122,14 @@ class SendspinReceiverService : Service() {
             }
             runCatching {
                 requireNotNull(musicAssistantClient).setMembers(
-                    baseUrl = serverUrl,
-                    token = token,
+                    baseUrl = callUrl,
+                    token = callToken,
                     targetPlayer = targetPlayer,
                     playerIdsToAdd = if (add) listOf(playerId) else emptyList(),
                     playerIdsToRemove = if (add) emptyList() else listOf(playerId),
                 )
-                val players = requireNotNull(musicAssistantClient).fetchPlayers(serverUrl, token)
-                updateMusicAssistantPlayers(serverUrl, token, players)
+                val players = requireNotNull(musicAssistantClient).fetchPlayers(callUrl, callToken)
+                updateMusicAssistantPlayers(if (remote) null else serverUrl, if (remote) null else token, players)
             }.onFailure { error ->
                 handleMusicAssistantError(serverUrl, error)
             }
@@ -918,16 +1145,21 @@ class SendspinReceiverService : Service() {
             try {
                 val state = SendspinReceiverSession.state.value
                 val serverId = state.serverId
-                val serverUrl = state.musicAssistantServerUrl ?: discoverMusicAssistantServerUrl(serverId)
-                val token = musicAssistantToken(serverId, serverUrl)
-                if (serverUrl.isNullOrBlank() || token.isNullOrBlank()) {
+                val remote = maRemoteControlActive()
+                val serverUrl =
+                    if (remote) state.musicAssistantServerUrl
+                    else state.musicAssistantServerUrl ?: discoverMusicAssistantServerUrl(serverId)
+                val token = if (remote) currentMusicAssistantToken() else musicAssistantToken(serverId, serverUrl)
+                if (!remote && (serverUrl.isNullOrBlank() || token.isNullOrBlank())) {
                     Timber.tag(TAG).w("MA play_media: no server URL or token (serverId=%s)", serverId)
                     showToast("Music Assistant: connect a server in settings first")
                     return@launch
                 }
+                val callUrl = serverUrl.orEmpty()
+                val callToken = token.orEmpty()
 
                 val client = requireNotNull(musicAssistantClient)
-                val target = resolvePlayMediaTarget(client, serverUrl, token)
+                val target = resolvePlayMediaTarget(client, callUrl, callToken)
                 if (target == null) {
                     Timber.tag(TAG).w("MA play_media: no usable target")
                     // Tell the user *why* we refused to play. The most common
@@ -941,8 +1173,8 @@ class SendspinReceiverService : Service() {
                 }
                 SendspinReceiverSession.update {
                     it.copy(
-                        musicAssistantServerUrl = serverUrl,
-                        musicAssistantToken = token,
+                        musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
+                        musicAssistantToken = token ?: it.musicAssistantToken,
                         musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
                         musicAssistantError = null,
                         musicAssistantQueuePlayerId = target.id,
@@ -958,8 +1190,8 @@ class SendspinReceiverService : Service() {
                 )
 
                 client.playMedia(
-                    baseUrl = serverUrl,
-                    token = token,
+                    baseUrl = callUrl,
+                    token = callToken,
                     queueId = target.id,
                     mediaUri = mediaUri,
                 )
@@ -1158,11 +1390,14 @@ class SendspinReceiverService : Service() {
     }
 
     private fun updateMusicAssistantPlayers(
-        serverUrl: String,
-        token: String,
+        serverUrl: String?,
+        token: String?,
         players: List<MusicAssistantPlayerState>,
     ) {
-        storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
+        // Only a real LAN URL is persisted as a dial target — never a remote-mode null.
+        if (!serverUrl.isNullOrBlank()) {
+            storeMusicAssistantServerUrl(SendspinReceiverSession.state.value.serverId, serverUrl)
+        }
         val currentPlayer = thisDeviceMusicAssistantPlayer(players)
         // Prefer the MA queue target that represents this device. On some MA
         // versions the name match is already the Universal-Player; on others
@@ -1227,8 +1462,8 @@ class SendspinReceiverService : Service() {
                 }
         SendspinReceiverSession.update {
             it.copy(
-                musicAssistantServerUrl = serverUrl,
-                musicAssistantToken = token,
+                musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
+                musicAssistantToken = token ?: it.musicAssistantToken,
                 musicAssistantAuthState = SendspinMusicAssistantAuthState.AUTHENTICATED,
                 musicAssistantLoading = false,
                 musicAssistantError = null,
@@ -1241,7 +1476,7 @@ class SendspinReceiverService : Service() {
         }
     }
 
-    private fun handleMusicAssistantError(serverUrl: String, error: Throwable) {
+    private fun handleMusicAssistantError(serverUrl: String?, error: Throwable) {
         val authState =
             if (error is MusicAssistantApiException && error.statusCode == 401) {
                 SendspinMusicAssistantAuthState.INVALID
@@ -1250,7 +1485,7 @@ class SendspinReceiverService : Service() {
             }
         SendspinReceiverSession.update {
             it.copy(
-                musicAssistantServerUrl = serverUrl,
+                musicAssistantServerUrl = serverUrl ?: it.musicAssistantServerUrl,
                 musicAssistantLoading = false,
                 musicAssistantAuthState = authState,
                 musicAssistantError = error.message ?: "Music Assistant request failed",
@@ -1366,7 +1601,11 @@ class SendspinReceiverService : Service() {
             .writeTimeout(java.time.Duration.ofSeconds(60))
             .callTimeout(java.time.Duration.ofSeconds(90))
             .build()
-        return MusicAssistantGroupClient(maHttp).also { musicAssistantClient = it }
+        return MusicAssistantGroupClient(maHttp)
+            .also {
+                it.rpcTransport = maApiTransport // keep remote control routing across rebuilds
+                musicAssistantClient = it
+            }
     }
 
     private fun updateControllerState(state: ControllerState) {
@@ -1774,6 +2013,7 @@ class SendspinReceiverService : Service() {
         const val EXTRA_CONTROLLER_VOLUME: String = "sendspin.controller.volume"
         const val EXTRA_CONTROLLER_MUTED: String = "sendspin.controller.muted"
         const val EXTRA_MUSIC_ASSISTANT_SERVER_URL: String = "sendspin.musicAssistant.serverUrl"
+        const val EXTRA_MUSIC_ASSISTANT_REMOTE_ID: String = "sendspin.musicAssistant.remoteId"
         const val EXTRA_MUSIC_ASSISTANT_USERNAME: String = "sendspin.musicAssistant.username"
         const val EXTRA_MUSIC_ASSISTANT_PASSWORD: String = "sendspin.musicAssistant.password"
         const val EXTRA_MUSIC_ASSISTANT_TOKEN: String = "sendspin.musicAssistant.token"
@@ -1827,12 +2067,16 @@ class SendspinReceiverService : Service() {
         /** Failed dials before the legacy mDNS advertise fallback is enabled. */
         private const val OUTBOUND_DIALS_BEFORE_ADVERTISE_FALLBACK = 6
 
+
         /**
          * WebSocket ping cadence for the outbound dial. OkHttp fails the socket
          * when a pong is missed, which is the ONLY client-side way to notice a
          * dead path (writes merely queue) — matches the official MA app's 5 s.
          */
         private const val WS_PING_INTERVAL_SECONDS = 5L
+
+        /** Connect timeout for the LAN /sendspin dial so off-LAN failures fall back fast. */
+        private const val WS_DIAL_CONNECT_TIMEOUT_SECONDS = 4L
 
         // Stall watchdog: with PLAYING state and zero rendered PCM, mark the UI
         // stalled after 2 ticks (4 s) and rebuild the client stack after 5
@@ -1872,6 +2116,8 @@ class SendspinReceiverService : Service() {
             "dev.jdtech.jellyfin.sendspin.action.MUSIC_ASSISTANT_SAVE_TOKEN"
         private const val ACTION_MUSIC_ASSISTANT_SET_SERVER_URL =
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_SERVER_URL"
+        private const val ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID =
+            "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_REMOTE_ID"
         private const val ACTION_MUSIC_ASSISTANT_SET_MEMBER =
             "dev.spatialfin.sendspin.action.MUSIC_ASSISTANT_SET_MEMBER"
         private const val ACTION_MUSIC_ASSISTANT_PLAY_MEDIA =
@@ -1884,6 +2130,7 @@ class SendspinReceiverService : Service() {
         private const val PREF_MA_TOKEN_SERVER_PREFIX = "token_server:"
         private const val PREF_MA_TOKEN_URL_PREFIX = "token_url:"
         private const val PREF_MA_URL_SERVER_PREFIX = "url_server:"
+        private const val PREF_MA_REMOTE_ID = "remote_id"
 
         /**
          * Per-Jellyfin-user key namespace for the MA SharedPreferences. Each
@@ -2001,6 +2248,24 @@ class SendspinReceiverService : Service() {
             val intent = Intent(context, SendspinReceiverService::class.java).apply {
                 action = ACTION_MUSIC_ASSISTANT_SET_SERVER_URL
                 putExtra(EXTRA_MUSIC_ASSISTANT_SERVER_URL, serverUrl)
+                putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
+            }
+            context.startService(intent)
+        }
+
+        /**
+         * Store the Music Assistant Remote ID for off-LAN remote access (from
+         * Music Assistant → Settings → Remote Access). Accepts the hyphenated display
+         * form; the service validates and normalises it. Scoped to [jellyfinUserId].
+         */
+        fun setMusicAssistantRemoteId(
+            context: Context,
+            remoteId: String,
+            jellyfinUserId: String?,
+        ) {
+            val intent = Intent(context, SendspinReceiverService::class.java).apply {
+                action = ACTION_MUSIC_ASSISTANT_SET_REMOTE_ID
+                putExtra(EXTRA_MUSIC_ASSISTANT_REMOTE_ID, remoteId)
                 putExtra(EXTRA_JELLYFIN_USER_ID, jellyfinUserId)
             }
             context.startService(intent)

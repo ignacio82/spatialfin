@@ -111,6 +111,20 @@ interface ServerDatabaseDao {
     )
     fun getServerCurrentAddress(serverId: String): ServerAddress?
 
+    /** All known addresses for a server, the current one first. Used to probe every
+     *  address (LAN, remote, Tailscale, …) and auto-switch to whichever is reachable. */
+    @Query(
+        """
+        SELECT * FROM serverAddresses
+        WHERE serverId = :serverId
+        ORDER BY CASE
+            WHEN id = (SELECT currentServerAddressId FROM servers WHERE id = :serverId) THEN 0
+            ELSE 1
+        END
+        """
+    )
+    fun getServerAddresses(serverId: String): List<ServerAddress>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertMovie(movie: SpatialFinMovieDto)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertMovie(movie: SpatialFinMovieDto)

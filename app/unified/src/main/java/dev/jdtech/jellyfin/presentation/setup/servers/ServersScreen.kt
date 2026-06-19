@@ -109,7 +109,7 @@ private fun ServersScreenLayout(
         ) {
             Spacer(modifier = Modifier.weight(0.2f))
             Image(
-                painter = painterResource(id = CoreR.drawable.ic_banner),
+                painter = painterResource(id = dev.spatialfin.R.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )

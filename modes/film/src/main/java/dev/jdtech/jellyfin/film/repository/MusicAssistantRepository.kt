@@ -53,6 +53,19 @@ class MusicAssistantRepository @Inject constructor(
      * POST /api  { "command": "music/tracks/library_items", "args": { "limit": 25 } }
      */
     private suspend fun executeCommand(command: String, args: JSONObject? = null): JSONArray? = withContext(Dispatchers.IO) {
+        // Off-LAN: when the SendSpin receiver has a WebRTC ma-api channel up, tunnel the same
+        // command over it so the home rows populate on cellular too (the LAN /api below is
+        // unreachable). Falls back to LAN REST when no remote transport is active.
+        dev.jdtech.jellyfin.sendspin.receiver.MusicAssistantRemoteBridge.remoteExecutor?.let { remote ->
+            return@withContext try {
+                val body = remote(command, args?.toString()) ?: return@withContext null
+                parseResultArray(body)
+            } catch (e: Exception) {
+                Timber.w(e, "MA remote command %s failed", command)
+                null
+            }
+        }
+
         val (serverUrl, token) = getCredentials() ?: return@withContext null
         val payload = JSONObject().put("command", command)
         if (args != null) payload.put("args", args)
@@ -75,14 +88,7 @@ class MusicAssistantRepository @Inject constructor(
             val responseCode = connection.responseCode
             if (responseCode in 200..299) {
                 val body = connection.inputStream.bufferedReader().use { it.readText() }
-                // Response can be a raw JSON array or a JSON object with "result" or "data" array
-                val trimmed = body.trim()
-                if (trimmed.startsWith("[")) {
-                    JSONArray(trimmed)
-                } else {
-                    val obj = JSONObject(trimmed)
-                    obj.optJSONArray("result") ?: obj.optJSONArray("data") ?: JSONArray()
-                }
+                parseResultArray(body)
             } else {
                 val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
                 Timber.w("MA command %s failed (%d): %s", command, responseCode, errorBody)
@@ -91,6 +97,17 @@ class MusicAssistantRepository @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "Error executing MA command %s", command)
             null
+        }
+    }
+
+    /** A response may be a raw JSON array or an object wrapping the array in `result`/`data`. */
+    private fun parseResultArray(body: String): JSONArray {
+        val trimmed = body.trim()
+        return if (trimmed.startsWith("[")) {
+            JSONArray(trimmed)
+        } else {
+            val obj = JSONObject(trimmed)
+            obj.optJSONArray("result") ?: obj.optJSONArray("data") ?: JSONArray()
         }
     }
 

@@ -70,7 +70,7 @@ fun AboutScreen(navigateBack: () -> Unit) {
                         ) {
                             Spacer(Modifier.height(MaterialTheme.spacings.medium))
                             Image(
-                                painter = painterResource(CoreR.drawable.ic_banner),
+                                painter = painterResource(dev.spatialfin.R.drawable.ic_beam_launcher),
                                 contentDescription = null,
                                 modifier = Modifier.width(320.dp),
                             )
