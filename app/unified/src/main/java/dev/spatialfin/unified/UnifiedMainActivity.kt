@@ -199,6 +199,11 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         dev.spatialfin.unified.MusicAssistantTest.runTest(this)
         super.onCreate(savedInstanceState)
+
+        // External display: the browse shell stays on the phone. When the user plays a video and
+        // an external display (e.g. Rokid glasses over USB-C) is connected, BeamPlayerActivity
+        // projects the player onto that display via the Android Presentation API.
+
         enableEdgeToEdge()
 
         // Beam Pro (PHONE in [DeviceClass]) drives a pico projector — the user

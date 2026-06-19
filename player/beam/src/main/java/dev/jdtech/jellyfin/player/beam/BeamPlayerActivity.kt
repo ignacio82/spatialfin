@@ -19,6 +19,8 @@ import androidx.activity.compose.setContent
 import org.jellyfin.sdk.model.api.RemoteSubtitleInfo
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -76,6 +78,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -859,6 +862,23 @@ class BeamPlayerActivity : AppCompatActivity() {
     }
 }
 
+/**
+ * Pick a connected external display to project the player onto (e.g. Rokid glasses over USB-C
+ * DisplayPort). Prefers displays the platform flags as presentation-capable, then falls back to
+ * any valid non-default display so a mirrored sink without FLAG_PRESENTATION still works.
+ */
+private fun pickExternalPresentationDisplay(
+    displayManager: android.hardware.display.DisplayManager,
+): android.view.Display? {
+    displayManager
+        .getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
+        .firstOrNull { it.isValid && it.displayId != android.view.Display.DEFAULT_DISPLAY }
+        ?.let { return it }
+    return displayManager.displays.firstOrNull {
+        it.isValid && it.displayId != android.view.Display.DEFAULT_DISPLAY
+    }
+}
+
 @Composable
 @TraceRecomposition(tag = "beam-player", threshold = 3)
 private fun BeamPlayerScreen(
@@ -1158,8 +1178,44 @@ private fun BeamPlayerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
     ) {
-        val renderWidth = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1280)
-        val renderHeight = with(density) { maxHeight.roundToPx() }.coerceAtLeast(720)
+        // Detect a connected external display (e.g. Rokid glasses over USB-C DisplayPort).
+        // When present, the player is projected there via the Presentation API below and the
+        // phone keeps only the controls; otherwise everything stays on the phone surface.
+        val displayManager =
+            remember { context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager }
+        var externalDisplay by remember { mutableStateOf(pickExternalPresentationDisplay(displayManager)) }
+        DisposableEffect(displayManager) {
+            val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+                override fun onDisplayAdded(displayId: Int) {
+                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                }
+                override fun onDisplayRemoved(displayId: Int) {
+                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                }
+                override fun onDisplayChanged(displayId: Int) {
+                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                }
+            }
+            displayManager.registerDisplayListener(
+                listener,
+                android.os.Handler(Looper.getMainLooper()),
+            )
+            onDispose { displayManager.unregisterDisplayListener(listener) }
+        }
+
+        // Render libass at the resolution of wherever the video actually lands: the external
+        // display's native size when projecting, otherwise the phone surface size. Without this
+        // the ASS overlay would be laid out for the phone's aspect ratio and misalign on glasses.
+        val targetDisplay = externalDisplay
+        val renderWidth: Int
+        val renderHeight: Int
+        if (targetDisplay != null) {
+            renderWidth = targetDisplay.mode.physicalWidth.coerceAtLeast(1280)
+            renderHeight = targetDisplay.mode.physicalHeight.coerceAtLeast(720)
+        } else {
+            renderWidth = with(density) { maxWidth.roundToPx() }.coerceAtLeast(1280)
+            renderHeight = with(density) { maxHeight.roundToPx() }.coerceAtLeast(720)
+        }
         LaunchedEffect(libassRenderer, renderWidth, renderHeight, player.videoSize.width, player.videoSize.height) {
             val renderer = libassRenderer ?: return@LaunchedEffect
             renderer.resize(
@@ -1188,46 +1244,127 @@ private fun BeamPlayerScreen(
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
-            val context = LocalContext.current
-            val playerView =
-                remember {
-                    PlayerView(context).apply {
-                        this.player = player
-                        useController = false
-                        setBackgroundColor(android.graphics.Color.BLACK)
+            // Project the player onto the external display via the Presentation API. Keyed only
+            // on the display, the player, and the host Activity so the Presentation window is
+            // built once per connection. The libass subtitle bitmap changes ~60x/sec; reading
+            // useLibass / libassBitmap *inside* the Presentation's own composition lets just the
+            // subtitle Image recompose without ever tearing the window down. The ViewTree owners
+            // are required or ComposeView.setContent throws on a non-Activity window.
+            val lifecycleOwner = context as? AppCompatActivity
+            DisposableEffect(externalDisplay, player, lifecycleOwner) {
+                val display = externalDisplay
+                if (display == null || lifecycleOwner == null) {
+                    onDispose {}
+                } else {
+                    val presentation = android.app.Presentation(context, display)
+                    val composeView = ComposeView(presentation.context).apply {
+                        setViewTreeLifecycleOwner(lifecycleOwner)
+                        setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+                        setContent {
+                            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                                AndroidView(
+                                    factory = { factoryContext ->
+                                        PlayerView(factoryContext).apply {
+                                            useController = false
+                                            setBackgroundColor(android.graphics.Color.BLACK)
+                                            this.player = player
+                                            subtitleView?.setStyle(
+                                                CaptionStyleCompat(
+                                                    subtitleTextColor,
+                                                    subtitleBackgroundColor,
+                                                    android.graphics.Color.TRANSPARENT,
+                                                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                                                    android.graphics.Color.BLACK,
+                                                    null,
+                                                ),
+                                            )
+                                            subtitleView?.setFixedTextSize(
+                                                android.util.TypedValue.COMPLEX_UNIT_SP,
+                                                subtitleSizeSp,
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                                if (useLibass) {
+                                    libassBitmap?.let { bitmap ->
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = "Subtitles",
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-
-            DisposableEffect(player) {
-                playerView.player = player
-                playerView.subtitleView?.setStyle(
-                    CaptionStyleCompat(
-                        subtitleTextColor,
-                        subtitleBackgroundColor,
-                        android.graphics.Color.TRANSPARENT,
-                        CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                        android.graphics.Color.BLACK,
-                        null,
+                    presentation.setContentView(composeView)
+                    // Keep the external panel awake. A "connected displays" sink that hosts its
+                    // own task stack (e.g. Rokid glasses in Pixel desktop mode) dozes when nothing
+                    // actively targets it, which leaves the Presentation surface blank — this flag
+                    // holds it ON for the duration of playback.
+                    presentation.window?.addFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
                     )
-                )
-                playerView.subtitleView?.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
-                onDispose {
-                    playerView.player = null
+                    val shown = try {
+                        presentation.show()
+                        true
+                    } catch (e: Exception) {
+                        // The display can disappear between detection and show(); fall back to phone.
+                        Timber.w(e, "External display projection failed; keeping playback on phone")
+                        false
+                    }
+                    onDispose { if (shown) presentation.dismiss() }
                 }
             }
 
-            AndroidView(
-                factory = { playerView },
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (externalDisplay == null) {
+                val playerView =
+                    remember {
+                        PlayerView(context).apply {
+                            useController = false
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                        }
+                    }
 
-            if (useLibass) {
-                libassBitmap?.let { bitmap ->
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Subtitles",
-                        modifier = Modifier.fillMaxSize(),
+                DisposableEffect(player, subtitleTextColor, subtitleBackgroundColor, subtitleSizeSp) {
+                    playerView.player = player
+                    playerView.subtitleView?.setStyle(
+                        CaptionStyleCompat(
+                            subtitleTextColor,
+                            subtitleBackgroundColor,
+                            android.graphics.Color.TRANSPARENT,
+                            CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                            android.graphics.Color.BLACK,
+                            null,
+                        )
                     )
+                    playerView.subtitleView?.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subtitleSizeSp)
+                    onDispose {
+                        playerView.player = null
+                    }
+                }
+
+                AndroidView(
+                    factory = { playerView },
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                if (useLibass) {
+                    libassBitmap?.let { bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Subtitles",
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Playing on External Display", color = Color.White, style = MaterialTheme.typography.titleLarge)
                 }
             }
 
