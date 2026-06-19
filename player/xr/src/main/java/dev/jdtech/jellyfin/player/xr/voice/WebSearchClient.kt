@@ -76,11 +76,8 @@ internal class WebSearchClient(
         }
     }
 
-    private fun resolvedDirectSearxngUrl(): String? {
-        val raw = appPreferences.getValue(appPreferences.voiceAssistantSearxngUrl)?.trim().orEmpty()
-        if (raw.isBlank()) return null
-        return raw.toHttpUrlOrNull()?.toString()
-    }
+    private fun resolvedDirectSearxngUrl(): String? =
+        sanitizeSearxngUrl(appPreferences.getValue(appPreferences.voiceAssistantSearxngUrl))
 
     private fun buildDirectSearxngRequest(baseUrl: String, query: String): Request? {
         val httpUrl = baseUrl.toHttpUrlOrNull() ?: return null
@@ -140,5 +137,33 @@ internal class WebSearchClient(
     companion object {
         private const val SNIPPET_CHAR_CAP = 320
         private val WHITESPACE_REGEX = Regex("\\s+")
+
+        /**
+         * Validate and normalize a user-pasted SearXNG base URL. The assistant
+         * query (which can echo the user's library and chat context) is sent in
+         * the URL, so cleartext over the LAN is a real exfiltration / MITM
+         * surface. Policy: require `https`, with the sole exception of a
+         * loopback host (`127.0.0.1` / `::1` / `localhost`) where `http` is not
+         * remotely observable — that covers the supported companion-sidecar
+         * topology. Returns null for blank, unparseable, or non-conforming URLs
+         * (which degrades [search] to the companion path or a graceful no-op).
+         */
+        internal fun sanitizeSearxngUrl(raw: String?): String? {
+            val trimmed = raw?.trim().orEmpty()
+            if (trimmed.isBlank()) return null
+            val httpUrl = trimmed.toHttpUrlOrNull() ?: return null
+            val allowed = httpUrl.isHttps || isLoopbackHost(httpUrl.host)
+            if (!allowed) {
+                Timber.w("WebSearch: ignoring non-HTTPS SearXNG URL host=%s", httpUrl.host)
+                return null
+            }
+            return httpUrl.toString()
+        }
+
+        private fun isLoopbackHost(host: String): Boolean =
+            host.equals("localhost", ignoreCase = true) ||
+                host == "127.0.0.1" ||
+                host == "::1" ||
+                host == "[::1]"
     }
 }

@@ -16,6 +16,9 @@ local.properties
 
 # Log/OS Files
 *.log
+# Captured device logs are often named *.txt, not *.log
+/logcat*.txt
+/*-crash.log
 
 # Android Studio generated files and folders
 captures/
@@ -66,3 +69,11 @@ screenshots/
 
 # Personal planning docs (per-developer scratch, not shipped)
 MA_CLIENT_PLAN.md
+
+# Scratch / one-off debug artifacts at repo root (UI dumps, design bundles)
+/scratch/
+/*.tar.gz
+/*.zip
+/view.xml
+/code.html
+/spec.html

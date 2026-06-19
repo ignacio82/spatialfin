@@ -44,6 +44,9 @@ jobs:
           :settings:testDebugUnitTest \
           :setup:testDebugUnitTest
 
+    - name: Android Lint (gated on new issues via committed baseline)
+      run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:lintLibreDebug
+
     - name: Check Compose stability baselines
       run: |
         bash .github/scripts/run-gradle-with-retry.sh \

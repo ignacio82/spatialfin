@@ -141,6 +141,18 @@ android {
         sourceCompatibility = Versions.JAVA
         targetCompatibility = Versions.JAVA
     }
+
+    lint {
+        // Gate CI on *new* lint errors. Pre-existing issues are captured in the
+        // committed baseline so the gate lands without a cleanup prerequisite;
+        // burn the baseline down over time. Warnings stay non-fatal.
+        baseline = file("lint-baseline.xml")
+        abortOnError = true
+        warningsAsErrors = false
+        // CI runs lint on the debug variant; skip the redundant release pass
+        // (release is currently unminified anyway).
+        checkReleaseBuilds = false
+    }
 }
 
 composeCompiler {
