@@ -6,10 +6,13 @@ entries as they ship; do not let this file rot.
 **Status markers:** ✅ shipped (commit hash) · ⏭️ deferred · 🚫 dropped (with
 reason). Mark in the same commit that lands the change.
 
-**Last full audit:** 2026-05-17 (covers through commit `5b4feb6`; version
-2.7.2 / 103). Sprints 0–1 are fully shipped; the cast / split-A/V / AirPlay
-subsystem (PRs 1–6) and the auth-livelock + first-frame-audio fixes landed
-*after* the previous audit and surfaced a new P0/P1 tail — see **Sprint A**.
+**Last full audit:** 2026-06-18 (covers through commit `37ec550a`; version
+2.7.21 / 122). See **Sprint E** for the newly surfaced, source-verified tail
+and `docs/IMPROVEMENT_PROPOSAL_2026-06.md` for the full write-up (hygiene,
+test-coverage structure, forward-looking bets). Prior full audit: 2026-05-17
+(through `5b4feb6`, version 2.7.2 / 103) — Sprints 0–1 fully shipped; the cast /
+split-A/V / AirPlay subsystem (PRs 1–6) and the auth-livelock + first-frame-audio
+fixes surfaced the P0/P1 tail in **Sprint A**.
 
 ## Why this exists
 
@@ -311,6 +314,54 @@ tail.
   2026-05-25. Focused callback keep-rule retries did not resolve it (item 27).
 - **P2** No Compose stability reports / `stabilityCheck` CI gate
   (item 15).
+
+### Sprint E — surfaced during 2026-06-18 audit (re-verified against source)
+
+Found in the 2026-06-18 full audit (covers through commit `37ec550a`, version
+2.7.21 / 122). Each item below was opened against current source, not carried
+on trust. Companion write-up: `docs/IMPROVEMENT_PROPOSAL_2026-06.md`.
+
+- **P0** `core/.../di/DatabaseModule.kt:33` —
+  `fallbackToDestructiveMigration(dropAllTables = true)` is **still live**
+  (ServerDatabase version 18). This is the same risk as carried item Sprint D
+  #26, now localized: the builder lives in `:core`, not `:data` (an earlier
+  grep that searched only `:data` wrongly concluded it was gone). Any migration
+  gap silently drops `downloadtasks` + all offline userdata in production.
+  Fix: drop destructive fallback (or exclude the download tables) so a missing
+  migration fails loudly in CI/QA.
+- **P1** `player/xr/.../voice/WebSearchClient.kt:82` — `resolvedDirectSearxngUrl`
+  uses `toHttpUrlOrNull()` with **no scheme enforcement**, so a `http://`
+  SearXNG URL is accepted and assistant queries traverse the LAN in cleartext
+  (MITM-readable). Same as Sprint C #19 — confirmed still open. Fix: require
+  `https` (or loopback) + surface a "no auth configured" settings warning.
+- **P2** `player/local/.../domain/PlaylistManager.kt:468,674` —
+  `probeSubtitleSize` is fired via `async(Dispatchers.IO)` with **no
+  `withTimeout` and no concurrency bound**; a signs-and-songs subtitle pack on
+  a slow server still stalls `toPlayerItem` on the player-open path. Fix: wrap
+  in `withTimeoutOrNull` + bound concurrency. (Cross-season continue is now
+  partially handled via `getNextUp` at `:68`.)
+- **P2** `player/local/.../domain/PlaylistManager.kt:169,186,243,289,329` —
+  bare `catch (e: Exception)` → `return null` swallows conversion errors;
+  playlist navigation silently skips items with no surfaced reason. Fix: typed
+  errors / telemetry on the skip path.
+- **P2** `player/local/.../presentation/PlayerViewModel.kt:50` — the detached
+  `GlobalScope` SyncPlay `leaveGroup` still has no failure surfacing (carried
+  open item, re-confirmed present).
+- **P2 (process)** CI (`.github/workflows/ci.yml`) runs assemble + unit tests +
+  `stabilityCheck` but **no Android Lint** (despite `lint.xml`), **no
+  bundle/release-path validation**, and **no dependency-vulnerability scan**
+  (`renovate.json` only updates weekly). A `:bundleLibreRelease` break is
+  invisible until store-upload day.
+- **P2 (test debt)** Regression tests are missing for the **P0s already marked
+  ✅** in `:core` / `:data` — `LlmChatModelHelper` mutex-unlock-on-throw and
+  `DownloadStorageManager.reconcileItemSources` data-loss guard were both fixed
+  without a pinning test. Modules `modes/film`, `player/tv`, `player/beam`,
+  `player/session`, `setup`, `sendspin` have **zero** unit tests.
+- **P3 (hygiene)** Repo-root clutter: tracked `.aicore-0.0.1-exp02-classes.jar`
+  (272 KB), `capture_screenshot.py`, `view.xml`, `code.html`, `spec.html`,
+  `scratch/`; large un-ignored working-tree artifacts (`logcat.txt` ~15 MB,
+  `design.tar.gz` ~10 MB, `design.zip`). Tighten `.gitignore`
+  (`logcat*.txt`, `/*.tar.gz`, `/scratch/`) and move scripts to `tools/`.
 
 ---
 
