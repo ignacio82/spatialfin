@@ -354,10 +354,12 @@ on trust. Companion write-up: `docs/IMPROVEMENT_PROPOSAL_2026-06.md`.
   bundle/release-path validation**, and **no dependency-vulnerability scan**
   (`renovate.json` only updates weekly). A `:bundleLibreRelease` break is
   invisible until store-upload day.
-- **P2 (test debt)** Regression tests are missing for the **P0s already marked
-  ✅** in `:core` / `:data` — `LlmChatModelHelper` mutex-unlock-on-throw and
-  `DownloadStorageManager.reconcileItemSources` data-loss guard were both fixed
-  without a pinning test. Modules `modes/film`, `player/tv`, `player/beam`,
+- 🟡 **P2 (test debt)** Regression tests for the **P0s already marked ✅** in
+  `:core` / `:data`: ✅ `LlmChatModelHelper` mutex-unlock-on-throw
+  (`LlmChatModelHelperMutexTest`) and ✅ `DownloadStorageManager`
+  reconcile-while-downloading data-loss guard (extracted
+  `DownloadReconciliationPolicy` + `DownloadReconciliationPolicyTest`) now
+  pinned. Still open: modules `modes/film`, `player/tv`, `player/beam`,
   `player/session`, `setup`, `sendspin` have **zero** unit tests.
 - **P3 (hygiene)** Repo-root clutter: tracked `.aicore-0.0.1-exp02-classes.jar`
   (272 KB), `capture_screenshot.py`, `view.xml`, `code.html`, `spec.html`,

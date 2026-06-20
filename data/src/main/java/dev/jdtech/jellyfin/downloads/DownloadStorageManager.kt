@@ -125,8 +125,8 @@ constructor(
             .filter { it.type == SpatialFinSourceType.LOCAL }
             .forEach { source ->
                 if (!File(source.path).exists()) {
-                    val hasActiveDownload = database.getDownloadTasksBySourceId(source.id).any { it.status != 8 }
-                    if (!hasActiveDownload) {
+                    val statuses = database.getDownloadTasksBySourceId(source.id).map { it.status }
+                    if (DownloadReconciliationPolicy.shouldDeleteMissingSource(statuses)) {
                         deleteItemBlocking(item, source)
                     }
                 } else {
