@@ -937,7 +937,7 @@ fun SpatialPlayerScreen(
         try {
             environment.preferredSpatialEnvironment =
                 if (passthroughEnabled) null
-                else SpatialEnvironment.SpatialEnvironmentPreference(skybox = null, geometry = null)
+                else SpatialEnvironment.SpatialEnvironmentPreference(exrImage = null, geometry = null)
         } catch (_: Exception) {}
     }
 
@@ -957,7 +957,7 @@ fun SpatialPlayerScreen(
     LaunchedEffect(session, hasHandTrackingPermission) {
         if (!hasHandTrackingPermission) return@LaunchedEffect
         runCatching {
-            session.configure(session.config.copy(handTracking = HandTrackingMode.BOTH))
+            session.configure(androidx.xr.runtime.Config.Builder(session.config).setHandTracking(HandTrackingMode.BOTH).build())
         }.onFailure { Timber.w(it, "VOICE: Player hand tracking not available") }
     }
 

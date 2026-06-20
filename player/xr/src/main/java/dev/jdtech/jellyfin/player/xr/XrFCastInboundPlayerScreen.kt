@@ -161,7 +161,7 @@ internal fun XrFCastInboundPlayerScreen(
         } else {
             try {
                 environment.preferredSpatialEnvironment =
-                    SpatialEnvironment.SpatialEnvironmentPreference(skybox = null, geometry = null)
+                    SpatialEnvironment.SpatialEnvironmentPreference(exrImage = null, geometry = null)
             } catch (_: Exception) {}
         }
     }

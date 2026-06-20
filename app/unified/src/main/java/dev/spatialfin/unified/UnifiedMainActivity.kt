@@ -742,7 +742,7 @@ class UnifiedMainActivity : AppCompatActivity() {
             if (hasHandTrackingPermission) {
                 runCatching {
                     session.configure(
-                        session.config.copy(handTracking = HandTrackingMode.BOTH)
+                        androidx.xr.runtime.Config.Builder(session.config).setHandTracking(HandTrackingMode.BOTH).build()
                     )
                 }.onFailure { Timber.w(it, "VOICE: Hand tracking not available") }
             }
