@@ -220,16 +220,21 @@ tail.
 - **P1** `PlayerViewModel.onCleared` SyncPlay `leaveGroup` — *partially*
   addressed by item 11 (pending-leave pref); the detached-`GlobalScope`
   shape of the immediate leave still has no failure surfacing.
-- **P2** `PlaylistManager.toPlayerItem` swallows conversion errors with
-  bare `catch(e: Exception)` returning null — playlist nav silently skips.
+- ✅ **P2** `PlaylistManager` conversion errors no longer swallowed silently:
+  `toPlayerItem` now throws typed `PlaylistConversionException` (was a bare
+  `Exception("No media sources available")`), and the next/prev `catch` blocks
+  log with the throwable (the old `Timber.e("…: $e")` dropped the stacktrace)
+  while still skipping the item in nav.
 - **P2** `PlaylistManager` loads the entire season eagerly and has no
   cross-season continue (finale auto-stops instead of S+1E1); large
   seasons pay a startup-latency cost. Resolve next/prev lazily across
-  season boundaries via `getNextUp`.
-- **P2** `PlaylistManager.probeSubtitleSize` runs unbounded parallel
-  blocking HTTP (3 s+3 s each) on the player-open path; an anime
-  signs-and-songs pack on a slow server stalls `toPlayerItem` for ~6 s.
-  Wrap in `withTimeoutOrNull` + bound concurrency.
+  season boundaries via `getNextUp`. (Still open — separate from the
+  probe/typed-error fixes.)
+- ✅ **P2** `PlaylistManager.probeSubtitleSize` no longer runs unbounded
+  parallel blocking HTTP on the player-open path: probes are now bounded by a
+  `Semaphore(6)` and each is capped with `withTimeoutOrNull(4 s)` (timeout ⇒
+  unknown size ⇒ track kept). Keep/drop decision extracted to the pure
+  `shouldKeepSubtitle` (`PlaylistSubtitleSizeTest`).
 - **P2** `BeamPlayerActivity` hard-coded `delay(...)` for control fades
   without explicit cancellation tokens.
 - **P2** `SpatialVoiceSynthesizer` `_isSpeaking` is a single shared boolean
@@ -336,16 +341,13 @@ on trust. Companion write-up: `docs/IMPROVEMENT_PROPOSAL_2026-06.md`.
   SearXNG URL is accepted and assistant queries traverse the LAN in cleartext
   (MITM-readable). Same as Sprint C #19 — confirmed still open. Fix: require
   `https` (or loopback) + surface a "no auth configured" settings warning.
-- **P2** `player/local/.../domain/PlaylistManager.kt:468,674` —
-  `probeSubtitleSize` is fired via `async(Dispatchers.IO)` with **no
-  `withTimeout` and no concurrency bound**; a signs-and-songs subtitle pack on
-  a slow server still stalls `toPlayerItem` on the player-open path. Fix: wrap
-  in `withTimeoutOrNull` + bound concurrency. (Cross-season continue is now
-  partially handled via `getNextUp` at `:68`.)
-- **P2** `player/local/.../domain/PlaylistManager.kt:169,186,243,289,329` —
-  bare `catch (e: Exception)` → `return null` swallows conversion errors;
-  playlist navigation silently skips items with no surfaced reason. Fix: typed
-  errors / telemetry on the skip path.
+- ✅ **P2** `PlaylistManager.probeSubtitleSize` no longer unbounded on the
+  player-open path — `Semaphore(6)` + per-probe `withTimeoutOrNull(4 s)`; pure
+  `shouldKeepSubtitle` extracted and tested. (Cross-season continue remains a
+  separate open item.)
+- ✅ **P2** `PlaylistManager` conversion errors no longer swallowed silently —
+  typed `PlaylistConversionException` + stacktrace-preserving `Timber.e(e, …)`
+  on the next/prev skip path.
 - **P2** `player/local/.../presentation/PlayerViewModel.kt:50` — the detached
   `GlobalScope` SyncPlay `leaveGroup` still has no failure surfacing (carried
   open item, re-confirmed present).
@@ -497,8 +499,9 @@ Order within the sprint is by blast radius:
 20. RecommendationPlanner: differentiate "empty library" from "no good
     match" in telemetry + UI.
 21. `SmartJellyfinRepository.runWrite` write-through for user-data writes.
-22. `PlaylistManager`: cross-season continue + bounded subtitle probe +
-    typed conversion errors.
+22. 🟡 `PlaylistManager`: ✅ bounded subtitle probe (Semaphore + per-probe
+    `withTimeoutOrNull`) + ✅ typed conversion errors
+    (`PlaylistConversionException`); ⏳ cross-season continue still open.
 23. Promote 1–2 `ASPIRATIONAL_IMPROVEMENTS` into asserted classifier cases.
 24. Voice request queue: drop or coalesce taps while busy; TTS
     `utteranceId` tracking; `AssistantSpeechStateMachine` key fix.
