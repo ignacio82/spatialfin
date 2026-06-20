@@ -30,7 +30,15 @@ object DatabaseModule {
     fun provideServerDatabaseDao(@ApplicationContext app: Context): ServerDatabaseDao {
         return Room.databaseBuilder(app.applicationContext, ServerDatabase::class.java, "servers")
             .addMigrations(MIGRATION_6_7, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            // Destructive only on *downgrade* (DB schema newer than the installed
+            // code — rare; Play normally blocks version downgrades). A missing
+            // *forward* migration must NOT silently wipe the user's offline
+            // downloads + userdata: it now throws at runtime so the gap is caught
+            // in QA / upgrade testing instead of in production. The full 2->18
+            // chain is covered by autoMigrations + the manual MIGRATION_* above
+            // (schemas committed under data/schemas; SpatialFin never shipped a
+            // v1 DB).
+            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
             .allowMainThreadQueries()
             .build()
             .getServerDatabaseDao()
