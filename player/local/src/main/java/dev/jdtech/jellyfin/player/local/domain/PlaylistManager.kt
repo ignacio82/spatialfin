@@ -28,6 +28,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
@@ -35,6 +38,15 @@ import timber.log.Timber
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+
+/**
+ * Thrown when a [SpatialFinItem] cannot be turned into a playable [PlayerItem]
+ * (e.g. the server returned no usable media sources). Typed so direct-play
+ * callers can surface a real error instead of a silent no-op, while playlist
+ * next/prev navigation can still catch it and skip the offending item.
+ */
+class PlaylistConversionException(message: String, cause: Throwable? = null) :
+    Exception(message, cause)
 
 class PlaylistManager @Inject internal constructor(
     @ApplicationContext private val context: Context,
@@ -287,7 +299,9 @@ class PlaylistManager @Inject internal constructor(
                             try {
                                 item.toPlayerItem(null, null, 0L)
                             } catch (e: Exception) {
-                                Timber.e("Failed to retrieve previous player item: $e")
+                                // Skip this item in playlist nav, but keep the stacktrace
+                                // (string interpolation dropped it) so the skip is diagnosable.
+                                Timber.e(e, "Failed to convert previous playlist item %s to PlayerItem", item.id)
                                 null
                             }
                         } else {
@@ -327,7 +341,9 @@ class PlaylistManager @Inject internal constructor(
                             try {
                                 item.toPlayerItem(null, null, 0L)
                             } catch (e: Exception) {
-                                Timber.e("Failed to retrieve next player item: $e")
+                                // Skip this item in playlist nav, but keep the stacktrace
+                                // (string interpolation dropped it) so the skip is diagnosable.
+                                Timber.e(e, "Failed to convert next playlist item %s to PlayerItem", item.id)
                                 null
                             }
                         } else {
@@ -402,7 +418,7 @@ class PlaylistManager @Inject internal constructor(
                 )
             } else {
                 mediaSources.getOrNull(mediaSourceIndex)
-            } ?: throw Exception("No media sources available")
+            } ?: throw PlaylistConversionException("No media sources available for item $id")
         val effectiveMaxBitrate =
             when {
                 maxBitrate != null -> maxBitrate
@@ -447,9 +463,14 @@ class PlaylistManager @Inject internal constructor(
         }
         // Media3's SingleSampleMediaPeriod loads the entire subtitle into a single
         // ByteBuffer via Arrays.copyOf (doubles on grow), so an N-byte track needs ~2N
-        // of heap. Probe Content-Length on IO dispatchers in parallel and drop tracks
-        // above MAX_SUBTITLE_BYTES so Media3 never attempts the load.
+        // of heap. Probe Content-Length on IO dispatchers and drop tracks above
+        // MAX_SUBTITLE_BYTES so Media3 never attempts the load.
         val externalSubtitles = coroutineScope {
+            // Bound concurrency so a multi-track "signs & songs" pack can't open dozens of
+            // simultaneous connections to a slow server; cap each probe so one stalled
+            // response can't hold up the player-open path (toPlayerItem). A null result
+            // (network error OR timeout) means "unknown size" and the track is kept.
+            val probeLimiter = Semaphore(MAX_CONCURRENT_SUBTITLE_PROBES)
             subtitleStreams
                 .map { mediaStream ->
                     ExternalSubtitle(
@@ -465,18 +486,25 @@ class PlaylistManager @Inject internal constructor(
                     )
                 }
                 .map { sub ->
-                    async(Dispatchers.IO) { sub to probeSubtitleSize(sub.uri.toString()) }
+                    async(Dispatchers.IO) {
+                        val probed = probeLimiter.withPermit {
+                            withTimeoutOrNull(SUBTITLE_PROBE_TIMEOUT_MS) {
+                                probeSubtitleSize(sub.uri.toString())
+                            }
+                        }
+                        sub to probed
+                    }
                 }
                 .awaitAll()
                 .mapNotNull { (sub, probedBytes) ->
-                    if (probedBytes != null && probedBytes > MAX_SUBTITLE_BYTES) {
+                    if (shouldKeepSubtitle(probedBytes)) {
+                        sub
+                    } else {
                         Timber.w(
                             "Subtitle sideload DROPPED (too large %d bytes > cap %d): title=%s lang=%s uri=%s",
                             probedBytes, MAX_SUBTITLE_BYTES, sub.title, sub.language, sub.uri,
                         )
                         null
-                    } else {
-                        sub
                     }
                 }
         }
@@ -663,6 +691,24 @@ class PlaylistManager @Inject internal constructor(
         // which OOMs the player even with largeHeap=true. 50 MB comfortably covers the
         // worst real "signs & songs" tracks while excluding the pathological ones.
         private const val MAX_SUBTITLE_BYTES = 50L * 1024L * 1024L
+
+        // Max simultaneous subtitle Content-Length probes. Typical content has ≤6 tracks
+        // (no throttling); a pathological multi-track pack is capped so it can't flood a
+        // slow server with connections.
+        private const val MAX_CONCURRENT_SUBTITLE_PROBES = 6
+
+        // Upper bound on a single probe before we give up and treat the size as unknown.
+        // Just above the underlying socket connect/read timeouts (3 s each) so a normal
+        // slow-but-alive server still answers, while a hung one can't stall player open.
+        private const val SUBTITLE_PROBE_TIMEOUT_MS = 4_000L
+
+        /**
+         * Keep a sideloaded subtitle unless we *positively* know it exceeds
+         * [MAX_SUBTITLE_BYTES]. Unknown size (`null` — the probe failed or timed out) is
+         * treated as allowed so a flaky/slow probe never silently hides working subtitles.
+         */
+        internal fun shouldKeepSubtitle(probedBytes: Long?): Boolean =
+            probedBytes == null || probedBytes <= MAX_SUBTITLE_BYTES
     }
 
     /**
