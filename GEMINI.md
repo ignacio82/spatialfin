@@ -3,7 +3,7 @@
 This document is the canonical context for any AI assistant working on SpatialFin. It captures the architecture, hard-won XR/voice lessons, build conventions, and known pitfalls.
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.23 (124)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000124`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.24 (125)**, `compileSdk 37`, `targetSdk 35`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000125`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
