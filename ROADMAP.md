@@ -303,11 +303,10 @@ tail.
   silently breaks if `buildFeatures.resValues` is ever flipped off.
 
 #### Build / dependencies / perf
-- **P2** Room `fallbackToDestructiveMigration(dropAllTables = true)` plus
-  the manual/auto migration chain means any migration gap silently
-  **drops `downloadtasks` and all offline userdata** in production. Drop
-  destructive fallback (or exclude the download tables) so a missing
-  migration fails loudly in CI/QA instead of nuking user downloads.
+- ✅ **P2** Room `fallbackToDestructiveMigration(dropAllTables = true)` no longer
+  silently **drops `downloadtasks` and all offline userdata** on a migration
+  gap — replaced with downgrade-only destructive fallback so a missing forward
+  migration fails loudly. See the ✅ P0 in Sprint E and Sprint D #26.
 - **P1** Release is `isMinifyEnabled = false` — SceneCore documents
   minified-client support since `1.0.0-alpha03`, but optimized alpha15 builds
   still crash on Galaxy XR (`SM_I610`) with `AbstractMethodError` as of
@@ -321,14 +320,17 @@ Found in the 2026-06-18 full audit (covers through commit `37ec550a`, version
 2.7.21 / 122). Each item below was opened against current source, not carried
 on trust. Companion write-up: `docs/IMPROVEMENT_PROPOSAL_2026-06.md`.
 
-- **P0** `core/.../di/DatabaseModule.kt:33` —
-  `fallbackToDestructiveMigration(dropAllTables = true)` is **still live**
-  (ServerDatabase version 18). This is the same risk as carried item Sprint D
-  #26, now localized: the builder lives in `:core`, not `:data` (an earlier
-  grep that searched only `:data` wrongly concluded it was gone). Any migration
-  gap silently drops `downloadtasks` + all offline userdata in production.
-  Fix: drop destructive fallback (or exclude the download tables) so a missing
-  migration fails loudly in CI/QA.
+- ✅ **P0** `core/.../di/DatabaseModule.kt` —
+  `fallbackToDestructiveMigration(dropAllTables = true)` silently dropped
+  `downloadtasks` + all offline userdata on any migration gap. Replaced with
+  `fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)`: a missing
+  *forward* migration (the real risk — a dev forgetting a migration on a version
+  bump) now throws at runtime and is caught in QA/upgrade testing instead of
+  wiping production; destructive behavior is retained only on the rare downgrade
+  case. Verified the full 2→18 chain is covered (autoMigrations + manual
+  `MIGRATION_*`; schemas committed under `data/schemas`; no v1 DB ever shipped).
+  Same fix closes Sprint D #26. Follow-up: a `MigrationTestHelper` CI test needs
+  instrumented-test infra (none today).
 - **P1** `player/xr/.../voice/WebSearchClient.kt:82` — `resolvedDirectSearxngUrl`
   uses `toHttpUrlOrNull()` with **no scheme enforcement**, so a `http://`
   SearXNG URL is accepted and assistant queries traverse the LAN in cleartext
@@ -502,9 +504,9 @@ Order within the sprint is by blast radius:
 
 ## Sprint D — debt with a clock on it
 
-26. Remove `fallbackToDestructiveMigration(dropAllTables = true)` (or
-    exclude the download tables) so a missing migration fails loudly
-    instead of nuking user downloads.
+26. ✅ Removed the blanket `fallbackToDestructiveMigration(dropAllTables = true)`
+    in `core/.../di/DatabaseModule.kt`; now downgrade-only, so a missing forward
+    migration fails loudly instead of nuking user downloads. (See Sprint E ✅ P0.)
 27. Re-attempt `isMinifyEnabled = true` against a newer Jetpack XR / R8
     combination; an alpha15 retry on Galaxy XR (`SM_I610`) on 2026-05-25
     remained blocked by `com.android.extensions.xr.function.Consumer.accept`
