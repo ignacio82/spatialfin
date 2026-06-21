@@ -68,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
@@ -467,7 +468,18 @@ private fun TrackSelectionDialogContent(
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
 ) {
-    val trackGroups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
+    var trackGroups by remember(player, trackType) {
+        mutableStateOf(player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) })
+    }
+    DisposableEffect(player, trackType) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                trackGroups = tracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     val trackNames = trackGroups.getTrackNames()
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 

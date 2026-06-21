@@ -56,6 +56,12 @@ internal class PlayerTrackSelector(
         val subtitleGroups =
             player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
 
+        // Sideloaded subtitle tracks arrive in a separate onTracksChanged callback after audio
+        // tracks. If the item has declared external subtitles but none have appeared in the player
+        // yet, skip and let the next onTracksChanged call retry rather than locking the dedup with
+        // no subtitle tracks available — which would permanently suppress smart auto-enable.
+        if (subtitleGroups.isEmpty() && currentItem.externalSubtitles.isNotEmpty()) return
+
         val isAnime =
             currentItem.genres.any { genre -> genre.contains("anime", ignoreCase = true) } ||
                 (

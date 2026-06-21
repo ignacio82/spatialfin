@@ -1,6 +1,7 @@
 package dev.jdtech.jellyfin.player.beam
 
 import android.Manifest
+import android.os.Build
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import android.app.PictureInPictureParams
 import android.content.Context
@@ -863,6 +864,17 @@ class BeamPlayerActivity : AppCompatActivity() {
 }
 
 /**
+ * Beam Pro (X4000) and similar Xreal-manufactured devices have no phone screen — the XReal
+ * glasses are the only display and the OS routes the primary display to them natively. Using
+ * the Presentation API on such a device would incorrectly try to move the player to a secondary
+ * display that is already the native output path, causing crashes and wrong behavior. Generic
+ * phones (e.g. Pixel 10 Pro) where the glasses are connected as an external USB-C DP sink need
+ * the Presentation path to project the player onto the glasses.
+ */
+private fun isNativeGlassesDevice(): Boolean =
+    Build.MANUFACTURER.equals("xreal", ignoreCase = true)
+
+/**
  * Pick a connected external display to project the player onto (e.g. Rokid glasses over USB-C
  * DisplayPort). Prefers displays the platform flags as presentation-capable, then falls back to
  * any valid non-default display so a mirrored sink without FLAG_PRESENTATION still works.
@@ -1181,19 +1193,24 @@ private fun BeamPlayerScreen(
         // Detect a connected external display (e.g. Rokid glasses over USB-C DisplayPort).
         // When present, the player is projected there via the Presentation API below and the
         // phone keeps only the controls; otherwise everything stays on the phone surface.
+        // Xreal-manufactured devices (Beam Pro) have no phone screen — the glasses are the
+        // native primary display, so always skip the Presentation path there.
+        val nativeGlassesDevice = remember { isNativeGlassesDevice() }
         val displayManager =
             remember { context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager }
-        var externalDisplay by remember { mutableStateOf(pickExternalPresentationDisplay(displayManager)) }
+        var externalDisplay by remember {
+            mutableStateOf(if (nativeGlassesDevice) null else pickExternalPresentationDisplay(displayManager))
+        }
         DisposableEffect(displayManager) {
             val listener = object : android.hardware.display.DisplayManager.DisplayListener {
                 override fun onDisplayAdded(displayId: Int) {
-                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                    if (!nativeGlassesDevice) externalDisplay = pickExternalPresentationDisplay(displayManager)
                 }
                 override fun onDisplayRemoved(displayId: Int) {
-                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                    if (!nativeGlassesDevice) externalDisplay = pickExternalPresentationDisplay(displayManager)
                 }
                 override fun onDisplayChanged(displayId: Int) {
-                    externalDisplay = pickExternalPresentationDisplay(displayManager)
+                    if (!nativeGlassesDevice) externalDisplay = pickExternalPresentationDisplay(displayManager)
                 }
             }
             displayManager.registerDisplayListener(
@@ -2143,7 +2160,18 @@ private fun BeamTrackSelectionDialog(
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
 ) {
-    val trackGroups = player.currentTracks.groups.filter { it.type == trackType }
+    var trackGroups by remember(player, trackType) {
+        mutableStateOf(player.currentTracks.groups.filter { it.type == trackType })
+    }
+    DisposableEffect(player, trackType) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                trackGroups = tracks.groups.filter { it.type == trackType }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     val trackNames = trackGroups.getTrackNames()
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 

@@ -2,6 +2,7 @@ package dev.spatialfin.unified
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 
 enum class DeviceClass { XR, TV, PHONE }
 
@@ -45,6 +46,16 @@ data class DeviceClassCapabilities(val deviceClass: DeviceClass) {
 
     /** Beam Pro uses its own companion uploader pipeline; XR and TV share the standard one. */
     val usesBeamCompanion: Boolean = deviceClass == DeviceClass.PHONE
+
+    /**
+     * Xreal-manufactured devices (Beam Pro, model X4000) have no phone screen — the XReal glasses
+     * are the native primary display. The external-display Presentation path in BeamPlayerActivity
+     * must be skipped on these devices; see isNativeGlassesDevice() there for implementation.
+     * This capability is informational only (BeamPlayerActivity can't import from :app:unified).
+     */
+    val isNativeGlassesDevice: Boolean =
+        deviceClass == DeviceClass.PHONE &&
+            Build.MANUFACTURER.equals("xreal", ignoreCase = true)
 }
 
 /** Convenience accessor so callers don't have to re-detect the class. */

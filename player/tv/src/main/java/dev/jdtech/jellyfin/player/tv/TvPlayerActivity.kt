@@ -806,7 +806,7 @@ private fun TvPlayerScreen(
                     when (native.keyCode) {
                         AndroidKeyEvent.KEYCODE_DPAD_LEFT,
                         AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT -> {
-                            if (!controlsVisible && activeDialog == null) {
+                            if (!showUpNext && !controlsVisible && activeDialog == null) {
                                 player.seekBack()
                                 true
                             } else {
@@ -815,7 +815,7 @@ private fun TvPlayerScreen(
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
                         AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_RIGHT -> {
-                            if (!controlsVisible && activeDialog == null) {
+                            if (!showUpNext && !controlsVisible && activeDialog == null) {
                                 player.seekForward()
                                 true
                             } else {
@@ -834,7 +834,7 @@ private fun TvPlayerScreen(
                         AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_UP,
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                         AndroidKeyEvent.KEYCODE_SYSTEM_NAVIGATION_DOWN -> {
-                            if (!controlsVisible && activeDialog == null) {
+                            if (!showUpNext && !controlsVisible && activeDialog == null) {
                                 revealControls()
                                 true
                             } else {
@@ -845,7 +845,7 @@ private fun TvPlayerScreen(
                         AndroidKeyEvent.KEYCODE_ENTER,
                         AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
                         AndroidKeyEvent.KEYCODE_SPACE -> {
-                            if (!controlsVisible && activeDialog == null) {
+                            if (!showUpNext && !controlsVisible && activeDialog == null) {
                                 if (native.repeatCount == 0) {
                                     val segment = visibleSkipPromptSegment
                                     if (segment != null) {
