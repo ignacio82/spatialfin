@@ -274,6 +274,8 @@ class XrPlayerActivity : AppCompatActivity() {
             ) {
                 val renderer = libassRenderer
                 if (renderer != null) {
+                    // libass claims text tracks exclusively for the formats it supports.
+                    // We add it first so it gets priority for ASS/SRT/VTT.
                     out.add(
                         LibassTextRenderer(
                             renderer,
@@ -286,12 +288,16 @@ class XrPlayerActivity : AppCompatActivity() {
                         }
                     )
                     Timber.i("subtitle: LibassTextRenderer registered (pref=%s)", libassUsagePref)
-                    // Do NOT add the default TextRenderer in this mode. With parsing disabled,
-                    // LibassTextRenderer receives raw ASS/SRT/VTT bytes and handles them
-                    // (including full-file sideloaded samples which it explodes into events).
-                } else {
-                    // Stereo mode: no libass, parsing is enabled → default TextRenderer handles cues.
-                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                }
+                // Always add ExoPlayer's default renderers so we don't lose support for PGS,
+                // TTML, tx3g, and other formats that libass doesn't handle.
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                    it.experimentalSetLegacyDecodingEnabled(true)
+                    val index = out.indexOf(it)
+                    if (index != -1) {
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                    }
                 }
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)

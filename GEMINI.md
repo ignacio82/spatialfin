@@ -330,6 +330,7 @@ For low-latency movement of complex **player/video** UIs:
 - **Extraction path:** Keep `experimentalParseSubtitlesDuringExtraction(false)` for libass playback. Otherwise Media3 converts ASS into `application/x-media3-cues` and bypasses raw delivery.
 - **Panel-to-video geometry:** The subtitle panel must cover the same projected video frame as the playback surface. Do not independently clamp the subtitle panel size after projecting the video size to subtitle depth — positioned ASS signs will drift.
 - **Synthetic header for chunked streams:** When ASS arrives in chunks with empty `initData`, a synthetic `[Script Info]` header is injected (see `f578de2`/`a51b536`). Don't remove this without re-checking chunked subtitle playback.
+- **ExoPlayer TextRenderer compatibility:** Media3 refactored subtitle decoding. When building renderers, you MUST call `experimentalSetLegacyDecodingEnabled(true)` on `TextRenderer` instances built by `DefaultRenderersFactory`, and wrap them in a custom `FallbackTextRenderer` to catch unchecked format errors and prevent them from crashing the player when `LibassRenderer` or the default renderer fails. <!-- added 2026-06-22: ExoPlayer subtitle compatibility -->
 
 ### On-Device AI (LiteRT Gemma)
 - **Engine:** LiteRT LM (formerly MediaPipe LLM Inference).

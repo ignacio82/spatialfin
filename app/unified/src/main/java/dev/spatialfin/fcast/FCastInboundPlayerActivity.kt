@@ -637,14 +637,8 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             ) {
                 val active = renderer
                 if (active != null) {
-                    // libass claims text tracks exclusively. We deliberately skip
-                    // super.buildTextRenderers so ExoPlayer's stock TextRenderer doesn't grab
-                    // SRT/VTT ahead of libass — libass renders them through its synthetic ASS
-                    // header so the user gets consistent styling across all text formats.
-                    // PR 6: forward the deferred embedded-font fetch into the renderer. The
-                    // libass thread will block on this at track init — typically already
-                    // resolved by the time we get there because preloadLibassFontsAsync runs
-                    // in onCreate/onNewIntent.
+                    // libass claims text tracks exclusively for the formats it supports.
+                    // We add it first so it gets priority for ASS/SRT/VTT.
                     val fontLoader: () -> List<Pair<String, ByteArray>> = {
                         runCatching {
                             runBlocking {
@@ -661,8 +655,16 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                         )
                     )
                     Timber.tag(TAG).i("FCast inbound: LibassTextRenderer registered")
-                } else {
-                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                }
+                // Always add ExoPlayer's default renderers so we don't lose support for PGS,
+                // TTML, tx3g, and other formats that libass doesn't handle.
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                    it.experimentalSetLegacyDecodingEnabled(true)
+                    val index = out.indexOf(it)
+                    if (index != -1) {
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                    }
                 }
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)

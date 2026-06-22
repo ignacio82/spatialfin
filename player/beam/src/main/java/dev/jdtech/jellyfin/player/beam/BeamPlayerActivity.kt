@@ -634,10 +634,8 @@ class BeamPlayerActivity : AppCompatActivity() {
                 ) {
                     val renderer = libassRenderer
                     if (renderer != null) {
-                        // libass claims text tracks exclusively. Parsing is disabled below,
-                        // so ASS/SRT/VTT bytes arrive raw and full-file sideloaded samples
-                        // get exploded into per-event chunks. Skipping the default
-                        // TextRenderer prevents it from claiming tracks ahead of libass.
+                        // libass claims text tracks exclusively for the formats it supports.
+                        // We add it first so it gets priority for ASS/SRT/VTT.
                         out.add(
                             XrLibassTextRenderer(
                                 renderer.native,
@@ -648,8 +646,20 @@ class BeamPlayerActivity : AppCompatActivity() {
                             )
                         )
                         Timber.i("beam subtitle: XrLibassTextRenderer registered (pref=%s)", libassUsagePref)
-                    } else {
-                        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                    }
+                    
+                    // Always add ExoPlayer's default renderers so we don't lose support for PGS,
+                    // TTML, tx3g, and other formats that libass doesn't handle.
+                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                    
+                    // Since parseSubtitlesDuringExtraction = false, we must enable legacy decoding
+                    // so ExoPlayer's TextRenderer can decode raw PGS/TTML bytes.
+                    out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                        it.experimentalSetLegacyDecodingEnabled(true)
+                        val index = out.indexOf(it)
+                        if (index != -1) {
+                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                        }
                     }
                 }
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)

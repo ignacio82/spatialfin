@@ -66,10 +66,11 @@ internal class PlayerTrackSelector(
             currentItem.genres.any { genre -> genre.contains("anime", ignoreCase = true) } ||
                 (
                     audioGroups.any { group -> groupMatchesLanguage(group, "jpn") } &&
+                        (currentItem.genres.any { genre -> genre.contains("animation", ignoreCase = true) } ||
                         subtitleGroups.any { group ->
                             val mime = group.getTrackFormat(0).sampleMimeType.orEmpty()
                             mime == "text/x-ssa" || mime == MimeTypes.TEXT_SSA
-                        }
+                        })
                 )
         val preferredAudioForContent =
             if (isAnime) {
@@ -136,7 +137,7 @@ internal class PlayerTrackSelector(
 
         val seriesOverrideSubtitle = seriesOverride?.subtitleLanguageCode
         val seriesOverrideSubtitleSignature = seriesOverride?.subtitleTrackSignature
-        val selectedSubtitleGroup =
+        var selectedSubtitleGroup =
             if (seriesOverride?.subtitlesEnabled == false) {
                 null
             } else if (seriesOverrideSubtitleSignature != null) {
@@ -158,6 +159,13 @@ internal class PlayerTrackSelector(
                     autoPickDialogueSubtitle(subtitleGroups, preferredCode)
                 }
             }
+
+        // If we want subtitles because the audio is foreign or it's anime, but couldn't find a language match,
+        // fall back to a default or single available track rather than silently disabling subtitles.
+        if (selectedSubtitleGroup == null && (!audioUnderstood || isAnime) && seriesOverride?.subtitlesEnabled != false) {
+            selectedSubtitleGroup = subtitleGroups.firstOrNull { (it.getTrackFormat(0).selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0 }
+                ?: subtitleGroups.takeIf { it.size == 1 }?.firstOrNull()
+        }
 
         val builder = player.trackSelectionParameters
             .buildUpon()
@@ -226,6 +234,7 @@ internal class PlayerTrackSelector(
             player.trackSelectionParameters =
                 player.trackSelectionParameters
                     .buildUpon()
+                    .clearOverridesOfType(trackType)
                     .setOverrideForType(
                         TrackSelectionOverride(selectedGroup.mediaTrackGroup, 0),
                     )
@@ -387,11 +396,9 @@ internal class PlayerTrackSelector(
         preferredLanguageCode: String?,
     ): Tracks.Group? {
         if (preferredLanguageCode.isNullOrBlank()) return null
-        return groups
-            .filter { group ->
-                groupMatchesLanguage(group, preferredLanguageCode) &&
-                    !PlayerTrackHeuristics.isForcedOrSignsOnly(group)
-            }
+        val matches = groups.filter { groupMatchesLanguage(it, preferredLanguageCode) }
+        val dialogMatches = matches.filter { !PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+        return (dialogMatches.takeIf { it.isNotEmpty() } ?: matches)
             .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredLanguageCode) }
     }
 

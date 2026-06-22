@@ -459,7 +459,6 @@ class TvPlayerActivity : AppCompatActivity() {
                     extensionRendererMode: Int,
                     out: ArrayList<Renderer>,
                 ) {
-                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
                     libassRenderer?.let { renderer ->
                         out.add(
                             LibassTextRenderer(
@@ -471,6 +470,14 @@ class TvPlayerActivity : AppCompatActivity() {
                                 subtitleBackgroundColor = subtitleBackgroundColor,
                             )
                         )
+                    }
+                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                    out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                        it.experimentalSetLegacyDecodingEnabled(true)
+                        val index = out.indexOf(it)
+                        if (index != -1) {
+                            out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                        }
                     }
                 }
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)

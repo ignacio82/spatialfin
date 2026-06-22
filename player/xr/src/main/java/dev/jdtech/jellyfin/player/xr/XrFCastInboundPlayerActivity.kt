@@ -336,9 +336,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                 out: ArrayList<Renderer>,
             ) {
                 val active = renderer
-                if (active == null) {
-                    super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
-                } else {
+                if (active != null) {
                     out.add(
                         LibassTextRenderer(
                             libassRenderer = active,
@@ -349,8 +347,16 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                             },
                             usagePref = usagePref,
                             srtFontSize = appPreferences.getValue(appPreferences.xrSubtitleSize),
-                        ),
+                        )
                     )
+                }
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>().forEach {
+                    it.experimentalSetLegacyDecodingEnabled(true)
+                    val index = out.indexOf(it)
+                    if (index != -1) {
+                        out[index] = dev.jdtech.jellyfin.player.core.FallbackTextRenderer(it)
+                    }
                 }
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
