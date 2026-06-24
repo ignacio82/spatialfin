@@ -77,3 +77,6 @@ MA_CLIENT_PLAN.md
 /view.xml
 /code.html
 /spec.html
+
+# Compiled class files
+*.class
