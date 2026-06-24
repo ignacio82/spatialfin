@@ -133,6 +133,7 @@ class FCastReceiverService : Service() {
         FCastInboundSession.bindBroadcaster(
             playback = { update -> scope.launch { newServer.broadcastPlaybackUpdate(update) } },
             volume = { update -> scope.launch { newServer.broadcastVolumeUpdate(update) } },
+            tracks = { update -> scope.launch { newServer.broadcastTracksUpdate(update) } },
         )
 
         val ad = FCastReceiverAdvertiser(applicationContext)

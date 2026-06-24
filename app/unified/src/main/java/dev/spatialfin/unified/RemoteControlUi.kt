@@ -300,22 +300,27 @@ fun RemoteControlMiniPlayerHost(modifier: Modifier = Modifier) {
     val activeSession by viewModel.activeRemoteSession.collectAsStateWithLifecycle()
     val availableSessions by viewModel.activeRemoteSessions.collectAsStateWithLifecycle()
     val mediaStreams by viewModel.activeMediaStreams.collectAsStateWithLifecycle()
+    // Reset dismissed state when the playing item changes so a new item always shows.
+    var dismissed by remember(activeSession?.id, activeSession?.nowPlayingItem?.id) { mutableStateOf(false) }
 
-    RemoteControlMiniPlayer(
-        session = activeSession,
-        availableSessions = availableSessions,
-        baseUrl = viewModel.baseUrl,
-        accessToken = viewModel.accessToken,
-        mediaStreams = mediaStreams,
-        onSelectSession = viewModel::selectRemoteSession,
-        onPlayStateCommand = { cmd ->
-            activeSession?.id?.let { viewModel.sendCommand(it, cmd) }
-        },
-        onGeneralCommand = { cmd, args ->
-            activeSession?.id?.let { viewModel.sendGeneralCommand(it, cmd, args) }
-        },
-        modifier = modifier,
-    )
+    if (!dismissed) {
+        RemoteControlMiniPlayer(
+            session = activeSession,
+            availableSessions = availableSessions,
+            baseUrl = viewModel.baseUrl,
+            accessToken = viewModel.accessToken,
+            mediaStreams = mediaStreams,
+            onSelectSession = viewModel::selectRemoteSession,
+            onPlayStateCommand = { cmd ->
+                activeSession?.id?.let { viewModel.sendCommand(it, cmd) }
+            },
+            onGeneralCommand = { cmd, args ->
+                activeSession?.id?.let { viewModel.sendGeneralCommand(it, cmd, args) }
+            },
+            onDismiss = { dismissed = true },
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable
@@ -328,6 +333,7 @@ fun RemoteControlMiniPlayer(
     onSelectSession: (String) -> Unit,
     onPlayStateCommand: (PlaystateCommand) -> Unit,
     onGeneralCommand: (GeneralCommandType, Map<String, String>?) -> Unit,
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (session == null || session.nowPlayingItem == null) return
@@ -376,6 +382,13 @@ fun RemoteControlMiniPlayer(
                 Icon(
                     if (isPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
                     contentDescription = if (isPaused) "Play" else "Pause"
+                )
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer
                 )
             }
         }

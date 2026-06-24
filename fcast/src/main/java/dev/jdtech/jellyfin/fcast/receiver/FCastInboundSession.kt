@@ -21,6 +21,8 @@ object FCastInboundSession {
     @Volatile private var playbackBroadcaster: ((PlaybackUpdateMessage) -> Unit)? = null
     @Volatile private var volumeBroadcaster: ((VolumeUpdateMessage) -> Unit)? = null
     @Volatile private var tracksBroadcaster: ((dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) -> Unit)? = null
+    // Cached so the service can replay it to senders that connect after onTracksChanged fires.
+    @Volatile private var lastTracksUpdate: dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage? = null
 
     /**
      * Latest control messages that arrived **before** an [ExternalStreamPlayer] was bound.
@@ -123,12 +125,16 @@ object FCastInboundSession {
         playbackBroadcaster = playback
         volumeBroadcaster = volume
         tracksBroadcaster = tracks
+        // Replay the cached tracks update so senders that connect after onTracksChanged
+        // already fired still receive the available track list immediately.
+        lastTracksUpdate?.let { tracks(it) }
     }
 
     fun unbindBroadcaster() {
         playbackBroadcaster = null
         volumeBroadcaster = null
         tracksBroadcaster = null
+        lastTracksUpdate = null
     }
 
     // Called by IntentBasedExternalStreamPlayer when an FCast frame lands on the router.
@@ -202,6 +208,7 @@ object FCastInboundSession {
     }
 
     fun pushTracksUpdate(update: dev.jdtech.jellyfin.fcast.protocol.SpatialFinTracksUpdateMessage) {
+        lastTracksUpdate = update
         tracksBroadcaster?.invoke(update)
     }
 }

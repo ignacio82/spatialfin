@@ -1312,10 +1312,12 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val playFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val firstActionFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(showId) { viewModel.load(showId) }
     LaunchedEffect(state.show?.id) {
         if (state.show != null) {
             runCatching { playFocus.requestFocus() }
+                .onFailure { runCatching { firstActionFocus.requestFocus() } }
         }
     }
     when {
@@ -1333,7 +1335,7 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
                     if (next != null) {
                         TvHeroButton(if (next.playbackPositionTicks > 0L) "Resume Episode" else "Play Next", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, next)?.let(context::startActivity) }
                     }
-                    TvIconHeroButton(if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (show.played) "Watched" else "Mark watched", show.played) { viewModel.togglePlayed() }
+                    TvIconHeroButton(if (show.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (show.played) "Watched" else "Mark watched", show.played, modifier = Modifier.focusRequester(firstActionFocus)) { viewModel.togglePlayed() }
                     TvIconHeroButton(if (show.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (show.favorite) "Favorited" else "Favorite", show.favorite) { viewModel.toggleFavorite() }
                     Box {
                         var menuOpen by remember { mutableStateOf(false) }
@@ -1693,9 +1695,9 @@ private fun TvShowEpisodesSection(
     onSelectSeason: (UUID) -> Unit,
     onOpenEpisode: (UUID) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier = Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().focusGroup(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(18.dp),
         ) {

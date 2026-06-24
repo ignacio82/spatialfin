@@ -47,6 +47,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -75,6 +77,15 @@ fun FCastReceiverScreen(
     onStop: () -> Unit
 ) {
     var showControls by remember { mutableStateOf(true) }
+    val subtitlesFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+
+    // Park D-pad focus on the first action button when controls appear so the
+    // user can navigate CC/Audio/Quality without those buttons being unreachable.
+    LaunchedEffect(showControls) {
+        if (showControls && !isAudioOnly) {
+            runCatching { subtitlesFocus.requestFocus() }
+        }
+    }
 
     fun togglePlaybackFromRemote() {
         if (player.playWhenReady || player.isPlaying) {
@@ -292,13 +303,16 @@ fun FCastReceiverScreen(
                         }
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.focusGroup(), verticalAlignment = Alignment.CenterVertically) {
                         val context = androidx.compose.ui.platform.LocalContext.current
-                        IconButton(onClick = {
-                            androidx.media3.ui.TrackSelectionDialogBuilder(
-                                context, "Select Subtitles", player, androidx.media3.common.C.TRACK_TYPE_TEXT
-                            ).build().show()
-                        }) {
+                        IconButton(
+                            onClick = {
+                                androidx.media3.ui.TrackSelectionDialogBuilder(
+                                    context, "Select Subtitles", player, androidx.media3.common.C.TRACK_TYPE_TEXT
+                                ).build().show()
+                            },
+                            modifier = Modifier.focusRequester(subtitlesFocus),
+                        ) {
                             Icon(
                                 painter = painterResource(id = dev.spatialfin.R.drawable.ic_subtitles),
                                 contentDescription = "Subtitles",
