@@ -636,7 +636,9 @@ class UnifiedMainActivity : AppCompatActivity() {
                                     pluginId = item.universalMediaItem.pluginId,
                                     itemId = item.universalMediaItem.id,
                                     videoUrl = item.universalMediaItem.videoUrl,
-                                    title = item.name
+                                    title = item.name,
+                                    stereoMode = item.universalMediaItem.stereoMode,
+                                    projection = item.universalMediaItem.projection,
                                 )
                             )
                             true

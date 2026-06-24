@@ -70,6 +70,7 @@ class XrPlayerActivity : AppCompatActivity() {
     private var mediaSession: MediaSession? = null
     private val mediaSessionId = "xrplayer-${UUID.randomUUID()}"
     private var currentStereoMode: String = "mono"
+    private var currentProjection: String = ProjectionModeDetector.PROJECTION_FLAT
     private var libassRenderer: LibassRenderer? = null
     private var finishRequested = false
     private var homeSpaceRequestIssued = false
@@ -98,6 +99,7 @@ class XrPlayerActivity : AppCompatActivity() {
             itemKind: String,
             startFromBeginning: Boolean = false,
             stereoMode: String = "mono",
+            projection: String = ProjectionModeDetector.PROJECTION_FLAT,
             mediaSourceIndex: Int? = null,
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
@@ -108,6 +110,7 @@ class XrPlayerActivity : AppCompatActivity() {
                 putExtra("itemKind", itemKind)
                 putExtra("startFromBeginning", startFromBeginning)
                 putExtra("stereoMode", stereoMode)
+                putExtra("projection", projection)
                 putExtra("openSyncPlayDialogOnStart", openSyncPlayDialogOnStart)
                 mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
                 maxBitrate?.let { putExtra("maxBitrate", it) }
@@ -120,11 +123,13 @@ class XrPlayerActivity : AppCompatActivity() {
             mediaStoreId: Long,
             startFromBeginning: Boolean = false,
             stereoMode: String = "mono",
+            projection: String = ProjectionModeDetector.PROJECTION_FLAT,
         ): android.content.Intent {
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("localMediaId", mediaStoreId)
                 putExtra("startFromBeginning", startFromBeginning)
                 putExtra("stereoMode", stereoMode)
+                putExtra("projection", projection)
             }
         }
 
@@ -133,11 +138,13 @@ class XrPlayerActivity : AppCompatActivity() {
             networkVideoId: String,
             startFromBeginning: Boolean = false,
             stereoMode: String = "mono",
+            projection: String = ProjectionModeDetector.PROJECTION_FLAT,
         ): android.content.Intent {
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("networkVideoId", networkVideoId)
                 putExtra("startFromBeginning", startFromBeginning)
                 putExtra("stereoMode", stereoMode)
+                putExtra("projection", projection)
             }
         }
 
@@ -147,14 +154,24 @@ class XrPlayerActivity : AppCompatActivity() {
             itemId: String,
             videoUrl: String,
             title: String,
-            stereoMode: String = "mono",
+            stereoMode: String? = null,
+            projection: String? = null,
         ): android.content.Intent {
+            // Plugins may declare projection / stereo explicitly (their content,
+            // their call); otherwise fall back to detecting from the title + URL.
+            // Plugin-streamed files (e.g. Pexels) usually carry no spherical
+            // container metadata, so this is the only reliable signal.
+            val resolvedProjection = projection
+                ?: ProjectionModeDetector.asExtra(
+                    ProjectionModeDetector.detect(title, listOf(videoUrl)),
+                )
             return android.content.Intent(context, XrPlayerActivity::class.java).apply {
                 putExtra("universalPluginId", pluginId)
                 putExtra("universalItemId", itemId)
                 putExtra("universalVideoUrl", videoUrl)
                 putExtra("universalTitle", title)
-                putExtra("stereoMode", stereoMode)
+                putExtra("stereoMode", stereoMode ?: "mono")
+                putExtra("projection", resolvedProjection)
             }
         }
 
@@ -224,7 +241,14 @@ class XrPlayerActivity : AppCompatActivity() {
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
         currentStereoMode = extras.getString("stereoMode") ?: "mono"
-        val stereoPlayback = currentStereoMode == "sbs" || currentStereoMode == "top_bottom" || currentStereoMode == "multiview"
+        currentProjection = extras.getString("projection") ?: ProjectionModeDetector.PROJECTION_FLAT
+        val immersiveProjection = isImmersiveProjection(currentProjection)
+        // libass renders a flat ASS overlay panel that can't map onto a sphere/
+        // hemisphere; immersive 180/360 falls back to Media3 subtitles, same as the
+        // stereo modes. Treat both as "skip libass".
+        val stereoPlayback =
+            currentStereoMode == "sbs" || currentStereoMode == "top_bottom" ||
+                currentStereoMode == "multiview" || immersiveProjection
         recordLaunchPhase("onCreate:inputs-validated")
 
         recordLaunchPhase("onCreate:before-viewmodel-preferences")
@@ -518,6 +542,7 @@ class XrPlayerActivity : AppCompatActivity() {
                         viewModel = viewModel,
                         session = session,
                         initialStereoMode = currentStereoMode,
+                        initialProjection = currentProjection,
                         itemId = itemId,
                         localMediaId = localMediaId,
                         networkVideoId = networkVideoId,

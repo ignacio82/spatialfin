@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
+import dev.jdtech.jellyfin.player.xr.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.spatialfin.presentation.theme.spacings
@@ -61,6 +62,13 @@ fun LocalVideoScreen(
                 StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                 else -> "mono"
             }
+            val projectionStr = if (item != null) {
+                ProjectionModeDetector.asExtra(
+                    ProjectionModeDetector.detect(item.name, listOf(item.fileName)),
+                )
+            } else {
+                ProjectionModeDetector.PROJECTION_FLAT
+            }
             if (multitask) {
                 context.startActivity(
                     dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity.createIntentForLocalMedia(
@@ -76,6 +84,7 @@ fun LocalVideoScreen(
                         mediaStoreId = mediaStoreId,
                         startFromBeginning = startFromBeginning,
                         stereoMode = stereoModeStr,
+                        projection = projectionStr,
                     )
                 )
             }

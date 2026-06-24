@@ -15,7 +15,15 @@ data class UniversalMediaItem(
     val viewCount: Long? = null,
     val uploadDate: String? = null,
     val isLive: Boolean = false,
-    val homeRowId: String? = null
+    val homeRowId: String? = null,
+    /**
+     * Optional spatial hints a plugin can declare for immersive XR playback.
+     * [projection] is `"flat"` / `"180"` / `"360"`; [stereoMode] is
+     * `"mono"` / `"sbs"` / `"top_bottom"` / `"multiview"`. When null, the XR
+     * player falls back to detecting them from the title / video URL.
+     */
+    val projection: String? = null,
+    val stereoMode: String? = null,
 )
 
 @Serializable

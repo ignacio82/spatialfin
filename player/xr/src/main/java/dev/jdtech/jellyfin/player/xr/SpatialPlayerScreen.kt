@@ -240,6 +240,7 @@ fun SpatialPlayerScreen(
     viewModel: PlayerViewModel,
     session: Session,
     initialStereoMode: String,
+    initialProjection: String = ProjectionModeDetector.PROJECTION_FLAT,
     itemId: UUID?,
     localMediaId: Long?,
     networkVideoId: String? = null,
@@ -407,6 +408,12 @@ fun SpatialPlayerScreen(
     var playbackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var passthroughOverrideEnabled by remember { mutableStateOf<Boolean?>(null) }
     var currentStereoMode by remember { mutableStateOf(initialStereoMode) }
+    // Spatial projection axis (flat / 180° hemisphere / 360° sphere), orthogonal
+    // to the stereo axis above. `projectionManuallySet` locks out the runtime
+    // container-metadata auto-detect once the user picks from the player menu.
+    var currentProjection by remember { mutableStateOf(initialProjection) }
+    var projectionManuallySet by remember { mutableStateOf(false) }
+    val immersiveProjection = isImmersiveProjection(currentProjection)
     var reportedVideoSize by remember { mutableStateOf(player.videoSize) }
     var hasVideoTrack by remember { mutableStateOf(player.currentTracks.hasVideoTrack()) }
     var firstVideoFrameRendered by remember { mutableStateOf(false) }
@@ -421,7 +428,10 @@ fun SpatialPlayerScreen(
         libassRenderer = libassRenderer,
         onCueRecorded = subtitleContext::recordCueLine,
     )
-    val passthroughEnabled = passthroughOverrideEnabled ?: !isPlaying
+    // Immersive 180/360 fills the field of view, so passthrough is always blacked
+    // out (the sphere/hemisphere is the environment). Flat panels keep the
+    // play=blackout / pause=passthrough behaviour and the manual override.
+    val passthroughEnabled = if (immersiveProjection) false else (passthroughOverrideEnabled ?: !isPlaying)
 
     val pinchDetector = remember(session, activity, voiceGestureHand) {
         activity?.let {
@@ -603,6 +613,19 @@ fun SpatialPlayerScreen(
             recommendationContext = voice.recommendationContext,
             passthroughEnabled = passthroughEnabled,
         )
+
+    // Re-anchor the immersive 180/360 surface onto the viewer's current head
+    // position. No-op for flat panels (which use the move affordance instead).
+    fun recenterImmersiveSurface() {
+        if (!immersiveProjection) return
+        val headPose = computeHeadCenteredPose(session)
+            ?: Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
+        runCatching {
+            videoRootEntity.value?.setPose(headPose)
+            videoEntity.value?.setPose(headPose)
+        }
+        lastReportedMovePose.value = headPose
+    }
 
     fun resetScreenPlacementToDefault() {
         val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
@@ -1081,11 +1104,29 @@ fun SpatialPlayerScreen(
             }
             override fun onTracksChanged(tracks: Tracks) {
                 hasVideoTrack = tracks.hasVideoTrack()
+                // Authoritative projection tier: if the container's decoded video
+                // Format carries spherical metadata, it overrides the filename
+                // guess — unless the user has manually pinned the projection.
+                if (!projectionManuallySet) {
+                    val videoFormat = tracks.groups
+                        .firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
+                        ?.getTrackFormat(0)
+                    val detected = videoFormat?.let { projectionFromFormat(it) }
+                    if (detected != null && detected != currentProjection) {
+                        Timber.i(
+                            "XR_VIDEO: container projection metadata detected=%s (was %s)",
+                            detected,
+                            currentProjection,
+                        )
+                        currentProjection = detected
+                    }
+                }
                 Timber.i(
-                    "XR_VIDEO: tracks changed videoGroups=%d hasVideoTrack=%b stereo=%s playbackState=%s",
+                    "XR_VIDEO: tracks changed videoGroups=%d hasVideoTrack=%b stereo=%s projection=%s playbackState=%s",
                     tracks.videoGroupCount(),
                     hasVideoTrack,
                     currentStereoMode,
+                    currentProjection,
                     playerStateName(player.playbackState),
                 )
             }
@@ -1199,6 +1240,9 @@ fun SpatialPlayerScreen(
         moveInProgress,
     ) {
         if (moveInProgress) return@LaunchedEffect
+        // Immersive 180/360 is head-centred with a fixed forward overlay — the
+        // flat depth/scale projection math doesn't apply.
+        if (immersiveProjection) return@LaunchedEffect
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
@@ -1266,15 +1310,32 @@ fun SpatialPlayerScreen(
     DisposableEffect(session) {
         val savedPose = savedPlayerPose
         val projectedOverlayPose = projectPoseFromOrigin(savedPose, overlayProjectionScale)
-        val initialShape = SurfaceEntity.Shape.Quad(FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS))
+        // Immersive 180/360 centres the surface on the viewer (head pose if the
+        // runtime exposes it, otherwise the activity-space origin — the user is
+        // within the large sphere radius of it) and skips the flat panel's
+        // depth/scale layout; the controls/subtitle panels sit at a fixed,
+        // reachable distance straight ahead. Flat keeps the saved cinema pose.
+        val sphereOrigin = Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
+        val headCenteredPose =
+            if (immersiveProjection) computeHeadCenteredPose(session) ?: sphereOrigin else savedPose
+        val forwardOverlayPose = Pose(Vector3(0f, 0f, -UI_DEPTH_METERS), Quaternion.Identity)
+        val videoCreatePose = if (immersiveProjection) headCenteredPose else savedPose
+        val overlayCreatePose = if (immersiveProjection) forwardOverlayPose else projectedOverlayPose
+        val initialShape = mapProjectionShape(
+            currentProjection,
+            VR_SPHERE_RADIUS_METERS,
+            FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS),
+        )
         try {
             val activitySpace = session.scene.activitySpace
-            val videoRoot = Entity.create(session, "PlayerVideoRoot", savedPose, activitySpace)
-            val uiRoot = Entity.create(session, "PlayerUiRoot", projectedOverlayPose, activitySpace)
-            val subtitleRoot = Entity.create(session, "PlayerSubtitleRoot", projectedOverlayPose, activitySpace)
-            videoRoot.setScale(videoPanelScale)
-            uiRoot.setScale(videoPanelScale)
-            subtitleRoot.setScale(videoPanelScale)
+            val videoRoot = Entity.create(session, "PlayerVideoRoot", videoCreatePose, activitySpace)
+            val uiRoot = Entity.create(session, "PlayerUiRoot", overlayCreatePose, activitySpace)
+            val subtitleRoot = Entity.create(session, "PlayerSubtitleRoot", overlayCreatePose, activitySpace)
+            if (!immersiveProjection) {
+                videoRoot.setScale(videoPanelScale)
+                uiRoot.setScale(videoPanelScale)
+                subtitleRoot.setScale(videoPanelScale)
+            }
 
             val sceneStereoMode = mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
             Timber.i(
@@ -1289,7 +1350,7 @@ fun SpatialPlayerScreen(
             )
             val surfaceEntity = SurfaceEntity.create(
                 session,
-                savedPose,
+                videoCreatePose,
                 initialShape,
                 sceneStereoMode,
                 SurfaceEntity.MediaBlendingMode.OPAQUE,
@@ -1297,7 +1358,15 @@ fun SpatialPlayerScreen(
                 SurfaceEntity.SurfaceProtection.NONE,
                 activitySpace,
             ).apply {
-                setScale(videoPanelScale)
+                if (!immersiveProjection) setScale(videoPanelScale)
+                // Soften the VR180 hemisphere seam so it blends into the blackout
+                // environment. A full 360° sphere has no visible edge, so leave it.
+                if (currentProjection == ProjectionModeDetector.PROJECTION_180) {
+                    runCatching {
+                        edgeFeatheringParams =
+                            SurfaceEntity.EdgeFeatheringParams.RectangleFeather(0.1f, 0.1f)
+                    }
+                }
             }
             Timber.i(
                 "XR_VIDEO: SurfaceEntity.create succeeded stereo=%s surfaceValid=%b entityDisposed=%b directPose=(%.3f, %.3f, %.3f)",
@@ -1308,7 +1377,7 @@ fun SpatialPlayerScreen(
                 savedPose.translation.y,
                 savedPose.translation.z,
             )
-            lastReportedMovePose.value = savedPose
+            lastReportedMovePose.value = videoCreatePose
 
             // Bind the native move affordance to the visible SurfaceEntity so its system glow
             // follows the video frame, while the surface remains a direct activitySpace child.
@@ -1451,32 +1520,48 @@ fun SpatialPlayerScreen(
                     }
                 },
             )
-            surfaceEntity.addComponent(movable)
-            movable.size = videoMoveAffordanceBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
+            // Grab/move only makes sense for a flat panel — you can't drag a sphere
+            // you're standing inside, and ResizableComponent isn't supported on the
+            // hemisphere/sphere shapes. Immersive modes re-anchor via the Recenter
+            // action instead, so we skip attaching the movable entirely.
+            if (!immersiveProjection) {
+                surfaceEntity.addComponent(movable)
+                movable.size = videoMoveAffordanceBounds(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS)
 
-            // SceneCore can briefly re-home a movable entity until the first interaction.
-            // Re-apply the intended launch layout after the movable component attaches so the
-            // screen starts in the cinema baseline instead of snapping there on first tap.
-            runCatching {
-                videoRoot.setPose(savedPose)
-                videoRoot.setScale(videoPanelScale)
-                surfaceEntity.setPose(savedPose)
-                surfaceEntity.setScale(videoPanelScale)
+                // SceneCore can briefly re-home a movable entity until the first interaction.
+                // Re-apply the intended launch layout after the movable component attaches so the
+                // screen starts in the cinema baseline instead of snapping there on first tap.
+                runCatching {
+                    videoRoot.setPose(savedPose)
+                    videoRoot.setScale(videoPanelScale)
+                    surfaceEntity.setPose(savedPose)
+                    surfaceEntity.setScale(videoPanelScale)
+                }
+                syncProjectedOverlayRoots(
+                    savedPose,
+                    videoPanelScale,
+                    uiRoot,
+                    subtitleRoot,
+                    UI_DEPTH_METERS / videoDepth,
+                )
+                lastReportedMovePose.value = savedPose
+            } else {
+                // Immersive: lock the surface centred on the head and the overlays
+                // a fixed distance straight ahead.
+                runCatching {
+                    videoRoot.setPose(videoCreatePose)
+                    surfaceEntity.setPose(videoCreatePose)
+                    uiRoot.setPose(overlayCreatePose)
+                    subtitleRoot.setPose(overlayCreatePose)
+                }
+                lastReportedMovePose.value = videoCreatePose
             }
-            syncProjectedOverlayRoots(
-                savedPose,
-                videoPanelScale,
-                uiRoot,
-                subtitleRoot,
-                UI_DEPTH_METERS / videoDepth,
-            )
-            lastReportedMovePose.value = savedPose
 
             videoRootEntity.value = videoRoot
             uiRootEntity.value = uiRoot
             subtitleRootEntity.value = subtitleRoot
             videoEntity.value = surfaceEntity
-            movableComponent.value = movable
+            movableComponent.value = if (immersiveProjection) null else movable
 
         } catch (e: Exception) {
             Timber.e(e, "XR_VIDEO: failed to create SurfaceEntity path")
@@ -1684,9 +1769,45 @@ fun SpatialPlayerScreen(
             initializedPlayerMediaKey = playerMediaKey
         }
     }
-    // Update SurfaceEntity shape when video dimensions or stereo mode changes.
-    // Both are consolidated here to avoid races between separate LaunchedEffects.
-    LaunchedEffect(reportedVideoSize, currentStereoMode, videoEntity.value) {
+    // Update SurfaceEntity shape when video dimensions, stereo mode, or projection
+    // changes. All are consolidated here to avoid races between separate effects.
+    LaunchedEffect(reportedVideoSize, currentStereoMode, currentProjection, videoEntity.value) {
+        val entityForProjection = videoEntity.value
+        // Immersive 180/360 — apply the sphere/hemisphere shape (and the live
+        // stereo layout) head-centred; skip all the flat quad aspect-ratio math.
+        if (immersiveProjection) {
+            if (entityForProjection != null) {
+                // If the surface was created flat (e.g. container metadata upgraded
+                // it to spherical at onTracksChanged), detach the now-meaningless
+                // move affordance so it doesn't linger on the sphere.
+                movableComponent.value?.let { mc ->
+                    runCatching { entityForProjection.removeComponent(mc) }
+                    movableComponent.value = null
+                }
+                val headPose = computeHeadCenteredPose(session)
+                    ?: lastReportedMovePose.value
+                    ?: Pose(Vector3(0f, 0f, 0f), Quaternion.Identity)
+                runCatching {
+                    entityForProjection.shape = mapProjectionShape(
+                        currentProjection,
+                        VR_SPHERE_RADIUS_METERS,
+                        FloatSize2d(DEFAULT_VIDEO_WIDTH_METERS, DEFAULT_VIDEO_HEIGHT_METERS),
+                    )
+                    entityForProjection.stereoMode =
+                        mapStereoMode(currentStereoMode) ?: SurfaceEntity.StereoMode.MONO
+                    entityForProjection.setScale(1.0f)
+                    entityForProjection.setPose(headPose)
+                    entityForProjection.edgeFeatheringParams =
+                        if (currentProjection == ProjectionModeDetector.PROJECTION_180) {
+                            SurfaceEntity.EdgeFeatheringParams.RectangleFeather(0.1f, 0.1f)
+                        } else {
+                            SurfaceEntity.EdgeFeatheringParams.NoFeathering()
+                        }
+                }
+                lastReportedMovePose.value = headPose
+            }
+            return@LaunchedEffect
+        }
         // 1. Recalculate video dimensions from the player if available.
         val videoSize = reportedVideoSize
 
@@ -2109,6 +2230,7 @@ fun SpatialPlayerScreen(
                                     onAudioClick = { activeDialog = "audio"; resetAutoHide() },
                                     onQualityClick = { activeDialog = "quality"; resetAutoHide() },
                                     onSpeedClick = { activeDialog = "speed"; resetAutoHide() },
+                                    onProjectionClick = { activeDialog = "projection"; resetAutoHide() },
                                     modifier = keepControlsAlive,
                                 )
                             }
@@ -2236,6 +2358,23 @@ fun SpatialPlayerScreen(
                             SpeedDialogContent(
                                 currentSpeed = viewModel.playbackSpeed,
                                 onSpeedSelected = { speed -> viewModel.selectSpeed(speed) },
+                                onDismiss = { activeDialog = null },
+                            )
+                        }
+                    }
+                    if (activeDialog == "projection") {
+                        SpatialDialog(onDismissRequest = { activeDialog = null }) {
+                            ProjectionDialogContent(
+                                currentProjection = currentProjection,
+                                onProjectionSelected = { projection ->
+                                    projectionManuallySet = true
+                                    currentProjection = projection
+                                    resetAutoHide()
+                                },
+                                onRecenter = {
+                                    recenterImmersiveSurface()
+                                    resetAutoHide()
+                                },
                                 onDismiss = { activeDialog = null },
                             )
                         }

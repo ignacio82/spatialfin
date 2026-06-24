@@ -308,7 +308,9 @@ class PluginContentRepository @Inject constructor(
                                 videoUrl: item.url || item.videoUrl || "",
                                 durationMs: (item.durationMs || ((item.duration || 0) * 1000)),
                                 viewCount: item.viewCount || 0,
-                                isLive: item.isLive || false
+                                isLive: item.isLive || false,
+                                projection: item.projection || null,
+                                stereoMode: item.stereoMode || null
                             };
                         } catch(e) {
                             return null;

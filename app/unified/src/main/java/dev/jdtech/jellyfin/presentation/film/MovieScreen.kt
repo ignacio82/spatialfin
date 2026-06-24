@@ -35,6 +35,7 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.jdtech.jellyfin.player.xr.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
@@ -150,6 +151,13 @@ fun MovieScreen(
                         StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                         else -> "mono"
                     }
+                    val projectionStr = if (movie != null) {
+                        ProjectionModeDetector.asExtra(
+                            ProjectionModeDetector.detect(movie.name, sourceNames),
+                        )
+                    } else {
+                        ProjectionModeDetector.PROJECTION_FLAT
+                    }
                     val buildLocalIntent: () -> Intent = {
                         val intent = Intent(context, targetActivity)
                         intent.putExtra("itemId", (movie?.id ?: movieId).toString())
@@ -157,7 +165,10 @@ fun MovieScreen(
                         intent.putExtra("startFromBeginning", action.startFromBeginning)
                         action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
                         action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                        if (useImmersivePlayer) intent.putExtra("stereoMode", stereoModeStr)
+                        if (useImmersivePlayer) {
+                            intent.putExtra("stereoMode", stereoModeStr)
+                            intent.putExtra("projection", projectionStr)
+                        }
                         intent
                     }
                     // Route through launchPlayback so a picked FCast receiver (with optional
@@ -185,6 +196,7 @@ fun MovieScreen(
                                     itemKind = BaseItemKind.MOVIE.serialName,
                                     startFromBeginning = action.startFromBeginning,
                                     stereoMode = stereoModeStr,
+                                    projection = projectionStr,
                                     mediaSourceIndex = action.mediaSourceIndex,
                                     maxBitrate = action.maxBitrate,
                                     splitAvVideoRole = true,
@@ -324,6 +336,9 @@ private fun MovieScreenLayout(
                                         StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                                         else -> "mono"
                                     },
+                                projection = ProjectionModeDetector.asExtra(
+                                    ProjectionModeDetector.detect(movie.name, sourceNames),
+                                ),
                                 openSyncPlayDialogOnStart = true,
                             )
                             context.startActivity(intent)

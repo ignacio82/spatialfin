@@ -251,6 +251,66 @@ internal fun SpeedDialogContent(
 }
 
 @Composable
+internal fun ProjectionDialogContent(
+    currentProjection: String,
+    onProjectionSelected: (String) -> Unit,
+    onRecenter: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    XrGlassSheet(
+        title = "Projection",
+        subtitle = "Immersive 180° / 360° video",
+        onDismiss = onDismiss,
+        width = 480.dp,
+    ) {
+        Spacer(Modifier.height(8.dp))
+        Column {
+            XrOptionRow(
+                title = "Flat screen",
+                subtitle = "Standard 2D / 3D panel",
+                icon = CoreR.drawable.ic_curved_screen,
+                selected = currentProjection == ProjectionModeDetector.PROJECTION_FLAT,
+                onClick = {
+                    onProjectionSelected(ProjectionModeDetector.PROJECTION_FLAT)
+                    onDismiss()
+                },
+            )
+            XrOptionRow(
+                title = "180° · VR180",
+                subtitle = "Front hemisphere",
+                icon = CoreR.drawable.ic_globe,
+                selected = currentProjection == ProjectionModeDetector.PROJECTION_180,
+                onClick = {
+                    onProjectionSelected(ProjectionModeDetector.PROJECTION_180)
+                    onDismiss()
+                },
+            )
+            XrOptionRow(
+                title = "360° · VR360",
+                subtitle = "Full sphere",
+                icon = CoreR.drawable.ic_globe,
+                selected = currentProjection == ProjectionModeDetector.PROJECTION_360,
+                onClick = {
+                    onProjectionSelected(ProjectionModeDetector.PROJECTION_360)
+                    onDismiss()
+                },
+            )
+            if (isImmersiveProjection(currentProjection)) {
+                XrOptionRow(
+                    title = "Recenter view",
+                    subtitle = "Re-anchor the sphere to your head",
+                    icon = CoreR.drawable.ic_rotate_ccw,
+                    onClick = {
+                        onRecenter()
+                        onDismiss()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 internal fun QualityDialogContent(
     currentMaxBitrate: Long,
     onQualitySelected: (Long) -> Unit,

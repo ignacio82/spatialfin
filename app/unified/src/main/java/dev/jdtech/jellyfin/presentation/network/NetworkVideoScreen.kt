@@ -42,6 +42,7 @@ import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
+import dev.jdtech.jellyfin.player.xr.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.spatialfin.presentation.theme.spacings
@@ -75,6 +76,13 @@ fun NetworkVideoScreen(
                 StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                 else -> "mono"
             }
+            val projectionStr = if (item != null) {
+                ProjectionModeDetector.asExtra(
+                    ProjectionModeDetector.detect(item.name, listOf(item.fileName)),
+                )
+            } else {
+                ProjectionModeDetector.PROJECTION_FLAT
+            }
             if (multitask) {
                 context.startActivity(
                     dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity.createIntentForNetworkMedia(
@@ -90,6 +98,7 @@ fun NetworkVideoScreen(
                         networkVideoId = videoId,
                         startFromBeginning = startFromBeginning,
                         stereoMode = stereoModeStr,
+                        projection = projectionStr,
                     )
                 )
             }

@@ -153,6 +153,7 @@ internal fun TrackOptionsOrbiter(
     onAudioClick: () -> Unit,
     onQualityClick: () -> Unit,
     onSpeedClick: (() -> Unit)? = null,
+    onProjectionClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -171,6 +172,9 @@ internal fun TrackOptionsOrbiter(
             OrbiterIconButton(CoreR.drawable.ic_sparkles, "Playback quality", onQualityClick)
             if (onSpeedClick != null) {
                 OrbiterIconButton(CoreR.drawable.ic_gauge, "Playback speed", onSpeedClick)
+            }
+            if (onProjectionClick != null) {
+                OrbiterIconButton(CoreR.drawable.ic_globe, "Projection (180/360)", onProjectionClick)
             }
         }
     }

@@ -1,9 +1,12 @@
 package dev.jdtech.jellyfin.player.xr
 
+import androidx.xr.arcore.ArDevice
+import androidx.xr.runtime.Session
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.Space
+import androidx.xr.scenecore.scene
 import timber.log.Timber
 
 /**
@@ -24,6 +27,28 @@ internal const val UI_DEPTH_METERS = 2.0f
 // Default panel scale baseline — tuned so a DEFAULT_VIDEO_WIDTH_METERS-wide panel
 // at VIDEO_DEPTH_METERS matches perceived size of a large living-room display.
 internal const val DEFAULT_VIDEO_PANEL_SCALE = 1.39f
+
+// Radius (metres) for the 180° hemisphere / 360° sphere immersive video surface.
+// The Android XR guide uses 1.0f with the surface centred exactly on the device
+// (head) pose — but ArDevice head tracking isn't available in this SceneCore-only
+// player session, so we centre the surface on the activity-space origin instead
+// and use a large radius. The whole scene sits within a couple of metres of the
+// origin, so a big sphere reliably keeps the viewer *inside* it (a small one left
+// the user looking at the video from outside, as a "tiny planet"). 50 m is well
+// inside the runtime's far clip while reading as effectively "at infinity".
+internal const val VR_SPHERE_RADIUS_METERS = 50.0f
+
+/**
+ * Head-centred pose (in activity space) for an immersive 180°/360° surface: the
+ * sphere/hemisphere must be centred on the viewer's head, not placed metres in
+ * front like the flat panel. Snapshots the current device pose and transforms it
+ * into activity space per the Android XR "Add spatial video" guide. Returns null
+ * if the device pose isn't available yet (caller falls back to the saved pose).
+ */
+internal fun computeHeadCenteredPose(session: Session): Pose? = runCatching {
+    val devicePose = ArDevice.getInstance(session).state.value.devicePose
+    session.scene.perceptionSpace.transformPoseTo(devicePose, session.scene.activitySpace)
+}.onFailure { Timber.w(it, "XR_VIDEO: failed to compute head-centered pose") }.getOrNull()
 
 internal fun extractVideoDepth(pose: Pose, currentDepth: Float): Float {
     val translation = pose.translation

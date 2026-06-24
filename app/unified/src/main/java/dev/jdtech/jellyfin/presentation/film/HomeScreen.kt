@@ -319,7 +319,9 @@ private fun HomeScreenLayout(
                                         uItem.universalMediaItem.pluginId,
                                         uItem.universalMediaItem.id,
                                         uItem.universalMediaItem.videoUrl,
-                                        uItem.name
+                                        uItem.name,
+                                        stereoMode = uItem.universalMediaItem.stereoMode,
+                                        projection = uItem.universalMediaItem.projection,
                                     )
                                 )
                             } else {

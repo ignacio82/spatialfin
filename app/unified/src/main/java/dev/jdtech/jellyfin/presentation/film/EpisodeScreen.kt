@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.jdtech.jellyfin.player.xr.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.xr.StereoModeDetector
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
@@ -148,6 +149,13 @@ fun EpisodeScreen(
                         else -> "mono"
                     }
                     val resolvedStereoMode = action.force3dMode ?: stereoModeStr
+                    val projectionStr = if (episode != null) {
+                        ProjectionModeDetector.asExtra(
+                            ProjectionModeDetector.detect(episode.name, sourceNames),
+                        )
+                    } else {
+                        ProjectionModeDetector.PROJECTION_FLAT
+                    }
                     val buildLocalIntent: () -> Intent = {
                         val intent = Intent(context, targetActivity)
                         intent.putExtra("itemId", episodeId.toString())
@@ -155,7 +163,10 @@ fun EpisodeScreen(
                         intent.putExtra("startFromBeginning", action.startFromBeginning)
                         action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
                         action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                        if (useImmersivePlayer) intent.putExtra("stereoMode", resolvedStereoMode)
+                        if (useImmersivePlayer) {
+                            intent.putExtra("stereoMode", resolvedStereoMode)
+                            intent.putExtra("projection", projectionStr)
+                        }
                         intent
                     }
                     // Route through launchPlayback so a picked FCast receiver (with optional
@@ -178,6 +189,7 @@ fun EpisodeScreen(
                                     itemKind = BaseItemKind.EPISODE.serialName,
                                     startFromBeginning = action.startFromBeginning,
                                     stereoMode = resolvedStereoMode,
+                                    projection = projectionStr,
                                     mediaSourceIndex = action.mediaSourceIndex,
                                     maxBitrate = action.maxBitrate,
                                     splitAvVideoRole = true,
@@ -320,6 +332,9 @@ private fun EpisodeScreenLayout(
                                         StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
                                         else -> "mono"
                                     },
+                                projection = ProjectionModeDetector.asExtra(
+                                    ProjectionModeDetector.detect(episode.name, sourceNames),
+                                ),
                                 openSyncPlayDialogOnStart = true,
                             )
                             context.startActivity(intent)

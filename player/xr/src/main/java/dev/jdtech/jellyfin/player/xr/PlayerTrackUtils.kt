@@ -1,14 +1,17 @@
 package dev.jdtech.jellyfin.player.xr
 
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.scenecore.SurfaceEntity
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 
 /**
  * Pure helpers for reading track state from a Media3 Player, formatting playback
- * time, and mapping stereo-mode strings. Extracted from SpatialPlayerScreen.kt.
+ * time, and mapping stereo-mode / projection strings. Extracted from
+ * SpatialPlayerScreen.kt.
  */
 
 internal fun mapStereoMode(mode: String): SurfaceEntity.StereoMode? = when (mode) {
@@ -16,6 +19,43 @@ internal fun mapStereoMode(mode: String): SurfaceEntity.StereoMode? = when (mode
     "top_bottom" -> SurfaceEntity.StereoMode.TOP_BOTTOM
     "multiview" -> SurfaceEntity.StereoMode.MULTIVIEW_LEFT_PRIMARY
     else -> null
+}
+
+/** True for the immersive projections that render onto a hemisphere/sphere. */
+internal fun isImmersiveProjection(projection: String): Boolean =
+    projection == ProjectionModeDetector.PROJECTION_180 ||
+        projection == ProjectionModeDetector.PROJECTION_360
+
+/**
+ * Maps the player's `"projection"` string to the SceneCore canvas shape. 180° →
+ * front hemisphere, 360° → full sphere (both radius [radiusMeters], head at
+ * centre), anything else → the flat [quad].
+ */
+internal fun mapProjectionShape(
+    projection: String,
+    radiusMeters: Float,
+    quad: FloatSize2d,
+): SurfaceEntity.Shape = when (projection) {
+    ProjectionModeDetector.PROJECTION_180 -> SurfaceEntity.Shape.Hemisphere(radiusMeters)
+    ProjectionModeDetector.PROJECTION_360 -> SurfaceEntity.Shape.Sphere(radiusMeters)
+    else -> SurfaceEntity.Shape.Quad(quad)
+}
+
+/**
+ * Authoritative container-metadata tier: derives a projection from a decoded
+ * video [Format]. media3 exposes only the raw `projectionData` bytes (no parsed
+ * 180-vs-360 enum), so we treat any spherical metadata as 360° unless the
+ * stereo layout is the mesh kind that VR180 rigs emit. Returns null when the
+ * container declares no spherical projection, leaving the filename/manual tiers
+ * in charge.
+ */
+internal fun projectionFromFormat(format: Format): String? {
+    if (format.projectionData == null) return null
+    return if (format.stereoMode == C.STEREO_MODE_STEREO_MESH) {
+        ProjectionModeDetector.PROJECTION_180
+    } else {
+        ProjectionModeDetector.PROJECTION_360
+    }
 }
 
 internal fun formatTime(ms: Long): String {
