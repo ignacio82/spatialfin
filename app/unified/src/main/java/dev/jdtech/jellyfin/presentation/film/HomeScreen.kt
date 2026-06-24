@@ -92,8 +92,15 @@ fun HomeScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // One-shot language prompt: once dismissed it never reappears. Language
+    // setup stays reachable from Settings. Persisted so dismissal survives
+    // restarts; local state drives instant recomposition.
+    var languagesDismissed by remember {
+        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupLanguagesDismissed))
+    }
     val needsLanguageSetup =
-        appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank()
+        appPreferences.getValue(appPreferences.smartSpokenLanguages).isNullOrBlank() &&
+            !languagesDismissed
     val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
 
     LaunchedEffect(true) { viewModel.loadData() }
@@ -103,6 +110,10 @@ fun HomeScreen(
         displayRatings = displayRatings,
         needsLanguageSetup = needsLanguageSetup,
         onLanguageSettingsClick = onLanguageSettingsClick,
+        onDismissLanguagePrompt = {
+            appPreferences.setValue(appPreferences.finishSetupLanguagesDismissed, true)
+            languagesDismissed = true
+        },
         onAction = { action ->
             when (action) {
                 is HomeAction.OnItemClick -> onItemClick(action.item)
@@ -129,6 +140,7 @@ private fun HomeScreenLayout(
     displayRatings: Boolean,
     needsLanguageSetup: Boolean,
     onLanguageSettingsClick: () -> Unit,
+    onDismissLanguagePrompt: () -> Unit,
     onAction: (HomeAction) -> Unit,
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     onNetworkShareSeeAll: (shareId: String) -> Unit,
@@ -158,6 +170,7 @@ private fun HomeScreenLayout(
                         bodyRes = CoreR.string.finish_setup_languages_body,
                         actionRes = CoreR.string.finish_setup_languages_action,
                         onClick = onLanguageSettingsClick,
+                        onDismiss = onDismissLanguagePrompt,
                     )
                 )
             }
@@ -199,6 +212,7 @@ private fun HomeScreenLayout(
                                         body = stringResource(item.bodyRes),
                                         actionLabel = stringResource(item.actionRes),
                                         onActionClick = item.onClick,
+                                        onDismiss = item.onDismiss,
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(MaterialTheme.spacings.small))
@@ -379,6 +393,7 @@ private fun HomeScreenLayoutPreview() {
             displayRatings = true,
             needsLanguageSetup = false,
             onLanguageSettingsClick = {},
+            onDismissLanguagePrompt = {},
             onAction = {},
             onPluginBrowse = { _, _ -> },
             onNetworkShareSeeAll = {},
@@ -391,6 +406,7 @@ private data class FinishSetupItem(
     val bodyRes: Int,
     val actionRes: Int,
     val onClick: () -> Unit,
+    val onDismiss: () -> Unit,
 )
 
 private data class HomeStatusCardModel(

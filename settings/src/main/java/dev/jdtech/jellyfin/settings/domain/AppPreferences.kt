@@ -247,6 +247,13 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val onboardingCompleted = Preference("pref_onboarding_completed", false)
     val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
 
+    // "Finish setup" home / local prompt cards. Each is a one-shot suggestion:
+    // once the user dismisses it, it must never reappear (the same destination
+    // stays reachable from Settings). Persisted so dismissal survives restarts.
+    val finishSetupServerDismissed = Preference("pref_finish_setup_server_dismissed", false)
+    val finishSetupLanguagesDismissed = Preference("pref_finish_setup_languages_dismissed", false)
+    val finishSetupAiDismissed = Preference("pref_finish_setup_ai_dismissed", false)
+
     // Seerr (Jellyseerr/Overseerr)
     val seerrEnabled = Preference("pref_seerr_enabled", false)
     val seerrUrl = Preference<String?>("pref_seerr_url", null)

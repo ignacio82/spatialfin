@@ -75,6 +75,19 @@ fun LocalMediaScreen(
         mutableStateOf<Boolean?>(if (shouldCheckLocalAi) null else true)
     }
 
+    // One-shot "finish setup" prompts: once dismissed they never reappear. The
+    // same destinations stay reachable from Settings. Seeded from persisted prefs
+    // so dismissal survives restarts; local state drives instant recomposition.
+    var serverDismissed by remember {
+        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupServerDismissed))
+    }
+    var languagesDismissed by remember {
+        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupLanguagesDismissed))
+    }
+    var aiDismissed by remember {
+        mutableStateOf(appPreferences.getValue(appPreferences.finishSetupAiDismissed))
+    }
+
     val permissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             hasPermission = hasLocalVideoAccess(context)
@@ -102,8 +115,9 @@ fun LocalMediaScreen(
     LocalMediaScreenLayout(
         hasPermission = hasPermission,
         hasServers = hasServers,
-        needsLanguageSetup = needsLanguageSetup,
-        needsAiSetup = localAiAvailable == false && !hasCloudApiKey,
+        needsLanguageSetup = needsLanguageSetup && !languagesDismissed,
+        needsAiSetup = localAiAvailable == false && !hasCloudApiKey && !aiDismissed,
+        serverPromptDismissed = serverDismissed,
         state = state,
         onGrantPermission = { permissionLauncher.launch(localVideoPermissions()) },
         onItemClick = onItemClick,
@@ -111,6 +125,18 @@ fun LocalMediaScreen(
         onSettingsClick = onSettingsClick,
         onLanguageSettingsClick = onLanguageSettingsClick,
         onVoiceSettingsClick = onVoiceSettingsClick,
+        onDismissServerPrompt = {
+            appPreferences.setValue(appPreferences.finishSetupServerDismissed, true)
+            serverDismissed = true
+        },
+        onDismissLanguagePrompt = {
+            appPreferences.setValue(appPreferences.finishSetupLanguagesDismissed, true)
+            languagesDismissed = true
+        },
+        onDismissAiPrompt = {
+            appPreferences.setValue(appPreferences.finishSetupAiDismissed, true)
+            aiDismissed = true
+        },
         onRetry = { viewModel.loadVideos() },
     )
 }
@@ -121,6 +147,7 @@ private fun LocalMediaScreenLayout(
     hasServers: Boolean,
     needsLanguageSetup: Boolean,
     needsAiSetup: Boolean,
+    serverPromptDismissed: Boolean,
     state: LocalMediaState,
     onGrantPermission: () -> Unit,
     onItemClick: (LocalVideoItem) -> Unit,
@@ -128,18 +155,22 @@ private fun LocalMediaScreenLayout(
     onSettingsClick: () -> Unit,
     onLanguageSettingsClick: () -> Unit,
     onVoiceSettingsClick: () -> Unit,
+    onDismissServerPrompt: () -> Unit,
+    onDismissLanguagePrompt: () -> Unit,
+    onDismissAiPrompt: () -> Unit,
     onRetry: () -> Unit,
 ) {
     val contentPadding = PaddingValues(24.dp)
     val finishSetupItems =
         buildList {
-            if (!hasServers) {
+            if (!hasServers && !serverPromptDismissed) {
                 add(
                     FinishSetupItem(
                         titleRes = CoreR.string.finish_setup_connect_server_title,
                         bodyRes = CoreR.string.finish_setup_connect_server_body,
                         actionRes = CoreR.string.finish_setup_connect_server_action,
                         onClick = onManageServersClick,
+                        onDismiss = onDismissServerPrompt,
                     )
                 )
             }
@@ -150,6 +181,7 @@ private fun LocalMediaScreenLayout(
                         bodyRes = CoreR.string.finish_setup_languages_body,
                         actionRes = CoreR.string.finish_setup_languages_action,
                         onClick = onLanguageSettingsClick,
+                        onDismiss = onDismissLanguagePrompt,
                     )
                 )
             }
@@ -160,6 +192,7 @@ private fun LocalMediaScreenLayout(
                         bodyRes = CoreR.string.finish_setup_ai_body,
                         actionRes = CoreR.string.finish_setup_ai_action,
                         onClick = onVoiceSettingsClick,
+                        onDismiss = onDismissAiPrompt,
                     )
                 )
             }
@@ -215,6 +248,7 @@ private fun LocalMediaScreenLayout(
                                     body = stringResource(item.bodyRes),
                                     actionLabel = stringResource(item.actionRes),
                                     onActionClick = item.onClick,
+                                    onDismiss = item.onDismiss,
                                 )
                             }
                             Spacer(modifier = Modifier.height(MaterialTheme.spacings.medium))
@@ -290,4 +324,5 @@ private data class FinishSetupItem(
     val bodyRes: Int,
     val actionRes: Int,
     val onClick: () -> Unit,
+    val onDismiss: () -> Unit,
 )
