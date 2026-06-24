@@ -139,7 +139,7 @@ public fun dev.jdtech.jellyfin.presentation.film.FavoritesScreen(onItemClick: ko
     - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
-public fun dev.jdtech.jellyfin.presentation.film.HomeScreen(appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onLibraryClick: kotlin.Function1<@[ParameterName(name = \, onSearchClick: kotlin.Function0<kotlin.Unit>, onSettingsClick: kotlin.Function0<kotlin.Unit>, onManageServers: kotlin.Function0<kotlin.Unit>, onReconnectClick: kotlin.Function0<kotlin.Unit>, onLanguageSettingsClick: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<@[ParameterName(name = \, onPluginBrowse: kotlin.Function2<@[ParameterName(name = \, viewModel: dev.jdtech.jellyfin.film.presentation.home.HomeViewModel): kotlin.Unit
+public fun dev.jdtech.jellyfin.presentation.film.HomeScreen(appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onLibraryClick: kotlin.Function1<@[ParameterName(name = \, onSearchClick: kotlin.Function0<kotlin.Unit>, onSettingsClick: kotlin.Function0<kotlin.Unit>, onManageServers: kotlin.Function0<kotlin.Unit>, onReconnectClick: kotlin.Function0<kotlin.Unit>, onLanguageSettingsClick: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<@[ParameterName(name = \, onPluginBrowse: kotlin.Function2<@[ParameterName(name = \, onNetworkShareSeeAll: kotlin.Function1<@[ParameterName(name = \, viewModel: dev.jdtech.jellyfin.film.presentation.home.HomeViewModel): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -152,10 +152,11 @@ public fun dev.jdtech.jellyfin.presentation.film.HomeScreen(appPreferences: dev.
     - onLanguageSettingsClick: STABLE (function type)
     - onItemClick: STABLE (function type)
     - onPluginBrowse: STABLE (function type)
+    - onNetworkShareSeeAll: STABLE (function type)
     - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
-private fun dev.jdtech.jellyfin.presentation.film.HomeScreenLayout(state: dev.jdtech.jellyfin.film.presentation.home.HomeState, displayRatings: kotlin.Boolean, needsLanguageSetup: kotlin.Boolean, onLanguageSettingsClick: kotlin.Function0<kotlin.Unit>, onAction: kotlin.Function1<dev.jdtech.jellyfin.film.presentation.home.HomeAction, kotlin.Unit>, onPluginBrowse: kotlin.Function2<@[ParameterName(name = \): kotlin.Unit
+private fun dev.jdtech.jellyfin.presentation.film.HomeScreenLayout(state: dev.jdtech.jellyfin.film.presentation.home.HomeState, displayRatings: kotlin.Boolean, needsLanguageSetup: kotlin.Boolean, onLanguageSettingsClick: kotlin.Function0<kotlin.Unit>, onAction: kotlin.Function1<dev.jdtech.jellyfin.film.presentation.home.HomeAction, kotlin.Unit>, onPluginBrowse: kotlin.Function2<@[ParameterName(name = \, onNetworkShareSeeAll: kotlin.Function1<@[ParameterName(name = \): kotlin.Unit
   skippable: true
   restartable: true
   params:
@@ -165,6 +166,7 @@ private fun dev.jdtech.jellyfin.presentation.film.HomeScreenLayout(state: dev.jd
     - onLanguageSettingsClick: STABLE (function type)
     - onAction: STABLE (function type)
     - onPluginBrowse: STABLE (function type)
+    - onNetworkShareSeeAll: STABLE (function type)
 
 @Composable
 private fun dev.jdtech.jellyfin.presentation.film.HomeStatusCard(model: dev.jdtech.jellyfin.presentation.film.HomeStatusCardModel, onReconnectClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
@@ -1025,10 +1027,10 @@ public fun dev.jdtech.jellyfin.presentation.network.NetworkScreen(onShareClick: 
     - onAddShareClick: STABLE (function type)
     - onItemClick: STABLE (function type)
     - onSettingsClick: STABLE (function type)
-    - viewModel: RUNTIME (requires runtime check)
+    - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
-private fun dev.jdtech.jellyfin.presentation.network.NetworkScreenLayout(state: dev.jdtech.jellyfin.presentation.network.NetworkState, onShareClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkShareDto, kotlin.Unit>, onAddShareClick: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkVideoItem, kotlin.Unit>, onSettingsClick: kotlin.Function0<kotlin.Unit>, onRetry: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.jdtech.jellyfin.presentation.network.NetworkScreenLayout(state: dev.jdtech.jellyfin.presentation.network.NetworkState, onShareClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkShareDto, kotlin.Unit>, onAddShareClick: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkVideoItem, kotlin.Unit>, onSettingsClick: kotlin.Function0<kotlin.Unit>, onRetry: kotlin.Function0<kotlin.Unit>, onShowOnHomeChange: kotlin.Function2<@[ParameterName(name = \): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -1038,6 +1040,7 @@ private fun dev.jdtech.jellyfin.presentation.network.NetworkScreenLayout(state: 
     - onItemClick: STABLE (function type)
     - onSettingsClick: STABLE (function type)
     - onRetry: STABLE (function type)
+    - onShowOnHomeChange: STABLE (function type)
 
 @Composable
 public fun dev.jdtech.jellyfin.presentation.network.NetworkShareScreen(shareId: kotlin.String, navigateBack: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkVideoItem, kotlin.Unit>, viewModel: dev.jdtech.jellyfin.presentation.network.NetworkShareViewModel): kotlin.Unit
@@ -1080,12 +1083,14 @@ private fun dev.jdtech.jellyfin.presentation.network.NetworkVideoScreenLayout(st
     - onTogglePlayed: STABLE (function type)
 
 @Composable
-private fun dev.jdtech.jellyfin.presentation.network.ShareCard(share: dev.jdtech.jellyfin.models.NetworkShareDto, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.jdtech.jellyfin.presentation.network.ShareCard(share: dev.jdtech.jellyfin.models.NetworkShareDto, showOnHome: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>, onShowOnHomeChange: kotlin.Function1<kotlin.Boolean, kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - share: UNSTABLE (has mutable properties or unstable members)
+    - showOnHome: STABLE (primitive type)
     - onClick: STABLE (function type)
+    - onShowOnHomeChange: STABLE (function type)
 
 @Composable
 public fun dev.jdtech.jellyfin.presentation.settings.AboutScreen(navigateBack: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -1703,7 +1708,7 @@ public fun dev.jdtech.jellyfin.presentation.utils.rememberTapPending(timeoutMs: 
     - timeoutMs: STABLE (primitive type)
 
 @Composable
-public fun dev.spatialfin.NavigationRoot(navController: androidx.navigation.NavHostController, hasServers: kotlin.Boolean, hasCurrentServer: kotlin.Boolean, hasCurrentUser: kotlin.Boolean, onboardingCompleted: kotlin.Boolean, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, initialSearchQuery: kotlin.String?, onReconnect: kotlin.Function0<kotlin.Unit>, xrSpaceMode: dev.spatialfin.unified.XrSpaceMode?, onEnterFullSpace: kotlin.Function0<kotlin.Unit>?, onEnterHomeSpace: kotlin.Function0<kotlin.Unit>?, currentUser: dev.jdtech.jellyfin.models.User?, currentServerAddress: kotlin.String?, fcastSession: dev.spatialfin.fcast.session.CastSessionManager?, onMaItemTap: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Boolean>?): kotlin.Unit
+public fun dev.spatialfin.NavigationRoot(navController: androidx.navigation.NavHostController, hasServers: kotlin.Boolean, hasCurrentServer: kotlin.Boolean, hasCurrentUser: kotlin.Boolean, onboardingCompleted: kotlin.Boolean, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, initialSearchQuery: kotlin.String?, onReconnect: kotlin.Function0<kotlin.Unit>, xrSpaceMode: dev.spatialfin.unified.XrSpaceMode?, onEnterFullSpace: kotlin.Function0<kotlin.Unit>?, onEnterHomeSpace: kotlin.Function0<kotlin.Unit>?, currentUser: dev.jdtech.jellyfin.models.User?, currentServerAddress: kotlin.String?, fcastSession: dev.spatialfin.fcast.session.CastSessionManager?, onMaItemTap: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Boolean>?, onVoiceClick: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -1722,6 +1727,7 @@ public fun dev.spatialfin.NavigationRoot(navController: androidx.navigation.NavH
     - currentServerAddress: STABLE (class with no mutable properties)
     - fcastSession: UNSTABLE (has mutable properties or unstable members)
     - onMaItemTap: STABLE (function type)
+    - onVoiceClick: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.XrProfileRailButton(user: dev.jdtech.jellyfin.models.User, serverAddress: kotlin.String?, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -1978,7 +1984,7 @@ private fun dev.spatialfin.beam.BeamHeroCard(item: dev.jdtech.jellyfin.models.Sp
     - actions: STABLE (composable function type)
 
 @Composable
-public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, onOpenLibrary: kotlin.Function3<java.util.UUID, kotlin.String, dev.jdtech.jellyfin.models.CollectionType, kotlin.Unit>, onOpenShow: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenItem: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenJellyfinAudioDetail: kotlin.Function3<java.util.UUID, kotlin.String, dev.spatialfin.unified.audio.JellyfinAudioDetailType, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenMaSearch: kotlin.Function0<kotlin.Unit>, onOpenMaBrowse: kotlin.Function2<kotlin.String, kotlin.String, kotlin.Unit>, userName: kotlin.String?, onOpenServer: kotlin.Function0<kotlin.Unit>, onOpenUser: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, onOpenLibrary: kotlin.Function3<java.util.UUID, kotlin.String, dev.jdtech.jellyfin.models.CollectionType, kotlin.Unit>, onOpenShow: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenSeason: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenItem: kotlin.Function1<java.util.UUID, kotlin.Unit>, onOpenJellyfinAudioDetail: kotlin.Function3<java.util.UUID, kotlin.String, dev.spatialfin.unified.audio.JellyfinAudioDetailType, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenNetworkShare: kotlin.Function1<kotlin.String, kotlin.Unit>, onOpenMaSearch: kotlin.Function0<kotlin.Unit>, onOpenMaBrowse: kotlin.Function2<kotlin.String, kotlin.String, kotlin.Unit>, userName: kotlin.String?, onOpenServer: kotlin.Function0<kotlin.Unit>, onOpenUser: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
   params:
@@ -1989,6 +1995,7 @@ public fun dev.spatialfin.beam.BeamHomeScreen(contentPadding: androidx.compose.f
     - onOpenItem: STABLE (function type)
     - onOpenJellyfinAudioDetail: STABLE (function type)
     - onOpenPluginBrowse: STABLE (function type)
+    - onOpenNetworkShare: STABLE (function type)
     - onOpenMaSearch: STABLE (function type)
     - onOpenMaBrowse: STABLE (function type)
     - userName: STABLE (class with no mutable properties)
@@ -2112,7 +2119,7 @@ public fun dev.spatialfin.beam.BeamNetworkScreen(contentPadding: androidx.compos
     - onShareClick: STABLE (function type)
     - onAddShareClick: STABLE (function type)
     - onItemClick: STABLE (function type)
-    - viewModel: RUNTIME (requires runtime check)
+    - viewModel: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
 public fun dev.spatialfin.beam.BeamNetworkShareScreen(contentPadding: androidx.compose.foundation.layout.PaddingValues, shareId: kotlin.String, onBack: kotlin.Function0<kotlin.Unit>, onItemClick: kotlin.Function1<dev.jdtech.jellyfin.models.NetworkVideoItem, kotlin.Unit>, onShareRemoved: kotlin.Function0<kotlin.Unit>, viewModel: dev.spatialfin.beam.BeamNetworkShareViewModel): kotlin.Unit
@@ -3056,7 +3063,7 @@ private fun dev.spatialfin.tv.TvHomeHeroCard(item: dev.jdtech.jellyfin.models.Sp
     - onDetails: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.presentation.home.HomeState, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onOpenLibrary: kotlin.Function1<dev.jdtech.jellyfin.models.View, kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenCompanion: kotlin.Function0<kotlin.Unit>, onOpenSearch: kotlin.Function0<kotlin.Unit>, onRefresh: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.presentation.home.HomeState, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onOpenLibrary: kotlin.Function1<dev.jdtech.jellyfin.models.View, kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onOpenPluginBrowse: kotlin.Function2<kotlin.String, kotlin.String?, kotlin.Unit>, onOpenCompanion: kotlin.Function0<kotlin.Unit>, onOpenSearch: kotlin.Function0<kotlin.Unit>, onRefresh: kotlin.Function0<kotlin.Unit>, onOpenNetworkShare: kotlin.Function1<kotlin.String, kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3069,6 +3076,7 @@ private fun dev.spatialfin.tv.TvHomeScreen(homeState: dev.jdtech.jellyfin.film.p
     - onOpenCompanion: STABLE (function type)
     - onOpenSearch: STABLE (function type)
     - onRefresh: STABLE (function type)
+    - onOpenNetworkShare: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.tv.TvHomeStatusCard(model: dev.spatialfin.tv.TvHomeStatusModel, onReconnect: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -3194,6 +3202,16 @@ private fun dev.spatialfin.tv.TvNetworkPrefs(appPreferences: dev.jdtech.jellyfin
   restartable: true
   params:
     - appPreferences: UNSTABLE (has mutable properties or unstable members)
+
+@Composable
+private fun dev.spatialfin.tv.TvNetworkShareScreen(shareId: kotlin.String, onBack: kotlin.Function0<kotlin.Unit>, onOpenItem: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, viewModel: dev.jdtech.jellyfin.presentation.network.NetworkShareViewModel): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - shareId: STABLE (String is immutable)
+    - onBack: STABLE (function type)
+    - onOpenItem: STABLE (function type)
+    - viewModel: RUNTIME (requires runtime check)
 
 @Composable
 private fun dev.spatialfin.tv.TvOnScreenKeyboard(onKey: kotlin.Function1<kotlin.Char, kotlin.Unit>, onSpace: kotlin.Function0<kotlin.Unit>, onDelete: kotlin.Function0<kotlin.Unit>, onClear: kotlin.Function0<kotlin.Unit>, firstKeyFocusRequester: androidx.compose.ui.focus.FocusRequester?): kotlin.Unit
@@ -3562,7 +3580,7 @@ public fun dev.spatialfin.unified.HomeVoiceController.RegisterEffects(requestFol
     - requestFollowUp: STABLE (function type)
 
 @Composable
-public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.sdk.model.api.SessionInfoDto?, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.sdk.model.api.SessionInfoDto?, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3574,6 +3592,14 @@ public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.
     - onSelectSession: STABLE (function type)
     - onPlayStateCommand: STABLE (function type)
     - onGeneralCommand: STABLE (function type)
+    - onDismiss: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+public fun dev.spatialfin.unified.RemoteControlMiniPlayerHost(modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
@@ -3601,7 +3627,7 @@ private fun dev.spatialfin.unified.RemoteSessionSelector(sessions: kotlin.collec
     - onSelectSession: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.unified.UnifiedMainActivity.FullSpaceContent(session: androidx.xr.runtime.Session, navController: androidx.navigation.NavHostController, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onboardingCompleted: kotlin.Boolean, voiceSearchQuery: kotlin.String?, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, partialTranscript: kotlin.String, voiceFeedback: kotlin.String?, voiceGestureArmingProgress: kotlin.Float, voiceGestureHint: kotlin.String?, voiceMicLevel: kotlin.Float, transitioning: kotlin.Boolean, recommendationContext: dev.jdtech.jellyfin.player.xr.voice.RecommendationContext?, onSelectRecommendation: kotlin.Function2<kotlin.Int, dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onDismissRecommendation: kotlin.Function0<kotlin.Unit>, onReconnect: kotlin.Function0<kotlin.Unit>, onEnterHomeSpace: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.unified.UnifiedMainActivity.FullSpaceContent(session: androidx.xr.runtime.Session, navController: androidx.navigation.NavHostController, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onboardingCompleted: kotlin.Boolean, voiceSearchQuery: kotlin.String?, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, partialTranscript: kotlin.String, voiceFeedback: kotlin.String?, voiceGestureArmingProgress: kotlin.Float, voiceGestureHint: kotlin.String?, voiceMicLevel: kotlin.Float, transitioning: kotlin.Boolean, recommendationContext: dev.jdtech.jellyfin.player.xr.voice.RecommendationContext?, onSelectRecommendation: kotlin.Function2<kotlin.Int, dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onDismissRecommendation: kotlin.Function0<kotlin.Unit>, onReconnect: kotlin.Function0<kotlin.Unit>, onEnterHomeSpace: kotlin.Function0<kotlin.Unit>, onVoiceClick: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3623,9 +3649,10 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.FullSpaceContent(session:
     - onDismissRecommendation: STABLE (function type)
     - onReconnect: STABLE (function type)
     - onEnterHomeSpace: STABLE (function type)
+    - onVoiceClick: STABLE (function type)
 
 @Composable
-private fun dev.spatialfin.unified.UnifiedMainActivity.HomeSpaceContent(navController: androidx.navigation.NavHostController, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onboardingCompleted: kotlin.Boolean, voiceSearchQuery: kotlin.String?, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, partialTranscript: kotlin.String, voiceFeedback: kotlin.String?, voiceGestureArmingProgress: kotlin.Float, voiceGestureHint: kotlin.String?, voiceMicLevel: kotlin.Float, transitioning: kotlin.Boolean, recommendationContext: dev.jdtech.jellyfin.player.xr.voice.RecommendationContext?, onSelectRecommendation: kotlin.Function2<kotlin.Int, dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onDismissRecommendation: kotlin.Function0<kotlin.Unit>, onReconnect: kotlin.Function0<kotlin.Unit>, onEnterFullSpace: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.unified.UnifiedMainActivity.HomeSpaceContent(navController: androidx.navigation.NavHostController, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, onboardingCompleted: kotlin.Boolean, voiceSearchQuery: kotlin.String?, voiceState: dev.jdtech.jellyfin.player.xr.voice.VoiceState, partialTranscript: kotlin.String, voiceFeedback: kotlin.String?, voiceGestureArmingProgress: kotlin.Float, voiceGestureHint: kotlin.String?, voiceMicLevel: kotlin.Float, transitioning: kotlin.Boolean, recommendationContext: dev.jdtech.jellyfin.player.xr.voice.RecommendationContext?, onSelectRecommendation: kotlin.Function2<kotlin.Int, dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, onDismissRecommendation: kotlin.Function0<kotlin.Unit>, onReconnect: kotlin.Function0<kotlin.Unit>, onEnterFullSpace: kotlin.Function0<kotlin.Unit>, onVoiceClick: kotlin.Function0<kotlin.Unit>?): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -3646,6 +3673,7 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.HomeSpaceContent(navContr
     - onDismissRecommendation: STABLE (function type)
     - onReconnect: STABLE (function type)
     - onEnterFullSpace: STABLE (function type)
+    - onVoiceClick: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.unified.UnifiedMainActivity.XrContent(session: androidx.xr.runtime.Session, navController: androidx.navigation.NavHostController, lifecycleOwner: androidx.lifecycle.LifecycleOwner, coroutineScope: kotlinx.coroutines.CoroutineScope, context: android.content.Context, state: dev.jdtech.jellyfin.viewmodels.MainState, appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, repository: dev.jdtech.jellyfin.repository.JellyfinRepository, initialSearchQueryExtra: kotlin.String?, onboardingCompleted: kotlin.Boolean, onFinishAffinity: kotlin.Function0<kotlin.Unit>, onFinish: kotlin.Function0<kotlin.Unit>): kotlin.Unit
