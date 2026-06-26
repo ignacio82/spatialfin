@@ -56,7 +56,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.TrackSelectionDialogBuilder
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.media3.common.Tracks
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.spatial.Orbiter
 import androidx.xr.compose.spatial.OrbiterAnchorPoint
@@ -126,6 +131,19 @@ internal fun XrFCastInboundPlayerScreen(
     val libassBitmap by libassBitmapState.collectAsState()
     val libassFrameVersion by libassFrameVersionState.collectAsState()
     var videoEntity by remember { mutableStateOf<SurfaceEntity?>(null) }
+    // Which track type's picker overlay is open (TEXT / AUDIO / VIDEO), or null. Replaces the
+    // Media3 TrackSelectionDialogBuilder AlertDialog, which never rendered in the XR spatial
+    // scene (so the CC / audio buttons appeared dead).
+    var trackPickerType by remember { mutableStateOf<Int?>(null) }
+    // Bumped on every onTracksChanged so the open picker recomposes against the live track list.
+    var tracksRevision by remember { mutableIntStateOf(0) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) { tracksRevision++ }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
     var uiRoot by remember { mutableStateOf<Entity?>(null) }
     var subtitleRoot by remember { mutableStateOf<Entity?>(null) }
     var movableComponent by remember { mutableStateOf<MovableComponent?>(null) }
@@ -592,9 +610,9 @@ internal fun XrFCastInboundPlayerScreen(
                                 offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
                             ) {
                                 TrackOptionsOrbiter(
-                                    onSubtitleClick = { TrackSelectionDialogBuilder(context, "Subtitles", player, C.TRACK_TYPE_TEXT).build().show() },
-                                    onAudioClick = { TrackSelectionDialogBuilder(context, "Audio", player, C.TRACK_TYPE_AUDIO).build().show() },
-                                    onQualityClick = { TrackSelectionDialogBuilder(context, "Quality", player, C.TRACK_TYPE_VIDEO).build().show() },
+                                    onSubtitleClick = { trackPickerType = C.TRACK_TYPE_TEXT },
+                                    onAudioClick = { trackPickerType = C.TRACK_TYPE_AUDIO },
+                                    onQualityClick = { trackPickerType = C.TRACK_TYPE_VIDEO },
                                 )
                             }
                         }
@@ -650,10 +668,132 @@ internal fun XrFCastInboundPlayerScreen(
                                         }
                                 )
                             }
+
+                            trackPickerType?.let { type ->
+                                InboundTrackPicker(
+                                    player = player,
+                                    trackType = type,
+                                    revision = tracksRevision,
+                                    onDismiss = { trackPickerType = null },
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Spatial-native track selector for the FCast theater receiver. Replaces the Media3
+ * [TrackSelectionDialogBuilder] AlertDialog, which never rendered in the XR scene. Lists the
+ * current audio / subtitle / video tracks and applies the pick directly to the player's
+ * [androidx.media3.common.TrackSelectionParameters]. Subtitles gain an explicit "Off" row.
+ */
+@Composable
+private fun InboundTrackPicker(
+    player: ExoPlayer,
+    trackType: Int,
+    revision: Int,
+    onDismiss: () -> Unit,
+) {
+    // `revision` is read so the list recomposes when tracks change underneath the open picker.
+    @Suppress("UNUSED_EXPRESSION") revision
+    val groups = player.currentTracks.groups.filter {
+        it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported)
+    }
+    val title = when (trackType) {
+        C.TRACK_TYPE_AUDIO -> "Audio"
+        C.TRACK_TYPE_TEXT -> "Subtitles"
+        else -> "Quality"
+    }
+    val anySelected = groups.any { it.isSelected }
+
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.55f))
+            .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .pointerInput(Unit) { detectTapGestures(onTap = { }) },
+        ) {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.padding(vertical = 16.dp),
+            ) {
+                androidx.compose.material3.Text(
+                    text = title,
+                    style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+                androidx.compose.foundation.lazy.LazyColumn {
+                    if (trackType == C.TRACK_TYPE_TEXT) {
+                        item {
+                            InboundTrackRow(label = "Off", selected = !anySelected) {
+                                player.trackSelectionParameters = player.trackSelectionParameters
+                                    .buildUpon()
+                                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                    .build()
+                                onDismiss()
+                            }
+                        }
+                    }
+                    items(groups.size) { i ->
+                        val group = groups[i]
+                        val format = group.getTrackFormat(0)
+                        val label = format.label ?: format.language ?: "Track ${i + 1}"
+                        InboundTrackRow(label = label, selected = group.isSelected) {
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .clearOverridesOfType(trackType)
+                                .setOverrideForType(
+                                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+                                )
+                                .setTrackTypeDisabled(trackType, false)
+                                .apply { if (trackType == C.TRACK_TYPE_TEXT) setIgnoredTextSelectionFlags(0) }
+                                .build()
+                            onDismiss()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InboundTrackRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Text(
+            text = label,
+            style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+            color = if (selected) {
+                androidx.compose.material3.MaterialTheme.colorScheme.primary
+            } else {
+                androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            },
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            androidx.compose.material3.Icon(
+                imageVector = androidx.compose.material.icons.Icons.Default.Check,
+                contentDescription = "Selected",
+                tint = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
