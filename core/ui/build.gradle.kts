@@ -18,6 +18,9 @@ dependencies {
     // SpatialFin* domain models (SpatialFinItem/Episode/Season/Person) that the
     // shared browse primitives render. They live in :data (same as :core uses).
     implementation(projects.data)
+    // Shared on-device LLM management cards (presentation.ai) render the
+    // download-manager + preference state defined in :settings.
+    implementation(projects.settings)
 
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.runtime)

@@ -62,8 +62,8 @@ import dagger.hilt.android.EntryPointAccessors
 import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
-import dev.spatialfin.beam.BeamAiCoreManagementCard
-import dev.spatialfin.beam.BeamGemmaManagementCard
+import dev.jdtech.jellyfin.presentation.ai.BeamAiCoreManagementCard
+import dev.jdtech.jellyfin.presentation.ai.BeamGemmaManagementCard
 import dev.spatialfin.beam.BeamLlmEntryPoint
 import kotlinx.coroutines.launch
 
