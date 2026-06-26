@@ -180,6 +180,7 @@ dependencies {
     implementation(project(":modes:film"))
     implementation(project(":modes:music"))
     implementation(project(":modes:audio"))
+    implementation(project(":shell:tv"))
     implementation(project(":player:core"))
     implementation(project(":player:local"))
     implementation(project(":player:session"))

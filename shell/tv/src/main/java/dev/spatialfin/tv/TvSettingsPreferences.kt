@@ -59,12 +59,11 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import dagger.hilt.android.EntryPointAccessors
-import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
+import dev.jdtech.jellyfin.core.llm.LlmManagerEntryPoint
 import dev.jdtech.jellyfin.presentation.ai.BeamAiCoreManagementCard
 import dev.jdtech.jellyfin.presentation.ai.BeamGemmaManagementCard
-import dev.spatialfin.beam.BeamLlmEntryPoint
 import kotlinx.coroutines.launch
 
 /**
@@ -454,7 +453,7 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
     val entryPoint = remember(context) {
         EntryPointAccessors.fromApplication(
             context.applicationContext,
-            BeamLlmEntryPoint::class.java,
+            LlmManagerEntryPoint::class.java,
         )
     }
     val llmDownloadManager = remember(entryPoint) { entryPoint.llmDownloadManager() }
@@ -554,9 +553,9 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
                 modifier = Modifier.fillMaxWidth(0.85f),
                 color = androidx.compose.material3.MaterialTheme.colorScheme.surface,
             ) {
-                VoicePickerDialog(
-                    initialVoiceName = assistantVoice.ifBlank { null },
-                    onSave = { selected ->
+                dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog.current?.invoke(
+                    assistantVoice.ifBlank { null },
+                    { selected ->
                         val normalized = selected?.trim()?.takeIf { it.isNotEmpty() }
                         appPreferences.setValue(
                             appPreferences.voiceAssistantVoice,
@@ -565,7 +564,7 @@ private fun TvVoicePrefs(appPreferences: AppPreferences) {
                         assistantVoice = normalized.orEmpty()
                         voicePickerVisible = false
                     },
-                    onDismissRequest = { voicePickerVisible = false },
+                    { voicePickerVisible = false },
                 )
             }
         }
@@ -848,15 +847,16 @@ private fun TvCachePrefs(appPreferences: AppPreferences) {
 @Composable
 private fun TvCastPrefs(appPreferences: AppPreferences) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val fcastController = dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
     TvPrefSectionTitle("Cast")
     var enabled by rememberSaveable {
-        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
+        mutableStateOf(fcastController?.isReceiverEnabled(appPreferences) ?: true)
     }
     var autoStart by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
     }
     var name by rememberSaveable {
-        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.resolveDisplayName(appPreferences))
+        mutableStateOf(fcastController?.resolveDisplayName(appPreferences).orEmpty())
     }
     var dirty by rememberSaveable { mutableStateOf(false) }
 
@@ -889,8 +889,7 @@ private fun TvCastPrefs(appPreferences: AppPreferences) {
     )
     androidx.compose.material3.Button(
         onClick = {
-            dev.spatialfin.fcast.FCastReceiverWiring.applyReceiverConfig(context, appPreferences)
-            dev.spatialfin.sendspin.SendspinReceiverWiring.applyReceiverConfig(context, appPreferences)
+            fcastController?.applyReceiverConfig(context, appPreferences)
             dirty = false
         },
         enabled = dirty,

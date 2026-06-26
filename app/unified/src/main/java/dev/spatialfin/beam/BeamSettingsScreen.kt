@@ -53,11 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import dev.jdtech.jellyfin.core.llm.AICoreStatus
+import dev.jdtech.jellyfin.core.llm.LlmManagerEntryPoint
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.presentation.ai.BeamAiCoreManagementCard
 import dev.jdtech.jellyfin.presentation.ai.BeamGemmaManagementCard
@@ -92,21 +90,6 @@ import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
 import dev.spatialfin.unified.applock.PinSetupScreen
 import kotlinx.coroutines.launch
-
-/**
- * Singleton accessor for the LiteRT-LM download manager. Hilt can't inject
- * directly into a plain @Composable, but a SingletonComponent EntryPoint
- * gives us the same instance the XR / settings ViewModels already use.
- */
-// Despite the `Beam` name, this entry point is reusable: the Gemma +
-// AICore management cards are rendered on both Beam and TV, and both
-// flavors pull the same managers from the single Hilt singleton graph.
-@EntryPoint
-@InstallIn(SingletonComponent::class)
-internal interface BeamLlmEntryPoint {
-    fun llmDownloadManager(): LlmDownloadManager
-    fun llmModelManager(): LlmModelManager
-}
 
 /**
  * Categories exposed as drill-down cards on the Beam (and TV) settings hubs.
@@ -317,7 +300,7 @@ fun BeamSettingsScreen(
     val beamLlmEntryPoint = remember(context) {
         EntryPointAccessors.fromApplication(
             context.applicationContext,
-            BeamLlmEntryPoint::class.java,
+            LlmManagerEntryPoint::class.java,
         )
     }
     val llmDownloadManager = remember(beamLlmEntryPoint) { beamLlmEntryPoint.llmDownloadManager() }
@@ -1232,12 +1215,11 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
+            val fcastController =
+                dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
             Button(
                 onClick = {
-                    dev.spatialfin.fcast.FCastReceiverWiring
-                        .applyReceiverConfig(context, appPreferences)
-                    dev.spatialfin.sendspin.SendspinReceiverWiring
-                        .applyReceiverConfig(context, appPreferences)
+                    fcastController?.applyReceiverConfig(context, appPreferences)
                     dirty = false
                 },
                 enabled = dirty,

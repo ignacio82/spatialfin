@@ -324,7 +324,19 @@ class UnifiedMainActivity : AppCompatActivity() {
                 DeviceClass.TV -> {
                     CompositionLocalProvider(
                         dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher provides
-                            jellyfinAudioDispatcher
+                            jellyfinAudioDispatcher,
+                        dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost provides
+                            { modifier -> RemoteControlMiniPlayerHost(modifier) },
+                        dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController provides
+                            AppFCastReceiverController,
+                        dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog provides
+                            { initialVoiceName, onSave, onDismissRequest ->
+                                dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog(
+                                    initialVoiceName = initialVoiceName,
+                                    onSave = onSave,
+                                    onDismissRequest = onDismissRequest,
+                                )
+                            },
                     ) {
                         TvTheme {
                             TvNavigationRoot(
@@ -344,7 +356,26 @@ class UnifiedMainActivity : AppCompatActivity() {
                 DeviceClass.PHONE -> {
                     CompositionLocalProvider(
                         dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher provides
-                            jellyfinAudioDispatcher
+                            jellyfinAudioDispatcher,
+                        dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost provides
+                            { modifier -> RemoteControlMiniPlayerHost(modifier) },
+                        dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController provides
+                            AppFCastReceiverController,
+                        dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog provides
+                            { initialVoiceName, onSave, onDismissRequest ->
+                                dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog(
+                                    initialVoiceName = initialVoiceName,
+                                    onSave = onSave,
+                                    onDismissRequest = onDismissRequest,
+                                )
+                            },
+                        dev.jdtech.jellyfin.presentation.settings.LocalSubtitlePreviewCard provides
+                            { modifier ->
+                                dev.spatialfin.presentation.settings.components.SubtitlePreviewCard(
+                                    appPreferences = appPreferences,
+                                    modifier = modifier,
+                                )
+                            },
                     ) {
                         BeamTheme {
                             Surface(modifier = Modifier, color = Color.Transparent) {

@@ -594,9 +594,8 @@ fun BeamNavigationRoot(
                                     maNowPlaying.pendingPlayUri != null,
                             )
                         }
-                        dev.spatialfin.unified.RemoteControlMiniPlayerHost(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        )
+                        dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
+                            ?.invoke(Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         if (useBottomNav) {
                             BeamBottomNavigationRow(
                                 currentRoute = currentRoute,

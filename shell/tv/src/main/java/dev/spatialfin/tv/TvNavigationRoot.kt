@@ -1,6 +1,6 @@
 package dev.spatialfin.tv
 
-import dev.spatialfin.R
+import dev.spatialfin.tv.R
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -525,7 +525,8 @@ fun TvNavigationRoot(
             ) {
                 Column {
                     // Network remote: control any other SpatialFin instance playing on the LAN.
-                    dev.spatialfin.unified.RemoteControlMiniPlayerHost()
+                    dev.jdtech.jellyfin.presentation.shell.LocalRemoteControlMiniPlayerHost.current
+                        ?.invoke(androidx.compose.ui.Modifier)
                     dev.spatialfin.unified.music.MaMiniPlayer(
                         session = maSession,
                         onExpand = { showNowPlaying = true },

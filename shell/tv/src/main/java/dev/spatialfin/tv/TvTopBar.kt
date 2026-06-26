@@ -21,8 +21,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.components.userPrimaryImageUri
-import dev.spatialfin.R
 
 @Composable
 internal fun TvTopBar(
@@ -45,7 +45,7 @@ internal fun TvTopBar(
         // Logo / Server Name
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             androidx.compose.foundation.Image(
-                painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                painter = painterResource(id = CoreR.drawable.ic_launcher_foreground),
                 contentDescription = "SpatialFin",
                 modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)),
             )
