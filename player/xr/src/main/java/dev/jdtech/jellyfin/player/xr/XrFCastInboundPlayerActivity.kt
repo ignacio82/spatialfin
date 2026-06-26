@@ -623,8 +623,13 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "XrFCastInbound"
         private const val MAX_SCHEDULED_START_WAIT_MS = 4_000L
+        // Case-insensitive: the Jellyfin stream URL the sender casts uses lowercase
+        // `/videos/<id>/master.m3u8`, while subtitle/attachment deliveryUrls use `/Videos/`.
+        // Matching only the capitalised form left itemId null on every cast, so neither the
+        // embedded-font preload nor the subtitle sideload ever ran.
         private val JELLYFIN_VIDEO_PATH_REGEX = Regex(
             "/Videos/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/",
+            RegexOption.IGNORE_CASE,
         )
 
         fun createIntent(context: Context, request: ExternalStreamRequest): Intent =
