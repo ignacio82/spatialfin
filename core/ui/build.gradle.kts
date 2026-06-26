@@ -15,6 +15,9 @@ dependencies {
     // offline-mode CompositionLocal, adaptive grid cells). Depends on :core for
     // CoreR and the base color/spacing tokens it builds on.
     implementation(projects.core)
+    // SpatialFin* domain models (SpatialFinItem/Episode/Season/Person) that the
+    // shared browse primitives render. They live in :data (same as :core uses).
+    implementation(projects.data)
 
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.runtime)
@@ -31,6 +34,9 @@ dependencies {
     // XR spatial dialog + spatial theme surfaces used by the shared dialogs/theme.
     implementation(libs.androidx.xr.compose)
     implementation(libs.androidx.xr.compose.material3)
+
+    // AsyncImage for the shared browse primitives (ItemCard, ItemPoster, …).
+    implementation(libs.coil.compose)
 
     implementation(libs.timber)
 }
