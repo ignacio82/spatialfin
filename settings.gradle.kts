@@ -20,6 +20,7 @@ include(":plugins")
 include(":sendspin")
 
 pluginManagement {
+    includeBuild("build-logic")
     repositories {
         mavenCentral()
         gradlePluginPortal()

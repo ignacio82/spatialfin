@@ -1,25 +1,12 @@
 plugins {
     alias(libs.plugins.android.library)
+    id("spatialfin.android.library")
     alias(libs.plugins.ksp)
     alias(libs.plugins.compose.stability.analyzer)
 }
 
 android {
     namespace = "dev.jdtech.jellyfin.film"
-    compileSdk = Versions.COMPILE_SDK
-    buildToolsVersion = Versions.BUILD_TOOLS
-
-    defaultConfig { minSdk = Versions.MIN_SDK }
-
-    buildTypes {
-        named("release") { isMinifyEnabled = false }
-        register("staging") { initWith(getByName("release")) }
-    }
-
-    compileOptions {
-        sourceCompatibility = Versions.JAVA
-        targetCompatibility = Versions.JAVA
-    }
 }
 
 dependencies {

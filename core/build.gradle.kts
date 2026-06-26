@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.compose.compiler)
+    id("spatialfin.android.library")
+    id("spatialfin.android.compose")
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -10,32 +11,11 @@ plugins {
 
 android {
     namespace = "dev.jdtech.jellyfin.core"
-    compileSdk = Versions.COMPILE_SDK
-    buildToolsVersion = Versions.BUILD_TOOLS
-
-    defaultConfig { minSdk = Versions.MIN_SDK }
-
-    buildTypes {
-        named("release") { isMinifyEnabled = false }
-        register("staging") { initWith(getByName("release")) }
-    }
 
     flavorDimensions += "variant"
     productFlavors { register("libre") }
 
-    compileOptions {
-        sourceCompatibility = Versions.JAVA
-        targetCompatibility = Versions.JAVA
-    }
-
-    buildFeatures { compose = true }
-
     testOptions { unitTests.isIncludeAndroidResources = true }
-}
-
-composeCompiler {
-    reportsDestination.set(layout.buildDirectory.dir("compose_compiler"))
-    metricsDestination.set(layout.buildDirectory.dir("compose_compiler"))
 }
 
 dependencies {
