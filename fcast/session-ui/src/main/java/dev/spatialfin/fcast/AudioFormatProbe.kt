@@ -18,7 +18,7 @@ import dev.jdtech.jellyfin.fcast.protocol.AudioFormatInfo
  * collapses anything past stereo unless the user specifically enabled passthrough).
  */
 @OptIn(UnstableApi::class)
-internal object AudioFormatProbe {
+object AudioFormatProbe {
 
     /**
      * Read [player]'s currently-selected audio track and convert to [AudioFormatInfo]. Returns

@@ -253,7 +253,7 @@ fun FCastCinematicRemote(
                         enabled = tracksState != null && controlsEnabled
                     ) {
                         Icon(
-                            painter = painterResource(dev.spatialfin.R.drawable.ic_audiotrack),
+                            painter = painterResource(dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_audiotrack),
                             contentDescription = "Audio Tracks",
                             tint = if (tracksState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -322,7 +322,7 @@ fun FCastCinematicRemote(
                         enabled = tracksState != null && controlsEnabled
                     ) {
                         Icon(
-                            painter = painterResource(dev.spatialfin.R.drawable.ic_subtitles),
+                            painter = painterResource(dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_subtitles),
                             contentDescription = "Subtitle Tracks",
                             tint = if (tracksState != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -382,7 +382,7 @@ fun FCastCinematicRemote(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                painter = painterResource(dev.spatialfin.R.drawable.ic_queue),
+                                painter = painterResource(dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_queue),
                                 contentDescription = "Up Next",
                                 modifier = Modifier.size(20.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant

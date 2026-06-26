@@ -176,7 +176,7 @@ fun FCastGlobalPickerHost(
         val name = warningReceiver ?: return@LaunchedEffect
         android.widget.Toast.makeText(
             context,
-            context.getString(dev.spatialfin.R.string.cast_subtitle_fidelity_degraded, name),
+            context.getString(dev.jdtech.jellyfin.fcast.sessionui.R.string.cast_subtitle_fidelity_degraded, name),
             android.widget.Toast.LENGTH_LONG,
         ).show()
         sessionManager.consumeSubtitleDegradationWarning()
@@ -505,7 +505,7 @@ private fun SubtitleFidelityChip(sessionManager: CastSessionManager) {
         shape = RoundedCornerShape(8.dp),
     ) {
         Text(
-            text = androidx.compose.ui.res.stringResource(dev.spatialfin.R.string.cast_subtitle_transcoding),
+            text = androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.fcast.sessionui.R.string.cast_subtitle_transcoding),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onTertiaryContainer,

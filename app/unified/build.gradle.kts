@@ -172,6 +172,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":data"))
     implementation(project(":fcast"))
+    implementation(project(":fcast:session-ui"))
     implementation(project(":settings"))
     implementation(project(":setup"))
     implementation(project(":plugins"))

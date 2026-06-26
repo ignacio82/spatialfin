@@ -61,7 +61,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
-import dev.spatialfin.R
+import dev.jdtech.jellyfin.fcast.sessionui.R
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -282,7 +282,7 @@ fun FCastReceiverScreen(
                             )
                         }
                         Icon(
-                            painter = painterResource(id = dev.spatialfin.R.drawable.ic_cast_connected),
+                            painter = painterResource(id = dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_cast_connected),
                             contentDescription = "Cast Icon",
                             tint = Color.White,
                             modifier = Modifier.size(32.dp).padding(start = 8.dp)
@@ -314,7 +314,7 @@ fun FCastReceiverScreen(
                             modifier = Modifier.focusRequester(subtitlesFocus),
                         ) {
                             Icon(
-                                painter = painterResource(id = dev.spatialfin.R.drawable.ic_subtitles),
+                                painter = painterResource(id = dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_subtitles),
                                 contentDescription = "Subtitles",
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)
@@ -327,7 +327,7 @@ fun FCastReceiverScreen(
                             ).build().show()
                         }) {
                             Icon(
-                                painter = painterResource(id = dev.spatialfin.R.drawable.ic_audiotrack),
+                                painter = painterResource(id = dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_audiotrack),
                                 contentDescription = "Audio",
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)
@@ -340,7 +340,7 @@ fun FCastReceiverScreen(
                             ).build().show()
                         }) {
                             Icon(
-                                painter = painterResource(id = dev.spatialfin.R.drawable.ic_settings),
+                                painter = painterResource(id = dev.jdtech.jellyfin.fcast.sessionui.R.drawable.ic_settings),
                                 contentDescription = "Quality",
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cast subtitle notices (used by the FCast session/cinematic-remote UI). -->
+    <string name="cast_subtitle_transcoding">Transcoding for subtitle compatibility</string>
+    <string name="cast_subtitle_fidelity_degraded">This title uses styled subtitles. %1$s will simplify them.</string>
+
+    <!-- media3 PlayerControlView content descriptions (fcast_glass_player_controls.xml). -->
+    <string name="player_controls_rewind">Rewind</string>
+    <string name="player_controls_fast_forward">Fast forward</string>
+    <string name="player_controls_progress">Progress bar</string>
+</resources>
