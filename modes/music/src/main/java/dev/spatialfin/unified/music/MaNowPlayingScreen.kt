@@ -977,7 +977,7 @@ private fun PreparingSpinner() {
 }
 
 @Composable
-internal fun Modifier.maFocusHighlight(shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.CircleShape): Modifier {
+fun Modifier.maFocusHighlight(shape: androidx.compose.ui.graphics.Shape = androidx.compose.foundation.shape.CircleShape): Modifier {
     var isFocused by remember { mutableStateOf(false) }
     val scale by androidx.compose.animation.core.animateFloatAsState(if (isFocused) 1.15f else 1f, label = "focusScale")
     val outlineColor = MaterialTheme.colorScheme.primary

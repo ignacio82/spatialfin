@@ -177,6 +177,7 @@ dependencies {
     implementation(project(":plugins"))
     implementation(project(":sendspin"))
     implementation(project(":modes:film"))
+    implementation(project(":modes:music"))
     implementation(project(":player:core"))
     implementation(project(":player:local"))
     implementation(project(":player:session"))
