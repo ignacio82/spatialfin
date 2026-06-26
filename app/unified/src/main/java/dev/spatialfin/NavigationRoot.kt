@@ -356,6 +356,24 @@ fun NavigationRoot(
                     onDismiss = onDismiss,
                 )
             },
+        // Settings preview seams: VoicePickerDialog (SpatialVoiceSynthesizer) and
+        // SubtitlePreviewCard (LibassRenderer) are :player:xr-backed, so they stay
+        // app-side and the moved XR settings screen renders them through these.
+        dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog provides
+            { initialVoiceName, onSave, onDismissRequest ->
+                dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog(
+                    initialVoiceName = initialVoiceName,
+                    onSave = onSave,
+                    onDismissRequest = onDismissRequest,
+                )
+            },
+        dev.jdtech.jellyfin.presentation.settings.LocalSubtitlePreviewCard provides
+            { modifier ->
+                dev.spatialfin.presentation.settings.components.SubtitlePreviewCard(
+                    appPreferences = appPreferences,
+                    modifier = modifier,
+                )
+            },
     ) {
     val panelModifier = if (xrSpaceMode == XrSpaceMode.FULL) {
         Modifier

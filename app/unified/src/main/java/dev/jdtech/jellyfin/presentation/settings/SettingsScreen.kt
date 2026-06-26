@@ -58,8 +58,6 @@ import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsGroupCard
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.settings.components.SettingsTextInputDialog
-import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
-import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceIntInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
@@ -432,13 +430,13 @@ fun SettingsScreen(
 
     if (voicePickerVisible) {
         SpatialDialog(onDismissRequest = { voicePickerVisible = false }) {
-            VoicePickerDialog(
-                initialVoiceName = voicePickerInitial,
-                onSave = { selected ->
+            LocalVoicePickerDialog.current?.invoke(
+                voicePickerInitial,
+                { selected ->
                     viewModel.saveVoiceAssistantVoice(selected)
                     voicePickerVisible = false
                 },
-                onDismissRequest = { voicePickerVisible = false },
+                { voicePickerVisible = false },
             )
         }
     }
@@ -746,10 +744,7 @@ private fun SettingsScreenLayout(
             ) {
                 if (hasSubtitlePreferences && appPreferences != null && searchQuery.isBlank()) {
                     item {
-                        SubtitlePreviewCard(
-                            appPreferences = appPreferences,
-                            modifier = Modifier.widthIn(max = 860.dp),
-                        )
+                        LocalSubtitlePreviewCard.current?.invoke(Modifier.widthIn(max = 860.dp))
                     }
                 }
                 items(filteredGroups) { group ->
