@@ -1,4 +1,4 @@
-package dev.jdtech.jellyfin.player.xr
+package dev.jdtech.jellyfin.player.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

@@ -1,4 +1,5 @@
 package dev.jdtech.jellyfin.player.xr
+import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 
 import androidx.media3.common.C
 import androidx.media3.common.Format

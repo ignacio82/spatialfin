@@ -1,4 +1,5 @@
 package dev.jdtech.jellyfin.player.xr
+import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column

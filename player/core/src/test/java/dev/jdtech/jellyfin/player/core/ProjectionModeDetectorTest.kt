@@ -1,6 +1,6 @@
-package dev.jdtech.jellyfin.player.xr
+package dev.jdtech.jellyfin.player.core
 
-import dev.jdtech.jellyfin.player.xr.ProjectionModeDetector.ProjectionMode
+import dev.jdtech.jellyfin.player.core.ProjectionModeDetector.ProjectionMode
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

@@ -1,4 +1,4 @@
-package dev.jdtech.jellyfin.player.xr
+package dev.jdtech.jellyfin.player.core
 
 import java.util.Locale
 

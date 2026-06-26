@@ -116,7 +116,7 @@ When the task touches voice, on-device AI, recommendations, or assistant UX, sta
 | `:player:xr` | Immersive XR player, libass JNI, voice subsystem, spatial UI. |
 | `:player:local` | ExoPlayer/Media3 wrapper for local & Jellyfin playback (`PlayerViewModel`). |
 | `:player:session` | Player session/action layer; voice-typed actions (`XrPlayerAction`) and `PlayerSessionController`. |
-| `:player:core` | Player abstractions and domain models. |
+| `:player:core` | Player abstractions and domain models. Also home to the **pure** playback-metadata detectors `StereoModeDetector` / `ProjectionModeDetector` (`dev.jdtech.jellyfin.player.core`, only `java.util.Locale`), moved out of `:player:xr` so browse screens / feature modules can detect stereo & projection without a `:player:xr` edge. <!-- updated 2026-06-26: detectors relocated from :player:xr (modularization) --> |
 | `:player:beam` | Phone-form-factor player (re-exports `:player:xr` for jniLibs / dex-merge reasons — see [Build Quirks](#build-quirks)). |
 | `:player:tv` | TV-form-factor player (Leanback). |
 | `:modes:film` | Browse/detail screens for movies/shows/episodes/collections, search. |

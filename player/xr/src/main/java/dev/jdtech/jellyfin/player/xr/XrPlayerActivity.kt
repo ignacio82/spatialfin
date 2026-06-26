@@ -1,4 +1,5 @@
 package dev.jdtech.jellyfin.player.xr
+import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
