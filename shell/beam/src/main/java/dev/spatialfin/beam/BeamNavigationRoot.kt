@@ -1,6 +1,6 @@
 package dev.spatialfin.beam
 
-import dev.spatialfin.R
+import dev.jdtech.jellyfin.setup.R as SetupR
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
@@ -1350,7 +1350,7 @@ private fun BeamSidebar(
                 horizontalArrangement = if (isExpanded) Arrangement.Start else Arrangement.Center,
             ) {
                 androidx.compose.foundation.Image(
-                    painter = painterResource(id = R.drawable.ic_beam_launcher),
+                    painter = painterResource(id = SetupR.drawable.ic_beam_launcher),
                     contentDescription = "SpatialFin",
                     modifier = Modifier
                         .size(32.dp)

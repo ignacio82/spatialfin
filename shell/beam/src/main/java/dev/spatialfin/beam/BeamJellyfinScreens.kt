@@ -545,7 +545,7 @@ fun BeamHomeTopAppBar(
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         AsyncImage(
-            model = dev.spatialfin.R.mipmap.ic_launcher,
+            model = dev.jdtech.jellyfin.core.R.mipmap.ic_launcher,
             contentDescription = null,
             modifier = Modifier
                 .size(30.dp)

@@ -181,6 +181,7 @@ dependencies {
     implementation(project(":modes:music"))
     implementation(project(":modes:audio"))
     implementation(project(":shell:tv"))
+    implementation(project(":shell:beam"))
     implementation(project(":player:core"))
     implementation(project(":player:local"))
     implementation(project(":player:session"))

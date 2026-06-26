@@ -84,8 +84,6 @@ import dev.jdtech.jellyfin.settings.presentation.models.PreferenceLongInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSelect
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceStringInput
 import dev.jdtech.jellyfin.settings.presentation.models.PreferenceSwitch
-import dev.jdtech.jellyfin.presentation.settings.components.VoicePickerDialog
-import dev.spatialfin.presentation.settings.components.SubtitlePreviewCard
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
 import dev.spatialfin.unified.applock.PinSetupScreen
@@ -632,10 +630,8 @@ fun BeamSettingsScreen(
         }
         if (shouldShow("subtitles")) {
             item {
-                SubtitlePreviewCard(
-                    appPreferences = appPreferences,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                dev.jdtech.jellyfin.presentation.settings.LocalSubtitlePreviewCard.current
+                    ?.invoke(Modifier.fillMaxWidth())
             }
             item {
                 BeamSettingsSection(title = "Subtitles") {
@@ -1039,9 +1035,9 @@ fun BeamSettingsScreen(
                 modifier = Modifier.fillMaxWidth(0.95f),
                 color = MaterialTheme.colorScheme.surface,
             ) {
-                VoicePickerDialog(
-                    initialVoiceName = assistantVoice.ifBlank { null },
-                    onSave = { selected ->
+                dev.jdtech.jellyfin.presentation.settings.LocalVoicePickerDialog.current?.invoke(
+                    assistantVoice.ifBlank { null },
+                    { selected ->
                         val normalized = selected?.trim()?.takeIf { it.isNotEmpty() }
                         appPreferences.setValue(
                             appPreferences.voiceAssistantVoice,
@@ -1050,7 +1046,7 @@ fun BeamSettingsScreen(
                         assistantVoice = normalized.orEmpty()
                         voicePickerVisible = false
                     },
-                    onDismissRequest = { voicePickerVisible = false },
+                    { voicePickerVisible = false },
                 )
             }
         }
@@ -1132,8 +1128,9 @@ private val legacyVoiceValues = setOf("male", "female", "system")
 @Composable
 private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
     val context = LocalContext.current
+    val fcastController = dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
     var enabled by rememberSaveable {
-        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.isReceiverEnabled(appPreferences))
+        mutableStateOf(fcastController?.isReceiverEnabled(appPreferences) ?: true)
     }
     var autoStart by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.castAutoStart))
@@ -1141,7 +1138,7 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
     // Initialise from the resolved name (which falls back to Build.MODEL when the pref is
     // unset) so the field is never blank — first-edit overwrites the default cleanly.
     var name by rememberSaveable {
-        mutableStateOf(dev.spatialfin.fcast.FCastReceiverWiring.resolveDisplayName(appPreferences))
+        mutableStateOf(fcastController?.resolveDisplayName(appPreferences).orEmpty())
     }
     var dirty by rememberSaveable { mutableStateOf(false) }
 
@@ -1215,8 +1212,6 @@ private fun BeamCastSettingsSection(appPreferences: AppPreferences) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
-            val fcastController =
-                dev.jdtech.jellyfin.presentation.shell.LocalFCastReceiverController.current
             Button(
                 onClick = {
                     fcastController?.applyReceiverConfig(context, appPreferences)

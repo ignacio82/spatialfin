@@ -1,6 +1,5 @@
 package dev.spatialfin.beam
 
-import dev.spatialfin.BuildConfig
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
@@ -54,7 +53,7 @@ object BeamCompanionLogUploader {
             priority = Log.INFO,
             tag = "SpatialFinBeam",
             message =
-                "SESSION START sessionId=$sessionId model=${Build.MODEL ?: ""} sdk=${Build.VERSION.SDK_INT} app=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                "SESSION START sessionId=$sessionId model=${Build.MODEL ?: ""} sdk=${Build.VERSION.SDK_INT} app=${appVersionLabel()}",
             throwable = null,
         )
     }
@@ -98,7 +97,7 @@ object BeamCompanionLogUploader {
                 .put("manufacturer", Build.MANUFACTURER ?: "")
                 .put("model", Build.MODEL ?: "")
                 .put("androidVersion", Build.VERSION.RELEASE ?: "")
-                .put("appVersion", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                .put("appVersion", appVersionLabel())
                 .put("sessionId", sessionId)
                 .put("logs", JSONArray(batch))
 
@@ -143,6 +142,18 @@ object BeamCompanionLogUploader {
             android.util.Log.ASSERT -> "A"
             else -> "?"
         }
+
+    /**
+     * "versionName (versionCode)" read from the installed package, so this
+     * module doesn't depend on the app's `BuildConfig` (it lives in `:shell:beam`).
+     */
+    private fun appVersionLabel(): String =
+        runCatching {
+            val pkg = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+            val code =
+                if (Build.VERSION.SDK_INT >= 28) pkg.longVersionCode else @Suppress("DEPRECATION") pkg.versionCode.toLong()
+            "${pkg.versionName} ($code)"
+        }.getOrDefault("?")
 
     private fun deviceId(): String =
         Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
