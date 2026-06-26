@@ -44,9 +44,11 @@ import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.currentStateAsState
@@ -82,6 +84,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.presentation.film.CollectionScreen
 import dev.jdtech.jellyfin.presentation.film.DownloadsScreen
@@ -535,6 +538,23 @@ fun NavigationRoot(
                 exitTransition = { fadeOut(tween(300)) },
             ) {
             composable<WelcomeRoute> {
+                // GeminiNanoService lives in :player:xr; the onboarding screen (now in
+                // :setup) only needs the resolved "is on-device AI supported?" boolean,
+                // so the service is owned here and the result is passed down as a seam.
+                val welcomeContext = LocalContext.current
+                val geminiNanoService = remember(welcomeContext) {
+                    GeminiNanoService(welcomeContext.applicationContext)
+                }
+                var aiSupported by remember { mutableStateOf<Boolean?>(null) }
+                var aiStatusLoading by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    aiStatusLoading = true
+                    aiSupported = runCatching { geminiNanoService.status() }.getOrNull()?.supported
+                    aiStatusLoading = false
+                }
+                DisposableEffect(Unit) {
+                    onDispose { geminiNanoService.destroy() }
+                }
                 WelcomeScreen(
                     appPreferences = appPreferences,
                     onContinueToServerSetup = {
@@ -549,6 +569,8 @@ fun NavigationRoot(
                             launchSingleTop = true
                         }
                     },
+                    aiSupported = aiSupported,
+                    aiStatusLoading = aiStatusLoading,
                 )
             }
             composable<ServersRoute> {

@@ -28,7 +28,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,12 +58,10 @@ import androidx.xr.compose.spatial.SpatialDialog
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
 import dev.spatialfin.unified.applock.AppLockManager
 import dev.spatialfin.unified.applock.AppLockMode
 import dev.spatialfin.unified.applock.PinSetupScreen
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
-import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoStatus
 import dev.jdtech.jellyfin.presentation.settings.MusicAssistantAuthFields
 import dev.jdtech.jellyfin.presentation.settings.components.SmartLanguageSettingsDialog
 import dev.jdtech.jellyfin.presentation.setup.components.RootLayout
@@ -89,11 +86,12 @@ fun WelcomeScreen(
     appPreferences: AppPreferences,
     onContinueToServerSetup: () -> Unit,
     onContinueToLocalLibrary: () -> Unit,
+    aiSupported: Boolean?,
+    aiStatusLoading: Boolean,
     companionViewModel: CompanionViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-    val geminiNanoService = remember(context) { GeminiNanoService(context.applicationContext) }
 
     val companionState by companionViewModel.state.collectAsStateWithLifecycle()
 
@@ -118,17 +116,8 @@ fun WelcomeScreen(
     var cloudApiKey by rememberSaveable {
         mutableStateOf(appPreferences.getValue(appPreferences.voiceAssistantCloudApiKey).orEmpty())
     }
-    var aiStatus by remember { mutableStateOf<GeminiNanoStatus?>(null) }
-    var aiStatusLoading by remember { mutableStateOf(true) }
-
     val steps = remember { WelcomeStep.entries }
     val currentStep = steps[currentStepIndex]
-
-    LaunchedEffect(Unit) {
-        aiStatusLoading = true
-        aiStatus = runCatching { geminiNanoService.status() }.getOrNull()
-        aiStatusLoading = false
-    }
 
     LaunchedEffect(companionState) {
         if (companionState is CompanionState.Success) {
@@ -138,10 +127,6 @@ fun WelcomeScreen(
             cloudApiKey = importedApiKey
             wantsGemma = appPreferences.getValue(appPreferences.voiceAssistantGemmaEnabled)
         }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { geminiNanoService.destroy() }
     }
 
     fun completeOnboarding(saveChoices: Boolean) {
@@ -283,7 +268,7 @@ fun WelcomeScreen(
             smartLanguageSettings = smartLanguageSettings.copy(preferOriginalAudio = it)
         },
         onEditLanguages = { showLanguageDialog = true },
-        aiStatus = aiStatus,
+        aiSupported = aiSupported,
         aiStatusLoading = aiStatusLoading,
         wantsGemma = wantsGemma,
         onWantsGemmaChange = { wantsGemma = it },
@@ -323,7 +308,7 @@ private fun WelcomeScreenLayout(
     smartLanguageSettings: SmartLanguageSettings,
     onPreferOriginalAudioChange: (Boolean) -> Unit,
     onEditLanguages: () -> Unit,
-    aiStatus: GeminiNanoStatus?,
+    aiSupported: Boolean?,
     aiStatusLoading: Boolean,
     wantsGemma: Boolean,
     onWantsGemmaChange: (Boolean) -> Unit,
@@ -491,7 +476,7 @@ private fun WelcomeScreenLayout(
                         }
                         WelcomeStep.Ai -> {
                             AiStep(
-                                aiStatus = aiStatus,
+                                aiSupported = aiSupported,
                                 aiStatusLoading = aiStatusLoading,
                                 wantsGemma = wantsGemma,
                                 onWantsGemmaChange = onWantsGemmaChange,
@@ -816,7 +801,7 @@ private fun SecurityStep(
 
 @Composable
 private fun AiStep(
-    aiStatus: GeminiNanoStatus?,
+    aiSupported: Boolean?,
     aiStatusLoading: Boolean,
     wantsGemma: Boolean,
     onWantsGemmaChange: (Boolean) -> Unit,
@@ -852,7 +837,7 @@ private fun AiStep(
                     }
                 }
             }
-            aiStatus?.supported == true -> {
+            aiSupported == true -> {
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
@@ -1066,7 +1051,7 @@ private fun WelcomeScreenLayoutPreview() {
             smartLanguageSettings = SmartLanguageSettings(spokenLanguageCodes = listOf("en", "es")),
             onPreferOriginalAudioChange = {},
             onEditLanguages = {},
-            aiStatus = null,
+            aiSupported = null,
             aiStatusLoading = false,
             wantsGemma = true,
         onWantsGemmaChange = {},
