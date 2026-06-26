@@ -31,7 +31,7 @@ import dev.jdtech.jellyfin.data.musicassistant.data.model.server.ServerQueueItem
  * so we prefer a concrete mapping and fall back to nothing rather than echoing
  * "Library".
  */
-internal fun ServerMediaItem.providerDisplayName(): String? =
+fun ServerMediaItem.providerDisplayName(): String? =
     MusicProviderNames.fromProviderOrUri(
         provider = provider,
         providerInstance = providerMappings?.firstOrNull { it.providerInstance.isNotBlank() }?.providerInstance,
@@ -45,7 +45,7 @@ private val LOSSLESS_CODECS = setOf(
 )
 
 /** True when this stream is lossless or hi-res (≥24-bit or >48 kHz). */
-internal fun AudioFormat.isHiResOrLossless(): Boolean {
+fun AudioFormat.isHiResOrLossless(): Boolean {
     val depth = bitDepth
     val rate = sampleRate
     val hiRes = (depth != null && depth >= 24) || (rate != null && rate > 48_000)
@@ -55,17 +55,17 @@ internal fun AudioFormat.isHiResOrLossless(): Boolean {
 }
 
 /** Badge a tile as HD when any of its provider mappings can serve lossless/hi-res audio. */
-internal fun ServerMediaItem.isHighDefinitionAudio(): Boolean =
+fun ServerMediaItem.isHighDefinitionAudio(): Boolean =
     providerMappings?.any { it.audioFormat?.isHiResOrLossless() == true } == true
 
 /** Queue rows know the actual stream format; fall back to the media item's mappings. */
-internal fun ServerQueueItem.isHighDefinitionAudio(): Boolean =
+fun ServerQueueItem.isHighDefinitionAudio(): Boolean =
     streamDetails?.audioFormat?.isHiResOrLossless() == true ||
         mediaItem?.isHighDefinitionAudio() == true
 
 /** Small "HD" pill rendered next to a track/album title when [isHighDefinitionAudio]. */
 @Composable
-internal fun MaHdBadge(modifier: Modifier = Modifier) {
+fun MaHdBadge(modifier: Modifier = Modifier) {
     Text(
         text = "HD",
         style = MaterialTheme.typography.labelSmall,

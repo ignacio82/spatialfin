@@ -342,6 +342,17 @@ fun NavigationRoot(
             androidx.compose.runtime.remember(fcastSession) {
                 fcastSession?.let { dev.spatialfin.fcast.session.CastButtonControllerAdapter(it) }
             },
+        // MA long-press actions seam: the renderer reads LocalMaPlayDispatcher at
+        // the consuming screen's position, so the browse UI stays free of the
+        // app MA types (MaCardActionsMenu / MaPlayDispatcher).
+        dev.jdtech.jellyfin.presentation.music.LocalMaCardActionsRenderer provides
+            { item, onDismiss ->
+                dev.spatialfin.unified.music.MaCardActionsMenu(
+                    item = item,
+                    dispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current,
+                    onDismiss = onDismiss,
+                )
+            },
     ) {
     val panelModifier = if (xrSpaceMode == XrSpaceMode.FULL) {
         Modifier

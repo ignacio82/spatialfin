@@ -156,6 +156,15 @@ a `:fcast`/app dependency. The form-factor roots (`NavigationRoot`,
 covariant `CastReceiver?` → `Any?`) + `showPicker()`. Same pattern as the
 `PlayRequest` seam: keep the heavy `:fcast` type out of the browse UI. <!-- added 2026-06-26: cast-button seam (modularization) -->
 
+The **Music Assistant home-card** coupling uses the same pattern:
+`LocalMaCardActionsRenderer` (`:core:ui`, `dev.jdtech.jellyfin.presentation.music`)
+is a composable-lambda `CompositionLocal` for the long-press actions sheet; XR
+`NavigationRoot` provides an impl that reads `LocalMaPlayDispatcher` and calls
+`MaCardActionsMenu`. The shared MA tile helpers (`providerDisplayName`,
+`MaHdBadge`, `isHighDefinitionAudio`) moved from `dev.spatialfin.unified.music`
+in `:app` to `:core:ui` (package preserved). The film `HomeScreen` /
+`MusicAssistantItemCard` therefore no longer reference the `:app` MA package.
+
 ### Player Module Cross-Reference
 
 `:player:beam` exposes `:player:xr` via `api(project(":player:xr"))` to keep `libass_jni.so` and `LibassRenderer` flowing through a single dex-merge path. Do not also `implementation(project(":player:xr"))` from `:app:unified` — it causes duplicate-class errors. The current `:app:unified` build pulls XR transitively through `:player:beam`.

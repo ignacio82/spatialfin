@@ -186,15 +186,13 @@ private fun HomeScreenLayout(
     val showServerSelectionSheetState = rememberModalBottomSheetState()
     var showServerSelectionBottomSheet by remember { mutableStateOf(false) }
 
-    // Long-press target for a Music Assistant home card → actions sheet.
-    val maDispatcher = dev.spatialfin.unified.LocalMaPlayDispatcher.current
+    // Long-press target for a Music Assistant home card → actions sheet,
+    // rendered through the :core:ui seam so this screen stays free of the app
+    // MA types (see LocalMaCardActionsRenderer).
+    val maCardActionsRenderer = dev.jdtech.jellyfin.presentation.music.LocalMaCardActionsRenderer.current
     var maMenuItem by remember { mutableStateOf<dev.jdtech.jellyfin.models.SpatialFinItem?>(null) }
     maMenuItem?.let { menuItem ->
-        dev.spatialfin.unified.music.MaCardActionsMenu(
-            item = menuItem,
-            dispatcher = maDispatcher,
-            onDismiss = { maMenuItem = null },
-        )
+        maCardActionsRenderer?.invoke(menuItem) { maMenuItem = null }
     }
 
     Box(modifier = Modifier.fillMaxSize().semantics { isTraversalGroup = true }) {
