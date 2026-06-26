@@ -25,6 +25,7 @@ android {
 
 dependencies {
     implementation(projects.data)
+    implementation(projects.settings)
     implementation(projects.fcast)
     implementation(libs.timber)
 

@@ -30,7 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
-import dev.spatialfin.R
+import dev.jdtech.jellyfin.settings.R
 import kotlinx.coroutines.launch
 
 /**

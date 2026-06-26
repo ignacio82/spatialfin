@@ -1,5 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- App lock (relocated from :app:unified with the applock package) -->
+    <string name="app_lock_unlock_title">Unlock SpatialFin</string>
+    <string name="app_lock_unlock_subtitle">Authentication required to continue</string>
+    <string name="app_lock_unlock_action">Unlock</string>
+    <string name="app_lock_unlock_cancelled">Unlock cancelled. Tap Unlock to try again.</string>
+    <string name="app_lock_unlock_failed">Could not verify passkey. Try again.</string>
+    <string name="app_lock_setup_title">Enable app lock</string>
+    <string name="app_lock_setup_subtitle">Confirm it\'s you to turn on app lock.</string>
+    <string name="app_lock_no_credential">No screen lock is set up on this device.</string>
+
+    <!-- PIN mode -->
+    <string name="app_lock_pin_prompt_title">Enter PIN</string>
+    <string name="app_lock_pin_submit">Unlock</string>
+    <string name="app_lock_pin_incorrect">Incorrect PIN.</string>
+    <string name="app_lock_pin_attempts_remaining">%1$d attempt(s) remaining before data is wiped.</string>
+    <string name="app_lock_pin_forgot">Forgot PIN?</string>
+    <string name="app_lock_pin_wipe_title">Wipe SpatialFin data?</string>
+    <string name="app_lock_pin_wipe_body_on">The PIN cannot be recovered. Continuing will permanently delete all SpatialFin data on this device, including downloaded videos.</string>
+    <string name="app_lock_pin_wipe_body_off">The PIN cannot be recovered without wiping data. Continuing will permanently delete all SpatialFin data on this device, including downloaded videos.</string>
+    <string name="app_lock_pin_wipe_confirm">Wipe data</string>
+    <string name="app_lock_pin_wipe_cancel">Cancel</string>
+
+    <!-- PIN setup / change -->
+    <string name="app_lock_pin_setup_title">Set a PIN</string>
+    <string name="app_lock_pin_confirm_title">Confirm PIN</string>
+    <string name="app_lock_pin_setup_subtitle">Choose a numeric PIN between %1$d and %2$d digits.</string>
+    <string name="app_lock_pin_setup_cancel">Cancel</string>
+    <string name="app_lock_pin_mismatch">PINs did not match. Try again.</string>
+
     <string name="settings_category_language">Language</string>
     <string name="settings_preferred_audio_language">Preferred audio language</string>
     <string name="settings_preferred_subtitle_language">Preferred subtitle language</string>

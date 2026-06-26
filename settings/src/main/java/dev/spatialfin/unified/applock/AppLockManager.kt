@@ -127,8 +127,8 @@ class AppLockManager @Inject constructor(
         val crypto = wrapHandle?.let { BiometricPrompt.CryptoObject(it.cipher) }
         val result = runPrompt(
             activity = activity,
-            title = activity.getString(dev.spatialfin.R.string.app_lock_setup_title),
-            subtitle = activity.getString(dev.spatialfin.R.string.app_lock_setup_subtitle),
+            title = activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_setup_title),
+            subtitle = activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_setup_subtitle),
             crypto = crypto,
         )
         return when (result) {
@@ -137,7 +137,7 @@ class AppLockManager @Inject constructor(
                     val rekeyed = contentKeyManager.rekeyToBiometric(wrapHandle)
                     if (!rekeyed) {
                         return EnrollResult.Failed(
-                            activity.getString(dev.spatialfin.R.string.app_lock_unlock_failed)
+                            activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_unlock_failed)
                         )
                     }
                 }
@@ -162,8 +162,8 @@ class AppLockManager @Inject constructor(
         } else null
         val result = runPrompt(
             activity = activity,
-            title = activity.getString(dev.spatialfin.R.string.app_lock_unlock_title),
-            subtitle = activity.getString(dev.spatialfin.R.string.app_lock_unlock_subtitle),
+            title = activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_unlock_title),
+            subtitle = activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_unlock_subtitle),
             crypto = crypto,
         )
         return when (result) {
@@ -185,7 +185,7 @@ class AppLockManager @Inject constructor(
             }
             PromptResult.Cancelled -> AuthResult.Cancelled
             PromptResult.NoCredential -> AuthResult.Failed(
-                activity.getString(dev.spatialfin.R.string.app_lock_no_credential)
+                activity.getString(dev.jdtech.jellyfin.settings.R.string.app_lock_no_credential)
             )
             is PromptResult.Failed -> AuthResult.Failed(result.message)
         }

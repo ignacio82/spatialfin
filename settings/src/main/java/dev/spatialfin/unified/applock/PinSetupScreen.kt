@@ -24,7 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import dev.spatialfin.R
+import dev.jdtech.jellyfin.settings.R
 
 /** Two-step PIN setup / change flow. */
 @Composable
