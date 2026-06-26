@@ -4,6 +4,7 @@ rootProject.name = "SpatialFin"
 
 include(":app:unified")
 include(":core")
+include(":core:ui")
 include(":data")
 include(":fcast")
 include(":player:core")
