@@ -30,6 +30,7 @@ fun AppPreferences.applyCompanionPreference(key: String, value: String?): Boolea
         }
         nonAnimeSubtitleDisabled.backendName -> applyBoolean(nonAnimeSubtitleDisabled, value)
         smartPreferOriginalAudio.backendName -> applyBoolean(smartPreferOriginalAudio, value)
+        smartForcedSubtitles.backendName -> applyBoolean(smartForcedSubtitles, value)
         smartSpokenLanguages.backendName -> {
             setValue(smartSpokenLanguages, value)
             true

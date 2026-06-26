@@ -10,6 +10,8 @@
     <string name="settings_smart_language_dialog_title">Smart audio and subtitles</string>
     <string name="settings_smart_language_prefer_original">Prefer original audio when known</string>
     <string name="settings_smart_language_prefer_original_summary">If the media exposes an original audio language, keep that audio and only turn subtitles on when needed.</string>
+    <string name="settings_smart_language_forced_subtitles">Forced subtitles for foreign parts</string>
+    <string name="settings_smart_language_forced_subtitles_summary">When the audio is in a language you speak, automatically turn on a forced subtitle track in that same language so foreign-language scenes are still translated.</string>
     <string name="settings_smart_language_list_title">Spoken languages</string>
     <string name="settings_smart_language_list_summary">Order matters. SpatialFin tries your languages from top to bottom for audio and subtitle fallback.</string>
     <string name="settings_smart_language_search">Search languages</string>

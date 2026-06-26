@@ -47,6 +47,7 @@ fun SmartLanguageSettingsDialog(
     val context = LocalContext.current
     val allLanguages = remember(context) { LanguageCatalog.all(context) }
     var preferOriginalAudio by remember { mutableStateOf(initialSettings.preferOriginalAudio) }
+    var forcedSubtitles by remember { mutableStateOf(initialSettings.forcedSubtitlesInUnderstoodAudio) }
     var selectedCodes by remember { mutableStateOf(initialSettings.spokenLanguageCodes.distinct()) }
     var query by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -100,6 +101,7 @@ fun SmartLanguageSettingsDialog(
                     onUpdate(
                         SmartLanguageSettings(
                             preferOriginalAudio = preferOriginalAudio,
+                            forcedSubtitlesInUnderstoodAudio = forcedSubtitles,
                             spokenLanguageCodes =
                                 selectedCodes.ifEmpty {
                                     listOf(LanguageCatalog.defaultDeviceLanguageCode(context))
@@ -144,6 +146,38 @@ fun SmartLanguageSettingsDialog(
                     Switch(
                         checked = preferOriginalAudio,
                         onCheckedChange = { preferOriginalAudio = it },
+                    )
+                }
+            }
+
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Row(
+                    modifier =
+                        Modifier.fillMaxWidth().padding(MaterialTheme.spacings.large),
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_smart_language_forced_subtitles),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))
+                        Text(
+                            text =
+                                stringResource(
+                                    R.string.settings_smart_language_forced_subtitles_summary
+                                ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = forcedSubtitles,
+                        onCheckedChange = { forcedSubtitles = it },
                     )
                 }
             }

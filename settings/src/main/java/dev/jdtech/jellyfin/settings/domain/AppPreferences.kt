@@ -243,6 +243,11 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     // companion, or who want to point at a different instance.
     val voiceAssistantSearxngUrl = Preference<String?>("pref_voice_assistant_searxng_url", null)
     val smartPreferOriginalAudio = Preference("pref_smart_prefer_original_audio", true)
+    // When the chosen audio is already in a language the viewer understands, full dialogue
+    // subtitles stay off — but a forced / signs subtitle track in that same language only
+    // renders during the foreign-language portions of the show (e.g. an English show with a
+    // few Spanish scenes). Enabling it translates just those parts. Default on.
+    val smartForcedSubtitles = Preference("pref_smart_forced_subtitles", true)
     val smartSpokenLanguages = Preference<String?>("pref_smart_spoken_languages", null)
     val onboardingCompleted = Preference("pref_onboarding_completed", false)
     val seriesLanguageOverrides = Preference<String?>("pref_series_language_overrides", null)
@@ -337,6 +342,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     fun getSmartLanguageSettings(context: Context): SmartLanguageSettings {
         return SmartLanguageSettings(
             preferOriginalAudio = getValue(smartPreferOriginalAudio),
+            forcedSubtitlesInUnderstoodAudio = getValue(smartForcedSubtitles),
             spokenLanguageCodes = getSmartSpokenLanguageCodes(context),
         )
     }
@@ -358,6 +364,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
 
     fun setSmartLanguageSettings(settings: SmartLanguageSettings) {
         setValue(smartPreferOriginalAudio, settings.preferOriginalAudio)
+        setValue(smartForcedSubtitles, settings.forcedSubtitlesInUnderstoodAudio)
         setValue(
             smartSpokenLanguages,
             settings.spokenLanguageCodes.distinct().joinToString(",").ifBlank { null },

@@ -167,6 +167,21 @@ internal class PlayerTrackSelector(
                 ?: subtitleGroups.takeIf { it.size == 1 }?.firstOrNull()
         }
 
+        // The viewer understands the audio, so full dialogue subtitles stay off — but a forced /
+        // signs-only track in that SAME language only renders during the foreign-language portions
+        // of the show (e.g. an otherwise-English show with occasional Spanish scenes). Enabling it
+        // translates just those parts without subtitling the whole conversation. Respect explicit
+        // per-series disables and manual signature picks, and skip if the user opted out.
+        if (
+            selectedSubtitleGroup == null &&
+            audioUnderstood &&
+            seriesOverride?.subtitlesEnabled != false &&
+            seriesOverrideSubtitleSignature == null &&
+            appPreferences.getValue(appPreferences.smartForcedSubtitles)
+        ) {
+            selectedSubtitleGroup = autoPickForcedSubtitle(subtitleGroups, selectedAudioLanguage)
+        }
+
         val builder = player.trackSelectionParameters
             .buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
@@ -400,6 +415,27 @@ internal class PlayerTrackSelector(
         val dialogMatches = matches.filter { !PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
         return (dialogMatches.takeIf { it.isNotEmpty() } ?: matches)
             .maxByOrNull { scoreSubtitleGroup(it, preferredLanguageCode = preferredLanguageCode) }
+    }
+
+    /**
+     * Picks the best forced / signs-only subtitle track in [audioLanguageCode] (the language
+     * the viewer already understands). Unlike [autoPickDialogueSubtitle], this *only* considers
+     * forced/signs tracks — a full dialogue track in the audio language would needlessly subtitle
+     * speech the viewer can already follow. Used to translate the foreign-language portions of an
+     * otherwise-understood show (e.g. a Spanish scene in an English series).
+     *
+     * Returns null if [audioLanguageCode] is null/blank or no forced track matches it, so the
+     * caller leaves subtitles off.
+     */
+    private fun autoPickForcedSubtitle(
+        groups: List<Tracks.Group>,
+        audioLanguageCode: String?,
+    ): Tracks.Group? {
+        if (audioLanguageCode.isNullOrBlank()) return null
+        return groups
+            .filter { groupMatchesLanguage(it, audioLanguageCode) }
+            .filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+            .maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
     }
 
     private fun scoreSubtitleGroup(

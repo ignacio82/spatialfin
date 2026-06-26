@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.local.presentation
 import androidx.media3.common.C
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class PlayerTrackHeuristicsTest {
@@ -113,6 +114,56 @@ class PlayerTrackHeuristicsTest {
                 label = "English",
                 selectionFlags = C.SELECTION_FLAG_AUTOSELECT,
             ),
+        )
+    }
+
+    // -----------------------------------------------------------------
+    // forcedSubtitlePriority(label, selectionFlags)
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `explicitly forced track outranks a signs-only sibling`() {
+        val forcedFlag =
+            PlayerTrackHeuristics.forcedSubtitlePriority(
+                label = "English",
+                selectionFlags = C.SELECTION_FLAG_FORCED,
+            )
+        val forcedLabel =
+            PlayerTrackHeuristics.forcedSubtitlePriority(
+                label = "English (Forced)",
+                selectionFlags = 0,
+            )
+        val signsOnly =
+            PlayerTrackHeuristics.forcedSubtitlePriority(
+                label = "Signs & Songs",
+                selectionFlags = 0,
+            )
+
+        assertTrue(forcedFlag > signsOnly)
+        assertTrue(forcedLabel > signsOnly)
+    }
+
+    @Test
+    fun `default flag breaks ties between equivalent forced tracks`() {
+        val withDefault =
+            PlayerTrackHeuristics.forcedSubtitlePriority(
+                label = "Forced",
+                selectionFlags = C.SELECTION_FLAG_FORCED or C.SELECTION_FLAG_DEFAULT,
+            )
+        val withoutDefault =
+            PlayerTrackHeuristics.forcedSubtitlePriority(
+                label = "Forced",
+                selectionFlags = C.SELECTION_FLAG_FORCED,
+            )
+
+        assertTrue(withDefault > withoutDefault)
+    }
+
+    @Test
+    fun `signs-only track with no flags scores zero`() {
+        assertEquals(
+            0,
+            PlayerTrackHeuristics.forcedSubtitlePriority(label = "Signs", selectionFlags = 0),
         )
     }
 
