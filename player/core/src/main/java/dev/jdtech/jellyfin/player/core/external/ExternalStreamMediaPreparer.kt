@@ -35,7 +35,10 @@ class ExternalStreamMediaPreparer(
         val initialSpeed: Float?,
     )
 
-    fun prepare(request: ExternalStreamRequest): Prepared {
+    fun prepare(
+        request: ExternalStreamRequest,
+        extraSubtitles: List<MediaItem.SubtitleConfiguration> = emptyList(),
+    ): Prepared {
         val inline = request.source as? ExternalStreamSource.Inline
         val networkFactory = DefaultDataSource.Factory(
             context,
@@ -64,6 +67,11 @@ class ExternalStreamMediaPreparer(
                     }
                     .build(),
             )
+            // Jellyfin delivers subtitle tracks (embedded and external) as separate
+            // deliveryUrl streams, not inside the cast stream. Sideload them so the FCast
+            // receiver exposes every subtitle the source has, not just the one baked into
+            // the transcoded container.
+            .apply { if (extraSubtitles.isNotEmpty()) setSubtitleConfigurations(extraSubtitles) }
             .build()
         return Prepared(
             mediaSource = mediaSourceFactory.createMediaSource(item),
@@ -73,9 +81,14 @@ class ExternalStreamMediaPreparer(
         )
     }
 
-    fun replace(player: ExoPlayer, request: ExternalStreamRequest) {
-        val prepared = prepare(request)
-        player.setMediaSource(prepared.mediaSource, prepared.startPositionMs)
+    fun replace(
+        player: ExoPlayer,
+        request: ExternalStreamRequest,
+        extraSubtitles: List<MediaItem.SubtitleConfiguration> = emptyList(),
+        startPositionMs: Long? = null,
+    ) {
+        val prepared = prepare(request, extraSubtitles)
+        player.setMediaSource(prepared.mediaSource, startPositionMs ?: prepared.startPositionMs)
         prepared.initialVolume?.let { player.volume = it }
         prepared.initialSpeed?.let { player.setPlaybackSpeed(it) }
         player.prepare()

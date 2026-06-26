@@ -35,9 +35,13 @@ import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamPlayer
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamSource
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundBridgeIpcClient
+import android.net.Uri
+import androidx.media3.common.MediaItem
 import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
 import dev.jdtech.jellyfin.player.local.presentation.PlayerTrackHeuristics
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
+import kotlinx.coroutines.withContext
+import org.jellyfin.sdk.model.api.MediaStreamType
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
@@ -286,7 +290,65 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             .onSuccess {
                 exo.play()
                 pushPlaybackSnapshot()
+                sideloadJellyfinSubtitlesAsync(request)
             }
+    }
+
+    private var subtitleSideloadJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Jellyfin delivers a title's subtitle tracks as separate `/Videos/{id}/Subtitles/...`
+     * deliveryUrls, not inside the (often transcoded, single-track) cast stream — so a cast
+     * receiver that just plays the stream URL sees only the one embedded subtitle. This fetches
+     * the source's full subtitle list (exactly like the local player's PlaylistManager) and
+     * re-prepares the player with them sideloaded as [MediaItem.SubtitleConfiguration]s,
+     * preserving the current position. Resets the smart-subtitle guard so the forced-only
+     * default re-evaluates against the now-complete subtitle list.
+     */
+    private fun sideloadJellyfinSubtitlesAsync(request: ExternalStreamRequest) {
+        subtitleSideloadJob?.cancel()
+        val url = (request.source as? ExternalStreamSource.Url)?.url ?: return
+        val itemId = extractJellyfinItemId(url) ?: return
+        subtitleSideloadJob = lifecycleScope.launch {
+            val subs = withContext(Dispatchers.IO) {
+                runCatching {
+                    repository.getMediaSources(itemId, includePath = true)
+                        .flatMap { it.mediaStreams }
+                        .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
+                        .distinctBy { it.path }
+                        .map { stream ->
+                            MediaItem.SubtitleConfiguration.Builder(Uri.parse(stream.path))
+                                .setMimeType(subtitleMimeType(stream.codec))
+                                .setLanguage(stream.language.ifBlank { null })
+                                .setLabel(stream.title.ifBlank { stream.language.ifBlank { "Subtitle" } })
+                                .build()
+                        }
+                }.onFailure {
+                    Timber.tag(TAG).w(it, "FCast inbound subtitle sideload failed")
+                }.getOrDefault(emptyList())
+            }
+            if (subs.isEmpty()) return@launch
+            val exo = player ?: return@launch
+            // Re-prepare with subtitles at the current position; reset the smart guard so the
+            // forced-subtitle default re-runs against the full list (the forced track is usually
+            // one of the sideloaded ones).
+            val position = exo.currentPosition
+            val wasPlaying = exo.playWhenReady
+            smartSubtitleAppliedForItem = null
+            runCatching { mediaPreparer.replace(exo, request, subs, startPositionMs = position) }
+                .onSuccess {
+                    exo.playWhenReady = wasPlaying
+                    Timber.tag(TAG).i("FCast inbound: sideloaded %d subtitle tracks", subs.size)
+                }
+                .onFailure { Timber.tag(TAG).w(it, "FCast inbound subtitle re-prepare failed") }
+        }
+    }
+
+    private fun subtitleMimeType(codec: String): String = when (codec.lowercase()) {
+        "subrip", "srt" -> androidx.media3.common.MimeTypes.APPLICATION_SUBRIP
+        "webvtt", "vtt" -> androidx.media3.common.MimeTypes.TEXT_VTT
+        "ass", "ssa" -> androidx.media3.common.MimeTypes.TEXT_SSA
+        else -> androidx.media3.common.MimeTypes.TEXT_UNKNOWN
     }
 
     private fun pushPlaybackSnapshot() {
