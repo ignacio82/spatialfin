@@ -32,17 +32,17 @@ import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.core.StereoModeDetector
-import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
 fun LocalVideoScreen(
     mediaStoreId: Long,
     navigateBack: () -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: LocalVideoViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     LaunchedEffect(mediaStoreId) { viewModel.load(mediaStoreId) }
 
@@ -69,25 +69,15 @@ fun LocalVideoScreen(
             } else {
                 ProjectionModeDetector.PROJECTION_FLAT
             }
-            if (multitask) {
-                context.startActivity(
-                    dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity.createIntentForLocalMedia(
-                        context = context,
-                        mediaStoreId = mediaStoreId,
-                        startFromBeginning = startFromBeginning,
-                    )
+            onPlay(
+                PlayRequest.LocalMedia(
+                    mediaStoreId = mediaStoreId,
+                    startFromBeginning = startFromBeginning,
+                    immersive = !multitask,
+                    stereoMode = stereoModeStr,
+                    projection = projectionStr,
                 )
-            } else {
-                context.startActivity(
-                    XrPlayerActivity.createIntentForLocalMedia(
-                        context = context,
-                        mediaStoreId = mediaStoreId,
-                        startFromBeginning = startFromBeginning,
-                        stereoMode = stereoModeStr,
-                        projection = projectionStr,
-                    )
-                )
-            }
+            )
         },
         onTogglePlayed = { played -> viewModel.markPlayed(mediaStoreId, played) },
     )

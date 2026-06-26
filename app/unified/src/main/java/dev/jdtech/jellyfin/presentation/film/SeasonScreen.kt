@@ -1,6 +1,5 @@
 package dev.jdtech.jellyfin.presentation.film
 
-import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +47,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.StereoModeDetector
-import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.core.presentation.dummy.dummySeason
 import dev.jdtech.jellyfin.film.presentation.season.SeasonAction
 import dev.jdtech.jellyfin.film.presentation.season.SeasonState
@@ -77,6 +76,7 @@ fun SeasonScreen(
     navigateHome: () -> Unit,
     navigateToItem: (item: SpatialFinItem) -> Unit,
     navigateToSeries: (seriesId: UUID) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: SeasonViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -89,18 +89,13 @@ fun SeasonScreen(
         onAction = { action ->
             when (action) {
                 is SeasonAction.Play -> {
-                    val targetActivity = if (action.multitask) {
-                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
-                    } else {
-                        XrPlayerActivity::class.java
-                    }
-                    val intent = Intent(context, targetActivity)
-                    intent.putExtra("itemId", seasonId.toString())
-                    intent.putExtra("itemKind", BaseItemKind.SEASON.serialName)
-                    if (!action.multitask) {
-                        intent.putExtra("stereoMode", "mono")
-                    }
-                    context.startActivity(intent)
+                    onPlay(
+                        PlayRequest.LibraryItem(
+                            itemId = seasonId,
+                            itemKind = BaseItemKind.SEASON.serialName,
+                            immersive = !action.multitask,
+                        )
+                    )
                 }
                 is SeasonAction.OnBackClick -> navigateBack()
                 is SeasonAction.OnHomeClick -> navigateHome()

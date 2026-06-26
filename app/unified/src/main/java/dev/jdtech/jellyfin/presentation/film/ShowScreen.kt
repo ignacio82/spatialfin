@@ -1,6 +1,5 @@
 package dev.jdtech.jellyfin.presentation.film
 
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,7 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.film.presentation.show.ShowAction
 import dev.jdtech.jellyfin.film.presentation.show.ShowState
@@ -67,6 +66,7 @@ fun ShowScreen(
     navigateHome: () -> Unit,
     navigateToItem: (item: SpatialFinItem) -> Unit,
     navigateToPerson: (personId: UUID) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: ShowViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -81,18 +81,13 @@ fun ShowScreen(
         onAction = { action ->
             when (action) {
                 is ShowAction.Play -> {
-                    val targetActivity = if (action.multitask) {
-                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
-                    } else {
-                        XrPlayerActivity::class.java
-                    }
-                    val intent = Intent(context, targetActivity)
-                    intent.putExtra("itemId", showId.toString())
-                    intent.putExtra("itemKind", BaseItemKind.SERIES.serialName)
-                    if (!action.multitask) {
-                        intent.putExtra("stereoMode", "mono")
-                    }
-                    context.startActivity(intent)
+                    onPlay(
+                        PlayRequest.LibraryItem(
+                            itemId = showId,
+                            itemKind = BaseItemKind.SERIES.serialName,
+                            immersive = !action.multitask,
+                        )
+                    )
                 }
                 is ShowAction.PlayTrailer -> {
                     try {

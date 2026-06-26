@@ -44,7 +44,7 @@ import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.core.StereoModeDetector
-import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.spatialfin.presentation.theme.spacings
 import java.util.UUID
 import org.jellyfin.sdk.model.api.PersonKind
@@ -53,10 +53,10 @@ import org.jellyfin.sdk.model.api.PersonKind
 fun NetworkVideoScreen(
     videoId: String,
     navigateBack: () -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: NetworkVideoViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     LaunchedEffect(videoId) { viewModel.load(videoId) }
 
@@ -83,25 +83,15 @@ fun NetworkVideoScreen(
             } else {
                 ProjectionModeDetector.PROJECTION_FLAT
             }
-            if (multitask) {
-                context.startActivity(
-                    dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity.createIntentForNetworkMedia(
-                        context = context,
-                        networkVideoId = videoId,
-                        startFromBeginning = startFromBeginning,
-                    )
+            onPlay(
+                PlayRequest.NetworkMedia(
+                    networkVideoId = videoId,
+                    startFromBeginning = startFromBeginning,
+                    immersive = !multitask,
+                    stereoMode = stereoModeStr,
+                    projection = projectionStr,
                 )
-            } else {
-                context.startActivity(
-                    XrPlayerActivity.createIntentForNetworkMedia(
-                        context = context,
-                        networkVideoId = videoId,
-                        startFromBeginning = startFromBeginning,
-                        stereoMode = stereoModeStr,
-                        projection = projectionStr,
-                    )
-                )
-            }
+            )
         },
         onTogglePlayed = { played -> viewModel.markPlayed(videoId, played) },
     )

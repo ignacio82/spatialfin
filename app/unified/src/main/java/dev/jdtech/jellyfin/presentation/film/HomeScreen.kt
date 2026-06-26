@@ -65,6 +65,7 @@ import dev.jdtech.jellyfin.presentation.film.components.HomeCarousel
 import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
 import dev.jdtech.jellyfin.presentation.film.components.HomeSection
 import dev.jdtech.jellyfin.presentation.film.components.HomeView
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.presentation.film.components.ServerSelectionBottomSheet
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.spatialfin.presentation.theme.SpatialFinTheme
@@ -88,6 +89,7 @@ fun HomeScreen(
     onItemClick: (item: SpatialFinItem) -> Unit,
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     onNetworkShareSeeAll: (shareId: String) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -130,6 +132,7 @@ fun HomeScreen(
         },
         onPluginBrowse = onPluginBrowse,
         onNetworkShareSeeAll = onNetworkShareSeeAll,
+        onPlay = onPlay,
     )
 }
 
@@ -144,6 +147,7 @@ private fun HomeScreenLayout(
     onAction: (HomeAction) -> Unit,
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     onNetworkShareSeeAll: (shareId: String) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -313,13 +317,12 @@ private fun HomeScreenLayout(
                         onAction = { action ->
                             if (action is HomeAction.OnItemClick && action.item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
                                 val uItem = action.item as dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
-                                context.startActivity(
-                                    dev.jdtech.jellyfin.player.xr.XrPlayerActivity.createIntentForUniversalMedia(
-                                        context,
-                                        uItem.universalMediaItem.pluginId,
-                                        uItem.universalMediaItem.id,
-                                        uItem.universalMediaItem.videoUrl,
-                                        uItem.name,
+                                onPlay(
+                                    PlayRequest.UniversalMedia(
+                                        pluginId = uItem.universalMediaItem.pluginId,
+                                        id = uItem.universalMediaItem.id,
+                                        videoUrl = uItem.universalMediaItem.videoUrl,
+                                        name = uItem.name,
                                         stereoMode = uItem.universalMediaItem.stereoMode,
                                         projection = uItem.universalMediaItem.projection,
                                     )
@@ -399,6 +402,7 @@ private fun HomeScreenLayoutPreview() {
             onAction = {},
             onPluginBrowse = { _, _ -> },
             onNetworkShareSeeAll = {},
+            onPlay = {},
         )
     }
 }

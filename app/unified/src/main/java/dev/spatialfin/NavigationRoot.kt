@@ -506,6 +506,10 @@ fun NavigationRoot(
                     railContent()
                 }
             }
+            // App-side playback launcher (the PlayRequest seam). Browse screens
+            // emit a PlayRequest; this maps it to XrPlayerActivity / Multitask /
+            // FCast so the screens never touch :player:xr directly.
+            val playbackLauncher = rememberPlaybackLauncher()
             NavHost(
                 modifier = Modifier
                     .weight(1f)
@@ -700,6 +704,7 @@ fun NavigationRoot(
                     onNetworkShareSeeAll = { shareId ->
                         navController.safeNavigate(NetworkShareRoute(shareId = shareId))
                     },
+                    onPlay = playbackLauncher,
                 )
                 }
             }
@@ -828,6 +833,7 @@ fun NavigationRoot(
                     navigateToPerson = { personId ->
                         navController.safeNavigate(PersonRoute(personId.toString()))
                     },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<ShowRoute> { backStackEntry ->
@@ -842,6 +848,7 @@ fun NavigationRoot(
                     navigateToPerson = { personId ->
                         navController.safeNavigate(PersonRoute(personId.toString()))
                     },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<SeasonRoute> { backStackEntry ->
@@ -859,6 +866,7 @@ fun NavigationRoot(
                             launchSingleTop = true
                         }
                     },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<EpisodeRoute> { backStackEntry ->
@@ -876,6 +884,7 @@ fun NavigationRoot(
                             launchSingleTop = true
                         }
                     },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<LocalVideoRoute> { backStackEntry ->
@@ -883,6 +892,7 @@ fun NavigationRoot(
                 LocalVideoScreen(
                     mediaStoreId = route.mediaStoreId,
                     navigateBack = { navController.safePopBackStack() },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<NetworkRoute> {
@@ -921,6 +931,7 @@ fun NavigationRoot(
                 NetworkVideoScreen(
                     videoId = route.videoId,
                     navigateBack = { navController.safePopBackStack() },
+                    onPlay = playbackLauncher,
                 )
             }
             composable<PersonRoute> { backStackEntry ->

@@ -1,6 +1,5 @@
 package dev.jdtech.jellyfin.presentation.film
 
-import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -39,7 +37,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
 import dev.jdtech.jellyfin.player.core.StereoModeDetector
-import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
+import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
@@ -75,13 +73,12 @@ fun EpisodeScreen(
     navigateHome: () -> Unit,
     navigateToPerson: (personId: UUID) -> Unit,
     navigateToSeason: (seasonId: UUID) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
     viewModel: EpisodeViewModel = hiltViewModel(),
     downloaderViewModel: DownloaderViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val isOfflineMode = LocalOfflineMode.current
-    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-    val scope = rememberCoroutineScope()
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
@@ -137,11 +134,6 @@ fun EpisodeScreen(
                     }
                     val autoFullSpace = appPreferences.getValue(appPreferences.xrAutoEnterFullSpaceOnPlayback)
                     val useImmersivePlayer = !action.multitask && autoFullSpace
-                    val targetActivity = if (useImmersivePlayer) {
-                        XrPlayerActivity::class.java
-                    } else {
-                        dev.jdtech.jellyfin.player.xr.MultitaskPlayerActivity::class.java
-                    }
                     val stereoModeStr = when (stereoMode) {
                         StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
                         StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
@@ -156,50 +148,25 @@ fun EpisodeScreen(
                     } else {
                         ProjectionModeDetector.PROJECTION_FLAT
                     }
-                    val buildLocalIntent: () -> Intent = {
-                        val intent = Intent(context, targetActivity)
-                        intent.putExtra("itemId", episodeId.toString())
-                        intent.putExtra("itemKind", BaseItemKind.EPISODE.serialName)
-                        intent.putExtra("startFromBeginning", action.startFromBeginning)
-                        action.mediaSourceIndex?.let { intent.putExtra("mediaSourceIndex", it) }
-                        action.maxBitrate?.let { intent.putExtra("maxBitrate", it) }
-                        if (useImmersivePlayer) {
-                            intent.putExtra("stereoMode", resolvedStereoMode)
-                            intent.putExtra("projection", projectionStr)
-                        }
-                        intent
-                    }
-                    // Route through launchPlayback so a picked FCast receiver (with optional
-                    // Split-A/V toggle) intercepts the Play tap. Split-A/V intent always targets
-                    // XrPlayerActivity — MultitaskPlayerActivity doesn't implement
-                    // SplitAvVideoMaster.
-                    if (fcastSession != null && episode != null) {
-                        val resumeMs = if (action.startFromBeginning) 0L
-                            else episode.playbackPositionTicks / 10_000L
-                        dev.spatialfin.fcast.session.launchPlayback(
-                            context = context,
-                            sessionManager = fcastSession,
-                            scope = scope,
+                    // FCast Split-A/V routing + immersive/multitask intent building now
+                    // live in the app's playback launcher (the PlayRequest seam).
+                    onPlay(
+                        PlayRequest.LibraryItem(
+                            itemId = episodeId,
+                            itemKind = BaseItemKind.EPISODE.serialName,
                             item = episode,
-                            startPositionMs = resumeMs.takeIf { it > 0 },
-                            splitAvIntentBuilder = {
-                                XrPlayerActivity.createIntent(
-                                    context = context,
-                                    itemId = episode.id,
-                                    itemKind = BaseItemKind.EPISODE.serialName,
-                                    startFromBeginning = action.startFromBeginning,
-                                    stereoMode = resolvedStereoMode,
-                                    projection = projectionStr,
-                                    mediaSourceIndex = action.mediaSourceIndex,
-                                    maxBitrate = action.maxBitrate,
-                                    splitAvVideoRole = true,
-                                )
+                            startFromBeginning = action.startFromBeginning,
+                            immersive = useImmersivePlayer,
+                            mediaSourceIndex = action.mediaSourceIndex,
+                            maxBitrate = action.maxBitrate,
+                            stereoMode = resolvedStereoMode,
+                            projection = projectionStr,
+                            resumePositionMs = episode?.let {
+                                if (action.startFromBeginning) 0L
+                                else it.playbackPositionTicks / 10_000L
                             },
-                            intentBuilder = buildLocalIntent,
                         )
-                    } else {
-                        context.startActivity(buildLocalIntent())
-                    }
+                    )
                 }
                 is EpisodeAction.OnBackClick -> navigateBack()
                 is EpisodeAction.OnHomeClick -> navigateHome()
@@ -210,6 +177,7 @@ fun EpisodeScreen(
             viewModel.onAction(action)
         },
         onDownloaderAction = { action -> downloaderViewModel.onAction(action) },
+        onPlay = onPlay,
     )
 }
 
@@ -220,6 +188,7 @@ private fun EpisodeScreenLayout(
     initialMaxBitrate: Long,
     onAction: (EpisodeAction) -> Unit,
     onDownloaderAction: (DownloaderAction) -> Unit,
+    onPlay: (PlayRequest) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -320,24 +289,26 @@ private fun EpisodeScreenLayout(
                                     sourceNames,
                                     sourceVideoCodecs,
                                 )
-                            val intent = XrPlayerActivity.createIntent(
-                                context = context,
-                                itemId = episode.id,
-                                itemKind = BaseItemKind.EPISODE.serialName,
-                                startFromBeginning = false,
-                                stereoMode =
-                                    when (stereoMode) {
-                                        StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
-                                        StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
-                                        StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
-                                        else -> "mono"
-                                    },
-                                projection = ProjectionModeDetector.asExtra(
-                                    ProjectionModeDetector.detect(episode.name, sourceNames),
-                                ),
-                                openSyncPlayDialogOnStart = true,
+                            onPlay(
+                                PlayRequest.LibraryItem(
+                                    itemId = episode.id,
+                                    itemKind = BaseItemKind.EPISODE.serialName,
+                                    startFromBeginning = false,
+                                    immersive = true,
+                                    stereoMode =
+                                        when (stereoMode) {
+                                            StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                                            StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                                            StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                                            else -> "mono"
+                                        },
+                                    projection = ProjectionModeDetector.asExtra(
+                                        ProjectionModeDetector.detect(episode.name, sourceNames),
+                                    ),
+                                    openSyncPlayDialogOnStart = true,
+                                    allowFcastRouting = false,
+                                )
                             )
-                            context.startActivity(intent)
                         },
                         onPlayClick = { startFromBeginning, mediaSourceIndex, maxBitrate, multitask ->
                             onAction(
@@ -437,6 +408,7 @@ private fun EpisodeScreenLayoutPreview() {
             initialMaxBitrate = 0L,
             onAction = {},
             onDownloaderAction = {},
+            onPlay = {},
         )
     }
 }
