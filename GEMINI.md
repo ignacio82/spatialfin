@@ -144,6 +144,18 @@ Because everything is in one module now, TV/Beam files that reference `R` or `Bu
 
 The XR browse screens (`presentation/film` Home/Movie/Episode/Show/Season, plus `presentation/local` & `presentation/network` video screens) **do not launch the player directly**. They resolve stereo/projection (detectors in `:player:core`) and immersive-vs-multitask, then emit a `PlayRequest` (in `:core:ui`) via an `onPlay: (PlayRequest) -> Unit` parameter. `NavigationRoot` supplies the implementation from `rememberPlaybackLauncher()` (`app/unified/.../dev/spatialfin/PlaybackLauncher.kt`), which is the *only* place that maps to `XrPlayerActivity` / `MultitaskPlayerActivity` intents + `fcast.session.launchPlayback` (Split-A/V, resume position, watch-party `openSyncPlayDialogOnStart`). This is the seam that lets the film/local/network screens move into feature modules without a `:player:xr` edge (dex-merge guardrail). When adding a play affordance to a browse screen, emit a `PlayRequest`; never reference `XrPlayerActivity` from a screen. <!-- added 2026-06-26: PlayRequest playback seam (modularization phase 2a) -->
 
+### Cast-button seam (`CastButtonController`)
+
+Browse components render the cast affordance through `CastButtonController` /
+`LocalCastButtonController` (`:core:ui`, `dev.jdtech.jellyfin.presentation.cast`),
+**not** `LocalFCastSession` directly — so they can live in feature modules without
+a `:fcast`/app dependency. The form-factor roots (`NavigationRoot`,
+`BeamNavigationRoot`) provide it next to `LocalFCastSession` via
+`CastButtonControllerAdapter(CastSessionManager)` (`FCastSessionUi.kt`); it's
+`null` on TV (no session). `ItemButtonsBar` consumes `pickedTarget` (`StateFlow`,
+covariant `CastReceiver?` → `Any?`) + `showPicker()`. Same pattern as the
+`PlayRequest` seam: keep the heavy `:fcast` type out of the browse UI. <!-- added 2026-06-26: cast-button seam (modularization) -->
+
 ### Player Module Cross-Reference
 
 `:player:beam` exposes `:player:xr` via `api(project(":player:xr"))` to keep `libass_jni.so` and `LibassRenderer` flowing through a single dex-merge path. Do not also `implementation(project(":player:xr"))` from `:app:unified` — it causes duplicate-class errors. The current `:app:unified` build pulls XR transitively through `:player:beam`.

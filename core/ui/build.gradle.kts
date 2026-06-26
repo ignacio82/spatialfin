@@ -38,5 +38,8 @@ dependencies {
     // AsyncImage for the shared browse primitives (ItemCard, ItemPoster, …).
     implementation(libs.coil.compose)
 
+    // StateFlow appears on the CastButtonController seam's API surface.
+    implementation(libs.kotlinx.coroutines.core)
+
     implementation(libs.timber)
 }

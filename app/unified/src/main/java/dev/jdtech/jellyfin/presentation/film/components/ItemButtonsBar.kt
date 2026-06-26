@@ -173,13 +173,13 @@ fun ItemButtonsBar(
                 // playable items, matching Google Cast UX where the cast button is
                 // an always-visible peer of the playback controls. Only render
                 // when there's an CastSessionManager in scope (XR/Beam, not TV).
-                val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-                if (fcastSession != null && item.canPlay) {
-                    val pickedTarget by fcastSession.pickedTarget.collectAsState()
+                val castController = dev.jdtech.jellyfin.presentation.cast.LocalCastButtonController.current
+                if (castController != null && item.canPlay) {
+                    val pickedTarget by castController.pickedTarget.collectAsState()
                     XrIconActionButton(
                         icon = CoreR.drawable.ic_cast,
                         contentDescription = "Cast to receiver",
-                        onClick = { fcastSession.showPicker() },
+                        onClick = { castController.showPicker() },
                         emphasized = pickedTarget != null,
                     )
                 }

@@ -535,6 +535,10 @@ fun BeamNavigationRoot(
         LocalBeamBackground provides { beamBackgroundUrl = it },
         LocalBeamWidth provides beamWidth,
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
+        dev.jdtech.jellyfin.presentation.cast.LocalCastButtonController provides
+            remember(fcastSession) {
+                fcastSession?.let { dev.spatialfin.fcast.session.CastButtonControllerAdapter(it) }
+            },
         dev.spatialfin.unified.LocalMaPlayDispatcher provides maPlayDispatcher,
     ) {
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0F141C))) {

@@ -338,6 +338,10 @@ fun NavigationRoot(
     // center it so the rail stays within comfortable viewing range.
     androidx.compose.runtime.CompositionLocalProvider(
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
+        dev.jdtech.jellyfin.presentation.cast.LocalCastButtonController provides
+            androidx.compose.runtime.remember(fcastSession) {
+                fcastSession?.let { dev.spatialfin.fcast.session.CastButtonControllerAdapter(it) }
+            },
     ) {
     val panelModifier = if (xrSpaceMode == XrSpaceMode.FULL) {
         Modifier

@@ -53,6 +53,19 @@ import kotlin.math.roundToInt
 val LocalFCastSession = compositionLocalOf<CastSessionManager?> { null }
 
 /**
+ * Adapts the app's [CastSessionManager] to the `:core:ui` `CastButtonController`
+ * seam so browse components can render a cast button without depending on
+ * `:fcast`/`:app`. `pickedTarget` is exposed via `StateFlow` covariance
+ * (`StateFlow<CastReceiver?>` is a `StateFlow<Any?>`); no extra scope needed.
+ */
+class CastButtonControllerAdapter(
+    private val manager: CastSessionManager,
+) : dev.jdtech.jellyfin.presentation.cast.CastButtonController {
+    override val pickedTarget: kotlinx.coroutines.flow.StateFlow<Any?> = manager.pickedTarget
+    override fun showPicker() = manager.showPicker()
+}
+
+/**
  * Persistent cast affordance for any toolbar / nav surface. Renders the FCast globe icon, tints
  * it when [CastSessionManager.hasCastIntent] is true (Google Cast UX: the icon stays "on" once
  * the user has picked a receiver, even before a stream is active), and opens the global picker
