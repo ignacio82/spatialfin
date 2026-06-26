@@ -36,6 +36,8 @@ import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamRequest
 import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamSource
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundBridgeIpcClient
 import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
+import dev.jdtech.jellyfin.player.local.presentation.PlayerTrackHeuristics
+import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
@@ -135,12 +137,26 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
 
         override fun setTrack(type: Int, trackId: String) = runOnUiThread {
             val exo = player ?: return@runOnUiThread
+            // A manual pick from the sender wins over the smart default for this item.
+            exo.currentMediaItem?.mediaId?.let { smartSubtitleAppliedForItem = it }
+            // Sentinel "off" disables the track type (the sender's "Off" subtitle row).
+            // Previously there was no way to disable a track type at all.
+            if (trackId == "off" || trackId == "-1") {
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(type)
+                    .setTrackTypeDisabled(type, true)
+                    .build()
+                return@runOnUiThread
+            }
             val groupIndex = trackId.toIntOrNull() ?: return@runOnUiThread
             val group = exo.currentTracks.groups.getOrNull(groupIndex) ?: return@runOnUiThread
             if (group.type != type) return@runOnUiThread
             exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(type)
                 .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0))
                 .setTrackTypeDisabled(type, false)
+                // Honour the explicit pick over a sibling track's DEFAULT/FORCED flag.
+                .apply { if (type == C.TRACK_TYPE_TEXT) setIgnoredTextSelectionFlags(0) }
                 .build()
         }
     }
@@ -163,7 +179,10 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         override fun onVolumeChanged(volume: Float) {
             bridge?.publish(VolumeUpdateMessage(System.currentTimeMillis(), volume.toDouble()))
         }
-        override fun onTracksChanged(tracks: Tracks) = pushTracksSnapshot(tracks)
+        override fun onTracksChanged(tracks: Tracks) {
+            applySmartSubtitleSelection(tracks)
+            pushTracksSnapshot(tracks)
+        }
         override fun onCues(cueGroup: CueGroup) {
             cuesState.value = cueGroup.cues
         }
@@ -256,6 +275,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
 
     private fun applyRequest(request: ExternalStreamRequest) {
         val exo = player ?: return
+        smartSubtitleAppliedForItem = null
         requestState.value = request
         preloadLibassFontsAsync((request.source as? ExternalStreamSource.Url)?.url)
         runCatching { mediaPreparer.replace(exo, request) }
@@ -293,7 +313,11 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         val audio = mutableListOf<SpatialFinTrack>()
         val subtitles = mutableListOf<SpatialFinTrack>()
         tracks.groups.forEachIndexed { index, group ->
-            if ((!group.isSupported && group.type != C.TRACK_TYPE_TEXT) || (group.type != C.TRACK_TYPE_AUDIO && group.type != C.TRACK_TYPE_TEXT)) {
+            // Enumerate every audio + text track. Previously unsupported audio groups were
+            // dropped, which hid alternate audio tracks the user could see in other players
+            // (e.g. a second language track the XR can't hardware-decode but the server can
+            // transcode). Text is always kept. Other track types (video, image, …) are skipped.
+            if (group.type != C.TRACK_TYPE_AUDIO && group.type != C.TRACK_TYPE_TEXT) {
                 return@forEachIndexed
             }
             val format = group.getTrackFormat(0)
@@ -307,6 +331,90 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         }
         bridge?.publish(SpatialFinTracksUpdateMessage(audio, subtitles))
     }
+
+    private var smartSubtitleAppliedForItem: String? = null
+
+    /**
+     * Applies the same smart-subtitle default the local players use
+     * ([dev.jdtech.jellyfin.player.local.presentation.PlayerTrackSelector]) to a cast
+     * session, so the FCast receiver stops auto-enabling a full foreign-language subtitle
+     * the viewer doesn't want. Policy: when the playing audio is in a language the viewer
+     * understands (their smart "spoken languages"), full dialogue subtitles stay OFF and
+     * only a *forced / signs-only* track in that same language is enabled (translating just
+     * the foreign-language portions). The default ExoPlayer selection would instead land on
+     * a `DEFAULT`-flagged full English track. Manual picks from the sender win (see
+     * [bridge]'s `setTrack`). Runs once per media item.
+     */
+    private fun applySmartSubtitleSelection(tracks: Tracks) {
+        val exo = player ?: return
+        val mediaId = exo.currentMediaItem?.mediaId ?: return
+        if (smartSubtitleAppliedForItem == mediaId) return
+
+        val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
+        if (audioGroups.isEmpty()) return
+        val subtitleGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        // Subtitle groups can arrive in a later onTracksChanged than audio; wait for them so we
+        // don't lock in "no subtitle" before a forced track has even appeared.
+        if (subtitleGroups.isEmpty()) return
+
+        val spokenLanguages = appPreferences.getSmartSpokenLanguageCodes(this)
+        val selectedAudio = audioGroups.firstOrNull { it.isSelected } ?: audioGroups.first()
+        val audioLanguage = groupPrimaryLanguage(selectedAudio)
+        // No language tag ⇒ assume understood (mirrors PlayerTrackSelector) so we don't force
+        // full subs onto an untagged English track.
+        val audioUnderstood = audioLanguage == null ||
+            spokenLanguages.any { LanguageCatalog.matches(this, audioLanguage, it) }
+
+        // Viewer doesn't understand the audio: leave ExoPlayer's default selection (a full
+        // dialogue track is appropriate here). Mark applied so we don't keep re-running.
+        if (!audioUnderstood) {
+            smartSubtitleAppliedForItem = mediaId
+            return
+        }
+
+        val forced =
+            if (appPreferences.getValue(appPreferences.smartForcedSubtitles) && audioLanguage != null) {
+                subtitleGroups
+                    .filter { groupMatchesLanguage(it, audioLanguage) }
+                    .filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+                    .maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
+            } else {
+                null
+            }
+
+        val builder = exo.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+        if (forced != null) {
+            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(forced.mediaTrackGroup, 0))
+                .setIgnoredTextSelectionFlags(0)
+        } else {
+            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+        }
+        exo.trackSelectionParameters = builder.build()
+        smartSubtitleAppliedForItem = mediaId
+        Timber.tag(TAG).i(
+            "FCast inbound smart subtitle: audioLang=%s understood=%b forced=%s",
+            audioLanguage, audioUnderstood, forced?.getTrackFormat(0)?.label,
+        )
+    }
+
+    private fun groupPrimaryLanguage(group: Tracks.Group): String? =
+        (0 until group.length)
+            .mapNotNull { i ->
+                LanguageCatalog.normalize(
+                    this,
+                    group.getTrackFormat(i).language ?: group.getTrackFormat(i).label,
+                )
+            }
+            .firstOrNull()
+
+    private fun groupMatchesLanguage(group: Tracks.Group, languageCode: String): Boolean =
+        (0 until group.length).any { i ->
+            val format = group.getTrackFormat(i)
+            LanguageCatalog.matches(this, format.language, languageCode) ||
+                LanguageCatalog.matches(this, format.label, languageCode)
+        }
 
     private fun forwardToFlatPlayer(request: ExternalStreamRequest) {
         val fallback = Intent().setClassName(this, "dev.spatialfin.fcast.FCastInboundPlayerActivity")

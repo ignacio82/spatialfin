@@ -417,9 +417,19 @@ fun FCastCinematicRemote(
     }
 
     if (showSubtitleTrackSheet && tracksState != null) {
+        // Prepend an explicit "Off" row so the viewer can disable subtitles — the receiver
+        // maps the "off" id to disabling the text track type. Marked selected when no
+        // subtitle track is currently active.
+        val subtitleRows = listOf(
+            dev.jdtech.jellyfin.fcast.protocol.SpatialFinTrack(
+                id = "off",
+                name = "Off",
+                isSelected = tracksState!!.subtitleTracks.none { it.isSelected },
+            ),
+        ) + tracksState!!.subtitleTracks
         dev.spatialfin.fcast.FCastTrackSelectionSheet(
             title = "Subtitles",
-            tracks = tracksState!!.subtitleTracks,
+            tracks = subtitleRows,
             onDismiss = { showSubtitleTrackSheet = false },
             onTrackSelected = { trackId ->
                 scope.launch {

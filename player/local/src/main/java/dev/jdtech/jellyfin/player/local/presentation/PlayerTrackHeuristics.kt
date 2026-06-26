@@ -11,10 +11,12 @@ import androidx.media3.common.Tracks
  *   Media3 [Tracks.Group]); and
  * - a `Tracks.Group` overload that pulls `format[0]`'s fields and delegates.
  *
- * Lives in this package (as `internal`) so tests in the same module can reach it
- * without exposing it to `:app:unified`.
+ * Lives in `:player:local`; made public so the FCast inbound receiver player in
+ * `:player:xr` (which depends on `:player:local`) can reuse the exact same
+ * forced/signs detection when applying the smart subtitle default on a cast
+ * session — keeping the policy identical across direct playback and casting.
  */
-internal object PlayerTrackHeuristics {
+object PlayerTrackHeuristics {
 
     /**
      * Matches labels of forced / signs-only sibling subtitle tracks as whole words, so
