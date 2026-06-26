@@ -308,9 +308,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
     private fun sideloadJellyfinSubtitlesAsync(request: ExternalStreamRequest) {
         subtitleSideloadJob?.cancel()
         val url = (request.source as? ExternalStreamSource.Url)?.url
-        val itemId = url?.let(::extractJellyfinItemId)
-        Timber.tag(TAG).i("FCast inbound subtitle sideload: itemId=%s url=%s", itemId, url)
-        if (itemId == null) return
+        val itemId = url?.let(::extractJellyfinItemId) ?: return
         subtitleSideloadJob = lifecycleScope.launch {
             val subs = withContext(Dispatchers.IO) {
                 runCatching {
@@ -318,17 +316,9 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
                     // as External (with a deliveryUrl) rather than marking them for burn-in /
                     // transcode (no URL). A null/low cap made Jellyfin omit the deliveryUrl, so
                     // every subtitle was dropped by the `path` filter below.
-                    val sources = repository.getMediaSources(itemId, includePath = true, maxBitrate = 1_000_000_000L)
-                    val allSubs = sources.flatMap { it.mediaStreams }
-                        .filter { it.type == MediaStreamType.SUBTITLE }
-                    Timber.tag(TAG).i(
-                        "FCast inbound subtitle streams: total=%d withPath=%d codecs=%s",
-                        allSubs.size,
-                        allSubs.count { !it.path.isNullOrBlank() },
-                        allSubs.joinToString(",") { "${it.language}/${it.codec}/ext=${it.isExternal}/path=${!it.path.isNullOrBlank()}" }.take(400),
-                    )
-                    allSubs
-                        .filter { !it.path.isNullOrBlank() }
+                    repository.getMediaSources(itemId, includePath = true, maxBitrate = 1_000_000_000L)
+                        .flatMap { it.mediaStreams }
+                        .filter { it.type == MediaStreamType.SUBTITLE && !it.path.isNullOrBlank() }
                         .distinctBy { it.path }
                         .map { stream ->
                             MediaItem.SubtitleConfiguration.Builder(Uri.parse(stream.path))
