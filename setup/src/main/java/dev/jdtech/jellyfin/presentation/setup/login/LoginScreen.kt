@@ -121,7 +121,7 @@ private fun LoginScreenLayout(
                     .verticalScroll(scrollState),
         ) {
             Image(
-                painter = painterResource(id = dev.spatialfin.R.drawable.ic_beam_launcher),
+                painter = painterResource(id = dev.jdtech.jellyfin.setup.R.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )

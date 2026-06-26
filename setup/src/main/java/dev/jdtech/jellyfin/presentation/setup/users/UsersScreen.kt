@@ -101,7 +101,7 @@ private fun UsersScreenLayout(
         ) {
             Spacer(modifier = Modifier.weight(0.2f))
             Image(
-                painter = painterResource(id = dev.spatialfin.R.drawable.ic_beam_launcher),
+                painter = painterResource(id = dev.jdtech.jellyfin.setup.R.drawable.ic_beam_launcher),
                 contentDescription = null,
                 modifier = Modifier.width(320.dp).align(Alignment.CenterHorizontally),
             )
