@@ -10,7 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -105,7 +105,7 @@ fun MaSelectionBar(
                     selection.clear()
                 },
             ) {
-                Icon(Icons.Filled.QueueMusic, contentDescription = "Add to queue")
+                Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Add to queue")
             }
             IconButton(
                 enabled = dispatcher != null,

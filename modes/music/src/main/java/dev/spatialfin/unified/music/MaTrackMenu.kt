@@ -20,7 +20,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -86,7 +86,7 @@ fun MaTrackMenu(
             )
             DropdownMenuItem(
                 text = { Text("Add to queue") },
-                leadingIcon = { Icon(Icons.Filled.QueueMusic, contentDescription = null) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null) },
                 onClick = { expanded = false; dispatcher.addToQueue(item) },
             )
             DropdownMenuItem(

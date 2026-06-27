@@ -26,14 +26,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AllInclusive
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
@@ -202,7 +202,7 @@ fun MaNowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Always reachable: the Party plugin is configured server-side
@@ -226,7 +226,7 @@ fun MaNowPlayingScreen(
                     }
                     if (!usingSendspinFallback) {
                         IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
-                            Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue")
                         }
                     }
                     if (onOpenSearch != null) {
@@ -373,7 +373,7 @@ private fun NowPlayingTrackMenu(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 text = { Text("Add to queue") },
-                leadingIcon = { Icon(Icons.Filled.QueueMusic, contentDescription = null) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null) },
                 onClick = { expanded = false; dispatcher.addToQueue(item) },
             )
             DropdownMenuItem(
@@ -859,7 +859,7 @@ private fun MaLyricsPanel(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).maFocusHighlight()) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
             Column(
                 modifier = Modifier
@@ -903,7 +903,7 @@ private fun MaChaptersPanel(
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).maFocusHighlight()) {
-                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(top = 56.dp),

@@ -83,7 +83,7 @@ class RealHttpBridge(
                     val mediaType = headers["Content-Type"]?.toMediaTypeOrNull()
                     val requestBody = if (body != null && body.startsWith("BASE64:")) {
                         val bytes = android.util.Base64.decode(body.substring(7), android.util.Base64.NO_WRAP)
-                        okhttp3.RequestBody.create(mediaType, bytes)
+                        bytes.toRequestBody(mediaType)
                     } else {
                         (body ?: "").toRequestBody(mediaType)
                     }

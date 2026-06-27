@@ -32,13 +32,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -509,7 +509,7 @@ fun JellyfinAudioNowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
                 Row {
                     if (item?.chapters?.isNotEmpty() == true) {
@@ -523,7 +523,7 @@ fun JellyfinAudioNowPlayingScreen(
                         }
                     }
                     IconButton(onClick = { showQueue = true }, modifier = Modifier.maFocusHighlight()) {
-                        Icon(Icons.Filled.QueueMusic, contentDescription = "Queue")
+                        Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue")
                     }
                 }
             }
@@ -582,7 +582,7 @@ private fun AudioTopBar(title: String, onBack: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         IconButton(onClick = onBack, modifier = Modifier.maFocusHighlight()) {
-            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
         }
         Text(
             text = title,

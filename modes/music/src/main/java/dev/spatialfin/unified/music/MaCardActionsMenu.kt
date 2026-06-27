@@ -12,7 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -89,7 +89,7 @@ fun MaCardActionsMenu(
                 ActionRow("Play next", Icons.Filled.SkipNext) {
                     dispatcher.playNext(serverItem); onDismiss()
                 }
-                ActionRow("Add to queue", Icons.Filled.QueueMusic) {
+                ActionRow("Add to queue", Icons.AutoMirrored.Filled.QueueMusic) {
                     dispatcher.addToQueue(serverItem); onDismiss()
                 }
                 ActionRow("Add to playlist", Icons.Filled.Add) {
