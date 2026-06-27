@@ -60,6 +60,25 @@ internal fun dev.jdtech.jellyfin.player.xr.CrewRow(person: dev.jdtech.jellyfin.p
     - person: UNSTABLE (has mutable properties or unstable members)
 
 @Composable
+private fun dev.jdtech.jellyfin.player.xr.InboundTrackPicker(player: androidx.media3.exoplayer.ExoPlayer, trackType: kotlin.Int, revision: kotlin.Int, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - player: RUNTIME (requires runtime check)
+    - trackType: STABLE (primitive type)
+    - revision: STABLE (primitive type)
+    - onDismiss: STABLE (function type)
+
+@Composable
+private fun dev.jdtech.jellyfin.player.xr.InboundTrackRow(label: kotlin.String, selected: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - label: STABLE (String is immutable)
+    - selected: STABLE (primitive type)
+    - onClick: STABLE (function type)
+
+@Composable
 private fun dev.jdtech.jellyfin.player.xr.MultitaskControllerOverlay(player: androidx.media3.common.Player, viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, onBackClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
@@ -108,6 +127,16 @@ public fun dev.jdtech.jellyfin.player.xr.ProgressSection(uiState: dev.jdtech.jel
     - resetAutoHide: STABLE (function type)
 
 @Composable
+internal fun dev.jdtech.jellyfin.player.xr.ProjectionDialogContent(currentProjection: kotlin.String, onProjectionSelected: kotlin.Function1<kotlin.String, kotlin.Unit>, onRecenter: kotlin.Function0<kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - currentProjection: STABLE (String is immutable)
+    - onProjectionSelected: STABLE (function type)
+    - onRecenter: STABLE (function type)
+    - onDismiss: STABLE (function type)
+
+@Composable
 internal fun dev.jdtech.jellyfin.player.xr.QualityDialogContent(currentMaxBitrate: kotlin.Long, onQualitySelected: kotlin.Function1<kotlin.Long, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
@@ -149,13 +178,14 @@ internal fun dev.jdtech.jellyfin.player.xr.SessionOrbiter(onCastClick: kotlin.Fu
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
-public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, session: androidx.xr.runtime.Session, initialStereoMode: kotlin.String, itemId: java.util.UUID?, localMediaId: kotlin.Long?, networkVideoId: kotlin.String?, universalPluginId: kotlin.String?, universalItemId: kotlin.String?, universalVideoUrl: kotlin.String?, universalTitle: kotlin.String?, itemKind: kotlin.String, startFromBeginning: kotlin.Boolean, mediaSourceIndex: kotlin.Int?, maxBitrate: kotlin.Long?, openSyncPlayDialogOnStart: kotlin.Boolean, libassRenderer: dev.jdtech.jellyfin.player.xr.LibassRenderer?, onSearchQuery: kotlin.coroutines.SuspendFunction1<kotlin.String, kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>>, onLaunchSearchResult: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, telemetryStore: dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore, fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController, onBackClick: kotlin.Function0<kotlin.Unit>, splitAvVideoRole: kotlin.Boolean, onEndSplitAvFromMaster: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel, session: androidx.xr.runtime.Session, initialStereoMode: kotlin.String, initialProjection: kotlin.String, itemId: java.util.UUID?, localMediaId: kotlin.Long?, networkVideoId: kotlin.String?, universalPluginId: kotlin.String?, universalItemId: kotlin.String?, universalVideoUrl: kotlin.String?, universalTitle: kotlin.String?, itemKind: kotlin.String, startFromBeginning: kotlin.Boolean, mediaSourceIndex: kotlin.Int?, maxBitrate: kotlin.Long?, openSyncPlayDialogOnStart: kotlin.Boolean, libassRenderer: dev.jdtech.jellyfin.player.xr.LibassRenderer?, onSearchQuery: kotlin.coroutines.SuspendFunction1<kotlin.String, kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinItem>>, onLaunchSearchResult: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinItem, kotlin.Unit>, telemetryStore: dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore, fcastController: dev.jdtech.jellyfin.fcast.sender.FCastCastingController, onBackClick: kotlin.Function0<kotlin.Unit>, splitAvVideoRole: kotlin.Boolean, onEndSplitAvFromMaster: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - viewModel: UNSTABLE (has mutable properties or unstable members)
     - session: UNSTABLE (has mutable properties or unstable members)
     - initialStereoMode: STABLE (String is immutable)
+    - initialProjection: STABLE (String is immutable)
     - itemId: UNSTABLE (has mutable properties or unstable members)
     - localMediaId: STABLE (class with no mutable properties)
     - networkVideoId: STABLE (class with no mutable properties)
@@ -171,7 +201,7 @@ public fun dev.jdtech.jellyfin.player.xr.SpatialPlayerScreen(viewModel: dev.jdte
     - libassRenderer: UNSTABLE (has mutable properties or unstable members)
     - onSearchQuery: STABLE (function type)
     - onLaunchSearchResult: STABLE (function type)
-    - telemetryStore: UNSTABLE (has mutable properties or unstable members)
+    - telemetryStore: STABLE (class with no mutable properties)
     - fcastController: STABLE (class with no mutable properties)
     - onBackClick: STABLE (function type)
     - splitAvVideoRole: STABLE (primitive type)
@@ -224,7 +254,7 @@ internal fun dev.jdtech.jellyfin.player.xr.SyncPlayDialogContent(state: dev.jdte
     - onDismiss: STABLE (function type)
 
 @Composable
-internal fun dev.jdtech.jellyfin.player.xr.TrackOptionsOrbiter(onSubtitleClick: kotlin.Function0<kotlin.Unit>, onAudioClick: kotlin.Function0<kotlin.Unit>, onQualityClick: kotlin.Function0<kotlin.Unit>, onSpeedClick: kotlin.Function0<kotlin.Unit>?, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+internal fun dev.jdtech.jellyfin.player.xr.TrackOptionsOrbiter(onSubtitleClick: kotlin.Function0<kotlin.Unit>, onAudioClick: kotlin.Function0<kotlin.Unit>, onQualityClick: kotlin.Function0<kotlin.Unit>, onSpeedClick: kotlin.Function0<kotlin.Unit>?, onProjectionClick: kotlin.Function0<kotlin.Unit>?, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: true
   restartable: true
   params:
@@ -232,6 +262,7 @@ internal fun dev.jdtech.jellyfin.player.xr.TrackOptionsOrbiter(onSubtitleClick: 
     - onAudioClick: STABLE (function type)
     - onQualityClick: STABLE (function type)
     - onSpeedClick: STABLE (function type)
+    - onProjectionClick: STABLE (function type)
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
@@ -290,7 +321,7 @@ internal fun dev.jdtech.jellyfin.player.xr.XrFCastInboundPlayerScreen(session: a
     - libassBitmapState: RUNTIME (requires runtime check)
     - libassFrameVersionState: RUNTIME (requires runtime check)
     - libassEnabled: STABLE (primitive type)
-    - preferences: UNSTABLE (has mutable properties or unstable members)
+    - preferences: STABLE (class with no mutable properties)
     - onSurfaceAttached: STABLE (function type)
     - onExit: STABLE (function type)
     - onSubtitleResize: STABLE (function type)
@@ -413,4 +444,11 @@ public fun dev.jdtech.jellyfin.player.xr.voice.VoiceOrbOverlay(state: dev.jdtech
     - gestureHint: STABLE (class with no mutable properties)
     - micLevel: STABLE (primitive type)
     - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+public fun dev.spatialfin.unified.HomeVoiceController.RegisterEffects(requestFollowUp: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - requestFollowUp: STABLE (function type)
 
