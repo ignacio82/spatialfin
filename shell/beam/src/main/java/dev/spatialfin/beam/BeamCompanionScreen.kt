@@ -67,6 +67,7 @@ import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
@@ -89,7 +90,6 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import timber.log.Timber
 
@@ -117,7 +117,7 @@ constructor(
     private val jellyfinApi: JellyfinApi,
     private val extrasApplier: CompanionUserExtrasApplier,
     private val activeSessionBus: ActiveSessionBus,
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow<BeamCompanionState>(BeamCompanionState.Idle)
     val state: StateFlow<BeamCompanionState> = _state
@@ -147,15 +147,19 @@ constructor(
 
     fun fetchAndApplyConfig(payload: CompanionDiscoveryPayload) {
         if (_state.value is BeamCompanionState.Fetching) return
-
-        appPreferences.setValue(appPreferences.companionUrl, payload.companion_url)
-        appPreferences.setValue(appPreferences.companionToken, payload.setup_token)
+        val endpoint = runCatching { CompanionEndpoint.from(payload) }
+            .getOrElse { error ->
+                _state.value = BeamCompanionState.Error(error.message ?: "Invalid companion pairing code")
+                return
+            }
 
         viewModelScope.launch {
             _state.value = BeamCompanionState.Fetching
             try {
-                val config = fetchConfig(payload)
+                val config = fetchConfig(endpoint)
                 applyConfig(config)
+                appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
+                appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
                 appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
                 _state.value = BeamCompanionState.Success
             } catch (e: Exception) {
@@ -171,17 +175,15 @@ constructor(
         }
     }
 
-    private suspend fun fetchConfig(payload: CompanionDiscoveryPayload): CompanionConfig =
+    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig =
         withContext(Dispatchers.IO) {
             val request =
-                Request.Builder()
-                    .url("${payload.companion_url}/api/v1/config")
-                    .addHeader("X-Setup-Token", payload.setup_token)
-                    .build()
+                endpoint.authorizedRequest(endpoint.configUrl).build()
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-                val body = response.body?.string() ?: throw Exception("Empty response")
+                val body = response.body.string()
+                if (body.isBlank()) throw Exception("Empty response")
                 json.decodeFromString(body)
             }
         }

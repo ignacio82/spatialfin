@@ -1,5 +1,6 @@
 package dev.spatialfin.unified.audio
 
+import androidx.annotation.Keep
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -97,6 +98,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+// @Keep: this enum is referenced by a kotlinx.serialization serializer, which
+// resolves constants by name. R8 must not obfuscate/strip the constant names or
+// (de)serialization breaks in minified builds.
+@Keep
 enum class JellyfinAudioDetailType {
     Album,
     Artist,

@@ -11,6 +11,9 @@ import dev.jdtech.jellyfin.models.downloadTaskId
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class DownloadReceiver : BroadcastReceiver() {
@@ -20,64 +23,78 @@ class DownloadReceiver : BroadcastReceiver() {
     @Inject lateinit var downloadStorageManager: DownloadStorageManager
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == "android.intent.action.DOWNLOAD_COMPLETE") {
-            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-            if (id != -1L) {
-                val downloadManager = context.getSystemService(DownloadManager::class.java)
-                val query = DownloadManager.Query().setFilterById(id)
-                val cursor = downloadManager.query(query)
-                if (!cursor.moveToFirst()) {
-                    cursor.close()
-                    return
-                }
-                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                cursor.close()
+        if (intent.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+        val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+        if (id == -1L) return
 
-                val source = database.getSourceByDownloadId(id)
-                if (source != null) {
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        val path = downloadStorageManager.completedPathFor(source.path)
-                        val successfulRename = File(source.path).renameTo(File(path))
-                        if (successfulRename) {
-                            val task = database.getDownloadTaskById(downloadTaskId(source.itemId, source.id))
-                            database.setSourcePath(source.id, path)
-                            database.clearSourceDownloadId(source.id)
-                            database.updateDownloadTask(
-                                id = downloadTaskId(source.itemId, source.id),
-                                downloadId = null,
-                                bytesDownloaded = task?.bytesDownloaded ?: 0L,
-                                totalBytes = task?.totalBytes,
-                                eTag = task?.eTag,
-                                lastModified = task?.lastModified,
-                                status = DownloadManager.STATUS_SUCCESSFUL,
-                                progress = 100,
-                                errorMessage = null,
-                                updatedAt = System.currentTimeMillis(),
-                            )
-                        } else {
-                            markFailedSource(source.itemId, source.id, "Failed to finalize download")
-                        }
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                handleDownloadComplete(context, id)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private fun handleDownloadComplete(context: Context, id: Long) {
+        val downloadManager = context.getSystemService(DownloadManager::class.java)
+        val query = DownloadManager.Query().setFilterById(id)
+        val cursor = downloadManager.query(query)
+        if (!cursor.moveToFirst()) {
+            cursor.close()
+            return
+        }
+        val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+        val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+        cursor.close()
+
+        if (status != DownloadManager.STATUS_SUCCESSFUL && status != DownloadManager.STATUS_FAILED) {
+            return
+        }
+
+        val source = database.getSourceByDownloadId(id)
+        if (source != null) {
+            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                val path = downloadStorageManager.completedPathFor(source.path)
+                val successfulRename = File(source.path).renameTo(File(path))
+                if (successfulRename) {
+                    val task = database.getDownloadTaskById(downloadTaskId(source.itemId, source.id))
+                    database.setSourcePath(source.id, path)
+                    database.clearSourceDownloadId(source.id)
+                    database.updateDownloadTask(
+                        id = downloadTaskId(source.itemId, source.id),
+                        downloadId = null,
+                        bytesDownloaded = task?.bytesDownloaded ?: 0L,
+                        totalBytes = task?.totalBytes,
+                        eTag = task?.eTag,
+                        lastModified = task?.lastModified,
+                        status = DownloadManager.STATUS_SUCCESSFUL,
+                        progress = 100,
+                        errorMessage = null,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                } else {
+                    markFailedSource(source.itemId, source.id, "Failed to finalize download")
+                }
+            } else {
+                database.clearSourceDownloadId(source.id)
+                markFailedSource(source.itemId, source.id, "Download failed (reason $reason)")
+            }
+        } else {
+            val mediaStream = database.getMediaStreamByDownloadId(id)
+            if (mediaStream != null) {
+                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                    val path = downloadStorageManager.completedPathFor(mediaStream.path)
+                    val successfulRename = File(mediaStream.path).renameTo(File(path))
+                    if (successfulRename) {
+                        database.setMediaStreamPath(mediaStream.id, path)
+                        database.clearMediaStreamDownloadId(mediaStream.id)
                     } else {
-                        database.clearSourceDownloadId(source.id)
-                        markFailedSource(source.itemId, source.id, "Download failed (reason $reason)")
+                        database.deleteMediaStream(mediaStream.id)
                     }
                 } else {
-                    val mediaStream = database.getMediaStreamByDownloadId(id)
-                    if (mediaStream != null) {
-                        if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                            val path = downloadStorageManager.completedPathFor(mediaStream.path)
-                            val successfulRename = File(mediaStream.path).renameTo(File(path))
-                            if (successfulRename) {
-                                database.setMediaStreamPath(mediaStream.id, path)
-                                database.clearMediaStreamDownloadId(mediaStream.id)
-                            } else {
-                                database.deleteMediaStream(mediaStream.id)
-                            }
-                        } else {
-                            database.clearMediaStreamDownloadId(mediaStream.id)
-                        }
-                    }
+                    database.clearMediaStreamDownloadId(mediaStream.id)
                 }
             }
         }

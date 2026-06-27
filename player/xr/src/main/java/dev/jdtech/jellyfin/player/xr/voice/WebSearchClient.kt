@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.player.xr.voice
 
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,7 +9,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import timber.log.Timber
-import java.net.URLEncoder
 
 internal data class WebSearchHit(
     val title: String,
@@ -39,9 +39,7 @@ internal class WebSearchClient(
     fun isConfigured(): Boolean {
         if (!appPreferences.getValue(appPreferences.voiceAssistantWebSearchEnabled)) return false
         if (resolvedDirectSearxngUrl() != null) return true
-        val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim()
-        val companionToken = appPreferences.getValue(appPreferences.companionToken).trim()
-        return companionUrl.isNotEmpty() && companionToken.isNotEmpty()
+        return companionEndpointOrNull() != null
     }
 
     /**
@@ -97,17 +95,20 @@ internal class WebSearchClient(
     }
 
     private fun buildCompanionRequest(query: String): Request? {
-        val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim().removeSuffix("/")
-        val setupToken = appPreferences.getValue(appPreferences.companionToken).trim()
-        if (companionUrl.isEmpty() || setupToken.isEmpty()) return null
-        val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        return Request.Builder()
-            .url("$companionUrl/api/v1/search?q=$encoded")
+        val endpoint = companionEndpointOrNull() ?: return null
+        return endpoint.authorizedRequest(endpoint.searchUrl(query))
             .header("Accept", "application/json")
-            .header("X-Setup-Token", setupToken)
             .get()
             .build()
     }
+
+    private fun companionEndpointOrNull(): CompanionEndpoint? =
+        runCatching {
+            CompanionEndpoint.parse(
+                appPreferences.getValue(appPreferences.companionUrl),
+                appPreferences.getValue(appPreferences.companionToken),
+            )
+        }.getOrNull()
 
     /**
      * Accepts both SearXNG JSON (`results: [{title, content, url, ...}]`) and

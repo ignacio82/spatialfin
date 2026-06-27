@@ -11,6 +11,8 @@ import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 
 @Module
@@ -40,7 +42,9 @@ object ApiModule {
         val serverId = appPreferences.getValue(appPreferences.currentServer) ?: return jellyfinApi
 
         val serverWithAddressAndUser =
-            database.getServerWithAddressAndUser(serverId) ?: return jellyfinApi
+            runBlocking(Dispatchers.IO) {
+                database.getServerWithAddressAndUser(serverId)
+            } ?: return jellyfinApi
         val serverAddress = serverWithAddressAndUser.address ?: return jellyfinApi
         val user = serverWithAddressAndUser.user
 

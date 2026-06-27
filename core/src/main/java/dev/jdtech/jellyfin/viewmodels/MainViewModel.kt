@@ -11,10 +11,12 @@ import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class MainViewModel
@@ -49,32 +51,42 @@ constructor(
         viewModelScope.launch {
             _state.emit(MainState(isLoading = true))
             val serverId = appPreferences.getValue(appPreferences.currentServer)
-            val serverData = serverId?.let { database.getServerWithAddressAndUser(it) }
+            val loadedSession = withContext(Dispatchers.IO) {
+                val serverData = serverId?.let { database.getServerWithAddressAndUser(it) }
 
-            // Repair the cold-start race: ApiModule.provideJellyfinApi is a
-            // @Singleton built exactly once, sometimes before SharedPreferences
-            // or Room are warm — when that happens it leaves the shared
-            // JellyfinApi with no base URL / access token, and never re-binds
-            // because the provider only runs once. Authenticated reads then
-            // 401, which (with isApparentConnectionFailure no longer treating
-            // 401 as offline) surfaces as an auth error rather than a livelock,
-            // but the screen still has no credentials. Re-applying the
-            // persisted session here — deterministically, before we emit the
-            // non-loading state that lets navigation mount Home — guarantees
-            // the API client reflects the stored session by first load.
-            // Idempotent: re-applying the same session is a no-op.
-            val fallbackAddress = serverId?.let { database.getServerCurrentAddress(it) }
-            fallbackAddress
-                ?.takeIf { serverData?.server?.currentServerAddressId != it.id }
-                ?.let { address -> serverId?.let { database.updateServerCurrentAddress(it, address.id) } }
-            val address = serverData?.address?.address ?: fallbackAddress?.address
-            if (address != null) {
+                // Repair the cold-start race: ApiModule.provideJellyfinApi is a
+                // @Singleton built exactly once, sometimes before SharedPreferences
+                // or Room are warm — when that happens it leaves the shared
+                // JellyfinApi with no base URL / access token, and never re-binds
+                // because the provider only runs once. Authenticated reads then
+                // 401, which (with isApparentConnectionFailure no longer treating
+                // 401 as offline) surfaces as an auth error rather than a livelock,
+                // but the screen still has no credentials. Re-applying the
+                // persisted session here — deterministically, before we emit the
+                // non-loading state that lets navigation mount Home — guarantees
+                // the API client reflects the stored session by first load.
+                // Idempotent: re-applying the same session is a no-op.
+                val fallbackAddress = serverId?.let { database.getServerCurrentAddress(it) }
+                serverId?.let { currentServerId ->
+                    fallbackAddress
+                        ?.takeIf { serverData?.server?.currentServerAddressId != it.id }
+                        ?.let { address -> database.updateServerCurrentAddress(currentServerId, address.id) }
+                }
+                val address = serverData?.address?.address ?: fallbackAddress?.address
+                LoadedMainSession(
+                    server = serverData?.server,
+                    user = serverData?.user,
+                    address = address,
+                    hasServers = database.getServersCount() > 0,
+                )
+            }
+            if (loadedSession.address != null) {
                 jellyfinApi.apply {
                     api.update(
-                        baseUrl = address,
-                        accessToken = serverData?.user?.accessToken,
+                        baseUrl = loadedSession.address,
+                        accessToken = loadedSession.user?.accessToken,
                     )
-                    userId = serverData?.user?.id
+                    userId = loadedSession.user?.id
                 }
             }
 
@@ -82,12 +94,12 @@ constructor(
                 MainState(
                     isLoading = false,
                     isDynamicColors = checkIsDynamicColors(),
-                    hasServers = checkHasServers(),
-                    hasCurrentServer = serverData?.server != null,
-                    hasCurrentUser = serverData?.user != null,
+                    hasServers = loadedSession.hasServers,
+                    hasCurrentServer = loadedSession.server != null,
+                    hasCurrentUser = loadedSession.user != null,
                     isOfflineMode = connectionMonitor.state.value.effectiveOfflineMode,
-                    currentUser = serverData?.user,
-                    currentServerAddress = address,
+                    currentUser = loadedSession.user,
+                    currentServerAddress = loadedSession.address,
                 )
             _state.emit(mainState)
         }
@@ -133,20 +145,26 @@ constructor(
     fun loadServerAndUser() {
         viewModelScope.launch {
             val serverId = appPreferences.getValue(appPreferences.currentServer)
-            serverId?.let { id ->
-                database.getServerWithAddressAndUser(id)?.let { data ->
-                    _uiState.emit(UiState.Normal(data.server, data.user))
-                }
+            val data = withContext(Dispatchers.IO) {
+                serverId?.let { id -> database.getServerWithAddressAndUser(id) }
+            }
+            data?.let {
+                _uiState.emit(UiState.Normal(it.server, it.user))
             }
         }
     }
-
-    private fun checkHasServers(): Boolean = database.getServersCount() > 0
 
     private fun checkIsDynamicColors(): Boolean =
         appPreferences.getValue(appPreferences.dynamicColors)
 
 }
+
+private data class LoadedMainSession(
+    val server: Server?,
+    val user: User?,
+    val address: String?,
+    val hasServers: Boolean,
+)
 
 data class MainState(
     val isLoading: Boolean = true,

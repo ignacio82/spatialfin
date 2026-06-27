@@ -26,7 +26,7 @@ constructor(val application: Application, private val database: ServerDatabaseDa
 
     fun loadAddresses(serverId: String) {
         currentServerId = serverId
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val serverWithAddresses = database.getServerWithAddresses(serverId)
                 _state.emit(ServerAddressesState(addresses = serverWithAddresses.addresses))

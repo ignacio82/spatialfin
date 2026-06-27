@@ -145,10 +145,20 @@
             </intent-filter>
         </activity-alias>
 
+        <!--
+          Legacy completion receiver for the system DownloadManager. SpatialFin no
+          longer enqueues into the system DownloadManager (all downloads run through
+          WorkManager / ResumableDownloadWorker; the system manager is only used for
+          .remove() cleanup of legacy ids), so ACTION_DOWNLOAD_COMPLETE will never
+          legitimately fire for this app. exported=false therefore loses no real
+          delivery and closes the spoofable-broadcast surface that let another app
+          mark our download tasks complete/failed. Candidate for full removal once
+          no upgraded installs can still hold pre-WorkManager system downloads.
+        -->
         <receiver
             android:name="dev.jdtech.jellyfin.utils.DownloadReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
             </intent-filter>

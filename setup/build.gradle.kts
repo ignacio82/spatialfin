@@ -50,4 +50,6 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.collections.immutable)
+
+    testImplementation(libs.junit4)
 }

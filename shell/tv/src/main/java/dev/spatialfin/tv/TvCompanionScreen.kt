@@ -66,6 +66,7 @@ import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.ServerAddress
 import dev.jdtech.jellyfin.models.User
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingEnvelope
@@ -135,7 +136,7 @@ constructor(
     private val jellyfinApi: JellyfinApi,
     private val extrasApplier: CompanionUserExtrasApplier,
     private val activeSessionBus: ActiveSessionBus,
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow<TvCompanionState>(TvCompanionState.Idle)
     val state: StateFlow<TvCompanionState> = _state
@@ -180,9 +181,10 @@ constructor(
                     viewModelScope.launch {
                         _state.value = TvCompanionState.Applying
                         runCatching {
-                            appPreferences.setValue(appPreferences.companionUrl, envelope.companion_url)
-                            appPreferences.setValue(appPreferences.companionToken, envelope.setup_token)
+                            val endpoint = CompanionEndpoint.from(envelope)
                             applyConfig(envelope.config)
+                            appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
+                            appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
                             appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
                             scheduleCompanionSync()
                         }.onSuccess {

@@ -86,17 +86,6 @@
     </issue>
 
     <issue
-        id="MissingKeepAnnotation"
-        message="To prevent this Enum&apos;s serializer from being obfuscated in minified builds, annotate it with @androidx.annotation.Keep"
-        errorLine1="enum class JellyfinAudioDetailType {"
-        errorLine2="           ~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/dev/spatialfin/unified/audio/JellyfinAudioScreens.kt"
-            line="100"
-            column="12"/>
-    </issue>
-
-    <issue
         id="RedundantLabel"
         message="Redundant label can be removed"
         errorLine1="            android:label=&quot;@string/app_name&quot;"

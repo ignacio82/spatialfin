@@ -24,6 +24,9 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -174,8 +177,11 @@ constructor(
                 when {
                     httpResponse.code == 416 -> {
                         if (tempFile.exists() && tempFile.length() > 0L) {
-                            finalizeSuccess(taskId, task.tempPath, task.finalPath, tempFile.length())
-                            return@withContext Result.success()
+                            return@withContext if (finalizeSuccess(taskId, task.tempPath, task.finalPath, tempFile.length())) {
+                                Result.success()
+                            } else {
+                                Result.failure()
+                            }
                         }
                         Timber.w("Resumable worker range not satisfiable taskId=%s", taskId)
                         markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, "Range not satisfiable")
@@ -282,8 +288,11 @@ constructor(
                             if (finalFile.exists()) {
                                 finalFile.delete()
                             }
-                            finalizeSuccess(taskId, task.tempPath, task.finalPath, downloadedBytes)
-                            return@withContext Result.success()
+                            return@withContext if (finalizeSuccess(taskId, task.tempPath, task.finalPath, downloadedBytes)) {
+                                Result.success()
+                            } else {
+                                Result.failure()
+                            }
                         }
                     }
                 } catch (e: IOException) {
@@ -298,7 +307,7 @@ constructor(
             }
         }
 
-    private fun finalizeSuccess(taskId: String, tempPath: String, finalPath: String, bytesDownloaded: Long) {
+    private fun finalizeSuccess(taskId: String, tempPath: String, finalPath: String, bytesDownloaded: Long): Boolean {
         val tempFile = File(tempPath)
         val finalFile = File(finalPath)
         finalFile.parentFile?.mkdirs()
@@ -307,7 +316,7 @@ constructor(
         if (!renamed || task == null) {
             Timber.e("Resumable worker failed final rename taskId=%s temp=%s final=%s", taskId, tempPath, finalPath)
             markFailed(taskId, bytesDownloaded, task?.totalBytes, task?.eTag, task?.lastModified, "Failed to finalize download")
-            return
+            return false
         }
         // Subtitle files aren't encrypted — libass reads them directly with no
         // cipher hook, and they're not sensitive content. Only primary video
@@ -319,9 +328,16 @@ constructor(
                 .onFailure { Timber.e(it, "Resumable worker: encryption failed taskId=%s", taskId) }
                 .getOrDefault(false)
             if (!encryptedOk) {
-                // Encryption failure must not leave a plaintext file masquerading as encrypted.
-                // The file itself is already fine (untouched); flag the task plain and continue.
-                Timber.w("Resumable worker: finalized taskId=%s WITHOUT encryption", taskId)
+                Timber.w("Resumable worker: failed to finalize encrypted download taskId=%s", taskId)
+                markFailed(
+                    taskId = taskId,
+                    bytesDownloaded = bytesDownloaded,
+                    totalBytes = task.totalBytes ?: bytesDownloaded,
+                    eTag = task.eTag,
+                    lastModified = task.lastModified,
+                    message = "Failed to encrypt downloaded content",
+                )
+                return false
             }
         }
         Timber.i("Resumable worker finalized taskId=%s final=%s bytes=%s kind=%s", taskId, finalPath, bytesDownloaded, task.kind)
@@ -352,12 +368,13 @@ constructor(
         if (task.kind == DownloadTaskKind.PRIMARY) {
             showDownloadCompleteNotification(params.inputData.getString(KEY_ITEM_TITLE))
         }
+        return true
     }
 
     /**
      * AES-CTR-encrypt [finalFile] in place using the DEK from [ContentKeyManager]
      * and a fresh random 16-byte IV. Writes the ciphertext to a sibling `.enc`
-     * file first, then atomically renames it over the original. On success the
+     * file first, then replaces the original. On success the
      * [taskId] row is updated with `isEncrypted = true` and the base64 IV.
      *
      * Returns true on success; false if something went wrong (in which case
@@ -391,16 +408,7 @@ constructor(
                     raw.flush()
                 }
             }
-            // Atomically replace the plaintext file with ciphertext. Use
-            // delete-then-rename rather than renameTo(finalFile) directly to
-            // avoid filesystems that reject rename-over-existing.
-            if (!finalFile.delete()) {
-                Timber.w("encryptFileInPlace: could not delete plaintext %s", finalFile)
-                encFile.delete()
-                return false
-            }
-            if (!encFile.renameTo(finalFile)) {
-                Timber.e("encryptFileInPlace: rename of %s -> %s failed", encFile, finalFile)
+            if (!replaceFile(encFile, finalFile)) {
                 return false
             }
             database.setDownloadTaskEncryption(
@@ -420,6 +428,29 @@ constructor(
             return false
         }
     }
+
+    private fun replaceFile(replacementFile: File, finalFile: File): Boolean =
+        try {
+            try {
+                Files.move(
+                    replacementFile.toPath(),
+                    finalFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    replacementFile.toPath(),
+                    finalFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+            true
+        } catch (e: Exception) {
+            Timber.e(e, "replaceFile: failed moving %s -> %s", replacementFile, finalFile)
+            replacementFile.delete()
+            false
+        }
 
     private fun showDownloadCompleteNotification(itemTitle: String?) {
         ensureNotificationChannel()

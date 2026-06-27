@@ -14,6 +14,7 @@ import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionDiscoveryPayload
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
@@ -28,7 +29,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -89,16 +89,19 @@ class CompanionViewModel @Inject constructor(
 
     fun fetchAndApplyConfig(payload: CompanionDiscoveryPayload) {
         if (_state.value is CompanionState.Fetching || _state.value is CompanionState.Success) return
-
-        // Save companion info for background sync
-        appPreferences.setValue(appPreferences.companionUrl, payload.companion_url)
-        appPreferences.setValue(appPreferences.companionToken, payload.setup_token)
+        val endpoint = runCatching { CompanionEndpoint.from(payload) }
+            .getOrElse { error ->
+                _state.value = CompanionState.Error(error.message ?: "Invalid companion pairing code")
+                return
+            }
 
         viewModelScope.launch {
             _state.value = CompanionState.Fetching
             try {
-                val config = fetchConfig(payload)
+                val config = fetchConfig(endpoint)
                 applyConfig(config)
+                appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
+                appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
                 appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
                 _state.value = CompanionState.Success
             } catch (e: Exception) {
@@ -113,16 +116,14 @@ class CompanionViewModel @Inject constructor(
         }
     }
 
-    private suspend fun fetchConfig(payload: CompanionDiscoveryPayload): CompanionConfig = withContext(Dispatchers.IO) {
-        Timber.d("COMPANION: Fetching config from ${payload.companion_url}/api/v1/config")
-        val request = Request.Builder()
-            .url("${payload.companion_url}/api/v1/config")
-            .addHeader("X-Setup-Token", payload.setup_token)
-            .build()
+    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig = withContext(Dispatchers.IO) {
+        Timber.d("COMPANION: Fetching config from ${endpoint.configUrl}")
+        val request = endpoint.authorizedRequest(endpoint.configUrl).build()
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val body = response.body?.string() ?: throw Exception("Empty response")
+            val body = response.body.string()
+            if (body.isBlank()) throw Exception("Empty response")
             Timber.d("COMPANION: Raw config response length=${body.length}")
             val config = json.decodeFromString<CompanionConfig>(body)
             Timber.d("COMPANION: Parsed config: version=${config.version}, servers=${config.servers.size}, preferences=${config.preferences.size}, networkShares=${config.networkShares.size}")

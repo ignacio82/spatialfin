@@ -9,6 +9,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.work.CompanionSyncWorker
 import java.util.concurrent.TimeUnit
@@ -41,7 +42,7 @@ import timber.log.Timber
  */
 @Singleton
 class CompanionLiveSyncClient @Inject constructor(
-    @ApplicationContext private val appContext: Context,
+    @param:ApplicationContext private val appContext: Context,
     private val appPreferences: AppPreferences,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -93,10 +94,17 @@ class CompanionLiveSyncClient @Inject constructor(
             scheduleReconnect()
             return
         }
-        val wsUrl = httpToWs(base)
+        val endpoint = runCatching {
+            CompanionEndpoint.parse(base, appPreferences.getValue(appPreferences.companionToken))
+        }.getOrElse { error ->
+            Timber.w(error, "CompanionLiveSync: invalid companion endpoint")
+            scheduleReconnect()
+            return
+        }
+        val wsUrl = endpoint.webSocketUrlString()
         val request = Request.Builder()
             .url(wsUrl)
-            .addHeader("X-Setup-Token", appPreferences.getValue(appPreferences.companionToken))
+            .addHeader("X-Setup-Token", endpoint.setupToken)
             .build()
         Timber.i("CompanionLiveSync: connecting to %s", wsUrl)
         currentSocket = client.newWebSocket(request, SocketListener())
@@ -163,10 +171,6 @@ class CompanionLiveSyncClient @Inject constructor(
             scheduleReconnect()
         }
     }
-
-    private fun httpToWs(httpUrl: String): String = httpUrl
-        .replaceFirst(Regex("^http:", RegexOption.IGNORE_CASE), "ws:")
-        .replaceFirst(Regex("^https:", RegexOption.IGNORE_CASE), "wss:")
 
     companion object {
         private const val INITIAL_BACKOFF_MS = 1_000L

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -14,7 +15,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -80,9 +80,10 @@ object BeamCompanionLogUploader {
 
     fun flushNow() {
         if (!initialized) return
-        val companionUrl = appPreferences.getValue(appPreferences.companionUrl).trim().removeSuffix("/")
-        val setupToken = appPreferences.getValue(appPreferences.companionToken).trim()
-        if (companionUrl.isEmpty() || setupToken.isEmpty()) return
+        val endpoint = companionEndpointOrNull() ?: run {
+            synchronized(lock) { pendingLogs.clear() }
+            return
+        }
 
         val batch =
             synchronized(lock) {
@@ -102,9 +103,7 @@ object BeamCompanionLogUploader {
                 .put("logs", JSONArray(batch))
 
         val request =
-            Request.Builder()
-                .url("$companionUrl/api/v1/device-logs")
-                .addHeader("X-Setup-Token", setupToken)
+            endpoint.authorizedRequest(endpoint.deviceLogsUrl)
                 .post(payload.toString().toRequestBody(jsonMediaType))
                 .build()
 
@@ -128,9 +127,16 @@ object BeamCompanionLogUploader {
     private fun shouldUpload(): Boolean {
         if (!initialized) return false
         if (!appPreferences.getValue(appPreferences.loggingEnabled)) return false
-        return appPreferences.getValue(appPreferences.companionUrl).isNotBlank() &&
-            appPreferences.getValue(appPreferences.companionToken).isNotBlank()
+        return companionEndpointOrNull() != null
     }
+
+    private fun companionEndpointOrNull(): CompanionEndpoint? =
+        runCatching {
+            CompanionEndpoint.parse(
+                appPreferences.getValue(appPreferences.companionUrl),
+                appPreferences.getValue(appPreferences.companionToken),
+            )
+        }.getOrNull()
 
     private fun priorityLabel(priority: Int): String =
         when (priority) {

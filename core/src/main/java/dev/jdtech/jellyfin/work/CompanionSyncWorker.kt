@@ -17,6 +17,7 @@ import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.models.companion.CompanionConfig
+import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
 import dev.jdtech.jellyfin.models.companion.CompanionUser
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.jellyfin.sdk.model.api.AuthenticateUserByName
 import timber.log.Timber
 import java.util.UUID
@@ -58,11 +58,19 @@ class CompanionSyncWorker @AssistedInject constructor(
             return@withContext Result.success()
         }
 
-        Timber.d("COMPANION SYNC: Background sync started from $url")
+        val endpoint = runCatching { CompanionEndpoint.parse(url, token) }
+            .getOrElse { error ->
+                Timber.w(error, "COMPANION SYNC: Ignoring invalid companion endpoint")
+                return@withContext Result.failure()
+            }
+
+        Timber.d("COMPANION SYNC: Background sync started from ${endpoint.normalizedBaseUrl}")
 
         try {
-            val config = fetchConfig(url, token)
+            val config = fetchConfig(endpoint)
             applyConfig(config)
+            appPreferences.setValue(appPreferences.companionUrl, endpoint.normalizedBaseUrl)
+            appPreferences.setValue(appPreferences.companionToken, endpoint.setupToken)
             appPreferences.setValue(appPreferences.lastCompanionSyncTime, System.currentTimeMillis())
             Timber.i("COMPANION SYNC: Background sync completed successfully")
             Result.success()
@@ -72,15 +80,13 @@ class CompanionSyncWorker @AssistedInject constructor(
         }
     }
 
-    private suspend fun fetchConfig(url: String, token: String): CompanionConfig {
-        val request = Request.Builder()
-            .url("$url/api/v1/config")
-            .addHeader("X-Setup-Token", token)
-            .build()
+    private suspend fun fetchConfig(endpoint: CompanionEndpoint): CompanionConfig {
+        val request = endpoint.authorizedRequest(endpoint.configUrl).build()
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val body = response.body?.string() ?: throw Exception("Empty response")
+            val body = response.body.string()
+            if (body.isBlank()) throw Exception("Empty response")
             Timber.d("COMPANION SYNC: Fetched config, length=${body.length}")
             val config = json.decodeFromString<CompanionConfig>(body)
             Timber.d("COMPANION SYNC: Parsed config: servers=${config.servers.size}, preferences=${config.preferences.size}")

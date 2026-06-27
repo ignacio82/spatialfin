@@ -68,4 +68,6 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.collections.immutable)
     implementation(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.junit4)
 }
