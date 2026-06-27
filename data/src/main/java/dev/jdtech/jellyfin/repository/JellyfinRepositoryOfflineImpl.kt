@@ -124,20 +124,20 @@ class JellyfinRepositoryOfflineImpl(
         val userId = jellyfinApi.userId ?: return@withContext flowOf(PagingData.empty())
         val wantsAll = includeTypes.isNullOrEmpty()
         val items = buildList<SpatialFinItem> {
-            if (wantsAll || includeTypes!!.contains(BaseItemKind.MOVIE)) {
+            if (wantsAll || includeTypes.contains(BaseItemKind.MOVIE)) {
                 addAll(
                     database.getMoviesByServerId(serverId)
                         .map { it.toSpatialFinMovie(database, userId) }
                         .filter { it.isDownloaded() }
                 )
             }
-            if (wantsAll || includeTypes!!.contains(BaseItemKind.SERIES)) {
+            if (wantsAll || includeTypes.contains(BaseItemKind.SERIES)) {
                 addAll(
                     database.getShowsByServerId(serverId)
                         .map { it.toSpatialFinShow(database, userId) }
                 )
             }
-            if (wantsAll || includeTypes!!.contains(BaseItemKind.EPISODE)) {
+            if (wantsAll || includeTypes.contains(BaseItemKind.EPISODE)) {
                 addAll(
                     database.getEpisodesByServerId(serverId)
                         .map { it.toSpatialFinEpisode(database, userId) }

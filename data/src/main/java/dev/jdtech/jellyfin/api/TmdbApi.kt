@@ -36,7 +36,7 @@ class TmdbApi(
         try {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext emptyList()
+                val body = response.body.string()
                 json.decodeFromString<TmdbSearchResponse<TmdbMovieResult>>(body).results
             } else {
                 Timber.e("TMDB movie search failed: ${response.code}")
@@ -57,7 +57,7 @@ class TmdbApi(
         try {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext emptyList()
+                val body = response.body.string()
                 json.decodeFromString<TmdbSearchResponse<TmdbTvResult>>(body).results
             } else {
                 Timber.e("TMDB TV search failed: ${response.code}")
@@ -74,7 +74,7 @@ class TmdbApi(
         try {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext null
+                val body = response.body.string()
                 json.decodeFromString<TmdbMovieDetails>(body)
             } else {
                 Timber.e("TMDB movie details failed: ${response.code}")
@@ -91,7 +91,7 @@ class TmdbApi(
         try {
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext null
+                val body = response.body.string()
                 json.decodeFromString<TmdbTvDetails>(body)
             } else {
                 Timber.e("TMDB TV details failed: ${response.code}")
@@ -110,7 +110,7 @@ class TmdbApi(
                 val request = buildRequest("/configuration") ?: return@withContext DEFAULT_IMAGE_BASE
                 val response = client.newCall(request).execute()
                 if (response.isSuccessful) {
-                    val body = response.body?.string() ?: return@withContext DEFAULT_IMAGE_BASE
+                    val body = response.body.string()
                     val config = json.decodeFromString<TmdbConfiguration>(body)
                     val base = config.images.secureBaseUrl
                     cachedImageBaseUrl = base

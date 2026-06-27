@@ -101,10 +101,10 @@ class SeerrApi(
             Timber.i("Seerr search request keyConfigured=%b query=%s", apiKey.isNotBlank(), query)
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext SeerrSearchOutcome()
+                val body = response.body.string()
                 SeerrSearchOutcome(response = json.decodeFromString<SeerrSearchResponse>(body))
             } else {
-                val errorBody = response.body?.string().orEmpty()
+                val errorBody = response.body.string()
                 Timber.e(
                     "Seerr search failed http=%d message=%s body=%s",
                     response.code,
@@ -181,8 +181,8 @@ class SeerrApi(
                 true
             } else {
                 Timber.e("Seerr request failed: ${response.code} ${response.message}")
-                val errorBody = response.body?.string()
-                if (!errorBody.isNullOrBlank()) {
+                val errorBody = response.body.string()
+                if (errorBody.isNotBlank()) {
                     Timber.e("Seerr error body: $errorBody")
                 }
                 false
@@ -201,7 +201,7 @@ class SeerrApi(
                 ) ?: return@withContext emptyList()
             val response = client.newCall(request).execute()
             if (response.isSuccessful) {
-                val body = response.body?.string() ?: return@withContext emptyList()
+                val body = response.body.string()
                 val tvInfo = json.decodeFromString<SeerrTvResponse>(body)
                 tvInfo.seasons.map { it.seasonNumber }.filter { it > 0 } // Exclude Season 0 (Specials) usually
             } else {

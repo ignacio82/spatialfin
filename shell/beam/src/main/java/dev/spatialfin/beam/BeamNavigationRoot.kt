@@ -537,7 +537,7 @@ fun BeamNavigationRoot(
         dev.spatialfin.fcast.session.LocalFCastSession provides fcastSession,
         dev.jdtech.jellyfin.presentation.cast.LocalCastButtonController provides
             remember(fcastSession) {
-                fcastSession?.let { dev.spatialfin.fcast.session.CastButtonControllerAdapter(it) }
+                fcastSession.let { dev.spatialfin.fcast.session.CastButtonControllerAdapter(it) }
             },
         dev.spatialfin.unified.LocalMaPlayDispatcher provides maPlayDispatcher,
     ) {

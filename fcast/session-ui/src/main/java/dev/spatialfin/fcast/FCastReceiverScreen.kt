@@ -427,8 +427,8 @@ fun FCastReceiverScreen(
                                         val playBtn = view.findViewById<View>(R.id.fcast_btn_play)
                                         val pauseBtn = view.findViewById<View>(R.id.fcast_btn_pause)
                                         
-                                        playBtn?.setOnClickListener { player?.play() }
-                                        pauseBtn?.setOnClickListener { player?.pause() }
+                                        playBtn?.setOnClickListener { player.play() }
+                                        pauseBtn?.setOnClickListener { player.pause() }
                                         
                                         val updateButtons = { isPlaying: Boolean ->
                                             if (isPlaying) {
@@ -440,12 +440,12 @@ fun FCastReceiverScreen(
                                             }
                                         }
                                         
-                                        player?.addListener(object : androidx.media3.common.Player.Listener {
+                                        player.addListener(object : androidx.media3.common.Player.Listener {
                                             override fun onIsPlayingChanged(isPlaying: Boolean) {
                                                 updateButtons(isPlaying)
                                             }
                                         })
-                                        updateButtons(player?.isPlaying == true)
+                                        updateButtons(player.isPlaying)
                                         
                                         view
                                     },

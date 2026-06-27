@@ -348,7 +348,7 @@ class PlayerSessionController(
 
         val selectedSource = when {
             is3D -> sources.firstOrNull { it.name.contains("3D", ignoreCase = true) || it.name.contains("SBS", ignoreCase = true) || it.name.contains("TAB", ignoreCase = true) }
-            isSmaller -> sources.minByOrNull { it.size ?: Long.MAX_VALUE }
+            isSmaller -> sources.minByOrNull { it.size }
             else -> null
         }
 

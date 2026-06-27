@@ -644,7 +644,7 @@ class SendspinReceiverService : Service() {
         val scope = currentJellyfinUserId?.takeIf { it.isNotBlank() } ?: "default"
         fun pick(predicate: (String) -> Boolean): String? =
             all.entries.asSequence()
-                .filter { (key, value) -> predicate(key) && value is String && (value as String).isNotBlank() }
+                .filter { (key, value) -> predicate(key) && value is String && value.isNotBlank() }
                 .map { it.value as String }
                 .firstOrNull()
         // Prefer the active user's token, then any stored token, then a legacy global one.

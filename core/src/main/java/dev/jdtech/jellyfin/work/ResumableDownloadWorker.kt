@@ -24,13 +24,7 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -199,12 +193,9 @@ constructor(
                     tempFile.delete()
                 }
 
-                val responseBody = httpResponse.body ?: run {
-                    val msg = "Empty response body"
-                    markFailed(taskId, existingBytes, task.totalBytes, task.eTag, task.lastModified, msg)
-                    return@withContext if (runAttemptCount < MAX_AUTO_RETRIES) Result.retry() else Result.failure()
-                }
-
+                // OkHttp's Response.body is non-null; an empty payload simply has
+                // contentLength 0, handled by the read loop below.
+                val responseBody = httpResponse.body
                 val responseContentLength = responseBody.contentLength().takeIf { it >= 0L }
                 val totalBytes =
                     if (append) {
@@ -389,68 +380,22 @@ constructor(
             Timber.i("encryptFileInPlace: DEK locked, leaving taskId=%s plain", taskId)
             return false
         }
-        val iv = ByteArray(AES_IV_BYTES).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance(AES_CTR_TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dek, "AES"), IvParameterSpec(iv))
-        val encFile = File(finalFile.parent, finalFile.name + ".enc")
-        try {
-            finalFile.inputStream().use { input ->
-                encFile.outputStream().use { raw ->
-                    val buf = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        val read = input.read(buf)
-                        if (read <= 0) break
-                        val out = cipher.update(buf, 0, read)
-                        if (out != null && out.isNotEmpty()) raw.write(out)
-                    }
-                    val tail = cipher.doFinal()
-                    if (tail != null && tail.isNotEmpty()) raw.write(tail)
-                    raw.flush()
-                }
-            }
-            if (!replaceFile(encFile, finalFile)) {
-                return false
-            }
-            database.setDownloadTaskEncryption(
-                id = taskId,
-                isEncrypted = true,
-                encryptionIv = Base64.encodeToString(iv, Base64.NO_WRAP),
-                updatedAt = System.currentTimeMillis(),
-            )
-            Timber.i(
-                "encryptFileInPlace: encrypted taskId=%s size=%d ivLen=%d",
-                taskId, finalFile.length(), iv.size,
-            )
-            return true
-        } catch (e: Exception) {
-            Timber.e(e, "encryptFileInPlace: failed for %s", finalFile)
-            encFile.delete()
+        val iv = ByteArray(ResumableDownloadFileOps.AES_IV_BYTES).also { SecureRandom().nextBytes(it) }
+        if (!ResumableDownloadFileOps.encryptFileInPlace(finalFile, dek, iv)) {
             return false
         }
+        database.setDownloadTaskEncryption(
+            id = taskId,
+            isEncrypted = true,
+            encryptionIv = Base64.encodeToString(iv, Base64.NO_WRAP),
+            updatedAt = System.currentTimeMillis(),
+        )
+        Timber.i(
+            "encryptFileInPlace: encrypted taskId=%s size=%d ivLen=%d",
+            taskId, finalFile.length(), iv.size,
+        )
+        return true
     }
-
-    private fun replaceFile(replacementFile: File, finalFile: File): Boolean =
-        try {
-            try {
-                Files.move(
-                    replacementFile.toPath(),
-                    finalFile.toPath(),
-                    StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(
-                    replacementFile.toPath(),
-                    finalFile.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                )
-            }
-            true
-        } catch (e: Exception) {
-            Timber.e(e, "replaceFile: failed moving %s -> %s", replacementFile, finalFile)
-            replacementFile.delete()
-            false
-        }
 
     private fun showDownloadCompleteNotification(itemTitle: String?) {
         ensureNotificationChannel()
@@ -571,10 +516,8 @@ constructor(
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun progressFor(downloadedBytes: Long, totalBytes: Long?): Int {
-        if (totalBytes == null || totalBytes <= 0L) return 0
-        return ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 100)
-    }
+    private fun progressFor(downloadedBytes: Long, totalBytes: Long?): Int =
+        ResumableDownloadFileOps.progressFor(downloadedBytes, totalBytes)
 
     private fun currentNetworkRestrictionMessage(hasAuthenticatedRequest: Boolean): String? {
         val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
@@ -598,10 +541,6 @@ constructor(
         // byte makes Android system services misbehave (DropBoxManager,
         // SQLite WALs, package installs), so we stop sooner.
         private const val LOW_STORAGE_SAFETY_MARGIN_BYTES = 64L * 1_048_576L
-        // AES-CTR: 16-byte block, 16-byte IV. The cipher is the same shape
-        // Media3's AesCipherDataSource uses, so it can decrypt on playback.
-        private const val AES_CTR_TRANSFORMATION = "AES/CTR/NoPadding"
-        private const val AES_IV_BYTES = 16
 
         fun uniqueWorkName(taskId: String): String = "resumable-download:$taskId"
     }

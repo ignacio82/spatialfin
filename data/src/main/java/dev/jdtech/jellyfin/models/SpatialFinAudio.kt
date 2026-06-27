@@ -184,7 +184,7 @@ suspend fun BaseItemDto.toSpatialFinAudioTrack(
         mediaSourceId = sources.firstOrNull()?.id ?: mediaSources.orEmpty().firstOrNull()?.id,
         container = container ?: mediaSources.orEmpty().firstOrNull()?.container,
         hasLyrics = hasLyrics == true,
-        isAudiobook = forceAudiobook || type == BaseItemKind.AUDIO_BOOK || mediaType?.serialName == "AudioBook",
+        isAudiobook = forceAudiobook || type == BaseItemKind.AUDIO_BOOK || mediaType.serialName == "AudioBook",
     )
 }
 

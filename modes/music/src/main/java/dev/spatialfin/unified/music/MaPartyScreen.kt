@@ -104,7 +104,7 @@ fun MaPartyScreen(
             if (!track?.artworkUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
-                        .data(track!!.artworkUrl)
+                        .data(track.artworkUrl)
                         .size(960, 540)
                         .build(),
                     contentDescription = null,

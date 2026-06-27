@@ -33,4 +33,6 @@ dependencies {
     // in-process loopback relay (see receiver/remote/). 16 KB page-size aligned.
     implementation(libs.stream.webrtc.android)
     implementation(libs.timber)
+
+    testImplementation(libs.junit4)
 }

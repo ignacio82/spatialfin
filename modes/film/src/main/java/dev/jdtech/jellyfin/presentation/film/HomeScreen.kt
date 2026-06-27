@@ -314,7 +314,7 @@ private fun HomeScreenLayout(
                         itemsPadding = itemsPadding,
                         onAction = { action ->
                             if (action is HomeAction.OnItemClick && action.item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
-                                val uItem = action.item as dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                                val uItem = action.item
                                 onPlay(
                                     PlayRequest.UniversalMedia(
                                         pluginId = uItem.universalMediaItem.pluginId,
@@ -338,7 +338,7 @@ private fun HomeScreenLayout(
 
         if (state.error != null && showErrorDialog) {
             ErrorDialog(
-                exception = Exception(state.error?.message ?: "Failed to load home content."),
+                exception = Exception(state.error.message),
                 onDismissRequest = { showErrorDialog = false },
             )
         }

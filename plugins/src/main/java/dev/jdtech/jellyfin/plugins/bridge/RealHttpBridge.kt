@@ -93,7 +93,7 @@ class RealHttpBridge(
 
             val response = client.newCall(requestBuilder.build()).execute().use { response ->
                 android.util.Log.e("CRITICAL_HTTP", "Plugin Response headers: ${response.code} for $url")
-                val contentType = response.body?.contentType()
+                val contentType = response.body.contentType()
                 val isText =
                     contentType == null ||
                         contentType.type == "text" ||
@@ -101,9 +101,9 @@ class RealHttpBridge(
                         contentType.subtype.contains("xml", ignoreCase = true)
 
                 val responseBody = if (isText) {
-                    response.body?.string()
+                    response.body.string()
                 } else {
-                    response.body?.bytes()?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+                    response.body.bytes().let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
                 }
 
                 if (!response.isSuccessful) {

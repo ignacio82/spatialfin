@@ -203,24 +203,40 @@ Recommended fix:
 
 ### 1. Fix Test Layout, Then Expand Coverage
 
-After the cross-module test compile failures are fixed, add focused module-local tests for currently uncovered or under-covered high-risk modules.
+Status: In progress on 2026-06-27.
 
-High-value targets:
+Progress:
 
-- Companion endpoint parsing and validation.
-- `ResumableDownloadWorker` encryption/finalization state machine.
-- `SendspinReceiverService` command parsing and state transitions.
+- Companion endpoint parsing/validation — covered by `CompanionEndpointTest`
+  (core).
+- `ResumableDownloadWorker` encryption/finalization — extracted the pure
+  file/crypto logic into `ResumableDownloadFileOps` (atomic `replaceFile`,
+  AES-CTR `encryptFileInPlace`, `progressFor`) so it is testable without a
+  WorkManager/Hilt/Room harness, and added `ResumableDownloadFileOpsTest`:
+  progress clamping, atomic replace (overwrite / create / missing-source
+  failure), and encrypt→decrypt round-trips (multi-buffer, empty, and
+  missing-source failure). Verified with `./gradlew :core:testLibreDebugUnitTest`.
+- Sendspin off-LAN remote access — added `sendspin` module unit tests (the
+  module previously had none): `RemoteIdTest` (hyphen/whitespace
+  normalization, length/charset validation, null handling) and
+  `SignalingCodecTest` (decode of every inbound frame, the FlexibleStringList
+  single-string-vs-array ICE-server edge case, malformed-JSON tolerance, and
+  outbound encode shapes). Verified with `./gradlew :sendspin:testDebugUnitTest`.
+
+Remaining high-value targets:
+
+- `SendspinReceiverService` in-service command/state machine (the WebRTC
+  signaling/`RemoteId` parsing it depends on is now covered).
 - Beam/TV player intent parsing.
 - Room migration and upgrade behavior.
-- FCAST split AV policy and calibration logic.
+- FCAST split AV policy and calibration logic (partial: policy tests already
+  exist under `fcast:session-ui`).
 
 Modules with little or no direct test coverage include:
 
-- `sendspin`
 - `shell:beam`
 - `shell:tv`
 - `setup`
-- `fcast:session-ui`
 - `modes:film`
 - `modes:audio`
 - `modes:music`

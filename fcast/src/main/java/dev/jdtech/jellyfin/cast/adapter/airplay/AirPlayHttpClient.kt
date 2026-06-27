@@ -138,10 +138,10 @@ internal class AirPlayHttpClient(
             httpClient.newCall(request).execute().use { response ->
                 if (response.code == 470) throw AirPlayException.PinRequired()
                 if (!response.isSuccessful) {
-                    val body = runCatching { response.body?.string() }.getOrNull()
+                    val body = runCatching { response.body.string() }.getOrNull()
                     throw AirPlayException.HttpFailure(response.code, body)
                 }
-                response.body?.bytes() ?: ByteArray(0)
+                response.body.bytes()
             }
         } catch (e: AirPlayException) {
             throw e

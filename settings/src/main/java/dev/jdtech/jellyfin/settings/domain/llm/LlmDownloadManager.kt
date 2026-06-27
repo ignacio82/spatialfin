@@ -93,7 +93,7 @@ class LlmDownloadManager @Inject constructor(
                 return@withContext
             }
 
-            val body = response.body ?: throw IllegalStateException("Empty response body")
+            val body = response.body
             val contentLength = body.contentLength()
             // For a 206 response the server sends only the remaining slice; add the already-
             // downloaded bytes back to get the true total.

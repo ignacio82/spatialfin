@@ -128,7 +128,7 @@ object LanguageCatalog {
                         localDisplayLanguage == normalizedDisplayName
                 ) {
                     locale.language
-                        ?.takeIf { it.isNotBlank() }
+                        .takeIf { it.isNotBlank() }
                         ?.let { add(normalizeToken(it)) }
                     locale.toLanguageTag()
                         .takeIf { it.isNotBlank() }

@@ -193,7 +193,7 @@ private fun LoginScreenLayout(
                 supportingText = {
                     if (state.error != null) {
                         Text(
-                            text = state.error!!.asString(),
+                            text = state.error.asString(),
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyLarge,
                         )
@@ -244,7 +244,7 @@ private fun LoginScreenLayout(
                         ) {
                             Text(
                                 text =
-                                    if (state.quickConnectCode != null) state.quickConnectCode!!
+                                    if (state.quickConnectCode != null) state.quickConnectCode
                                     else stringResource(SetupR.string.login_btn_quick_connect),
                                 style = MaterialTheme.typography.titleMedium,
                             )
@@ -254,7 +254,7 @@ private fun LoginScreenLayout(
             }
             if (state.disclaimer != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(text = state.disclaimer!!, style = MaterialTheme.typography.bodyLarge)
+                Text(text = state.disclaimer, style = MaterialTheme.typography.bodyLarge)
             }
         }
         FilledTonalButton(

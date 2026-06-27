@@ -200,7 +200,7 @@ class OkHttpServiceClient(
                                 if (!isHandled) {
                                     // Try parse as Event
                                     try {
-                                        val eventWrapper = EventWrapper(element as JsonObject)
+                                        val eventWrapper = EventWrapper(element)
                                         val concreteEvent = eventWrapper.event()
                                         if (concreteEvent != null) {
                                             _events.emit(concreteEvent)

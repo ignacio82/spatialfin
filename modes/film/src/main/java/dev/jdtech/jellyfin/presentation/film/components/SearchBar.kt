@@ -172,7 +172,7 @@ fun FilmSearchBar(
             state.errorMessage != null -> {
                 SearchStatusPanel(
                     title = stringResource(FilmR.string.search_error_title),
-                    subtitle = state.errorMessage ?: "",
+                    subtitle = state.errorMessage,
                 )
             }
             query.isBlank() -> {
@@ -235,7 +235,7 @@ fun FilmSearchBar(
 
                     val maItems = state.maItems
                     if (maItems != null) {
-                        val tracks = maItems.tracks ?: emptyList()
+                        val tracks = maItems.tracks
                         if (tracks.isNotEmpty()) {
                             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 Text(
@@ -254,7 +254,7 @@ fun FilmSearchBar(
                             }
                         }
 
-                        val albums = maItems.albums ?: emptyList()
+                        val albums = maItems.albums
                         if (albums.isNotEmpty()) {
                             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 Text(
@@ -273,7 +273,7 @@ fun FilmSearchBar(
                             }
                         }
 
-                        val artists = maItems.artists ?: emptyList()
+                        val artists = maItems.artists
                         if (artists.isNotEmpty()) {
                             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 Text(
@@ -292,7 +292,7 @@ fun FilmSearchBar(
                             }
                         }
 
-                        val playlists = maItems.playlists ?: emptyList()
+                        val playlists = maItems.playlists
                         if (playlists.isNotEmpty()) {
                             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 Text(

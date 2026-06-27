@@ -26,7 +26,7 @@ data class BeamVoiceParseResult(
 class BeamGeminiNanoService(private val appContext: Context) {
     suspend fun generateText(prompt: String, reason: String): String? = withContext(Dispatchers.IO) {
         runCatching {
-            val client = Generation.getClient() ?: return@withContext null
+            val client = Generation.getClient()
             if (client.checkStatus() != FeatureStatus.AVAILABLE) return@withContext null
             client.generateContent(prompt).candidates.firstOrNull()?.text
         }.onFailure { Timber.w(it, "GEMINI: nano %s failed", reason) }.getOrNull()

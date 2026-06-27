@@ -187,7 +187,7 @@ class SmartChatEngine(
             }
 
             // 2. Gemma with focused prompt (shorter input → faster inference than full buildPrompt)
-            val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference) ?: false
+            val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference)
             val currentInstance = if (shouldUseGemma()) { modelManager.ensureInitialized(); llmInstance } else null
             if (currentInstance != null && (currentInstance.backendName != "CPU" || cpuAllowed)) {
                 Timber.d("RECAP: routing to Gemma focused prompt")
@@ -354,7 +354,7 @@ class SmartChatEngine(
         }
 
         val gemmaEnabled = shouldUseGemma()
-        val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference) ?: false
+        val cpuAllowed = appPreferences.getValue(appPreferences.voiceAssistantCpuInference)
 
         if (gemmaEnabled) {
             modelManager.ensureInitialized()

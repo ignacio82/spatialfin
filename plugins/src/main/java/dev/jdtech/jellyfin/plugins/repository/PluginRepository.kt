@@ -307,7 +307,7 @@ class PluginRepository @Inject constructor(
         val request = Request.Builder().url(url).build()
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Unexpected code $response")
-            return response.body?.string() ?: throw IOException("Empty body")
+            return response.body.string()
         }
     }
 }

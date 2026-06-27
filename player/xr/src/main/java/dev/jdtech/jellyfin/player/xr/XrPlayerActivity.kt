@@ -503,7 +503,7 @@ class XrPlayerActivity : AppCompatActivity() {
         Timber.d("XrPlayer: step 3 — calling Session.create")
         try {
             val result = Session.create(this)
-            Timber.d("XrPlayer: step 4 — Session.create returned %s", result?.javaClass?.simpleName)
+            Timber.d("XrPlayer: step 4 — Session.create returned %s", result.javaClass.simpleName)
             if (result is SessionCreateSuccess) {
                 xrSession = result.session
                 recordLaunchPhase("onCreate:session-created")

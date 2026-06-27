@@ -182,7 +182,7 @@ internal class ChatToolRegistry(
             val result = mutableMapOf<String, Any?>()
             val keys = obj.keys()
             while (keys.hasNext()) {
-                val key = keys.next() as? String ?: continue
+                val key = keys.next() ?: continue
                 result[key] = obj.opt(key)
             }
             result

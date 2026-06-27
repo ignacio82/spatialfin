@@ -1277,7 +1277,7 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                                     add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = { menuOpen = false }))
                                     add(TvOverflowAction("syncplay", null, { Icon(painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), null, Modifier.size(24.dp), tint = Color.White) }, "SyncPlay", "Watch together with others", onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity) }))
                                     add(TvOverflowAction("playback_options", Icons.Rounded.Refresh, null, "Playback options", "Auto Quality", onClick = { menuOpen = false; TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity) }))
-                                    if (trailerUrl != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true)?.let(context::startActivity) }))
+                                    if (trailerUrl != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true).let(context::startActivity) }))
                                     if (i is SpatialFinEpisode) {
                                         add(TvOverflowAction("go_to_series", Icons.Rounded.Tv, null, "Go to series", onClick = { menuOpen = false; onOpenShow(i.seriesId) }))
                                         add(TvOverflowAction("go_to_season", Icons.AutoMirrored.Rounded.List, null, "Go to season", onClick = { menuOpen = false; onOpenSeason(i.seasonId) }))
@@ -1344,7 +1344,7 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
                         if (menuOpen) {
                             val actions = buildList {
                                 val showTrailer = show.trailer
-                                if (showTrailer != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true)?.let(context::startActivity) }))
+                                if (showTrailer != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true).let(context::startActivity) }))
                                 add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = { menuOpen = false }))
                                 add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
                                 add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false }))

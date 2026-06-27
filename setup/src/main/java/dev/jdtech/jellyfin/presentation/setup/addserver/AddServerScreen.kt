@@ -157,7 +157,7 @@ private fun AddServerScreenLayout(state: AddServerState, onAction: (AddServerAct
                 supportingText = {
                     if (state.error != null) {
                         Text(
-                            text = state.error!!.joinToString { it.asString(context.resources) },
+                            text = state.error.joinToString { it.asString(context.resources) },
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyLarge,
                         )

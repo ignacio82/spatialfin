@@ -762,7 +762,7 @@ private fun Scrubber(state: MaSession, onSeek: ((Long) -> Unit)? = null) {
             return@Column
         }
 
-        val effective = if (shouldTick && anchorAt != null) {
+        val effective = if (shouldTick) {
             (anchorElapsed + (now - anchorAt)).coerceAtMost(duration)
         } else {
             anchorElapsed.coerceAtMost(duration)

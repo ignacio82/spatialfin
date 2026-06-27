@@ -187,7 +187,7 @@ class PlaylistManager @Inject internal constructor(
             "Could not resolve playable stream for universal item $itemId"
         }
         
-        val resolvedUrl = if (resolved?.url?.startsWith("data:application/dash+xml;base64,") == true) {
+        val resolvedUrl = if (resolved.url.startsWith("data:application/dash+xml;base64,")) {
             try {
                 val base64 = resolved.url.substringAfter("base64,")
                 val xml = String(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
@@ -202,7 +202,7 @@ class PlaylistManager @Inject internal constructor(
         } else {
             resolved.url
         }
-        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved?.mimeType
+        val mimeType = if (resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("application/dash+xml")) "application/dash+xml" else resolved.mimeType
         
         android.util.Log.e("CRITICAL_PLAYLIST", "Final resolved URL: $resolvedUrl, mimeType=$mimeType")
         
@@ -215,10 +215,10 @@ class PlaylistManager @Inject internal constructor(
                 contentSource = PlayerContentSource.UNIVERSAL,
                 playbackPosition = 0L,
                 mimeType = mimeType,
-                videoUrl = resolved?.videoUrl,
-                audioUrl = resolved?.audioUrl,
-                videoMimeType = resolved?.videoMimeType,
-                audioMimeType = resolved?.audioMimeType
+                videoUrl = resolved.videoUrl,
+                audioUrl = resolved.audioUrl,
+                videoMimeType = resolved.videoMimeType,
+                audioMimeType = resolved.audioMimeType
             )
         playerItems.clear()
         playerItems.add(playerItem)

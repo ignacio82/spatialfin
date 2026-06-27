@@ -375,7 +375,7 @@ private fun MovieScreenLayout(
                         Spacer(Modifier.height(MaterialTheme.spacings.small))
                     }
                     if (state.displayExtraInfo && state.videoMetadata != null) {
-                        ExtraInfoText(videoMetadata = state.videoMetadata!!)
+                        ExtraInfoText(videoMetadata = state.videoMetadata)
                         Spacer(Modifier.height(MaterialTheme.spacings.medium))
                     }
                     OverviewText(text = movie.overview, maxCollapsedLines = 5)
