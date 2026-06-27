@@ -10,6 +10,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Music Assistant JSON-RPC client over the WebRTC `ma-api` data channel — the off-LAN
@@ -34,6 +39,13 @@ internal class MaApiChannelClient(
     private val tokenProvider: () -> String?,
     private val send: (String) -> Unit,
 ) {
+    val httpProxy = MaWebRtcHttpProxy(sender = { text -> send(text) })
+
+    // Off-channel work (http-proxy response dispatch / cancellation) — the inbound listener is
+    // non-suspend, and the proxy's mutex/parse paths are suspend. A bounded SupervisorJob scope
+    // keeps this structured (vs GlobalScope) so it dies with the channel in [close].
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private class Pending {
         val latch = CountDownLatch(1)
         @Volatile var result: String? = null
@@ -53,6 +65,15 @@ internal class MaApiChannelClient(
 
     /** Feed an inbound `ma-api` text frame. */
     fun onMessage(text: String) {
+        if (MaWebRtcHttpProxy.isHttpProxyResponse(text)) {
+            // Hand off to the proxy's coroutine: dispatchRawResponse is suspend (mutex), and the
+            // heavy hex decode happens later in the awaiter's coroutine, never on this listener.
+            scope.launch {
+                httpProxy.dispatchRawResponse(text)
+            }
+            return
+        }
+
         Timber.tag(TAG).d("ma-api << %s", text.take(140))
         val obj = runCatching { JSONObject(text) }.getOrNull() ?: return
         val messageId = obj.optString("message_id", "").takeIf { it.isNotBlank() }
@@ -159,6 +180,13 @@ internal class MaApiChannelClient(
         }
         pending.clear()
         partials.clear()
+        scope.launch {
+            try {
+                httpProxy.cancelAll(IOException("ma-api channel closed"))
+            } finally {
+                scope.cancel()
+            }
+        }
     }
 
     private companion object {

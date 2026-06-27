@@ -323,8 +323,13 @@ class MusicAssistantRepository @Inject constructor(
      */
     private fun resolveImageUrl(path: String, provider: String, remotelyAccessible: Boolean, serverUrl: String?): String? {
         if (remotelyAccessible && path.startsWith("http")) return path
-        val base = serverUrl?.trimEnd('/') ?: return path.takeIf { it.startsWith("http") }
         val encodedPath = Uri.encode(path)
+        
+        if (dev.jdtech.jellyfin.sendspin.receiver.MusicAssistantRemoteBridge.remoteImageFetcher != null) {
+            return "mawebrtc:///imageproxy?path=$encodedPath&provider=$provider"
+        }
+        
+        val base = serverUrl?.trimEnd('/') ?: return path.takeIf { it.startsWith("http") }
         return "$base/imageproxy?path=$encodedPath&provider=$provider"
     }
 

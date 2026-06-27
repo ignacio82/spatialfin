@@ -257,10 +257,19 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
         // expensive. Disable Coil's crossfade on TV — focus-based navigation already
         // rapid-fires image loads and the fades stack into visible choppiness.
         val enableCrossfade = capabilities.useImageCrossfades
+        dev.jdtech.jellyfin.data.musicassistant.utils.MaImageProxyOverride.resolver = { path, provider ->
+            if (dev.jdtech.jellyfin.sendspin.receiver.MusicAssistantRemoteBridge.remoteImageFetcher != null) {
+                val encodedPath = android.net.Uri.encode(path)
+                "mawebrtc:///imageproxy?path=$encodedPath&provider=$provider"
+            } else {
+                null
+            }
+        }
         return ImageLoader.Builder(context)
             .components {
                 add(OkHttpNetworkFetcherFactory(cacheStrategy = { CacheControlCacheStrategy() }))
                 add(SvgDecoder.Factory())
+                add(dev.spatialfin.unified.imageloader.WebRtcImageFetcher.Factory())
             }
             .diskCachePolicy(
                 if (appPreferences.getValue(appPreferences.imageCache)) CachePolicy.ENABLED

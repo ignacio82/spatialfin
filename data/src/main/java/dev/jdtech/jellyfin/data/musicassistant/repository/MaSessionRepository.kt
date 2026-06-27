@@ -414,12 +414,12 @@ class MaSessionRepository(
         }
         val nowPlayingFromServer = activeQueue?.currentItem?.mediaItem
             ?.let { item ->
+                val image = item.image ?: item.metadata?.images?.firstOrNull()
                 NowPlayingTrack(
                     uri = item.uri ?: "",
                     title = item.name,
                     artist = item.artists?.firstOrNull()?.name ?: activeQueue.currentItem.mediaItem.album?.name,
-                    artworkUrl = item.image?.path
-                        ?: item.metadata?.images?.firstOrNull()?.path,
+                    artworkUrl = image?.let { serviceClient.resolveImageUrl(it.path, it.provider, it.remotelyAccessible) },
                     durationMs = (item.duration ?: activeQueue.currentItem.duration)
                         ?.let { (it * 1000.0).toLong() },
                 )

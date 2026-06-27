@@ -90,6 +90,7 @@ class SendspinReceiverService : Service() {
      * off-LAN. Applied to [musicAssistantClient] via [applyMaApiTransport].
      */
     @Volatile private var maApiTransport: MaRpcTransport? = null
+    @Volatile private var maApiHttpProxy: dev.jdtech.jellyfin.sendspin.receiver.remote.MaWebRtcHttpProxy? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var displayName: String = "SpatialFin"
     private var receiverClientId: String = ""
@@ -563,8 +564,9 @@ class SendspinReceiverService : Service() {
                         .onFailure { Timber.tag(TAG).w(it, "SendSpin loopback dial failed") }
                 }
             },
-            onMaApiTransport = { transport ->
+            onMaApiReady = { transport, httpProxy ->
                 maApiTransport = transport
+                maApiHttpProxy = httpProxy
                 applyMaApiTransport()
                 // Surface the remote players once control is reachable.
                 if (transport != null) refreshMusicAssistantPlayers(discoverServerUrl = false)
@@ -574,6 +576,7 @@ class SendspinReceiverService : Service() {
                 webRtcConnection = null
                 webRtcRemoteId = null
                 maApiTransport = null
+                maApiHttpProxy = null
                 applyMaApiTransport()
             },
         )
@@ -587,6 +590,7 @@ class SendspinReceiverService : Service() {
         webRtcConnection = null
         webRtcRemoteId = null
         maApiTransport = null
+        maApiHttpProxy = null
         applyMaApiTransport()
         runCatching { conn.close(reason) }
     }
@@ -594,6 +598,7 @@ class SendspinReceiverService : Service() {
     /** Point the MA control client at the WebRTC ma-api transport (or back to REST when null). */
     private fun applyMaApiTransport() {
         val transport = maApiTransport
+        val httpProxy = maApiHttpProxy
         if (transport != null) {
             // Make sure a client exists to carry the transport (the WebRTC path can become
             // ready before any MA intent has lazily built one).
@@ -603,9 +608,13 @@ class SendspinReceiverService : Service() {
             MusicAssistantRemoteBridge.remoteExecutor = { command, argsJson ->
                 transport.execute(command, argsJson?.let { org.json.JSONObject(it) })
             }
+            MusicAssistantRemoteBridge.remoteImageFetcher = { path ->
+                httpProxy?.get(path = path) ?: throw IllegalStateException("HTTP Proxy not available")
+            }
         } else {
             musicAssistantClient?.rpcTransport = null
             MusicAssistantRemoteBridge.remoteExecutor = null
+            MusicAssistantRemoteBridge.remoteImageFetcher = null
         }
         SendspinReceiverSession.update { it.copy(musicAssistantRemoteReady = transport != null) }
     }

@@ -15,4 +15,7 @@ package dev.jdtech.jellyfin.sendspin.receiver
 object MusicAssistantRemoteBridge {
     @Volatile
     var remoteExecutor: ((command: String, argsJson: String?) -> String?)? = null
+
+    @Volatile
+    var remoteImageFetcher: (suspend (path: String) -> dev.jdtech.jellyfin.sendspin.receiver.remote.MaWebRtcHttpProxy.ProxyResponse)? = null
 }

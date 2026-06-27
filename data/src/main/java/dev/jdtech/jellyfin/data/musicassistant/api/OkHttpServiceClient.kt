@@ -105,6 +105,9 @@ class OkHttpServiceClient(
 
     override fun resolveImageUrl(path: String, provider: String, isRemotelyAccessible: Boolean): String? {
         if (isRemotelyAccessible && path.startsWith("http")) return path
+        
+        dev.jdtech.jellyfin.data.musicassistant.utils.MaImageProxyOverride.resolver?.invoke(path, provider)?.let { return it }
+        
         val baseUrl = _serverBaseUrl.value ?: return null
         return "$baseUrl/imageproxy?path=${path}&provider=${provider}"
     }

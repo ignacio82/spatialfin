@@ -48,8 +48,8 @@ internal class MaWebRtcConnection(
     private val tokenProvider: () -> String?,
     /** Invoked once the sendspin transport is ready; arg is the `ws://127.0.0.1:<port>` URL. */
     private val onSendspinReady: (loopbackUrl: String) -> Unit,
-    /** Invoked with the `ma-api` JSON-RPC transport when it opens, and null on teardown. */
-    private val onMaApiTransport: (MaRpcTransport?) -> Unit,
+    /** Invoked with the `ma-api` JSON-RPC transport and HTTP proxy when it opens, and null on teardown. */
+    private val onMaApiReady: (MaRpcTransport?, MaWebRtcHttpProxy?) -> Unit,
     /** Invoked on terminal failure/teardown with a short reason. */
     private val onClosed: (reason: String) -> Unit,
 ) : MaSignalingClient.Listener {
@@ -89,7 +89,7 @@ internal class MaWebRtcConnection(
         relay = null
         runCatching { maApiClient?.close() }
         maApiClient = null
-        runCatching { onMaApiTransport(null) }
+        runCatching { onMaApiReady(null, null) }
         // Dispose native resources (channels → peer connection → factory) so reconnects
         // don't leak. The one-time PeerConnectionFactory.initialize() stays process-global.
         runCatching { sendspinChannel?.dispose() }
@@ -320,9 +320,9 @@ internal class MaWebRtcConnection(
                     when (channel.state()) {
                         DataChannel.State.OPEN -> {
                             Timber.tag(TAG).i("WebRTC remote: ma-api channel open")
-                            onMaApiTransport(apiClient.transport)
+                            onMaApiReady(apiClient.transport, apiClient.httpProxy)
                         }
-                        DataChannel.State.CLOSED -> onMaApiTransport(null)
+                        DataChannel.State.CLOSED -> onMaApiReady(null, null)
                         else -> {}
                     }
                 }
