@@ -168,7 +168,7 @@ Release signing uses the standard SpatialFin variables:
 
 These values can be provided through Gradle properties, `local.properties`, or environment variables.
 
-There are no longer any `app/xr`, `app/beam`, or `app/tv` source trees. All application code lives in `app/unified/src/main/java` under per-form-factor packages (`dev.jdtech.jellyfin.*` for XR, `dev.spatialfin.tv.*`, `dev.spatialfin.beam.*`) — a single source set with no build-time source staging. The form factor is selected at runtime by `DeviceClass`.
+There are no longer any `app/xr`, `app/beam`, or `app/tv` source trees, and the form factor is selected at runtime by `DeviceClass` (never at build time). `:app:unified` is now a thin runtime host — `UnifiedMainActivity`/`UnifiedApplication`, the `DeviceClass` switch, the XR shell, and DI glue. The TV and Beam shells live in their own `:shell:tv` / `:shell:beam` modules, and each feature lives in its own module (`:modes:film`, `:modes:music`, `:modes:audio`, `:core:ui`, `:setup`, `:settings`, `:fcast:session-ui`, …). See the [Architecture](#architecture) section and `GEMINI.md` for the full module map.
 
 ## Local Library
 
@@ -291,25 +291,31 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 
 ## Architecture
 
-SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV).
+SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV). Shared build configuration lives in `build-logic/` convention plugins (`spatialfin.android.library` / `spatialfin.android.compose`) so each module's build script stays small. The table below is a selected overview; `GEMINI.md` has the authoritative, exhaustive module map.
 
 | Module | Description |
 |--------|-------------|
-| `:app:unified` | The only application module. Application id `dev.spatialfin`. XR / TV / Beam code all live in its single `src/main/java` tree under their own packages; branches at runtime on `DeviceClass`. |
-| `:player:xr` | Immersive XR player, libass JNI subtitle pipeline, voice subsystem, spatial UI. |
+| `:app:unified` | The only application module (application id `dev.spatialfin`). A thin runtime host: `UnifiedMainActivity`/`UnifiedApplication`, the `DeviceClass` switch, the XR shell, and DI glue. Branches at runtime on `DeviceClass`. |
+| `:shell:tv` | TV (Leanback) form-factor shell — `TvNavigationRoot` + TV settings/companion/users screens. The `DeviceClass.TV` branch routes here. |
+| `:shell:beam` | Beam (phone) form-factor shell — `BeamNavigationRoot` + the phone screens, settings, setup, and companion. The `DeviceClass.PHONE` branch routes here. |
+| `:player:xr` | Immersive XR player, libass JNI subtitle pipeline, voice subsystem (incl. the Home-Space `HomeVoiceController`), spatial UI. |
 | `:player:local` | Media3 / ExoPlayer wrapper for local and Jellyfin playback. |
 | `:player:session` | Typed player actions, voice command execution, SyncPlay orchestration. |
 | `:player:core` | Player abstractions and domain models. |
-| `:player:beam` | Phone-form-factor player (re-exports `:player:xr` for the libass libs). |
+| `:player:beam` | Phone-form-factor player (re-exports `:player:xr` via `api(...)` — the single dex-merge path for the libass libs). |
 | `:player:tv` | TV-form-factor (Leanback) player. |
-| `:modes:film` | Browse and detail screens for movies, shows, episodes, and collections. |
+| `:modes:film` | Film feature — browse/detail logic **and** Compose screens for movies, shows, episodes, and collections. |
+| `:modes:music` | Music Assistant feature — screens, media-session bridge, transport, voice-play helpers. |
+| `:modes:audio` | Native Jellyfin audio (music / audiobooks) playback + screens. |
 | `:data` | Jellyfin / TMDB / Seerr API clients, Room database, downloads, network shares (SMB/NFS), mDNS discovery. |
 | `:fcast` | Protocol-agnostic casting: FCast (v4) sender + receiver, Google Cast and AirPlay adapters, multi-protocol discovery, the subtitle-fidelity policy, and split-A/V wire schema. Pure-Kotlin, JVM-testable. |
-| `:core` | Shared UI components, LLM model manager, WorkManager workers. |
-| `:settings` | DataStore-based preferences and voice telemetry. |
-| `:setup` | Server onboarding and login flows. |
+| `:fcast:session-ui` | FCast session/cast UI + Split-A/V layer (CastSessionManager, pickers, cinematic remote, receiver screens) lifted out of `:app:unified`. |
+| `:core` | Shared models, LLM model manager, WorkManager workers, the `DeviceClass` primitive, and base `core.presentation.*` components. |
+| `:core:ui` | Shared UI foundation: `SpatialFinTheme`, cross-feature dialogs/components, shared browse primitives, the `PlayRequest` playback seam, and the cross-cutting CompositionLocal seams feature/shell modules use to reach app-level subsystems. |
+| `:settings` | DataStore-based preferences, voice telemetry, app-lock, content-encryption key. |
+| `:setup` | Server onboarding/login + the XR setup/settings/network-share Compose UI. |
 
-There are no `app/xr/`, `app/beam/`, or `app/tv/` directories — the per-form-factor trees were consolidated into `:app:unified`'s single source set. Edit files under `app/unified/src/main/java`; the form factor is resolved at runtime, not at build time.
+Feature and form-factor shell code lives in the modules above; `:app:unified/src/main/java` holds only the XR shell and host glue. The form factor is resolved at runtime, not at build time.
 
 ## AI Usage
 
