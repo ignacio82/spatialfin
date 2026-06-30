@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -136,22 +137,30 @@ class LlmModelManager @Inject constructor(
      */
     suspend fun ensureInitialized() {
         if (_engine.value != null) return
-        // Prefer AICore — re-probe in case the app was backgrounded during
-        // a previous probe or the device state changed.
-        val aiCore = AICoreModelHelper.checkStatus(context)
-        _aiCoreStatus.value = aiCore
-        if (aiCore is AICoreStatus.Ready) {
-            activateAiCoreEngine()
-            return
-        }
-        val downloadState = downloadManager.downloadState.value
-        if (downloadState is DownloadState.Ready &&
-            modelState.value.let { it is ModelState.Ready || it is ModelState.Initializing }) {
-            // LiteRT already initializing — wait on the existing collector.
-            return
-        }
-        if (downloadState is DownloadState.Ready) {
-            initializeLiteRtEngine(downloadState.file.absolutePath)
+        // The slow path below blocks: AICore status is an IPC probe, and the
+        // LiteRT GPU backend spends multiple seconds compiling Adreno OpenCL
+        // kernels inside nativeCreateEngine. Callers warm this up from a Compose
+        // LaunchedEffect (XR/Beam) which runs on the main thread, so do the work
+        // on Default — otherwise input dispatch starves and the player ANRs
+        // ("Input dispatching timed out … Waited 10005ms for FocusEvent").
+        withContext(Dispatchers.Default) {
+            // Prefer AICore — re-probe in case the app was backgrounded during
+            // a previous probe or the device state changed.
+            val aiCore = AICoreModelHelper.checkStatus(context)
+            _aiCoreStatus.value = aiCore
+            if (aiCore is AICoreStatus.Ready) {
+                activateAiCoreEngine()
+                return@withContext
+            }
+            val downloadState = downloadManager.downloadState.value
+            if (downloadState is DownloadState.Ready &&
+                modelState.value.let { it is ModelState.Ready || it is ModelState.Initializing }) {
+                // LiteRT already initializing — wait on the existing collector.
+                return@withContext
+            }
+            if (downloadState is DownloadState.Ready) {
+                initializeLiteRtEngine(downloadState.file.absolutePath)
+            }
         }
     }
 
