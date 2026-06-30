@@ -174,7 +174,7 @@ internal fun TrackOptionsOrbiter(
                 OrbiterIconButton(CoreR.drawable.ic_gauge, "Playback speed", onSpeedClick)
             }
             if (onProjectionClick != null) {
-                OrbiterIconButton(CoreR.drawable.ic_globe, "Projection (180/360)", onProjectionClick)
+                OrbiterIconButton(CoreR.drawable.ic_projection_screen, "Projection", onProjectionClick)
             }
         }
     }

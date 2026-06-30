@@ -257,6 +257,9 @@ internal fun ProjectionDialogContent(
     onProjectionSelected: (String) -> Unit,
     onRecenter: () -> Unit,
     onDismiss: () -> Unit,
+    wallPinned: Boolean = false,
+    wallPinStatus: String? = null,
+    onToggleWallPin: () -> Unit = {},
 ) {
     XrGlassSheet(
         title = "Projection",
@@ -305,6 +308,18 @@ internal fun ProjectionDialogContent(
                         onRecenter()
                         onDismiss()
                     },
+                )
+            } else {
+                // Flat panel only: world-lock the screen onto a real wall. The wall's
+                // orientation is inherited automatically, so a side wall faces into the room.
+                XrOptionRow(
+                    title = if (wallPinned) "Unpin from wall" else "Pin to wall",
+                    subtitle = wallPinStatus
+                        ?: if (wallPinned) "Anchored to a real wall" else "Anchor the screen to a wall",
+                    icon = CoreR.drawable.ic_curved_screen,
+                    selected = wallPinned,
+                    // Stay open so the search/anchor status stays visible.
+                    onClick = { onToggleWallPin() },
                 )
             }
         }

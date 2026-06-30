@@ -197,6 +197,10 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
     val xrAppPanelPoseVersion = Preference("pref_xr_app_panel_pose_version", 0)
 
+    // XR Wall Anchoring (pin the flat cinema panel to a real wall via ARCore)
+    val xrPlayerWallPinned = Preference("pref_xr_player_wall_pinned", false)
+    val xrPlayerWallAnchorUuid = Preference("pref_xr_player_wall_anchor_uuid", "")
+
     // XR Space Mode
     val xrLaunchMode = Preference("pref_xr_launch_mode", "home")
     val xrLastUsedMode = Preference("pref_xr_last_used_mode", "home")

@@ -296,6 +296,24 @@ fun SpatialPlayerScreen(
     var startupPoseGuardActive by remember { mutableStateOf(true) }
     var moveInProgress by remember { mutableStateOf(false) }
 
+    // --- Wall anchoring (pin the flat panel to a real wall) ---
+    val wallAnchorEntity = remember { mutableStateOf<androidx.xr.scenecore.AnchorEntity?>(null) }
+    // wallPinRequested is the user's intent for THIS session; wallPinActive is the
+    // achieved state once an anchor is found and the panel is reparented onto it.
+    // Deliberately starts false every launch (never auto-engages a saved pin): a stale
+    // pin re-attaching on startup could strand the controls out of reach. The user
+    // re-taps "Pin to wall" per session; the persisted anchor UUID still lets that
+    // re-pin reuse the same wall quickly.
+    var wallPinRequested by remember { mutableStateOf(false) }
+    var wallPinActive by remember { mutableStateOf(false) }
+    var wallPinStatus by remember { mutableStateOf<String?>(null) }
+    var hasSceneUnderstandingPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, WallAnchor.SCENE_UNDERSTANDING_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
     val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize).toFloat()
     val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
     val voiceControlEnabled = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceControlEnabled)
@@ -371,6 +389,15 @@ fun SpatialPlayerScreen(
             if (!granted) {
                 voice.voiceGestureArmingProgress = 0f
                 voice.voiceGestureHint = null
+            }
+        }
+    val sceneUnderstandingPermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasSceneUnderstandingPermission = granted
+            if (!granted) {
+                wallPinRequested = false
+                wallPinStatus = "Wall access denied"
+                viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallPinned, false)
             }
         }
     
@@ -1239,11 +1266,15 @@ fun SpatialPlayerScreen(
         uiRootEntity.value,
         subtitleRootEntity.value,
         moveInProgress,
+        wallPinActive,
     ) {
         if (moveInProgress) return@LaunchedEffect
         // Immersive 180/360 is head-centred with a fixed forward overlay — the
         // flat depth/scale projection math doesn't apply.
         if (immersiveProjection) return@LaunchedEffect
+        // Wall-pinned: the panel pose is owned by the wall AnchorEntity, not the
+        // origin-relative depth projection. Leave it alone.
+        if (wallPinActive) return@LaunchedEffect
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
@@ -1292,7 +1323,8 @@ fun SpatialPlayerScreen(
         savePlayerRootPose(viewModel, newVideoPose)
     }
 
-    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, startupPoseGuardActive) {
+    LaunchedEffect(videoRootEntity.value, uiRootEntity.value, subtitleRootEntity.value, startupPoseGuardActive, wallPinActive) {
+        if (wallPinActive) return@LaunchedEffect
         if (!startupPoseGuardActive) return@LaunchedEffect
         videoRootEntity.value ?: return@LaunchedEffect
         uiRootEntity.value ?: return@LaunchedEffect
@@ -1600,6 +1632,8 @@ fun SpatialPlayerScreen(
             uiRootEntity.value = null
             runCatching { subtitleRootEntity.value?.parent = null }
             subtitleRootEntity.value = null
+            runCatching { wallAnchorEntity.value?.parent = null }
+            wallAnchorEntity.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
             Timber.i("XR_VIDEO: spatial player surface disposal complete")
@@ -1648,6 +1682,8 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
         while (true) {
+            // While pinned, the wall AnchorEntity drives the surface/overlay poses.
+            if (wallPinActive) { delay(200L); continue }
             val poseToMirror = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot)
             poseToMirror?.let { pose ->
                 val effectiveVideoDepth = extractVideoDepth(pose, videoDepth)
@@ -1681,6 +1717,8 @@ fun SpatialPlayerScreen(
         var stillSinceMs: Long = 0L
         val stillDebounceMs = 300L
         while (true) {
+            // Don't persist the wall-local pose over the saved free-move cinema pose.
+            if (wallPinActive) { delay(250L); continue }
             val poseToSave = lastReportedMovePose.value ?: safeGetEntityPose(root)
             if (poseToSave != null) {
                 lastReportedMovePose.value = poseToSave
@@ -1853,6 +1891,7 @@ fun SpatialPlayerScreen(
         controlsVisible,
         isActuallyPaused,
         moveInProgress,
+        wallPinActive,
     ) {
         val videoSurface = videoEntity.value ?: return@LaunchedEffect
         val movable = movableComponent.value ?: return@LaunchedEffect
@@ -1873,7 +1912,8 @@ fun SpatialPlayerScreen(
         // isn't cancelled when it reveals the controls. With chrome hidden the
         // movable returns, so the user grabs the picture to reposition it.
         val chromeShown = controlsVisible || isActuallyPaused
-        val allowMovement = !isLocked && !controlsInputActive && (!chromeShown || moveInProgress)
+        // Free-move is suspended entirely while the panel is wall-pinned.
+        val allowMovement = !isLocked && !controlsInputActive && (!chromeShown || moveInProgress) && !wallPinActive
 
         runCatching {
             if (!allowMovement && hasMovable) {
@@ -1887,6 +1927,129 @@ fun SpatialPlayerScreen(
             }
         }.onFailure {
             Timber.w(it, "Unable to update XR screen movement lock state")
+        }
+    }
+
+    // Pin-to-wall driver: world-locks the flat panel onto a real wall via an ARCore
+    // AnchorEntity, or tears the pin down. Flat projection only (immersive surfaces are
+    // head-centred). Reparenting the surface/overlay roots under the wall anchor makes
+    // them coplanar with the wall and inherit its orientation, so a side wall ends up
+    // facing perpendicular into the room with no manual rotation. The conflicting
+    // depth-projection / move / save effects above are gated on wallPinActive.
+    LaunchedEffect(wallPinRequested, videoEntity.value, immersiveProjection, hasSceneUnderstandingPermission) {
+        val surface = videoEntity.value
+        val videoRoot = videoRootEntity.value
+        val uiRoot = uiRootEntity.value
+        val subtitleRoot = subtitleRootEntity.value
+
+        // Move ONLY the video surface + subtitles onto the wall. The controls overlay
+        // (uiRoot) is deliberately LEFT where it is (head-relative, in front of the
+        // viewer) so the player chrome — including the unpin/back affordances — always
+        // stays reachable even if the wall is off to the side. Orientation is computed
+        // to face the viewer and stay upright; the anchor is used only for position, so
+        // its arbitrary/tilted frame can't roll or skew the picture.
+        fun reparentToWall(anchor: androidx.xr.scenecore.AnchorEntity) {
+            val scale = WallAnchor.panelScale(DEFAULT_VIDEO_WIDTH_METERS)
+            val anchorWorld = runCatching {
+                anchor.getPose(androidx.xr.scenecore.Space.ACTIVITY)
+            }.getOrNull()
+            val anchorPos = anchorWorld?.translation ?: Vector3(0f, 0f, -VIDEO_DEPTH_METERS)
+            val headPos = computeHeadCenteredPose(session)?.translation
+            val forward = WallAnchor.facingTowardViewer(anchorPos, headPos)
+            val rot = WallAnchor.lookRotation(forward)
+            val panelPos = Vector3(
+                anchorPos.x + forward.x * WallAnchor.PANEL_STANDOFF_METERS,
+                anchorPos.y,
+                anchorPos.z + forward.z * WallAnchor.PANEL_STANDOFF_METERS,
+            )
+            val subtitlePos = Vector3(
+                anchorPos.x + forward.x * WallAnchor.OVERLAY_FORWARD_METERS,
+                anchorPos.y,
+                anchorPos.z + forward.z * WallAnchor.OVERLAY_FORWARD_METERS,
+            )
+            val panelPose = Pose(panelPos, rot)
+            val subtitlePose = Pose(subtitlePos, rot)
+            runCatching {
+                surface?.apply {
+                    parent = anchor
+                    setPose(panelPose, androidx.xr.scenecore.Space.ACTIVITY)
+                    setScale(scale)
+                }
+                videoRoot?.apply {
+                    parent = anchor
+                    setPose(panelPose, androidx.xr.scenecore.Space.ACTIVITY)
+                    setScale(scale)
+                }
+                subtitleRoot?.apply {
+                    parent = anchor
+                    setPose(subtitlePose, androidx.xr.scenecore.Space.ACTIVITY)
+                    setScale(scale)
+                }
+            }.onFailure { Timber.w(it, "WALL_ANCHOR: reparent onto wall failed") }
+            libass.bumpOverlayAttachment()
+        }
+
+        fun detachFromWall() {
+            val activitySpace = session.scene.activitySpace
+            runCatching {
+                surface?.parent = activitySpace
+                videoRoot?.parent = activitySpace
+                subtitleRoot?.parent = activitySpace
+            }.onFailure { Timber.w(it, "WALL_ANCHOR: detach from wall failed") }
+            runCatching { wallAnchorEntity.value?.parent = null }
+            wallAnchorEntity.value = null
+            wallPinActive = false
+            // Hand the panel back to the free-move cinema layout. The movement-gate
+            // effect re-attaches the MovableComponent now that wallPinActive is false.
+            applyCurrentLaunchPose()
+            libass.bumpOverlayAttachment()
+        }
+
+        // Not pinned / not eligible → ensure any prior pin is undone.
+        if (!wallPinRequested || immersiveProjection || surface == null) {
+            if (wallPinActive || wallAnchorEntity.value != null) detachFromWall()
+            return@LaunchedEffect
+        }
+        if (wallPinActive) return@LaunchedEffect
+
+        if (!hasSceneUnderstandingPermission) {
+            wallPinStatus = "Requesting wall access…"
+            sceneUnderstandingPermissionLauncher.launch(WallAnchor.SCENE_UNDERSTANDING_PERMISSION)
+            return@LaunchedEffect
+        }
+
+        wallPinStatus = "Look at the wall…"
+        if (!WallAnchor.enableSceneUnderstanding(session)) {
+            wallPinStatus = "Wall tracking unavailable"
+            wallPinRequested = false
+            return@LaunchedEffect
+        }
+
+        // Pick the wall the user is actually facing (not whatever the runtime returns).
+        val anchor = WallAnchor.findWallInFront(session, WallAnchor.ANCHOR_WAIT_MS)
+        if (anchor == null) {
+            wallPinStatus = "No wall in front — face a wall and retry"
+            wallPinRequested = false
+            return@LaunchedEffect
+        }
+        wallAnchorEntity.value = anchor
+
+        when (WallAnchor.awaitAnchored(anchor, 5_000L)) {
+            androidx.xr.scenecore.AnchorEntity.State.ANCHORED -> {
+                startupPoseGuardActive = false
+                WallAnchor.logAnchorPose(anchor)
+                // Detach the move affordance so a grab can't fight the wall pose.
+                movableComponent.value?.let { mc -> runCatching { surface.removeComponent(mc) } }
+                reparentToWall(anchor)
+                wallPinActive = true
+                wallPinStatus = "Pinned to wall"
+            }
+            else -> {
+                wallPinStatus = "Couldn't lock the wall — try again"
+                wallPinRequested = false
+                runCatching { anchor.parent = null }
+                wallAnchorEntity.value = null
+            }
         }
     }
 
@@ -2377,6 +2540,23 @@ fun SpatialPlayerScreen(
                                     resetAutoHide()
                                 },
                                 onDismiss = { activeDialog = null },
+                                wallPinned = wallPinActive,
+                                wallPinStatus = wallPinStatus,
+                                onToggleWallPin = {
+                                    val newRequested = !wallPinRequested
+                                    wallPinRequested = newRequested
+                                    if (!newRequested) {
+                                        // Clear the persisted anchor on an explicit unpin.
+                                        WallAnchor.unpersist(
+                                            session,
+                                            viewModel.appPreferences.getValue(viewModel.appPreferences.xrPlayerWallAnchorUuid),
+                                        )
+                                        viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallAnchorUuid, "")
+                                        wallPinStatus = null
+                                    }
+                                    viewModel.appPreferences.setValue(viewModel.appPreferences.xrPlayerWallPinned, newRequested)
+                                    resetAutoHide()
+                                },
                             )
                         }
                     }
