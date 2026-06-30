@@ -243,6 +243,18 @@ class PlayerSessionController(
             }
             is XrPlayerAction.CastToFCastReceiver -> onCastToFCastReceiver(action)
             is XrPlayerAction.StopFCastCasting -> onStopFCastCasting()
+            // Music Assistant transport is a Home-Space surface; it's routed via
+            // HomeVoiceNavigation, not the in-player session controller. These
+            // arrive here only if the model emits a music action while a video
+            // is open (not yet supported) — answer gracefully instead of acting.
+            is XrPlayerAction.MusicPlayPause,
+            is XrPlayerAction.MusicPause,
+            is XrPlayerAction.MusicResume,
+            is XrPlayerAction.MusicNext,
+            is XrPlayerAction.MusicPrevious,
+            is XrPlayerAction.MusicAdjustVolume,
+            is XrPlayerAction.MusicReportNowPlaying,
+            -> "Music controls are available from the home screen"
             is XrPlayerAction.Unrecognized -> {
                 "Sorry, I didn't understand: ${action.transcript}"
             }

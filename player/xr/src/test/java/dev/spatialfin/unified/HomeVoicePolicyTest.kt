@@ -1,5 +1,6 @@
 package dev.spatialfin.unified
 
+import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -7,6 +8,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeVoicePolicyTest {
+
+    // -----------------------------------------------------------------
+    // resolveTransportTarget
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `home with active music routes bare transport to music`() {
+        assertEquals(
+            HomeVoicePolicy.TransportTarget.MUSIC,
+            HomeVoicePolicy.resolveTransportTarget(VoiceScreenContext.HOME, maActive = true),
+        )
+    }
+
+    @Test
+    fun `home without active music keeps transport on video`() {
+        assertEquals(
+            HomeVoicePolicy.TransportTarget.VIDEO,
+            HomeVoicePolicy.resolveTransportTarget(VoiceScreenContext.HOME, maActive = false),
+        )
+    }
+
+    @Test
+    fun `player screen always keeps transport on video`() {
+        assertEquals(
+            HomeVoicePolicy.TransportTarget.VIDEO,
+            HomeVoicePolicy.resolveTransportTarget(VoiceScreenContext.PLAYER, maActive = true),
+        )
+        assertEquals(
+            HomeVoicePolicy.TransportTarget.VIDEO,
+            HomeVoicePolicy.resolveTransportTarget(VoiceScreenContext.PLAYER, maActive = false),
+        )
+    }
 
     // -----------------------------------------------------------------
     // isVoiceTurnBusy

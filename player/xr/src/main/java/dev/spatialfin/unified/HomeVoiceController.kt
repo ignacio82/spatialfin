@@ -47,10 +47,42 @@ interface HomeVoiceNavigation {
     fun launchItem(item: SpatialFinItem): Boolean
     /** Try to start playing music matching the given [query]. Returns true on success. */
     fun launchMusic(query: String): Boolean
+    /**
+     * Apply a Music Assistant transport [command] to the active player. Returns
+     * false when there is no controllable MA session (caller surfaces "nothing
+     * is playing"). Default is a no-op for surfaces without Music Assistant.
+     */
+    fun controlMusic(command: MusicVoiceCommand): Boolean = false
     fun goHome()
     fun goBack()
     fun closeApp()
 }
+
+/** Music Assistant transport intents the Home-Space voice layer dispatches via [HomeVoiceNavigation]. */
+sealed interface MusicVoiceCommand {
+    data object PlayPause : MusicVoiceCommand
+    data object Pause : MusicVoiceCommand
+    data object Resume : MusicVoiceCommand
+    data object Next : MusicVoiceCommand
+    data object Previous : MusicVoiceCommand
+
+    /** Absolute [percentage] (0–1) or relative [delta] volume change. */
+    data class AdjustVolume(val percentage: Float? = null, val delta: Float? = null) : MusicVoiceCommand
+}
+
+/**
+ * Minimal Music Assistant now-playing snapshot the Home-Space voice layer reads,
+ * deliberately free of any `:data` type so `:player:xr` stays decoupled from the
+ * MA repositories. Sourced from `MaSessionRepository.session.value` by the host.
+ */
+data class MaVoiceState(
+    /** A controllable player with a loaded track exists. */
+    val active: Boolean,
+    val isPlaying: Boolean,
+    val track: String?,
+    val artist: String?,
+    val album: String?,
+)
 
 /**
  * Holds all Home-Space voice state and the request/interrupt state machine.
@@ -70,6 +102,13 @@ class HomeVoiceController(
     private val repository: JellyfinRepository,
     private val llmModelManagerProvider: () -> LlmModelManager,
     private val voiceTelemetryStore: VoiceTelemetryStore,
+    /**
+     * Live Music Assistant now-playing state, or null when MA isn't configured /
+     * active. Read on each voice turn so transport routing and "what's playing"
+     * reflect the current track. Defaults to no-MA for surfaces / tests that
+     * don't wire it.
+     */
+    private val maStateProvider: () -> MaVoiceState? = { null },
 ) {
     companion object {
         private const val FOLLOW_UP_LISTEN_WINDOW_MS = 12_000L
@@ -226,12 +265,18 @@ class HomeVoiceController(
     )
 
     private fun homePlayerStateSnapshot(): PlayerStateSnapshot {
+        val ma = maStateProvider()
         return PlayerStateSnapshot(
             screenContext = VoiceScreenContext.HOME,
             lastRecommendationQuery = recommendationContext?.query,
             lastRecommendationCount = recommendationContext?.items?.size ?: 0,
             lastRecommendationTitles = recommendationContext?.items?.take(6)?.map { it.name }?.toImmutableList()
                 ?: persistentListOf(),
+            maActive = ma?.active == true,
+            maIsPlaying = ma?.isPlaying == true,
+            maCurrentTrack = ma?.track,
+            maCurrentArtist = ma?.artist,
+            maCurrentAlbum = ma?.album,
         )
     }
 
@@ -339,11 +384,51 @@ class HomeVoiceController(
                 navigation.goHome()
                 HomeVoiceActionOutcome("Returning home")
             }
+            is XrPlayerAction.MusicReportNowPlaying -> {
+                val ma = maStateProvider()
+                val feedback = if (ma?.track?.isNotBlank() == true) {
+                    buildString {
+                        append("You're listening to ${ma.track}")
+                        if (!ma.artist.isNullOrBlank()) append(" by ${ma.artist}")
+                    }
+                } else {
+                    "Nothing is playing right now"
+                }
+                HomeVoiceActionOutcome(feedback)
+            }
+            is XrPlayerAction.MusicPlayPause -> musicOutcome(
+                navigation,
+                MusicVoiceCommand.PlayPause,
+                if (maStateProvider()?.isPlaying == true) "Pausing the music" else "Resuming the music",
+            )
+            is XrPlayerAction.MusicPause ->
+                musicOutcome(navigation, MusicVoiceCommand.Pause, "Pausing the music")
+            is XrPlayerAction.MusicResume ->
+                musicOutcome(navigation, MusicVoiceCommand.Resume, "Resuming the music")
+            is XrPlayerAction.MusicNext ->
+                musicOutcome(navigation, MusicVoiceCommand.Next, "Skipping to the next track")
+            is XrPlayerAction.MusicPrevious ->
+                musicOutcome(navigation, MusicVoiceCommand.Previous, "Going to the previous track")
+            is XrPlayerAction.MusicAdjustVolume ->
+                musicOutcome(
+                    navigation,
+                    MusicVoiceCommand.AdjustVolume(action.percentage, action.delta),
+                    "Adjusting the music volume",
+                )
             is XrPlayerAction.Unrecognized ->
                 HomeVoiceActionOutcome("I didn't catch that: ${action.transcript}")
             else -> HomeVoiceActionOutcome("Command not available on home screen")
         }
     }
+
+    /** Dispatch a music transport command; "nothing playing" feedback when no MA session. */
+    private fun musicOutcome(
+        navigation: HomeVoiceNavigation,
+        command: MusicVoiceCommand,
+        successFeedback: String,
+    ): HomeVoiceActionOutcome = HomeVoiceActionOutcome(
+        if (navigation.controlMusic(command)) successFeedback else "Nothing is playing right now",
+    )
 
     /**
      * Begin a voice turn. Idempotent against an in-flight turn — repeat calls

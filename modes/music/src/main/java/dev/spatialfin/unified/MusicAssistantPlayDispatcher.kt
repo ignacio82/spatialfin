@@ -73,9 +73,22 @@ class MaPlayDispatcher(
     // --- Transport (targets the selected player) --------------------------
 
     fun playPause() = transport { repository.playPause(it) }
+    fun pause() = transport { repository.pause(it) }
+    fun resume() = transport { repository.play(it) }
     fun next() = transport { repository.next(it) }
     fun previous() = transport { repository.previous(it) }
     fun seekTo(positionMs: Long) = transport { repository.seekTo(it, positionMs) }
+
+    /**
+     * Nudge the selected player's volume by [deltaFraction] of full scale
+     * (e.g. +0.1 = +10 points). No-op when the player reports no current level.
+     */
+    fun nudgeVolume(deltaFraction: Float) {
+        val player = session.session.value.selectedPlayer ?: return
+        val current = player.volumeLevel ?: return
+        val target = (current + (deltaFraction * 100f)).toInt().coerceIn(0, 100)
+        scope.launch { repository.setVolume(player.id, target) }
+    }
 
     /**
      * Stop playback AND dismiss the now-playing UI — Stop means "I'm done", so

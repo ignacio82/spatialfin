@@ -180,6 +180,20 @@ class SpatialCommandCoordinator(
             )
         }
 
+        // Music Assistant transport routes ahead of the video keyword/model
+        // layers: in HOME, an active MA session captures pause/next/volume and
+        // music-qualified phrases ("next song") win on any screen-appropriate
+        // surface. Runs before exactKeywordMatch so generic volume / "play X"
+        // matching doesn't shadow it.
+        MusicVoiceGrammar.match(normalized, playerState)?.let {
+            return VoiceParseResult(
+                action = it,
+                strategy = VoiceParseStrategy.KEYWORD,
+                normalizedTranscript = normalized,
+                debugInfo = "music transport matched",
+            )
+        }
+
         exactKeywordMatch(normalized, playerState)?.let {
             return VoiceParseResult(
                 action = it,
@@ -564,13 +578,28 @@ class SpatialCommandCoordinator(
             } else {
                 ""
             }
+        // Only surface music actions when a Music Assistant session is active —
+        // mirrors how the chat tool gates web_search on the feature being on.
+        val musicActions =
+            if (playerState.maActive) {
+                ",music_play_pause,music_pause,music_resume,music_next,music_previous,music_adjust_volume,music_report_now_playing"
+            } else {
+                ""
+            }
+        val musicRule =
+            if (playerState.maActive) {
+                "- Music Assistant is playing audio. Use the music_* actions for transport of the music (\"next song\", \"pause the music\", \"what song is this\"); use music_report_now_playing for \"what's playing\"."
+            } else {
+                ""
+            }
         return """
             You convert XR media-player voice transcripts into a single JSON action.
             Return ONLY minified JSON.
             Supported action values:
-            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,reset_screen_placement,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized
+            play,pause,toggle_play_pause,seek_forward,seek_backward,seek_to,skip_intro,skip_outro,next_episode,previous_episode,set_speed,set_quality,select_audio,select_subtitles,disable_subtitles,search,select_option,open_syncplay,create_syncplay,join_syncplay,leave_syncplay,refresh_syncplay,adjust_volume,adjust_scale,adjust_distance,reset_screen_placement,go_home,close_app,go_back,show_controls,hide_controls,report_current_time,report_remaining_time,report_end_time,report_current_media,report_passthrough_status,set_passthrough,toggle_passthrough,chat,unrecognized$musicActions
 
             Rules:
+            $musicRule
             - Prefer a direct player action when the transcript clearly asks for one.
             - Use "chat" for questions, recommendations, clarifications, recaps, or metadata questions.
             - Recommendation refinements like "shorter", "movie only", "show only", "funny", "not anime", "something new", "with english audio", or "more like the second one" are always "chat".
@@ -603,6 +632,9 @@ class SpatialCommandCoordinator(
             lastRecommendationCount=${playerState.lastRecommendationCount}
             lastRecommendationTitles=${playerState.lastRecommendationTitles.joinToString(",")}
             passthroughEnabled=${playerState.passthroughEnabled}
+            musicAssistantActive=${playerState.maActive}
+            musicTrack=${playerState.maCurrentTrack ?: ""}
+            musicArtist=${playerState.maCurrentArtist ?: ""}
 
             Transcript:
             $transcript
@@ -677,6 +709,16 @@ class SpatialCommandCoordinator(
             "report_passthrough_status" -> XrPlayerAction.ReportPassthroughStatus
             "set_passthrough" -> XrPlayerAction.SetPassthrough(payload.optBoolean("enabled", true))
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "music_play_pause" -> XrPlayerAction.MusicPlayPause
+            "music_pause" -> XrPlayerAction.MusicPause
+            "music_resume" -> XrPlayerAction.MusicResume
+            "music_next" -> XrPlayerAction.MusicNext
+            "music_previous" -> XrPlayerAction.MusicPrevious
+            "music_adjust_volume" -> XrPlayerAction.MusicAdjustVolume(
+                percentage = payload.optDouble("percentage", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+                delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+            )
+            "music_report_now_playing" -> XrPlayerAction.MusicReportNowPlaying
             "chat" -> XrPlayerAction.ChatQuery(payload.optString("query").ifBlank { transcript })
             else -> XrPlayerAction.Unrecognized(transcript)
         }

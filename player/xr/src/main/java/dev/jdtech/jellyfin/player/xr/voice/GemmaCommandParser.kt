@@ -106,10 +106,16 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             VoiceScreenContext.PLAYER ->
                 "Screen is PLAYER; prefer playback / subtitle / audio / timeline actions when clearly requested."
         }
+        val musicGuidance =
+            if (playerState.maActive) {
+                " Music Assistant is playing audio: use music_* actions for music transport (\"next song\", \"pause the music\") and music_report_now_playing for \"what's playing\"."
+            } else {
+                ""
+            }
         return """
             You are the command parser for an XR media player. Call the
             `interpret_command` tool exactly once with the best-matching `action`
-            and only the fields relevant to that action. $screenGuidance
+            and only the fields relevant to that action. $screenGuidance$musicGuidance
 
             Disambiguation hints:
             - Questions about media, recommendations, recaps, or "what should I watch"
@@ -158,6 +164,11 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
                 Prefer playback, subtitle, audio, timeline, and recap actions when clearly requested.
                 """.trimIndent()
         }
+        val musicGuidance = if (playerState.maActive) {
+            "Music Assistant is playing audio. Use music_* actions for music transport (\"next song\", \"pause the music\") and music_report_now_playing for \"what's playing\"."
+        } else {
+            ""
+        }
         val retryGuidance = if (strictRetry) {
             """
             Previous output was invalid or truncated.
@@ -181,6 +192,7 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             - If the user asks to recenter the screen, use action "reset_screen_placement".
             - If the request specifies both audio and subtitles, put one in "secondary_action".
             - $screenGuidance
+            $musicGuidance
             $retryGuidance
 
             JSON schema:
@@ -352,6 +364,16 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             "report_current_media" -> XrPlayerAction.ReportCurrentMedia
             "set_passthrough" -> XrPlayerAction.SetPassthrough(args.bool("enabled") ?: true)
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "music_play_pause" -> XrPlayerAction.MusicPlayPause
+            "music_pause" -> XrPlayerAction.MusicPause
+            "music_resume" -> XrPlayerAction.MusicResume
+            "music_next" -> XrPlayerAction.MusicNext
+            "music_previous" -> XrPlayerAction.MusicPrevious
+            "music_adjust_volume" -> XrPlayerAction.MusicAdjustVolume(
+                percentage = args.float("percentage"),
+                delta = args.float("delta"),
+            )
+            "music_report_now_playing" -> XrPlayerAction.MusicReportNowPlaying
             "chat" -> XrPlayerAction.ChatQuery(args.str("query") ?: transcript)
             else -> XrPlayerAction.Unrecognized(transcript)
         }
@@ -428,6 +450,16 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
             "report_current_media" -> XrPlayerAction.ReportCurrentMedia
             "set_passthrough" -> XrPlayerAction.SetPassthrough(payload.optBoolean("enabled", true))
             "toggle_passthrough" -> XrPlayerAction.TogglePassthrough
+            "music_play_pause" -> XrPlayerAction.MusicPlayPause
+            "music_pause" -> XrPlayerAction.MusicPause
+            "music_resume" -> XrPlayerAction.MusicResume
+            "music_next" -> XrPlayerAction.MusicNext
+            "music_previous" -> XrPlayerAction.MusicPrevious
+            "music_adjust_volume" -> XrPlayerAction.MusicAdjustVolume(
+                percentage = payload.optDouble("percentage", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+                delta = payload.optDouble("delta", Double.NaN).takeUnless(Double::isNaN)?.toFloat(),
+            )
+            "music_report_now_playing" -> XrPlayerAction.MusicReportNowPlaying
             "chat" -> XrPlayerAction.ChatQuery(payload.optString("query").ifBlank { transcript })
             else -> XrPlayerAction.Unrecognized(transcript)
         }
@@ -469,6 +501,9 @@ class GemmaCommandParser(private val engine: VoiceAiEngine) {
                   "show_controls", "hide_controls",
                   "report_current_time", "report_remaining_time", "report_current_media",
                   "set_passthrough", "toggle_passthrough",
+                  "music_play_pause", "music_pause", "music_resume",
+                  "music_next", "music_previous", "music_adjust_volume",
+                  "music_report_now_playing",
                   "chat"
                 ]
               },

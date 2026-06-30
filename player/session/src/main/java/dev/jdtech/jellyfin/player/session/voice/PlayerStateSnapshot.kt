@@ -59,7 +59,10 @@ data class PlayerStateSnapshot(
     val castWithCharacters: ImmutableList<Pair<String, String>> = persistentListOf(),
     
     // Music Assistant State
+    /** True when a controllable MA session exists (a selected player with a loaded track). */
     val maActive: Boolean = false,
+    /** True when the active MA player is currently in the Playing phase. */
+    val maIsPlaying: Boolean = false,
     val maCurrentTrack: String? = null,
     val maCurrentArtist: String? = null,
     val maCurrentAlbum: String? = null,

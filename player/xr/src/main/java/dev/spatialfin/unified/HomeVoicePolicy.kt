@@ -1,5 +1,6 @@
 package dev.spatialfin.unified
 
+import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
 import dev.jdtech.jellyfin.player.xr.voice.VoiceState
 
 /**
@@ -7,6 +8,23 @@ import dev.jdtech.jellyfin.player.xr.voice.VoiceState
  * machine logic is unit-testable without spinning up Android services.
  */
 object HomeVoicePolicy {
+
+    /** Surface a bare transport verb (pause / next / volume) should act on. */
+    enum class TransportTarget { VIDEO, MUSIC }
+
+    /**
+     * Where an *unqualified* transport verb routes. HOME has no video surface,
+     * so an active Music Assistant session captures transport there; PLAYER
+     * keeps it on the video (current behaviour). Explicitly music-qualified
+     * phrases ("next song") bypass this and always target music.
+     */
+    fun resolveTransportTarget(
+        screenContext: VoiceScreenContext,
+        maActive: Boolean,
+    ): TransportTarget = when {
+        screenContext == VoiceScreenContext.HOME && maActive -> TransportTarget.MUSIC
+        else -> TransportTarget.VIDEO
+    }
 
     /**
      * A voice turn is "busy" when a recognition / processing / speech cycle is

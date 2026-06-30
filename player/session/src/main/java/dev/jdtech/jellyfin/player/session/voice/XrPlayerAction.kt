@@ -111,5 +111,32 @@ sealed interface XrPlayerAction {
     /** Stop casting and clean up the FCast sender connection. No-op if nothing is being cast. */
     data object StopFCastCasting : XrPlayerAction
 
+    // --- Music Assistant transport ------------------------------------------
+    // Distinct from the video Play/Pause/Next* actions: these target the active
+    // Music Assistant player (the audio surface) rather than the video player,
+    // so the dispatch never collides with on-screen playback. Resolved when
+    // music is the active surface (HOME) — see MusicVoiceGrammar.
+
+    /** Toggle play/pause on the active Music Assistant player. */
+    data object MusicPlayPause : XrPlayerAction
+
+    /** Pause the active Music Assistant player. */
+    data object MusicPause : XrPlayerAction
+
+    /** Resume the active Music Assistant player. */
+    data object MusicResume : XrPlayerAction
+
+    /** Skip to the next track on the active Music Assistant queue. */
+    data object MusicNext : XrPlayerAction
+
+    /** Skip to the previous track on the active Music Assistant queue. */
+    data object MusicPrevious : XrPlayerAction
+
+    /** Adjust the active Music Assistant player's volume (absolute [percentage] 0–1 or relative [delta]). */
+    data class MusicAdjustVolume(val percentage: Float? = null, val delta: Float? = null) : XrPlayerAction
+
+    /** Speak what's currently playing on Music Assistant ("what's playing", "what song is this"). */
+    data object MusicReportNowPlaying : XrPlayerAction
+
     data class Unrecognized(val transcript: String) : XrPlayerAction
 }

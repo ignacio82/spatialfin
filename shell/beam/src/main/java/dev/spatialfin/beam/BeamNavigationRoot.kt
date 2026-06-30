@@ -107,6 +107,8 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import dev.spatialfin.unified.HomeVoiceController
 import dev.spatialfin.unified.HomeVoiceNavigation
+import dev.spatialfin.unified.MaVoiceState
+import dev.spatialfin.unified.MusicVoiceCommand
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.core.presentation.components.CinematicBackdrop
@@ -230,6 +232,7 @@ fun BeamNavigationRoot(
             repository = repository,
             llmModelManagerProvider = { llmModelManager },
             voiceTelemetryStore = voiceTelemetryStore,
+            maStateProvider = { beamMaVoiceState(maSession) },
         )
     }
     val voiceState by voiceController.voiceService.state.collectAsStateWithLifecycle()
@@ -321,7 +324,7 @@ fun BeamNavigationRoot(
         }
     }
 
-    val navigation = remember(context, fcastSession, jellyfinAudioDispatcher) {
+    val navigation = remember(context, fcastSession, jellyfinAudioDispatcher, maPlayDispatcher) {
         object : HomeVoiceNavigation {
             override fun launchItem(item: SpatialFinItem): Boolean {
                 val routed = dev.spatialfin.fcast.session.launchPlayback(
@@ -398,6 +401,23 @@ fun BeamNavigationRoot(
                         serviceClient = maServiceClient,
                         query = query,
                     )
+                }
+                return true
+            }
+
+            override fun controlMusic(command: MusicVoiceCommand): Boolean {
+                if (maSession.session.value.selectedPlayer == null) return false
+                when (command) {
+                    MusicVoiceCommand.PlayPause -> maPlayDispatcher.playPause()
+                    MusicVoiceCommand.Pause -> maPlayDispatcher.pause()
+                    MusicVoiceCommand.Resume -> maPlayDispatcher.resume()
+                    MusicVoiceCommand.Next -> maPlayDispatcher.next()
+                    MusicVoiceCommand.Previous -> maPlayDispatcher.previous()
+                    is MusicVoiceCommand.AdjustVolume -> {
+                        val pct = command.percentage
+                        if (pct != null) maPlayDispatcher.setVolume((pct * 100f).toInt())
+                        else maPlayDispatcher.nudgeVolume(command.delta ?: 0.1f)
+                    }
                 }
                 return true
             }
@@ -1920,4 +1940,25 @@ private fun androidx.compose.foundation.layout.BoxScope.BeamRecommendationSheet(
             }
         }
     }
+}
+
+/**
+ * Snapshot the live Music Assistant session for the Beam voice layer. Null when
+ * nothing controllable is loaded, so transport routing falls back to
+ * navigation/search. Mirrors the XR host's `currentMaVoiceState`.
+ */
+private fun beamMaVoiceState(
+    session: dev.jdtech.jellyfin.data.musicassistant.repository.MaSessionRepository,
+): MaVoiceState? {
+    val s = session.session.value
+    val nowPlaying = s.nowPlaying ?: return null
+    if (s.selectedPlayer == null) return null
+    return MaVoiceState(
+        active = true,
+        isPlaying = s.playbackPhase ==
+            dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase.Playing,
+        track = nowPlaying.title,
+        artist = nowPlaying.artist,
+        album = null,
+    )
 }

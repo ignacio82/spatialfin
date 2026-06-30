@@ -196,6 +196,27 @@ class UnifiedMainActivity : AppCompatActivity() {
         handleMaDeepLink(intent)
     }
 
+    /**
+     * Snapshot the live Music Assistant session for the voice layer. Null when
+     * nothing controllable is loaded, so transport routing falls back to the
+     * video/navigation surfaces. Kept free of any voice-pipeline type beyond the
+     * shared [MaVoiceState] carrier.
+     */
+    private fun currentMaVoiceState(): MaVoiceState? {
+        if (!::maSession.isInitialized) return null
+        val s = maSession.session.value
+        val nowPlaying = s.nowPlaying ?: return null
+        if (s.selectedPlayer == null) return null
+        return MaVoiceState(
+            active = true,
+            isPlaying = s.playbackPhase ==
+                dev.jdtech.jellyfin.data.musicassistant.repository.PlaybackPhase.Playing,
+            track = nowPlaying.title,
+            artist = nowPlaying.artist,
+            album = null,
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         dev.spatialfin.unified.MusicAssistantTest.runTest(this)
         super.onCreate(savedInstanceState)
@@ -578,6 +599,7 @@ class UnifiedMainActivity : AppCompatActivity() {
                 repository = repository,
                 llmModelManagerProvider = modelManager::get,
                 voiceTelemetryStore = voiceTelemetryStore,
+                maStateProvider = ::currentMaVoiceState,
             )
         }
         LaunchedEffect(initialSearchQueryExtra) {
@@ -651,7 +673,10 @@ class UnifiedMainActivity : AppCompatActivity() {
         // resolves to a media item or a screen jump. Closure captures the latest
         // navController/context so per-call lookups stay current.
         val voiceCoroutineScope = rememberCoroutineScope()
-        val navigation = remember(navController, context, fcastSession) {
+        val maVoicePlayDispatcher = remember(context, maSession, maServiceClient) {
+            MaPlayDispatcher(context, maSession, maServiceClient)
+        }
+        val navigation = remember(navController, context, fcastSession, maVoicePlayDispatcher) {
             object : HomeVoiceNavigation {
                 private fun navigateToItem(item: SpatialFinItem): Boolean {
                     if (navController.currentBackStackEntry?.lifecycle?.currentState !=
@@ -727,6 +752,23 @@ class UnifiedMainActivity : AppCompatActivity() {
                             serviceClient = maServiceClient,
                             query = query,
                         )
+                    }
+                    return true
+                }
+
+                override fun controlMusic(command: MusicVoiceCommand): Boolean {
+                    if (maSession.session.value.selectedPlayer == null) return false
+                    when (command) {
+                        MusicVoiceCommand.PlayPause -> maVoicePlayDispatcher.playPause()
+                        MusicVoiceCommand.Pause -> maVoicePlayDispatcher.pause()
+                        MusicVoiceCommand.Resume -> maVoicePlayDispatcher.resume()
+                        MusicVoiceCommand.Next -> maVoicePlayDispatcher.next()
+                        MusicVoiceCommand.Previous -> maVoicePlayDispatcher.previous()
+                        is MusicVoiceCommand.AdjustVolume -> {
+                            val pct = command.percentage
+                            if (pct != null) maVoicePlayDispatcher.setVolume((pct * 100f).toInt())
+                            else maVoicePlayDispatcher.nudgeVolume(command.delta ?: 0.1f)
+                        }
                     }
                     return true
                 }
