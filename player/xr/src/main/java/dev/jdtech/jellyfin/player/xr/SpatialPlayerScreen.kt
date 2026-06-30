@@ -2789,6 +2789,43 @@ fun SpatialPlayerScreen(
                             )
                         }
                     }
+
+                    // Playback failure surface (e.g. an 8K stream a 4K decoder
+                    // can't handle): without it the cinema panel would stay black
+                    // with no explanation. Dismissing exits the player.
+                    uiState.playbackError?.let { error ->
+                        SpatialDialog(
+                            onDismissRequest = {
+                                viewModel.dismissPlaybackError()
+                                requestExit("playback-error")
+                            },
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    text = stringResource(LocalR.string.player_error_title),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    text = error.message,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                                Spacer(Modifier.height(24.dp))
+                                Button(
+                                    onClick = {
+                                        viewModel.dismissPlaybackError()
+                                        requestExit("playback-error")
+                                    },
+                                ) {
+                                    Text(stringResource(CoreR.string.close))
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (!voiceSearchOpen) {

@@ -1447,10 +1447,25 @@ private fun BeamPlayerScreen(
             // While the first video frame is still pending (initial buffering /
             // surface attach) show a spinner instead of the misleading Play
             // overlay; the controls and pause overlay below are held back too.
-            if (!firstFrameRendered && !isPipMode) {
+            if (!firstFrameRendered && !isPipMode && uiState.playbackError == null) {
                 androidx.compose.material3.CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center),
                     color = Color.White,
+                )
+            }
+
+            // Playback failure surface (e.g. an 8K stream a 4K decoder can't
+            // handle): without it the screen would stay black with the spinner.
+            uiState.playbackError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = { viewModel.dismissPlaybackError(); onBackClick() },
+                    title = { Text(stringResource(LocalR.string.player_error_title)) },
+                    text = { Text(error.message) },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.dismissPlaybackError(); onBackClick() }) {
+                            Text(stringResource(CoreR.string.close))
+                        }
+                    },
                 )
             }
 

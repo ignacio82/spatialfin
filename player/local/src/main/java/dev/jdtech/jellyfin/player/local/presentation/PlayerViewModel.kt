@@ -11,6 +11,7 @@ import android.view.Display
 import android.widget.Toast
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.annotation.StringRes
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -249,6 +250,24 @@ constructor(
          * loading or for non-Jellyfin content (local / network file).
          */
         val currentPlaybackInfoLabel: String? = null,
+        /**
+         * Non-null when playback has failed in a way the user should see (e.g. a
+         * format the hardware decoder can't handle — an 8K stream on a 4K-only
+         * decoder, an unsupported codec, or a source the server couldn't deliver).
+         * Cleared by [dismissPlaybackError]. The XR/Beam/TV players all render this
+         * as a blocking error surface instead of leaving a silent black screen.
+         */
+        val playbackError: PlaybackError? = null,
+    )
+
+    /**
+     * User-facing playback failure. [message] is already resolved to a localized,
+     * human-readable string; [detail] carries the raw Media3 error-code name for
+     * support/log correlation (shown small, optional).
+     */
+    data class PlaybackError(
+        val message: String,
+        val detail: String? = null,
     )
 
     private var items: MutableList<PlayerItem> = mutableListOf()
@@ -1562,6 +1581,23 @@ constructor(
             player.currentMediaItem?.mediaId,
             player.currentPosition,
         )
+        // Surface the failure instead of swallowing it into the log: without this
+        // an undecodable stream (8K on a 4K decoder, an unsupported codec, a dead
+        // source) just leaves a silent black screen with the Play icon stuck on.
+        val messageRes = playbackErrorMessageRes(error.errorCode)
+        val message = if (messageRes == R.string.player_error_generic) {
+            application.getString(messageRes, error.errorCodeName)
+        } else {
+            application.getString(messageRes)
+        }
+        _uiState.update {
+            it.copy(playbackError = PlaybackError(message = message, detail = error.errorCodeName))
+        }
+    }
+
+    /** Clears the [UiState.playbackError] surface (e.g. on user dismiss / back). */
+    fun dismissPlaybackError() {
+        _uiState.update { it.copy(playbackError = null) }
     }
 
     override fun onTracksChanged(tracks: Tracks) {
@@ -2080,4 +2116,32 @@ sealed interface PlayerEvents {
     data object NavigateBack : PlayerEvents
 
     data class IsPlayingChanged(val isPlaying: Boolean) : PlayerEvents
+}
+
+/**
+ * Maps a Media3 [PlaybackException] error code to a localized, user-facing
+ * explanation. Pure (code → string-res) so it stays unit-testable. The decode
+ * cases are the ones an "8K file on a 4K decoder" scenario lands on:
+ * [PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES] (the
+ * decoder exists but can't handle the resolution/level) and
+ * [PlaybackException.ERROR_CODE_DECODER_INIT_FAILED] /
+ * [PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED] (no usable decoder).
+ */
+@StringRes
+internal fun playbackErrorMessageRes(errorCode: Int): Int = when (errorCode) {
+    PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+        R.string.player_error_decode_capabilities
+    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+    PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+    ->
+        R.string.player_error_decode_unsupported
+    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+    PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+    ->
+        R.string.player_error_source
+    else -> R.string.player_error_generic
 }

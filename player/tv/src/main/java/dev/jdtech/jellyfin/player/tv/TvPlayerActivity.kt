@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.player.local.R as LocalR
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -984,11 +985,44 @@ private fun TvPlayerScreen(
         // While the first video frame is still pending (initial buffering /
         // surface attach) show a spinner instead of the misleading Play
         // overlay; the controls and pause overlay below are also held back.
-        if (!firstFrameRendered && !isPipMode) {
+        if (!firstFrameRendered && !isPipMode && uiState.playbackError == null) {
             androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center),
                 color = Color.White,
             )
+        }
+
+        // Playback failure surface (e.g. an 8K stream a 4K decoder can't handle):
+        // without it the screen would just stay black with the spinner. Blocks the
+        // center, offers a single action that leaves the player.
+        uiState.playbackError?.let { error ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f))
+                    .padding(48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                androidx.compose.material3.Text(
+                    text = stringResource(LocalR.string.player_error_title),
+                    color = Color.White,
+                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.Text(
+                    text = error.message,
+                    color = Color.White.copy(alpha = 0.85f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
+                androidx.compose.material3.Button(
+                    onClick = { viewModel.dismissPlaybackError(); onBackClick() },
+                ) {
+                    androidx.compose.material3.Text(stringResource(CoreR.string.close))
+                }
+            }
         }
 
         AnimatedVisibility(

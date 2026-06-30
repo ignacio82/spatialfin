@@ -26,4 +26,9 @@
     <string name="playback_method_direct_play">Direct Play</string>
     <string name="playback_method_transcoding">Transcoding</string>
     <string name="quality_auto_downgraded">Network slow — dropped to %1$s</string>
+    <string name="player_error_title">Can\'t play this video</string>
+    <string name="player_error_decode_capabilities">This video is higher than this device can decode (for example an 8K stream on a 4K decoder). Try a lower quality setting, or play it on a more capable device.</string>
+    <string name="player_error_decode_unsupported">This device can\'t decode this video\'s format or codec.</string>
+    <string name="player_error_source">This video couldn\'t be loaded from the server.</string>
+    <string name="player_error_generic">Playback failed (%1$s).</string>
 </resources>

@@ -40,6 +40,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -455,6 +456,36 @@ private fun MultitaskControllerOverlay(
                 onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
                 onDismiss = { activeDialog = null }
             )
+        }
+    }
+
+    // Playback failure surface (e.g. an 8K stream a 4K decoder can't handle):
+    // without it the multitask panel would stay black. Dismissing exits.
+    uiState.playbackError?.let { error ->
+        Dialog(onDismissRequest = { viewModel.dismissPlaybackError(); onBackClick() }) {
+            Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF1C1C1E)) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = stringResource(LocalR.string.player_error_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = error.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = { viewModel.dismissPlaybackError(); onBackClick() }) {
+                        Text(stringResource(CoreR.string.close))
+                    }
+                }
+            }
         }
     }
 }
