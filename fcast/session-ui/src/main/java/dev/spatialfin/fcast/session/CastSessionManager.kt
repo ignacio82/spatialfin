@@ -84,9 +84,7 @@ class CastSessionManager @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val discoveryMutex = Mutex()
 
-    init {
-        startFCastStateBridge()
-    }
+
 
     /** Status passthrough — Idle / Connecting / Casting / Failed. */
     val status: StateFlow<FCastCastingController.Status> = controller.status
@@ -1989,6 +1987,10 @@ class CastSessionManager @Inject constructor(
 
     /** True while a split-A/V session is active (between start and end). */
     val splitAvActive: StateFlow<SplitAvController.State> = splitAvController.state
+
+    init {
+        startFCastStateBridge()
+    }
 
     private companion object {
         const val TAG = "FCastSession"
