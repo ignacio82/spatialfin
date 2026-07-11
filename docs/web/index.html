@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#090b0f" />
+    <link rel="icon" type="image/png" href="/web/app-icon.png" />
+    <link rel="preconnect" href="https://xrblocks.github.io" />
+    <link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    <title>SpatialFin WebXR</title>
+    <script type="module" crossorigin src="/web/assets/index-CjLKBr0B.js"></script>
+    <link rel="stylesheet" crossorigin href="/web/assets/index-_WF5idrL.css">
+  </head>
+  <body>
+    <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
+      <section class="brand-pane">
+        <img class="brand-art" src="/web/app-icon.png" alt="" />
+        <div class="brand-copy">
+          <p class="eyebrow">WebXR Jellyfin client</p>
+          <h1 id="app-title">SpatialFin</h1>
+          <p class="brand-summary">Your media library, placed in your space.</p>
+        </div>
+      </section>
+
+      <section class="login-pane">
+        <form id="login-form" novalidate>
+          <div class="form-header">
+            <p class="eyebrow">Server connection</p>
+            <h2>Connect to Jellyfin</h2>
+          </div>
+
+          <label class="field" for="server">
+            <span>Server URL</span>
+            <input
+              id="server"
+              name="server"
+              type="text"
+              inputmode="url"
+              autocomplete="url"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="https://jellyfin.example.com"
+              required
+            />
+          </label>
+
+          <div class="credential-row">
+            <label class="field" for="username">
+              <span>Username</span>
+              <input
+                id="username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                autocapitalize="none"
+                required
+              />
+            </label>
+
+            <label class="field" for="password">
+              <span>Password</span>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+              />
+            </label>
+          </div>
+
+          <details class="advanced-settings">
+            <summary>Optional AI settings</summary>
+            <label class="field" for="gemini">
+              <span>Gemini API key</span>
+              <input
+                id="gemini"
+                name="gemini"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+          </details>
+
+          <label class="remember-option" for="remember">
+            <input id="remember" name="remember" type="checkbox" />
+            <span>Keep me signed in on this device</span>
+          </label>
+
+          <p id="login-status" class="status-message" role="status" hidden></p>
+          <p id="login-error" class="error-message" role="alert" hidden></p>
+
+          <button id="connect-button" class="connect-button" type="submit">
+            Connect
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <aside id="session-bar" class="session-bar" aria-label="Jellyfin session" hidden>
+      <span class="session-mark" aria-hidden="true"></span>
+      <span id="session-server"></span>
+      <button id="sign-out-button" type="button">Sign out</button>
+    </aside>
+
+    <main id="browser-app" class="browser-app" aria-label="SpatialFin media library" hidden>
+      <header class="browser-header">
+        <a class="browser-brand" href="#home" aria-label="SpatialFin home">
+          <img src="/web/app-icon.png" alt="" />
+          <span>SpatialFin</span>
+        </a>
+        <nav class="browser-nav" aria-label="Library navigation">
+          <button type="button" data-browser-route="home">Home</button>
+          <button type="button" data-browser-route="libraries">Libraries</button>
+        </nav>
+        <button id="enter-xr-button" class="enter-xr-button" type="button">Enter XR</button>
+        <button id="browser-sign-out-button" class="browser-sign-out-button" type="button">Sign out</button>
+      </header>
+      <section id="browser-content" class="browser-content" aria-live="polite"></section>
+    </main>
+
+    <section id="browser-player" class="browser-player" aria-label="Video player" hidden>
+      <div class="browser-player-toolbar">
+        <strong id="browser-player-title">Now playing</strong>
+        <button id="browser-player-close" type="button" aria-label="Close player">Close</button>
+      </div>
+      <video id="browser-video" controls playsinline></video>
+      <p id="browser-player-status" role="status"></p>
+    </section>
+
+  </body>
+</html>
