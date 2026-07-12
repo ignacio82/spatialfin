@@ -289,6 +289,22 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 - **Mode transitions rekey the wrapped DEK atomically**, so previously-encrypted downloads remain playable across mode changes — *except* transitioning *into* PIN mode, which is one-way: the Keystore aliases are deleted, and a forgotten PIN is unrecoverable by design.
 - **Toggle lives in the XR settings screen.** The lock still gates TV and phone access once enabled, but toggling it from those form factors is a future wiring task.
 
+## SpatialFin Web App
+
+SpatialFin provides a web-based version of the app accessible at [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web). The web application is built with WebXR and statically hosted via GitHub Pages (source in the `./docs/web` directory).
+
+### Connecting with Tailscale
+
+Because the web app is hosted securely via HTTPS, modern browsers will block it from communicating with a local HTTP Jellyfin server due to Mixed Content policies. The easiest way to solve this is by using Tailscale to provide a secure HTTPS tunnel to your server:
+
+1. Enable **MagicDNS** and **HTTPS Certificates** in your Tailscale admin dashboard.
+2. Run the following command on the server where Jellyfin and Tailscale are installed:
+   ```bash
+   sudo tailscale serve --bg 8096
+   ```
+   *(On Windows, omit `sudo`)*
+3. Connect in the web app using your Tailscale domain (e.g., `https://your-server.taild5c213.ts.net`). You do not need to append the `:8096` port.
+
 ## Architecture
 
 SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV). Shared build configuration lives in `build-logic/` convention plugins (`spatialfin.android.library` / `spatialfin.android.compose`) so each module's build script stays small. The table below is a selected overview; `GEMINI.md` has the authoritative, exhaustive module map.

@@ -27,6 +27,7 @@
                 <a href="smart.html">Smart Playback</a>
                 <a href="companion.html">Companion App</a>
                 <a href="plugins.html">Plugins</a>
+                <a href="/web/">Web App</a>
                 <a href="#trailer">Trailer</a>
                 <a href="#download" class="nav-cta">Get the App</a>
             </nav>
@@ -173,6 +174,7 @@
                         <button class="explorer-tab" onclick="showPane('music')">Music Assistant</button>
                         <button class="explorer-tab" onclick="showPane('companion')">Companion Hub</button>
                         <button class="explorer-tab" onclick="showPane('security')">Security</button>
+                        <button class="explorer-tab" onclick="showPane('webapp')">Web App</button>
                     </nav>
                     <div class="explorer-content">
                         <!-- Immersive XR -->
@@ -393,6 +395,27 @@
                                         <li><strong>Protects against offline file dump</strong> of the app's private storage or the <code>Downloads/SpatialFin</code> folder — ciphertext is useless without the KEK.</li>
                                         <li><strong>Protects against process-level execution while locked</strong> — the DEK is not in memory; unwrapping requires biometric auth or the correct PIN.</li>
                                         <li><strong>Does not protect against</strong> a rooted device actively running SpatialFin with the DEK already in memory, or against streaming playback (only downloaded content is encrypted).</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Web App -->
+                        <div class="explorer-pane" id="pane-webapp">
+                            <div class="explorer-grid">
+                                <div class="explorer-group">
+                                    <h4>SpatialFin WebXR</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Browser Based:</strong> Access the SpatialFin experience directly from your browser without installing the app.</li>
+                                        <li><strong>Access:</strong> Go to <a href="/web/" style="color: var(--primary); text-decoration: none;">spatialfin.martinez.fyi/web</a> to launch the web app.</li>
+                                    </ul>
+                                </div>
+                                <div class="explorer-group">
+                                    <h4>Connect with Tailscale</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Mixed Content:</strong> Since the web app is hosted on HTTPS, connecting to a local HTTP Jellyfin server is blocked by browsers.</li>
+                                        <li><strong>Tailscale Serve:</strong> Use Tailscale to secure your connection. Simply run <code>sudo tailscale serve --bg 8096</code> on your Jellyfin server (omit <code>sudo</code> on Windows).</li>
+                                        <li><strong>HTTPS URL:</strong> Once running, enter your Tailnet domain (e.g., <code>https://server.taild123.ts.net</code>) as your server address in the web app, with no port required.</li>
                                     </ul>
                                 </div>
                             </div>
