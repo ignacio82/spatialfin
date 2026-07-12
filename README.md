@@ -293,17 +293,24 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 
 SpatialFin provides an alpha web-based version of the app accessible at [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web). The web application is built with WebXR using [XR Blocks](https://xrblocks.github.io/) and statically hosted via GitHub Pages (source in the `./docs/web` directory).
 
-### Connecting with Tailscale
+### Direct local connection
 
-Because the web app is hosted securely via HTTPS, modern browsers will block it from communicating with a local HTTP Jellyfin server due to Mixed Content policies. The easiest way to solve this is by using Tailscale to provide a secure HTTPS tunnel to your server:
+Chrome 142 and newer can grant the hosted HTTPS web app Local Network Access to an HTTP Jellyfin server. Enter a full private address such as `http://192.168.1.5:8096` or `http://jellyfin.local:8096`, allow the browser's local-network permission prompt, and add `https://spatialfin.martinez.fyi` to Jellyfin's CORS hosts. Type `http://` explicitly—scheme-less addresses remain HTTPS. This sends credentials, tokens, and media unencrypted over the LAN, so only use it on a trusted network.
+
+Other browsers, denied local-network permission, or custom network setups may still require an HTTPS endpoint or a self-hosted SpatialFin deployment using its same-origin proxy.
+
+### HTTPS fallback with Tailscale
+
+Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavailable or undesirable:
 
 1. Enable **MagicDNS** and **HTTPS Certificates** in your Tailscale admin dashboard.
-2. Run the following command on the server where Jellyfin and Tailscale are installed:
+2. Join the browser or headset and the Jellyfin server to the same tailnet.
+3. Run the following command on the server where Jellyfin and Tailscale are installed:
    ```bash
    sudo tailscale serve --bg 8096
    ```
    *(On Windows, omit `sudo`)*
-3. Connect in the web app using your Tailscale domain (e.g., `https://your-server.taild5c213.ts.net`). You do not need to append the `:8096` port.
+4. Connect in the web app using your Tailscale domain (e.g., `https://your-server.taild5c213.ts.net`). You do not need to append the `:8096` port.
 
 ## Architecture
 

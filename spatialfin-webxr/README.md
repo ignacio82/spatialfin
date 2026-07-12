@@ -23,15 +23,35 @@ path when applicable:
 ```text
 https://jellyfin.example.com
 https://media.example.com/jellyfin
+http://192.168.1.5:8096
+http://jellyfin.local:8096
 ```
 
 Copied Jellyfin `/web` and `/web/index.html` URLs are normalized automatically.
 
 ## Run on a LAN headset
 
-An HTTPS WebXR page cannot fetch `http://192.168.x.x:8096` directly. For local
-development, give Vite a certificate valid for the hostname or IP address used
-by the headset and proxy Jellyfin through the app's own origin.
+Immersive WebXR still requires the SpatialFin page to be a secure context. Chrome
+142 and newer can allow a public HTTPS SpatialFin page to connect directly to an
+HTTP Jellyfin server on the local network. Enter the full private address, such
+as `http://192.168.1.5:8096` or `http://jellyfin.local:8096`, and grant SpatialFin
+the browser's Local Network Access permission when prompted. Include `http://`
+explicitly; scheme-less addresses remain HTTPS to avoid silently downgrading a
+secure local server.
+
+Direct local HTTP remains subject to Jellyfin CORS. Add the SpatialFin page's
+exact origin to Jellyfin's CORS hosts. The connection also leaves credentials,
+tokens, and media unencrypted on the LAN, so only use it on a trusted network.
+Browsers without Local Network Access support or denied permission may still
+block local HTTP. Native media-element requests cannot attach
+`targetAddressSpace`, so custom DNS names can also fail for native HLS; use a
+private IP literal, a `.local` name, or one of the proxy/HTTPS fallbacks below.
+
+### Same-origin proxy fallback
+
+The portable fallback is to give Vite a certificate valid for the hostname or
+IP address used by the headset and proxy Jellyfin through the app's own origin.
+This is also the recommended topology for a LAN-hosted SpatialFin page.
 
 The following example uses
 [mkcert](https://github.com/FiloSottile/mkcert). Replace the hostname and IP with
@@ -81,8 +101,8 @@ a deployment.
 
 ## Deploy with Caddy
 
-For a durable installation, build the static app and let Caddy serve it over
-HTTPS while proxying Jellyfin at the same `/jellyfin-proxy` path:
+For a durable, cross-browser installation, build the static app and let Caddy
+serve it over HTTPS while proxying Jellyfin at the same `/jellyfin-proxy` path:
 
 ```bash
 npm run build
@@ -116,8 +136,9 @@ See Jellyfin's
 [reverse-proxy guidance](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/)
 and [Caddy example](https://jellyfin.org/docs/general/post-install/networking/reverse-proxy/caddy/).
 
-If the app and Jellyfin use different HTTPS origins, add the app's exact origin
-to Jellyfin's CORS hosts. Browser requests use the standard `Authorization:
+If the app and Jellyfin use different origins—including an HTTPS SpatialFin page
+connecting directly to local HTTP Jellyfin—add the app's exact origin to
+Jellyfin's CORS hosts. Browser requests use the standard `Authorization:
 MediaBrowser` header, so cross-origin requests will preflight.
 
 ## Verify

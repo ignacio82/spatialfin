@@ -1,4 +1,4 @@
-import Hls from 'hls.js';
+import Hls, {FetchLoader} from 'hls.js';
 import {
   fetchEpisodes,
   fetchItemImage,
@@ -11,10 +11,13 @@ import {
   fetchViews,
   fetchItem,
   extractMediaPills,
+  resolveJellyfinRequestUrl,
   type JellyfinImageType,
   type JellyfinItem,
   type JellyfinView,
 } from './api';
+import {mediaUrlWithAccessToken} from './auth';
+import {createJellyfinRequest, streamingFetchSupported} from './network';
 
 interface BrowserShelf {
   title: string;
@@ -287,13 +290,32 @@ export class BrowserApp {
       this.hls?.destroy();
       this.hls = null;
       if (Hls.isSupported()) {
-        this.hls = new Hls({xhrSetup: (request) => {
-          for (const [name, value] of Object.entries(playback.requiredHeaders)) request.setRequestHeader(name, value);
-        }});
+        this.hls = streamingFetchSupported()
+          ? new Hls({
+              loader: FetchLoader,
+              fetchSetup: (context, init) => {
+                const headers = new Headers(init.headers);
+                for (const [name, value] of Object.entries(playback.requiredHeaders)) {
+                  headers.set(name, value);
+                }
+                return createJellyfinRequest(
+                  resolveJellyfinRequestUrl(context.url),
+                  {...init, headers},
+                );
+              },
+            })
+          : new Hls({
+              xhrSetup: (request, requestUrl) => {
+                request.open('GET', resolveJellyfinRequestUrl(requestUrl), true);
+                for (const [name, value] of Object.entries(playback.requiredHeaders)) {
+                  request.setRequestHeader(name, value);
+                }
+              },
+            });
         this.hls.loadSource(playback.streamUrl);
         this.hls.attachMedia(this.video);
       } else {
-        this.video.src = playback.streamUrl;
+        this.video.src = mediaUrlWithAccessToken(playback.streamUrl);
       }
       this.playerStatus.textContent = '';
       await this.video.play().catch(() => undefined);

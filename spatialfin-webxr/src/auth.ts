@@ -1,3 +1,5 @@
+import {fetchJellyfin} from './network';
+
 const SESSION_KEY = 'spatialfin_session_v1';
 const DEVICE_ID_KEY = 'spatialfin_device_id';
 
@@ -129,6 +131,15 @@ export function getAccessToken(): string | null {
   return getSession()?.accessToken ?? null;
 }
 
+export function mediaUrlWithAccessToken(streamUrl: string): string {
+  const url = new URL(streamUrl, window.location.href);
+  const token = getAccessToken();
+  if (token && !url.searchParams.has('api_key') && !url.searchParams.has('ApiKey')) {
+    url.searchParams.set('api_key', token);
+  }
+  return url.toString();
+}
+
 export function getGeminiKey(): string | null {
   return getSession()?.geminiKey ?? null;
 }
@@ -182,16 +193,24 @@ export function getAuthHeaders(
   return headers;
 }
 
-export function normalizeServerUrl(value: string): string {
+interface PageLocation {
+  origin: string;
+  protocol: string;
+}
+
+export function normalizeServerUrl(
+  value: string,
+  pageLocation: PageLocation = window.location,
+): string {
   let input = value.trim();
   if (!input) throw new JellyfinAuthError('Enter your Jellyfin server address.');
 
   if (input.startsWith('/')) {
-    input = new URL(input, window.location.origin).toString();
+    input = new URL(input, pageLocation.origin).toString();
   } else if (!/^[a-z][a-z\d+.-]*:\/\//i.test(input)) {
-    // A scheme-less address should inherit the page's security level. Inferring
-    // HTTP from an HTTPS app creates a request that browsers must block.
-    const inferredProtocol = window.location.protocol === 'http:' ? 'http:' : 'https:';
+    // Keep scheme-less input secure. Local HTTP is an explicit opt-in because
+    // silently downgrading could expose credentials intended for local HTTPS.
+    const inferredProtocol = pageLocation.protocol === 'http:' ? 'http:' : 'https:';
     input = `${inferredProtocol}//${input}`;
   }
 
@@ -208,12 +227,6 @@ export function normalizeServerUrl(value: string): string {
   if (url.username || url.password) {
     throw new JellyfinAuthError('Do not include credentials in the server URL.');
   }
-  if (window.location.protocol === 'https:' && url.protocol === 'http:') {
-    throw new JellyfinAuthError(
-      'This WebXR page uses HTTPS, so the browser will block an HTTP Jellyfin server. Use an HTTPS Jellyfin URL or a same-origin reverse proxy.',
-    );
-  }
-
   url.hash = '';
   url.search = '';
   url.pathname = url.pathname
@@ -244,12 +257,6 @@ function assertServerCanBeRequested(serverUrl: string) {
       400,
     );
   }
-  if (window.location.protocol === 'https:' && url.protocol === 'http:') {
-    throw new JellyfinAuthError(
-      'This WebXR page uses HTTPS, so the saved HTTP Jellyfin server is blocked. Sign in with an HTTPS URL or a same-origin reverse proxy.',
-      400,
-    );
-  }
 }
 
 async function fetchWithTimeout(
@@ -261,7 +268,7 @@ async function fetchWithTimeout(
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(input, {...init, signal: controller.signal});
+    return await fetchJellyfin(input, {...init, signal: controller.signal});
   } finally {
     window.clearTimeout(timeout);
   }
@@ -276,6 +283,9 @@ async function responseMessage(response: Response): Promise<string> {
 function networkErrorMessage(serverUrl: string, error: unknown): string {
   if (error instanceof DOMException && error.name === 'AbortError') {
     return `The Jellyfin server at ${serverUrl} did not respond in time.`;
+  }
+  if (window.location.protocol === 'https:' && serverUrl.startsWith('http:')) {
+    return `Could not reach ${serverUrl}. Allow SpatialFin local-network access and check Jellyfin CORS. If this browser does not support direct local HTTP, use Jellyfin HTTPS or a same-origin reverse proxy.`;
   }
   return `Could not reach ${serverUrl}. Check the address, TLS certificate, and Jellyfin CORS settings.`;
 }

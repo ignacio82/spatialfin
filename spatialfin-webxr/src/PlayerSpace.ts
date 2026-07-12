@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
-import Hls from 'hls.js';
-import {fetchPlaybackInfo, type JellyfinItem} from './api';
+import Hls, {FetchLoader} from 'hls.js';
+import {fetchPlaybackInfo, resolveJellyfinRequestUrl, type JellyfinItem} from './api';
 import {CanvasView, fillRoundedRect, formatClock, type CanvasPointer} from './CanvasView';
-import {getAccessToken, getAuthHeaders, getServerUrl} from './auth';
+import {getAuthHeaders, getServerUrl, mediaUrlWithAccessToken} from './auth';
 import {HomeSpace} from './HomeSpace';
+import {createJellyfinRequest, fetchJellyfin, streamingFetchSupported} from './network';
 
 const VIDEO_DEPTH_METERS = 6;
 const UI_DEPTH_METERS = 2;
@@ -558,32 +559,6 @@ export class PlayerSpace extends xb.Script {
     video.textTracks.addEventListener('change', this.handleTextTracksChanged);
   }
 
-  private streamUrlWithToken(streamUrl: string): string {
-    const url = new URL(streamUrl, window.location.href);
-    const token = getAccessToken();
-    if (token && !url.searchParams.has('api_key') && !url.searchParams.has('ApiKey')) {
-      url.searchParams.set('api_key', token);
-    }
-    return url.toString();
-  }
-
-  private resolveHlsRequestUrl(requestUrl: string): string {
-    const server = getServerUrl();
-    if (!server) return requestUrl;
-    const serverUrl = new URL(server);
-    const request = new URL(requestUrl, serverUrl);
-    const basePath = serverUrl.pathname.replace(/\/+$/, '');
-    if (
-      !basePath ||
-      basePath === '/' ||
-      request.origin !== serverUrl.origin ||
-      request.pathname === basePath ||
-      request.pathname.startsWith(`${basePath}/`)
-    ) return request.toString();
-    request.pathname = `${basePath}/${request.pathname.replace(/^\/+/, '')}`;
-    return request.toString();
-  }
-
   private async startPlayback(generation: number, signal: AbortSignal): Promise<void> {
     this.setStatus('Loading stream…');
     const playback = await fetchPlaybackInfo(this.item.Id, signal);
@@ -597,12 +572,24 @@ export class PlayerSpace extends xb.Script {
       const headers = new Headers(getAuthHeaders());
       headers.set('Accept', 'application/vnd.apple.mpegurl, application/x-mpegURL, video/mp2t, */*');
       new Headers(playback.requiredHeaders).forEach((value, name) => headers.set(name, value));
-      const hls = new Hls({
-        xhrSetup: (request, requestUrl) => {
-          request.open('GET', this.resolveHlsRequestUrl(requestUrl), true);
-          headers.forEach((value, name) => request.setRequestHeader(name, value));
-        },
-      });
+      const hls = streamingFetchSupported()
+        ? new Hls({
+            loader: FetchLoader,
+            fetchSetup: (context, init) => {
+              const requestHeaders = new Headers(init.headers);
+              headers.forEach((value, name) => requestHeaders.set(name, value));
+              return createJellyfinRequest(
+                resolveJellyfinRequestUrl(context.url),
+                {...init, headers: requestHeaders},
+              );
+            },
+          })
+        : new Hls({
+            xhrSetup: (request, requestUrl) => {
+              request.open('GET', resolveJellyfinRequestUrl(requestUrl), true);
+              headers.forEach((value, name) => request.setRequestHeader(name, value));
+            },
+          });
       this.hls = hls;
       hls.loadSource(playback.streamUrl);
       hls.attachMedia(video);
@@ -628,7 +615,7 @@ export class PlayerSpace extends xb.Script {
       return;
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = this.streamUrlWithToken(playback.streamUrl);
+      video.src = mediaUrlWithAccessToken(playback.streamUrl);
       return;
     }
     this.setStatus('HLS is not supported by this browser');
@@ -1252,7 +1239,7 @@ export class PlayerSpace extends xb.Script {
     const server = getServerUrl();
     if (!server) return;
     try {
-      await fetch(`${server}${path}`, {
+      await fetchJellyfin(`${server}${path}`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         body: JSON.stringify(this.playbackBody()),
@@ -1271,7 +1258,7 @@ export class PlayerSpace extends xb.Script {
     const controller = new AbortController();
     this.progressAbortController = controller;
     try {
-      await fetch(`${server}/Sessions/Playing/Progress`, {
+      await fetchJellyfin(`${server}/Sessions/Playing/Progress`, {
         method: 'POST',
         headers: getAuthHeaders(true),
         signal: controller.signal,

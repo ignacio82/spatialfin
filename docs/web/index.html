@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://xrblocks.github.io" />
     <link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
     <title>SpatialFin WebXR</title>
-    <script type="module" crossorigin src="/web/assets/index-dRakOTvk.js"></script>
-    <link rel="stylesheet" crossorigin href="/web/assets/index-ge41Jcdh.css">
+    <script type="module" crossorigin src="/web/assets/index-BnnB365G.js"></script>
+    <link rel="stylesheet" crossorigin href="/web/assets/index-DwIkLavq.css">
   <link rel="manifest" href="/web/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/web/registerSW.js"></script></head>
   <body>
     <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
@@ -39,10 +39,17 @@
               autocomplete="url"
               autocapitalize="none"
               spellcheck="false"
-              placeholder="https://jellyfin.example.com"
+              placeholder="http://192.168.1.5:8096"
               required
             />
           </label>
+          <p class="connection-help">
+            Local HTTP: enter the full <code>http://192.168.1.5:8096</code> URL,
+            allow Chrome's Local Network Access prompt, and add this page's
+            origin to Jellyfin CORS (for the hosted app:
+            <code>https://spatialfin.martinez.fyi</code>).
+            Use only on a trusted LAN; otherwise use Jellyfin HTTPS or a proxy.
+          </p>
 
           <div class="credential-row">
             <label class="field" for="username">

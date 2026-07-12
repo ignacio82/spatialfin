@@ -7,8 +7,14 @@ import {
   JellyfinAuthError,
   login,
   logout,
+  normalizeServerUrl,
   validateSession,
 } from './auth';
+import {
+  browserClassifiesAddressSpace,
+  createJellyfinRequest,
+  localNetworkTargetForRequest,
+} from './network';
 import {HomeSpace} from './HomeSpace';
 import {BrowserApp} from './BrowserApp';
 import './style.css';
@@ -32,6 +38,22 @@ const browserApp = new BrowserApp();
 
 let xrStartPromise: Promise<void> | null = null;
 const automationMode = new URLSearchParams(window.location.search).has('xrAutomation');
+
+if (automationMode) {
+  (window as typeof window & {
+    __spatialfinNetworkTest?: {
+      browserClassifiesAddressSpace: typeof browserClassifiesAddressSpace;
+      createJellyfinRequest: typeof createJellyfinRequest;
+      localNetworkTargetForRequest: typeof localNetworkTargetForRequest;
+      normalizeServerUrl: typeof normalizeServerUrl;
+    };
+  }).__spatialfinNetworkTest = {
+    browserClassifiesAddressSpace,
+    createJellyfinRequest,
+    localNetworkTargetForRequest,
+    normalizeServerUrl,
+  };
+}
 
 function setXrButtonState(label: string, disabled: boolean) {
   if (!enterXrButton) return;

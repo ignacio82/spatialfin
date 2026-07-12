@@ -176,6 +176,18 @@ h2 {
   color: #6f7d89;
 }
 
+.connection-help {
+  margin: 10px 0 0;
+  color: #8f9eab;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.connection-help code {
+  color: #bfd8f7;
+  overflow-wrap: anywhere;
+}
+
 .credential-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

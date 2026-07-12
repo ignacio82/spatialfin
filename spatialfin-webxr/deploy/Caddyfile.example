@@ -5,7 +5,8 @@
 	root * {$SPATIALFIN_WEB_ROOT:/srv/spatialfin-webxr/dist}
 	encode zstd gzip
 
-	# SpatialFin uses this same-origin path as its Jellyfin server URL. The
+	# Optional same-origin fallback for browsers without Local Network Access
+	# support. Enter /jellyfin-proxy as SpatialFin's Jellyfin server URL. The
 	# prefix is removed before requests reach a root-mounted Jellyfin server.
 	@jellyfin path /jellyfin-proxy /jellyfin-proxy/*
 	handle @jellyfin {

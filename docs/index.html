@@ -412,11 +412,12 @@
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
-                                    <h4>Connect with Tailscale</h4>
+                                    <h4>Connect to Jellyfin</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>Mixed Content:</strong> Since the web app is hosted on HTTPS, connecting to a local HTTP Jellyfin server is blocked by browsers.</li>
-                                        <li><strong>Tailscale Serve:</strong> Use Tailscale to secure your connection. Simply run <code>sudo tailscale serve --bg 8096</code> on your Jellyfin server (omit <code>sudo</code> on Windows).</li>
-                                        <li><strong>HTTPS URL:</strong> Once running, enter your Tailnet domain (e.g., <code>https://server.taild123.ts.net</code>) as your server address in the web app, with no port required.</li>
+                                        <li><strong>Direct local HTTP:</strong> On Chrome 142 or newer, enter the full LAN URL—such as <code>http://192.168.1.5:8096</code> or <code>http://jellyfin.local:8096</code>—and approve the Local Network Access prompt.</li>
+                                        <li><strong>CORS:</strong> Add the SpatialFin page's exact origin to Jellyfin's CORS hosts—for this hosted app, <code>https://spatialfin.martinez.fyi</code>. Type <code>http://</code> explicitly; scheme-less addresses remain HTTPS.</li>
+                                        <li><strong>Security:</strong> Local HTTP leaves credentials, tokens, and media unencrypted. Only use it on a trusted LAN.</li>
+                                        <li><strong>Fallback:</strong> If the browser blocks local HTTP, use Jellyfin HTTPS, self-host SpatialFin with its same-origin proxy, or join the browser and server to the same tailnet and run <code>sudo tailscale serve --bg 8096</code>. Then connect to the resulting <code>https://server.tailnet.ts.net</code> URL.</li>
                                     </ul>
                                 </div>
                             </div>

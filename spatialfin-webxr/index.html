@@ -37,10 +37,17 @@
               autocomplete="url"
               autocapitalize="none"
               spellcheck="false"
-              placeholder="https://jellyfin.example.com"
+              placeholder="http://192.168.1.5:8096"
               required
             />
           </label>
+          <p class="connection-help">
+            Local HTTP: enter the full <code>http://192.168.1.5:8096</code> URL,
+            allow Chrome's Local Network Access prompt, and add this page's
+            origin to Jellyfin CORS (for the hosted app:
+            <code>https://spatialfin.martinez.fyi</code>).
+            Use only on a trusted LAN; otherwise use Jellyfin HTTPS or a proxy.
+          </p>
 
           <div class="credential-row">
             <label class="field" for="username">

@@ -4,6 +4,7 @@ import {
   getServerUrl,
   getUserId,
 } from './auth';
+import {fetchJellyfin} from './network';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_STREAMING_BITRATE = 120_000_000;
@@ -198,6 +199,24 @@ function resolveServerPath(path: string): string {
   return new URL(`${basePath}${relativePath}`, serverUrl.origin).toString();
 }
 
+/** Preserve a configured Jellyfin base path on root-relative HLS child URLs. */
+export function resolveJellyfinRequestUrl(requestUrl: string): string {
+  const server = getServerUrl();
+  if (!server) return requestUrl;
+  const serverUrl = new URL(server);
+  const request = new URL(requestUrl, serverUrl);
+  const basePath = serverUrl.pathname.replace(/\/+$/, '');
+  if (
+    !basePath ||
+    basePath === '/' ||
+    request.origin !== serverUrl.origin ||
+    request.pathname === basePath ||
+    request.pathname.startsWith(`${basePath}/`)
+  ) return request.toString();
+  request.pathname = `${basePath}/${request.pathname.replace(/^\/+/, '')}`;
+  return request.toString();
+}
+
 async function errorDetail(response: Response): Promise<string | null> {
   try {
     const contentType = response.headers.get('content-type') ?? '';
@@ -228,7 +247,7 @@ async function request(path: string, options: RequestOptions = {}): Promise<Resp
   const hasJsonBody = options.json !== undefined;
 
   try {
-    const response = await fetch(buildUrl(path, options.query), {
+    const response = await fetchJellyfin(buildUrl(path, options.query), {
       method: options.method ?? 'GET',
       headers: getAuthHeaders({
         accept: options.accept ?? 'application/json',

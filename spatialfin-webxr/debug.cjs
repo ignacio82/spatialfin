@@ -297,6 +297,109 @@ async function run() {
     await page.goto(`${vite.baseUrl}/?xrAutomation=1`, {waitUntil: 'networkidle2'});
     await page.waitForSelector('#login-overlay:not([hidden])');
 
+    const urlPolicy = await page.evaluate(() => {
+      const test = window.__spatialfinNetworkTest;
+      if (!test) throw new Error('SpatialFin network test API is unavailable');
+      const httpsPage = {origin: 'https://spatialfin.example', protocol: 'https:'};
+      return {
+        browserClassified: [
+          '192.168.0.1',
+          '100.64.0.1',
+          '198.18.0.1',
+          '127.0.0.1',
+          'localhost',
+          'jellyfin.local',
+          'JELLYFIN.LOCAL.',
+          '[::1]',
+          '[fc00::1]',
+          '[::ffff:192.168.1.5]',
+          '8.8.8.8',
+          'jellyfin.home.arpa',
+          'jellyfin.lan',
+          'jellyfin.internal',
+          'jellyfin',
+          'jellyfin.local.evil.example',
+          '[2001:4860:4860::8888]',
+        ].map((hostname) => [hostname, test.browserClassifiesAddressSpace(hostname)]),
+        privateUrl: test.normalizeServerUrl(
+          '192.168.1.5:8096/web/index.html',
+          httpsPage,
+        ),
+        localUrl: test.normalizeServerUrl('jellyfin.local:8096', httpsPage),
+        publicUrl: test.normalizeServerUrl('media.example.com', httpsPage),
+        explicitHttpUrl: test.normalizeServerUrl('http://media.example.com:8096', httpsPage),
+        proxyUrl: test.normalizeServerUrl('/jellyfin-proxy', httpsPage),
+        privateTarget: test.localNetworkTargetForRequest(
+          'http://192.168.1.5:8096',
+          true,
+        ),
+        loopbackTarget: test.localNetworkTargetForRequest(
+          'http://localhost:8096',
+          true,
+        ),
+        localNameTarget: test.localNetworkTargetForRequest(
+          'http://jellyfin.local:8096',
+          true,
+        ),
+        namedTarget: test.localNetworkTargetForRequest(
+          'http://jellyfin.example:8096',
+          true,
+        ),
+        secureTarget: test.localNetworkTargetForRequest(
+          'https://jellyfin.example',
+          true,
+        ),
+        decoratedNamedTarget: test.createJellyfinRequest(
+          'http://jellyfin.example:8096',
+          {},
+          true,
+        ).targetAddressSpace,
+      };
+    });
+    assert.deepEqual(Object.fromEntries(urlPolicy.browserClassified), {
+      '192.168.0.1': true,
+      '100.64.0.1': true,
+      '198.18.0.1': true,
+      '127.0.0.1': true,
+      localhost: true,
+      'jellyfin.local': true,
+      'JELLYFIN.LOCAL.': true,
+      '[::1]': true,
+      '[fc00::1]': true,
+      '[::ffff:192.168.1.5]': true,
+      '8.8.8.8': true,
+      'jellyfin.home.arpa': false,
+      'jellyfin.lan': false,
+      'jellyfin.internal': false,
+      jellyfin: false,
+      'jellyfin.local.evil.example': false,
+      '[2001:4860:4860::8888]': true,
+    });
+    assert.equal(urlPolicy.privateUrl, 'https://192.168.1.5:8096');
+    assert.equal(urlPolicy.localUrl, 'https://jellyfin.local:8096');
+    assert.equal(urlPolicy.publicUrl, 'https://media.example.com');
+    assert.equal(urlPolicy.explicitHttpUrl, 'http://media.example.com:8096');
+    assert.equal(urlPolicy.proxyUrl, 'https://spatialfin.example/jellyfin-proxy');
+    assert.equal(urlPolicy.privateTarget, null);
+    assert.equal(urlPolicy.loopbackTarget, null);
+    assert.equal(urlPolicy.localNameTarget, null);
+    assert.equal(urlPolicy.namedTarget, 'local');
+    assert.equal(urlPolicy.secureTarget, null);
+    assert.equal(urlPolicy.decoratedNamedTarget, 'local');
+
+    await page.evaluate(() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.__spatialfinObservedRequests = [];
+      window.fetch = (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        window.__spatialfinObservedRequests.push({
+          url: request.url,
+          targetAddressSpace: request.targetAddressSpace ?? null,
+        });
+        return nativeFetch(input, init);
+      };
+    });
+
     await page.setViewport({width: 390, height: 844, deviceScaleFactor: 1});
     const mobileLayout = await page.evaluate(() => ({
       viewportWidth: window.innerWidth,
@@ -323,13 +426,24 @@ async function run() {
     assert.equal(await page.evaluate(() => localStorage.getItem('spatialfin_session_v1')), null);
 
     await page.waitForSelector('#browser-app:not([hidden])');
-    await page.waitForFunction(() => document.querySelector('.browser-shelf h2')?.textContent?.includes('Continue watching'));
+    try {
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('.browser-shelf h2'))
+        .some((heading) => heading.textContent?.includes('Continue watching')));
+    } catch (error) {
+      const browserState = await page.$eval('#browser-app', (element) => element.textContent);
+      throw new Error(`${error.message}\nBrowser state: ${browserState}\nRequests: ${JSON.stringify(requests)}\nErrors: ${browserErrors.join('\n')}`);
+    }
     assert.equal(
       await page.evaluate(() => Boolean(window.xb?.core?.renderer?.xr?.isPresenting)),
       false,
       'the browser view should not enter an immersive XR session automatically',
     );
     assert.ok(await page.$('.browser-hero .primary-action'), 'browser home should expose a normal media interface');
+    const initialLnaRequests = await page.evaluate(() => window.__spatialfinObservedRequests);
+    assert.ok(initialLnaRequests.some(({url, targetAddressSpace}) =>
+      url.includes('/Users/AuthenticateByName') && targetAddressSpace === 'local'));
+    assert.ok(initialLnaRequests.some(({url, targetAddressSpace}) =>
+      url.includes('/Items/Suggestions?') && targetAddressSpace === 'local'));
     const browserScreenshotPath = '/tmp/spatialfin-browser-home.png';
     await page.screenshot({path: browserScreenshotPath});
     await page.click('[data-browser-route="libraries"]');
@@ -580,6 +694,9 @@ async function run() {
     assert.ok(requests.some(({path: requestPath, authorization, playbackHeader}) =>
       requestPath.startsWith('/jellyfin-proxy/Videos/episode-1/master.m3u8?') &&
       authorization?.includes('Token="mock-access-token"') && playbackHeader === 'spatialfin'));
+    const playbackLnaRequests = await page.evaluate(() => window.__spatialfinObservedRequests);
+    assert.ok(playbackLnaRequests.some(({url, targetAddressSpace}) =>
+      url.includes('/Videos/episode-1/master.m3u8?') && targetAddressSpace === 'local'));
 
     await page.reload({waitUntil: 'networkidle2'});
     await page.waitForSelector('#login-overlay:not([hidden])');
