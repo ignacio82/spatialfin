@@ -66,10 +66,34 @@ interface HomeCanvasActions {
   openSeries: (item: JellyfinItem) => void;
   showHome: () => void;
   showMedia: () => void;
+  showLibrary: (view: JellyfinView) => void;
   showSettings: () => void;
   refresh: () => void;
   signOut: () => void;
   close: () => void;
+}
+
+import type { CanvasPointer } from './CanvasView';
+
+function extractMediaPills(item: JellyfinItem): string[] {
+  const pills: string[] = [];
+  const source = item.MediaSources?.[0];
+  if (source) {
+    const videoStream = source.MediaStreams?.find(s => s.Type === 'Video');
+    if (videoStream) {
+      if (videoStream.Width && videoStream.Width >= 3800) pills.push('4K');
+      else if (videoStream.Width && videoStream.Width >= 1900) pills.push('1080p');
+      else if (videoStream.Width && videoStream.Width >= 1200) pills.push('720p');
+      if (videoStream.Codec) pills.push(videoStream.Codec.toUpperCase());
+    } else if (source.VideoCodec) {
+      pills.push(source.VideoCodec.toUpperCase());
+    }
+    const audioStream = source.MediaStreams?.find(s => s.Type === 'Audio');
+    if (audioStream && audioStream.ChannelLayout) {
+      pills.push(audioStream.ChannelLayout.toUpperCase());
+    }
+  }
+  return pills;
 }
 
 function imageKey(item: JellyfinItem, type: JellyfinImageType): string {
@@ -103,6 +127,9 @@ class HomeCanvasView extends CanvasView {
   private readonly artwork = new Map<string, ImageBitmap>();
   private appIcon: ImageBitmap | null = null;
   private heroOffset = 0;
+  private scrollY = 0;
+  private pointerStartY = 0;
+  private scrollStartY = 0;
   private readonly actions: HomeCanvasActions;
 
   constructor(actions: HomeCanvasActions) {
@@ -111,6 +138,24 @@ class HomeCanvasView extends CanvasView {
     this.userData.layout = 'android-xr-home';
     this.userData.logicalSize = {width: PANEL_WIDTH_DP, height: PANEL_HEIGHT_DP};
     this.redraw();
+  }
+
+  protected override onCanvasPointerDown(pointer: CanvasPointer): boolean {
+    this.pointerStartY = pointer.y;
+    this.scrollStartY = this.scrollY;
+    return true;
+  }
+
+  protected override onCanvasPointerMove(pointer: CanvasPointer): boolean {
+    if (this.screen.kind !== 'home') return false;
+    const delta = pointer.y - this.pointerStartY;
+    const maxScroll = Math.max(0, 100 + 260 + 200 + this.model.shelves.length * 260 - PANEL_HEIGHT_DP);
+    const newScrollY = THREE.MathUtils.clamp(this.scrollStartY - delta, 0, maxScroll);
+    if (this.scrollY !== newScrollY) {
+      this.scrollY = newScrollY;
+      return true;
+    }
+    return false;
   }
 
   setAppIcon(icon: ImageBitmap) {
@@ -306,31 +351,73 @@ class HomeCanvasView extends CanvasView {
     );
     const contentX = 136;
     const contentWidth = 1248;
-    const heroY = 98;
+    let currentY = 98 - this.scrollY;
+
+    if (this.model.views.length > 0) {
+      this.drawMyMedia(contentX, currentY);
+      currentY += 160;
+    }
+
     const gap = 16;
     const heroWidth = (contentWidth - gap * 2) / 3;
     const heroHeight = 228;
     heroes.forEach((item, index) => {
-      this.drawHeroCard(item, contentX + index * (heroWidth + gap), heroY, heroWidth, heroHeight);
+      this.drawHeroCard(item, contentX + index * (heroWidth + gap), currentY, heroWidth, heroHeight);
     });
 
     if (heroes.length === 0) {
-      this.drawEmptyCard(contentX, heroY, contentWidth, heroHeight, 'No suggestions yet');
+      this.drawEmptyCard(contentX, currentY, contentWidth, heroHeight, 'No suggestions yet');
     }
+    currentY += heroHeight + 40;
 
-    const shelves = this.model.shelves.filter((shelf) => shelf.items.length > 0).slice(0, 2);
-    shelves.forEach((shelf, index) => {
-      this.drawShelf(shelf, 360 + index * 226);
+    this.model.shelves.forEach((shelf) => {
+      if (shelf.items.length > 0) {
+        this.drawShelf(shelf, currentY);
+        currentY += 260;
+      }
     });
-    if (shelves.length === 0) {
-      this.drawMessage('Your library is ready', 'No recent or resumable items were returned.', false, 360);
-    }
 
     this.userData.uiLabels = [
       serverLabel(),
+      ...this.model.views.map((v) => v.Name),
       ...heroes.map((item) => item.Name),
-      ...shelves.map((shelf) => shelf.title),
+      ...this.model.shelves.map((shelf) => shelf.title),
     ];
+  }
+
+  private drawMyMedia(x: number, y: number) {
+    if (y > PANEL_HEIGHT_DP || y < -150) return;
+    const ctx = this.context;
+    ctx.fillStyle = COLORS.onSurface;
+    ctx.font = '700 20px system-ui, sans-serif';
+    ctx.fillText('My Media', x + 14, y + 21);
+    
+    const cardY = y + 40;
+    const width = 160;
+    const height = 90;
+    const gap = 16;
+    this.model.views.slice(0, 7).forEach((view, index) => {
+      const cardX = x + index * (width + gap);
+      const id = `view-${view.Id}`;
+      ctx.save();
+      roundedRect(ctx, cardX, cardY, width, height, 12);
+      ctx.clip();
+      ctx.fillStyle = COLORS.surfaceHigh;
+      ctx.fillRect(cardX, cardY, width, height);
+      ctx.restore();
+      if (this.isHovered(id)) {
+        ctx.strokeStyle = COLORS.primary;
+        ctx.lineWidth = 3;
+        roundedRect(ctx, cardX + 1.5, cardY + 1.5, width - 3, height - 3, 11);
+        ctx.stroke();
+      }
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '650 16px system-ui, sans-serif';
+      ctx.fillText(ellipsize(ctx, view.Name, width - 10), cardX + width / 2, cardY + height / 2 + 6);
+      
+      this.addHitZone({id, x: cardX, y: cardY, width, height, action: () => this.actions.showLibrary(view)});
+    });
   }
 
   private drawHeroCard(
@@ -362,7 +449,12 @@ class HomeCanvasView extends CanvasView {
 
     const rating = item.CommunityRating?.toFixed(1) ??
       (item.CriticRating !== undefined ? `${Math.round(item.CriticRating)}%` : null);
-    if (rating) this.drawMiniPill(`★ ${rating}`, x + 20, y + height - 109);
+    let pillX = x + 20;
+    if (rating) pillX += this.drawMiniPill(`★ ${rating}`, pillX, y + height - 109) + 8;
+    for (const pill of extractMediaPills(item)) {
+      pillX += this.drawMiniPill(pill, pillX, y + height - 109) + 8;
+    }
+    
     const genres = (item.Genres ?? []).slice(0, 3).join(', ');
     ctx.textAlign = 'left';
     ctx.fillStyle = '#d4d8de';
@@ -383,7 +475,7 @@ class HomeCanvasView extends CanvasView {
     this.addHitZone({id, x, y, width, height, action: () => this.actions.openItem(item)});
   }
 
-  private drawMiniPill(label: string, x: number, y: number) {
+  private drawMiniPill(label: string, x: number, y: number): number {
     const ctx = this.context;
     ctx.font = '700 13px system-ui, sans-serif';
     const width = ctx.measureText(label).width + 18;
@@ -391,6 +483,7 @@ class HomeCanvasView extends CanvasView {
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.onSurface;
     ctx.fillText(label, x + width / 2, y + 18);
+    return width;
   }
 
   private drawShelf(shelf: HomeShelf, y: number) {
@@ -496,6 +589,7 @@ class HomeCanvasView extends CanvasView {
       item.ProductionYear?.toString(),
       item.RunTimeTicks ? `${Math.max(1, Math.round(item.RunTimeTicks / 600_000_000))} min` : null,
       item.OfficialRating,
+      ...extractMediaPills(item),
       ...(item.Genres ?? []).slice(0, 3),
     ].filter((value): value is string => Boolean(value));
     let pillX = infoX;
@@ -535,7 +629,32 @@ class HomeCanvasView extends CanvasView {
     ctx.fillText('Overview', 158, 584);
     ctx.fillStyle = COLORS.onSurfaceMuted;
     ctx.font = '500 17px system-ui, sans-serif';
-    this.drawWrappedText(item.Overview || 'No synopsis is available.', 158, 620, 1160, 27, 5);
+    this.drawWrappedText(item.Overview || 'No synopsis is available.', 158, 620, 1160, 27, 4);
+
+    if (item.People && item.People.length > 0) {
+      ctx.fillStyle = COLORS.onSurface;
+      ctx.font = '700 18px system-ui, sans-serif';
+      ctx.fillText('Cast & Crew', 158, 740);
+      let personX = 158;
+      item.People.slice(0, 12).forEach((person) => {
+        ctx.fillStyle = COLORS.surfaceHigh;
+        ctx.beginPath();
+        ctx.arc(personX + 32, 780, 32, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.textAlign = 'center';
+        ctx.fillStyle = COLORS.onSurface;
+        ctx.font = '500 12px system-ui, sans-serif';
+        ctx.fillText(ellipsize(ctx, person.Name || '', 70), personX + 32, 824);
+        if (person.Role) {
+          ctx.fillStyle = COLORS.onSurfaceMuted;
+          ctx.font = '500 11px system-ui, sans-serif';
+          ctx.fillText(ellipsize(ctx, person.Role, 70), personX + 32, 838);
+        }
+        personX += 80;
+      });
+      ctx.textAlign = 'left';
+    }
+
     this.userData.uiLabels = [item.Name, isSeries ? 'Episodes' : 'Play', 'Overview'];
   }
 
@@ -781,6 +900,7 @@ export class HomeSpace extends xb.Script {
       openSeries: (item) => void this.openSeries(item),
       showHome: () => canvas.setScreen({kind: 'home'}),
       showMedia: () => this.showAllMedia('Media'),
+      showLibrary: (view) => void this.openLibrary(view),
       showSettings: () => canvas.setScreen({kind: 'settings'}),
       refresh: () => void this.loadHome(),
       signOut: () => void logout(),
@@ -848,6 +968,24 @@ export class HomeSpace extends xb.Script {
     const items = this.uniqueItems(this.model.shelves.flatMap((shelf) => shelf.items));
     this.canvas?.setScreen({kind: 'library', title, items});
     void this.loadArtwork(items.slice(0, 15));
+  }
+
+  private async openLibrary(view: JellyfinView) {
+    const generation = ++this.requestGeneration;
+    this.canvas?.setScreen({kind: 'loading', title: view.Name, body: 'Loading library…'});
+    try {
+      const items = await fetchItems(view.Id);
+      if (generation !== this.requestGeneration || this.disposed) return;
+      this.canvas?.setScreen({kind: 'library', title: view.Name, items});
+      void this.loadArtwork(items.slice(0, 15));
+    } catch (error) {
+      if (generation !== this.requestGeneration || this.disposed) return;
+      this.canvas?.setScreen({
+        kind: 'message',
+        title: view.Name,
+        body: error instanceof Error ? error.message : 'Library could not be loaded.',
+      });
+    }
   }
 
   private openItem(item: JellyfinItem) {

@@ -16,6 +16,8 @@ const HOME_ITEM_FIELDS = [
   'OfficialRating',
   'ProductionYear',
   'RunTimeTicks',
+  'MediaSources',
+  'People',
 ].join(',');
 const HOME_IMAGE_TYPES = 'Primary,Backdrop,Logo';
 
@@ -52,6 +54,26 @@ export interface JellyfinUserData {
   Played?: boolean;
 }
 
+export interface JellyfinPerson {
+  Name?: string;
+  Role?: string;
+  Type?: string;
+  PrimaryImageTag?: string;
+  Id?: string;
+}
+
+export interface JellyfinMediaStream {
+  Type?: 'Audio' | 'Video' | 'Subtitle';
+  Codec?: string;
+  DisplayTitle?: string;
+  Language?: string;
+  IsDefault?: boolean;
+  Profile?: string;
+  Width?: number;
+  Height?: number;
+  ChannelLayout?: string;
+}
+
 export interface JellyfinItem {
   Id: string;
   Name: string;
@@ -74,6 +96,8 @@ export interface JellyfinItem {
     Logo?: string;
   };
   BackdropImageTags?: string[];
+  People?: JellyfinPerson[];
+  MediaSources?: JellyfinMediaSourceInfo[];
 }
 
 export interface JellyfinMediaSourceInfo {
@@ -83,6 +107,8 @@ export interface JellyfinMediaSourceInfo {
   TranscodingUrl?: string | null;
   RequiredHttpHeaders?: Record<string, string | null> | null;
   DefaultAudioStreamIndex?: number | null;
+  VideoCodec?: string;
+  MediaStreams?: JellyfinMediaStream[];
 }
 
 export interface JellyfinPlaybackInfoResponse {
