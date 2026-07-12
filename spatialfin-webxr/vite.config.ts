@@ -1,6 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {defineConfig, loadEnv} from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 function readBoolean(value: string | undefined, name: string): boolean {
   if (value === undefined || value === '' || value === 'false') {
@@ -48,6 +49,30 @@ export default defineConfig(({mode}) => {
 
   return {
     base: '/web/',
+    plugins: [
+      VitePWA({
+        registerType: 'autoUpdate',
+        workbox: {
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024
+        },
+        manifest: {
+          name: 'SpatialFin WebXR',
+          short_name: 'SpatialFin',
+          description: 'SpatialFin WebXR Client',
+          theme_color: '#000000',
+          background_color: '#000000',
+          display: 'standalone',
+          icons: [
+            {
+              src: 'app-icon.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable'
+            }
+          ]
+        }
+      })
+    ],
     build: {
       outDir: '../docs/web',
       emptyOutDir: true,

@@ -4,17 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#090b0f" />
-    <link rel="icon" type="image/png" href="/web/app-icon.png" />
+    <link rel="icon" type="image/png" href="/app-icon.png" />
     <link rel="preconnect" href="https://xrblocks.github.io" />
     <link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
     <title>SpatialFin WebXR</title>
-    <script type="module" crossorigin src="/web/assets/index-CjLKBr0B.js"></script>
-    <link rel="stylesheet" crossorigin href="/web/assets/index-_WF5idrL.css">
-  <link rel="manifest" href="/web/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/web/registerSW.js"></script></head>
+  </head>
   <body>
     <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
       <section class="brand-pane">
-        <img class="brand-art" src="/web/app-icon.png" alt="" />
+        <img class="brand-art" src="/app-icon.png" alt="" />
         <div class="brand-copy">
           <p class="eyebrow">WebXR Jellyfin client</p>
           <h1 id="app-title">SpatialFin</h1>
@@ -106,7 +104,7 @@
     <main id="browser-app" class="browser-app" aria-label="SpatialFin media library" hidden>
       <header class="browser-header">
         <a class="browser-brand" href="#home" aria-label="SpatialFin home">
-          <img src="/web/app-icon.png" alt="" />
+          <img src="/app-icon.png" alt="" />
           <span>SpatialFin</span>
         </a>
         <nav class="browser-nav" aria-label="Library navigation">
@@ -128,5 +126,6 @@
       <p id="browser-player-status" role="status"></p>
     </section>
 
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,0 +1,93 @@
+Scene (XR Blocks Scene)
+  XRSystems (XR Blocks Systems)
+    Object3D
+    DragManager (Drag Manager)
+    Object3D
+    CoreSound (Core Sound)
+      Object3D
+      Object3D
+      Object3D
+      Object3D
+      Object3D
+      Object3D
+    Object3D
+    ActiveControllers (Active Controllers)
+      Group
+        Line
+      Group
+        Line
+      MouseController (Mouse Controller)
+      GamepadController (Gamepad Controller)
+      Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+      Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+        Group
+    Reticles (Reticles)
+      Mesh (Reticle 0)
+      Mesh (Reticle 1)
+      Mesh (Reticle)
+      Mesh (Reticle 2)
+      Mesh (Reticle 3)
+    Object3D
+      Object3D (Simulator User)
+  Object3D
+    GridHelper
+    HemisphereLight
+    Object3D (Panel)
+      Mesh (PanelMesh)
+      Object3D (View)
+        Object3D (View)
+          Object3D (TextView)
+            Mesh
+        Object3D (View)
+          Object3D (View)
+  PerspectiveCamera
+    AudioListener

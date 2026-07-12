@@ -1,0 +1,1 @@
+{"name":"SpatialFin WebXR","short_name":"SpatialFin","description":"SpatialFin WebXR Client","start_url":"/web/","display":"standalone","background_color":"#000000","theme_color":"#000000","lang":"en","scope":"/web/","icons":[{"src":"app-icon.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]}

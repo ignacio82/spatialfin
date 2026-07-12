@@ -1,0 +1,43 @@
+# Replace the example hostname with a DNS name that resolves to this machine.
+# Caddy obtains and renews a publicly trusted certificate automatically when the
+# hostname and ports 80/443 are reachable from the internet.
+{$SPATIALFIN_SITE_ADDRESS:spatialfin.example.com} {
+	root * {$SPATIALFIN_WEB_ROOT:/srv/spatialfin-webxr/dist}
+	encode zstd gzip
+
+	# SpatialFin uses this same-origin path as its Jellyfin server URL. The
+	# prefix is removed before requests reach a root-mounted Jellyfin server.
+	@jellyfin path /jellyfin-proxy /jellyfin-proxy/*
+	handle @jellyfin {
+		uri strip_prefix /jellyfin-proxy
+		reverse_proxy {$JELLYFIN_UPSTREAM:http://127.0.0.1:8096}
+	}
+
+	# Vite emits an SPA, so unknown non-API paths fall back to index.html.
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+
+	@document path / /index.html
+	header @document Cache-Control "no-cache"
+	header {
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
+# HTTPS upstreams are verified against the system trust store by default. If
+# Jellyfin uses a private CA, replace the reverse_proxy line above with this
+# form and install the CA certificate on the Caddy host:
+#
+# reverse_proxy https://jellyfin.internal.example:8920 {
+# 	transport http {
+# 		tls_trust_pool file /etc/caddy/jellyfin-root-ca.pem
+# 		tls_server_name jellyfin.internal.example
+# 	}
+# }
+#
+# For isolated development only, Caddy also supports tls_insecure_skip_verify
+# inside the transport block. It disables upstream identity verification and
+# must not be used for a production or untrusted network deployment.
