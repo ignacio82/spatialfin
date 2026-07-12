@@ -9,6 +9,7 @@ import {
   fetchResumeItems,
   fetchSuggestions,
   fetchViews,
+  extractMediaPills,
   JellyfinApiError,
   type JellyfinImageType,
   type JellyfinItem,
@@ -75,26 +76,7 @@ interface HomeCanvasActions {
 
 import type { CanvasPointer } from './CanvasView';
 
-function extractMediaPills(item: JellyfinItem): string[] {
-  const pills: string[] = [];
-  const source = item.MediaSources?.[0];
-  if (source) {
-    const videoStream = source.MediaStreams?.find(s => s.Type === 'Video');
-    if (videoStream) {
-      if (videoStream.Width && videoStream.Width >= 3800) pills.push('4K');
-      else if (videoStream.Width && videoStream.Width >= 1900) pills.push('1080p');
-      else if (videoStream.Width && videoStream.Width >= 1200) pills.push('720p');
-      if (videoStream.Codec) pills.push(videoStream.Codec.toUpperCase());
-    } else if (source.VideoCodec) {
-      pills.push(source.VideoCodec.toUpperCase());
-    }
-    const audioStream = source.MediaStreams?.find(s => s.Type === 'Audio');
-    if (audioStream && audioStream.ChannelLayout) {
-      pills.push(audioStream.ChannelLayout.toUpperCase());
-    }
-  }
-  return pills;
-}
+
 
 function imageKey(item: JellyfinItem, type: JellyfinImageType): string {
   return `${item.Id}:${type}`;

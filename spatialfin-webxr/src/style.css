@@ -621,3 +621,57 @@ canvas {
     transition-duration: 0.01ms !important;
   }
 }
+
+.detail-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.pill {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #e1e3e8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.library-tile {
+  background: #111318;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s;
+  text-align: left;
+}
+.library-tile:hover {
+  transform: translateY(-2px);
+  background: #1a222c;
+}
+.library-tile .library-icon {
+  font-size: 1.5rem;
+  color: #fff;
+}
+.library-tile strong {
+  font-size: 1.1rem;
+  color: #fff;
+}
+.library-tile span {
+  font-size: 0.9rem;
+  color: #a4adc1;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}

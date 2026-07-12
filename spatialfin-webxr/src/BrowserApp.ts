@@ -9,6 +9,8 @@ import {
   fetchResumeItems,
   fetchSuggestions,
   fetchViews,
+  fetchItem,
+  extractMediaPills,
   type JellyfinItem,
   type JellyfinView,
 } from './api';
@@ -94,7 +96,7 @@ export class BrowserApp {
         fetchSuggestions(), fetchResumeItems(), fetchNextUp(), fetchViews(),
       ]);
       this.views = views;
-      const latest = await Promise.all(views.slice(0, 3).map(async (view) => ({
+      const latest = await Promise.all(views.map(async (view) => ({
         title: `Latest in ${view.Name}`,
         items: await fetchLatestMedia(view.Id).catch(() => fetchItems(view.Id)),
       })));
@@ -148,11 +150,31 @@ export class BrowserApp {
       }
       return;
     }
-    this.renderDetails(item);
+    this.loading(`Loading ${item.Name}…`);
+    try {
+      const fullItem = await fetchItem(item.Id);
+      this.renderDetails(fullItem);
+    } catch (error) {
+      this.error(error);
+    }
   }
 
   private renderHome(featured: JellyfinItem[], shelves: BrowserShelf[]) {
     const lead = featured[0];
+    let myMediaHtml = '';
+    if (this.views.length > 0) {
+      myMediaHtml = `
+        <section class="browser-shelf my-media">
+          <h2>My Media</h2>
+          <div class="library-grid" style="margin-bottom: 2rem;">
+            ${this.views.map(view => `<button class="library-tile" data-view-id="${view.Id}">
+              <span class="library-icon">▣</span><strong>${this.escape(view.Name)}</strong><span>Browse library</span>
+            </button>`).join('')}
+          </div>
+        </section>
+      `;
+    }
+
     this.content.innerHTML = `
       <section class="browser-hero">
         <div class="browser-hero-art" aria-hidden="true"></div>
@@ -163,10 +185,16 @@ export class BrowserApp {
           ${lead ? '<button class="primary-action" type="button">View details</button>' : ''}
         </div>
       </section>
+      ${myMediaHtml}
       <div class="browser-shelves"></div>`;
     if (lead) {
       this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.showItem(lead));
       void this.setImage(this.content.querySelector('.browser-hero-art')!, lead, 'Backdrop');
+    }
+    if (this.views.length > 0) {
+      this.content.querySelectorAll<HTMLButtonElement>('.my-media .library-tile').forEach((btn, index) => {
+        btn.addEventListener('click', () => void this.showLibrary(this.views[index]));
+      });
     }
     const shelfRoot = this.content.querySelector<HTMLElement>('.browser-shelves')!;
     shelves.filter((shelf) => shelf.items.length).forEach((shelf) => shelfRoot.append(this.createShelf(shelf)));
@@ -182,7 +210,27 @@ export class BrowserApp {
 
   private renderDetails(item: JellyfinItem) {
     this.revokeImages();
-    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p><p>${this.escape(item.Overview ?? 'No synopsis is available.')}</p><button class="primary-action" type="button">▶ Play in browser</button></div></section>`;
+    const pills = extractMediaPills(item);
+    const pillsHtml = pills.length > 0 ? `<div class="detail-pills">${pills.map(p => `<span class="pill">${this.escape(p)}</span>`).join('')}</div>` : '';
+    
+    let castHtml = '';
+    if (item.People && item.People.length > 0) {
+      castHtml = `
+        <div class="detail-cast" style="margin-top: 2rem;">
+          <h3 style="font-size: 1.2rem; margin-bottom: 1rem; color: #e1e3e8;">Cast & Crew</h3>
+          <div class="cast-row" style="display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px;">
+            ${item.People.slice(0, 12).map(person => `
+              <div class="cast-card" style="flex: 0 0 auto; background: #1a222c; border-radius: 8px; padding: 12px; min-width: 140px;">
+                <strong style="display: block; font-size: 1rem; color: #fff; margin-bottom: 4px;">${this.escape(person.Name ?? 'Unknown')}</strong>
+                <span style="font-size: 0.85rem; color: #a4adc1;">${this.escape(person.Role || person.Type || '')}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p><button class="primary-action" type="button" style="margin-top: 1.5rem;">▶ Play in browser</button>${castHtml}</div></section>`;
     this.content.querySelector<HTMLButtonElement>('.back-button')?.addEventListener('click', () => void this.showRoute('home'));
     this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.play(item));
     void this.setImage(this.content.querySelector('.detail-backdrop')!, item, 'Backdrop');
