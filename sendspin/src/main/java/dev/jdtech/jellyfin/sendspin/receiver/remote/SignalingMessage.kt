@@ -1,12 +1,7 @@
 package dev.jdtech.jellyfin.sendspin.receiver.remote
 
-import com.squareup.moshi.FromJson
-import com.squareup.moshi.JsonQualifier
-import com.squareup.moshi.JsonReader
-import com.squareup.moshi.JsonWriter
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.ToJson
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Messages exchanged with the Music Assistant WebRTC signaling server
@@ -16,12 +11,13 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
  * Modelled on the official MA mobile app's `SignalingMessage`. We only encode the
  * subset we send (connect-request / offer / ice-candidate / pong) and decode the
  * subset we receive (connected / answer / ice-candidate / error / peer-disconnected /
- * ping). [SignalingCodec] does the JSON, using the module's reflection-based Moshi.
+ * ping). [SignalingCodec] handles these small wire shapes directly so they remain stable
+ * under whole-program optimization without reflection rules.
  */
 
 /** STUN/TURN server entry handed to us in the `connected` message. */
 data class IceServerConfig(
-    @FlexibleStringList val urls: List<String> = emptyList(),
+    val urls: List<String> = emptyList(),
     val username: String? = null,
     val credential: String? = null,
 )
@@ -66,114 +62,122 @@ sealed interface SignalingInbound {
     data class Unknown(val type: String?) : SignalingInbound
 }
 
-/** `urls` may arrive as a single string (public server) or an array (Nabu Casa). */
-@Retention(AnnotationRetention.RUNTIME)
-@JsonQualifier
-annotation class FlexibleStringList
-
-private object FlexibleStringListAdapter {
-    @FromJson
-    @FlexibleStringList
-    fun fromJson(reader: JsonReader): List<String> =
-        when (reader.peek()) {
-            JsonReader.Token.BEGIN_ARRAY -> buildList {
-                reader.beginArray()
-                while (reader.hasNext()) add(reader.nextString())
-                reader.endArray()
-            }
-            JsonReader.Token.STRING -> listOf(reader.nextString())
-            JsonReader.Token.NULL -> {
-                reader.nextNull<Unit>()
-                emptyList()
-            }
-            else -> {
-                reader.skipValue()
-                emptyList()
-            }
-        }
-
-    @ToJson
-    fun toJson(writer: JsonWriter, @FlexibleStringList value: List<String>) {
-        writer.beginArray()
-        value.forEach { writer.value(it) }
-        writer.endArray()
-    }
-}
-
 /**
  * Serialises outbound and parses inbound signaling JSON. Stateless; safe to share.
  */
 class SignalingCodec {
-    private val moshi: Moshi =
-        Moshi.Builder()
-            .add(FlexibleStringListAdapter)
-            .addLast(KotlinJsonAdapterFactory())
-            .build()
-
-    private data class TypeEnvelope(val type: String? = null)
-
-    // Outbound wire shapes (only the fields the server reads).
-    private data class ConnectRequestWire(val type: String, val remoteId: String)
-    private data class OfferWire(
-        val type: String,
-        val remoteId: String,
-        val sessionId: String,
-        val data: SessionDescriptionData,
-    )
-    private data class IceCandidateWire(
-        val type: String,
-        val remoteId: String?,
-        val sessionId: String,
-        val data: IceCandidateData,
-    )
-    private data class PongWire(val type: String)
-
-    // Inbound wire shapes.
-    private data class ConnectedWire(
-        val sessionId: String? = null,
-        val iceServers: List<IceServerConfig> = emptyList(),
-    )
-    private data class AnswerWire(val sessionId: String? = null, val data: SessionDescriptionData)
-    private data class IceCandidateInWire(val sessionId: String? = null, val data: IceCandidateData)
-    private data class ErrorWire(val error: String? = null, val sessionId: String? = null)
-
-    private val envelopeAdapter = moshi.adapter(TypeEnvelope::class.java)
-
     fun encodeConnectRequest(remoteId: RemoteId): String =
-        moshi.adapter(ConnectRequestWire::class.java)
-            .toJson(ConnectRequestWire("connect-request", remoteId.rawId))
+        JSONObject()
+            .put("type", "connect-request")
+            .put("remoteId", remoteId.rawId)
+            .toString()
 
     fun encodeOffer(remoteId: RemoteId, sessionId: String, sdp: SessionDescriptionData): String =
-        moshi.adapter(OfferWire::class.java)
-            .toJson(OfferWire("offer", remoteId.rawId, sessionId, sdp))
+        JSONObject()
+            .put("type", "offer")
+            .put("remoteId", remoteId.rawId)
+            .put("sessionId", sessionId)
+            .put("data", sdp.toJson())
+            .toString()
 
     fun encodeIceCandidate(
         remoteId: RemoteId,
         sessionId: String,
         candidate: IceCandidateData,
     ): String =
-        moshi.adapter(IceCandidateWire::class.java)
-            .toJson(IceCandidateWire("ice-candidate", remoteId.rawId, sessionId, candidate))
+        JSONObject()
+            .put("type", "ice-candidate")
+            .put("remoteId", remoteId.rawId)
+            .put("sessionId", sessionId)
+            .put("data", candidate.toJson())
+            .toString()
 
-    fun encodePong(): String = moshi.adapter(PongWire::class.java).toJson(PongWire("pong"))
+    fun encodePong(): String = JSONObject().put("type", "pong").toString()
 
     /** Parse an inbound frame; returns [SignalingInbound.Unknown] on unrecognised/garbled input. */
     fun decode(json: String): SignalingInbound {
-        val type = runCatching { envelopeAdapter.fromJson(json)?.type }.getOrNull()
+        val envelope = runCatching { JSONObject(json) }.getOrNull()
+        val type = envelope?.stringOrNull("type")
         return runCatching {
             when (type) {
-                "connected" -> moshi.adapter(ConnectedWire::class.java).fromJson(json)
-                    ?.let { SignalingInbound.Connected(it.sessionId, it.iceServers) }
-                "answer" -> moshi.adapter(AnswerWire::class.java).fromJson(json)
-                    ?.let { SignalingInbound.Answer(it.sessionId, it.data) }
-                "ice-candidate" -> moshi.adapter(IceCandidateInWire::class.java).fromJson(json)
-                    ?.let { SignalingInbound.RemoteIce(it.sessionId, it.data) }
-                "error" -> moshi.adapter(ErrorWire::class.java).fromJson(json)
-                    ?.let { SignalingInbound.Error(it.error, it.sessionId) }
+                "connected" ->
+                    SignalingInbound.Connected(
+                        sessionId = envelope.stringOrNull("sessionId"),
+                        iceServers = envelope.optJSONArray("iceServers").toIceServers(),
+                    )
+                "answer" ->
+                    SignalingInbound.Answer(
+                        sessionId = envelope.stringOrNull("sessionId"),
+                        data = envelope.getJSONObject("data").toSessionDescription(),
+                    )
+                "ice-candidate" ->
+                    SignalingInbound.RemoteIce(
+                        sessionId = envelope.stringOrNull("sessionId"),
+                        data = envelope.getJSONObject("data").toIceCandidate(),
+                    )
+                "error" ->
+                    SignalingInbound.Error(
+                        error = envelope.stringOrNull("error"),
+                        sessionId = envelope.stringOrNull("sessionId"),
+                    )
                 "peer-disconnected" -> SignalingInbound.PeerDisconnected
                 "ping" -> SignalingInbound.Ping
                 else -> SignalingInbound.Unknown(type)
-            } ?: SignalingInbound.Unknown(type)
+            }
         }.getOrElse { SignalingInbound.Unknown(type) }
     }
+
+    private fun SessionDescriptionData.toJson(): JSONObject =
+        JSONObject().put("sdp", sdp).put("type", type)
+
+    private fun IceCandidateData.toJson(): JSONObject =
+        JSONObject().put("candidate", candidate).apply {
+            sdpMid?.let { put("sdpMid", it) }
+            sdpMLineIndex?.let { put("sdpMLineIndex", it) }
+        }
+
+    private fun JSONObject.toSessionDescription(): SessionDescriptionData =
+        SessionDescriptionData(sdp = getString("sdp"), type = getString("type"))
+
+    private fun JSONObject.toIceCandidate(): IceCandidateData =
+        IceCandidateData(
+            candidate = getString("candidate"),
+            sdpMid = stringOrNull("sdpMid"),
+            sdpMLineIndex = intOrNull("sdpMLineIndex"),
+        )
+
+    private fun JSONArray?.toIceServers(): List<IceServerConfig> =
+        if (this == null) {
+            emptyList()
+        } else {
+            buildList {
+                for (index in 0 until length()) {
+                    val server = optJSONObject(index) ?: continue
+                    add(
+                        IceServerConfig(
+                            urls = server.stringList("urls"),
+                            username = server.stringOrNull("username"),
+                            credential = server.stringOrNull("credential"),
+                        )
+                    )
+                }
+            }
+        }
+
+    private fun JSONObject.stringList(key: String): List<String> =
+        when (val value = opt(key)) {
+            is String -> listOf(value)
+            is JSONArray -> buildList {
+                for (index in 0 until value.length()) {
+                    value.optString(index).takeIf { it.isNotEmpty() }?.let(::add)
+                }
+            }
+            else -> emptyList()
+        }
+
+    private fun JSONObject.stringOrNull(key: String): String? =
+        if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
+
+    private fun JSONObject.intOrNull(key: String): Int? =
+        if (!has(key) || isNull(key)) null else optInt(key)
 }

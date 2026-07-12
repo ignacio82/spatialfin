@@ -23,6 +23,30 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    # Run the two Play bundles in separate, single-worker Gradle processes. R8 and
+    # Kotlin otherwise retain independent 8 GiB heaps from gradle.properties,
+    # which exceeds the memory budget of a hosted runner under load. Keep this as
+    # the first Gradle step so no default 8 GiB daemon is resident alongside it.
+    - name: Build optimized Play bundles (serialized)
+      env:
+        # Shrinker failures are deterministic; retrying a full optimized build
+        # only repeats the most memory-intensive CI step.
+        GRADLE_RETRY_ATTEMPTS: "1"
+      run: |
+        common_gradle_args=(
+          --no-daemon
+          --no-parallel
+          --max-workers=1
+          "-Dorg.gradle.jvmargs=-Xmx5120m -Dfile.encoding=UTF-8 -Dcom.android.tools.r8.enableKeepAnnotations=true"
+          -Pkotlin.compiler.execution.strategy=in-process
+        )
+        bash .github/scripts/run-gradle-with-retry.sh \
+          "${common_gradle_args[@]}" \
+          :app:unified:bundleLibreRelease
+        bash .github/scripts/run-gradle-with-retry.sh \
+          "${common_gradle_args[@]}" \
+          :app:unified:bundleTvRelease
+
     - name: Assemble shipped debug variants
       run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:assembleLibreDebug :app:unified:assembleTvDebug
 

@@ -17,6 +17,10 @@ plugins {
 allprojects {
     repositories {
         maven {
+            url = uri("https://storage.googleapis.com/r8-releases/raw")
+            content { includeModule("com.android.tools", "r8") }
+        }
+        maven {
             url = uri("${rootDir}/third_party/maven")
             content {
                 includeModule("com.sleepycat", "je")

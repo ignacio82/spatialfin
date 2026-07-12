@@ -19,6 +19,9 @@ android {
 }
 
 dependencies {
+    // Annotation-only dependency; it is consumed by R8 and is not packaged in the app.
+    compileOnly(libs.r8)
+
     implementation(project(":fcast")) // Depends on fcast for the cast/ abstraction layer
     implementation(libs.androidx.core)
     implementation(libs.kotlinx.coroutines.core)

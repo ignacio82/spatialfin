@@ -26,6 +26,17 @@ include(":plugins")
 include(":sendspin")
 
 pluginManagement {
+    // Keep the compiler and keep-annotation API on the same version. The app uses one precise
+    // NEVER_INLINE edge for a Java-WebSocket monitor-region verifier bug on Android XR.
+    buildscript {
+        repositories {
+            maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
+        }
+        dependencies {
+            classpath("com.android.tools:r8:9.3.19")
+        }
+    }
+
     includeBuild("build-logic")
     repositories {
         mavenCentral()

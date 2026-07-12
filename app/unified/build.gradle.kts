@@ -71,11 +71,10 @@ android {
             resValue("string", "search_authority", "dev.spatialfin.debug.search")
         }
         release {
-            // SceneCore alpha15 still crashes in optimized Galaxy XR builds with
-            // AbstractMethodError in com.android.extensions.xr.function.Consumer
-            // callbacks (verified on SM_I610 on 2026-05-25).
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // Optimized builds are validated through the release-derived staging variant on
+            // Galaxy XR. Keep the XR bridge rules below until that smoke test is retired.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -149,9 +148,8 @@ android {
         baseline = file("lint-baseline.xml")
         abortOnError = true
         warningsAsErrors = false
-        // CI runs lint on the debug variant; skip the redundant release pass
-        // (release is currently unminified anyway).
-        checkReleaseBuilds = false
+        // Release is optimized, so keep release-specific checks enabled.
+        checkReleaseBuilds = true
     }
 }
 
@@ -225,6 +223,8 @@ dependencies {
     implementation(libs.androidx.xr.scenecore)
     implementation(libs.androidx.xr.compose)
     implementation(libs.androidx.xr.compose.material3)
+    // Required on R8's analysis classpath for Jetpack XR alpha05+; the device supplies it.
+    compileOnly(libs.android.extensions.xr)
 
     // Camera
     implementation(libs.androidx.camera.core)

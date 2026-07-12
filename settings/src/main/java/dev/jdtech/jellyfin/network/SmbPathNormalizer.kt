@@ -12,6 +12,9 @@ object SmbPathNormalizer {
     ): SmbConnectionTarget {
         val normalizedHost = normalizeHost(host)
         val normalizedShare = normalizeShareName(shareName, normalizedHost)
+        require(!normalizedShare.isDotSegment()) {
+            "SMB share name must not be '.' or '..'."
+        }
 
         return SmbConnectionTarget(
             host = normalizedHost.ifBlank {
@@ -21,8 +24,13 @@ object SmbPathNormalizer {
         )
     }
 
-    fun normalizeRelativePath(path: String): String =
-        path.trim().replace('\\', '/').trim('/')
+    fun normalizeRelativePath(path: String): String {
+        val normalizedPath = path.trim().replace('\\', '/').trim('/')
+        require(normalizedPath.split('/').none { segment -> segment.isDotSegment() }) {
+            "SMB relative path must not contain '.' or '..' segments."
+        }
+        return normalizedPath
+    }
 
     private fun normalizeHost(host: String): String {
         val segments = host.toSegments()
@@ -76,4 +84,6 @@ object SmbPathNormalizer {
 
     private fun String.removePrefixIgnoreCase(prefix: String): String =
         if (startsWith(prefix, ignoreCase = true)) substring(prefix.length) else this
+
+    private fun String.isDotSegment(): Boolean = this == "." || this == ".."
 }

@@ -696,7 +696,7 @@ fun BeamNavigationRoot(
                             onOpenLibrary = { libraryId, libraryName, libraryType ->
                                 selectedLibraryId = libraryId.toString()
                                 selectedLibraryName = libraryName
-                                selectedLibraryType = libraryType.name
+                                selectedLibraryType = libraryType.type
                                 currentRoute = BeamRoute.Library
                             },
                             onOpenShow = { showId ->
@@ -763,7 +763,7 @@ fun BeamNavigationRoot(
                             onOpenLibrary = { libraryId, libraryName, libraryType ->
                                 selectedLibraryId = libraryId.toString()
                                 selectedLibraryName = libraryName
-                                selectedLibraryType = libraryType.name
+                                selectedLibraryType = libraryType.type
                                 currentRoute = BeamRoute.Library
                             },
                             onOpenShow = { showId ->
@@ -795,7 +795,7 @@ fun BeamNavigationRoot(
                     currentRoute == BeamRoute.Library -> {
                 val libraryId = selectedLibraryId?.let(UUID::fromString)
                 val libraryName = selectedLibraryName
-                val libraryType = selectedLibraryType?.let(CollectionType::valueOf)
+                val libraryType = selectedLibraryType?.let(CollectionType::fromString)
                 if (libraryId == null || libraryName == null || libraryType == null) {
                     currentRoute = BeamRoute.Home
                 } else {
@@ -826,7 +826,7 @@ fun BeamNavigationRoot(
                             onOpenLibrary = { nestedId, nestedName, nestedType ->
                                 selectedLibraryId = nestedId.toString()
                                 selectedLibraryName = nestedName
-                                selectedLibraryType = nestedType.name
+                                selectedLibraryType = nestedType.type
                                 currentRoute = BeamRoute.Library
                             },
                             onOpenShow = { showId ->
@@ -921,7 +921,7 @@ fun BeamNavigationRoot(
                         onOpenLibrary = { nestedId, nestedName, nestedType ->
                             selectedLibraryId = nestedId.toString()
                             selectedLibraryName = nestedName
-                            selectedLibraryType = nestedType.name
+                            selectedLibraryType = nestedType.type
                             currentRoute = BeamRoute.Library
                         },
                         onOpenShow = { showId ->

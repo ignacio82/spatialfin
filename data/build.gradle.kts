@@ -28,16 +28,16 @@ android {
                 com.android.build.api.variant.BuildConfigField(
                     "int",
                     Versions.APP_CODE.toString(),
-                    "Monotonically increasing version code"
-                )
+                    "Monotonically increasing version code",
+                ),
             )
             variant.buildConfigFields?.put(
                 "VERSION_NAME",
                 com.android.build.api.variant.BuildConfigField(
                     "String",
                     "\"${Versions.APP_NAME}\"",
-                    "Semantic version name"
-                )
+                    "Semantic version name",
+                ),
             )
         }
     }
@@ -69,10 +69,12 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.smbj)
     implementation(libs.jcifs.ng) { exclude(group = "org.bouncycastle", module = "bcprov-jdk15on") }
     implementation(libs.bcprov.jdk18on)
-    implementation(libs.nfs4j)
+    implementation(libs.nfs4j) {
+        // The read-only client does not use nfs4j's embedded server database.
+        exclude(group = "com.sleepycat", module = "je")
+    }
     implementation(libs.jmdns)
     implementation(libs.timber)
     testImplementation(libs.junit4)

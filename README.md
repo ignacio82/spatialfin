@@ -362,7 +362,7 @@ The debug APK is generated at:
 app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
 ```
 
-There are two product flavors: `libre` (universal — phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only; versionCode `APP_CODE + 1_000_000`). Build types are `debug`, `staging`, and `release`. Two Play Store bundles ship from the same source tree — `./gradlew :app:unified:bundleLibreRelease` and `:bundleTvRelease`. Release is currently shipped unminified — see `GEMINI.md` for the R8 / `androidx.xr` rationale and the keep rules that must stay in `app/unified/proguard-rules.pro`.
+There are two product flavors: `libre` (universal — phone / Galaxy XR / Beam Pro) and `tv` (Google Play Android TV track only; versionCode `APP_CODE + 1_000_000`). Build types are `debug`, `staging`, and `release`. Two Play Store bundles ship from the same source tree — `./gradlew :app:unified:bundleLibreRelease` and `:bundleTvRelease`. Both release flavors enable R8 code minification and optimized resource shrinking, and CI builds both bundles as a blocking gate. Jetpack XR's device-provided API is present only on the analysis classpath through `compileOnly("com.android.extensions.xr:extensions-xr:1.3.0")`; the optimized Libre build passed repeated cold-start/OpenXR-session smoke tests on Galaxy XR on 2026-07-12. See `GEMINI.md` for the XR boundary rules and validation checklist.
 
 ### Native Subtitle Library
 

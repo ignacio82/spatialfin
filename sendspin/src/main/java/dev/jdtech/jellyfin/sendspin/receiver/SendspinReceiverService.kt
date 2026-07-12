@@ -45,9 +45,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
-import org.java_websocket.WebSocket
 import timber.log.Timber
-import java.lang.reflect.Field
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -62,7 +60,8 @@ class SendspinReceiverService : Service() {
     private var audioPlayer: AndroidSendspinAudioPlayer? = null
     private var okHttpClient: OkHttpClient? = null
     private var advertiser: SendspinReceiverAdvertiser? = null
-    private var bootstrapJob: Job? = null
+    @Volatile private var bootstrapJob: Job? = null
+    private val clientLifecycleLock = Any()
 
     /**
      * Per-client lifecycle scope: every collector and topology loop tied to the
@@ -98,7 +97,7 @@ class SendspinReceiverService : Service() {
     private var lastSoftwareVersion: String? = null
     private var smoothedVisualizerLevels: List<Float> = emptyList()
     @Volatile private var lastPlayedServerId: String = ""
-    @Volatile private var lastClockRealignLogUs: Long = 0L
+    @Volatile private var lastClockRecoveryLogUs: Long = 0L
 
     /**
      * The current Jellyfin user, pushed in via Intent extras (the service is
@@ -281,8 +280,12 @@ class SendspinReceiverService : Service() {
         newClient.onVisualizerFrame = { frame ->
             updateVisualizerState(frame)
         }
+        val clockRecoveryGuard =
+            SendspinClockRecoveryGuard(
+                requiredOutliers = CLOCK_RECOVERY_REQUIRED_OUTLIERS,
+            )
         newClient.onAudioChunk = { chunk ->
-            recoverSendspinClockIfNeeded(newClient, chunk)
+            recoverSendspinClockIfNeeded(newClient, chunk, clockRecoveryGuard)
         }
         val createdAudioPlayer = newClient.audioPlayer as AndroidSendspinAudioPlayer
         newClient.setStaticDelayMs(ANDROID_AUDIO_OUTPUT_DELAY_MS)
@@ -334,6 +337,18 @@ class SendspinReceiverService : Service() {
                     it.copy(serverName = name.takeIf(String::isNotBlank))
                 }
                 updateNotification()
+            }
+        }
+        cs.launch {
+            newClient.serverHello.collect { hello ->
+                if (hello == null) {
+                    clockRecoveryGuard.clearConnection()
+                } else {
+                    clockRecoveryGuard.beginConnection(
+                        connectionToken = hello,
+                        baseline = newClient.clockSync.recoveryReading(),
+                    )
+                }
             }
         }
         cs.launch {
@@ -656,48 +671,43 @@ class SendspinReceiverService : Service() {
 
     /**
      * Guard against SendSpin clock discontinuities that map fresh audio chunks
-     * outside [AudioBuffer]'s playable window. The library invokes
-     * [SendSpinClient.onAudioChunk] immediately before `AudioBuffer.offer()`,
-     * so a realignment here lets the same chunk be queued instead of dropped.
+     * outside [AudioBuffer]'s playable window. sendspin-jvm does not expose a
+     * supported way to reset its [ClockSync], so rebuild the client to obtain a
+     * fresh filter instead of mutating the filter's private Kalman state. The
+     * filter also outlives socket reconnects, so [recoveryGuard] first requires
+     * a measurement newer than the active connection's hello-time baseline.
      */
-    private fun recoverSendspinClockIfNeeded(client: SendSpinClient, chunk: AudioChunk) {
+    private fun recoverSendspinClockIfNeeded(
+        client: SendSpinClient,
+        chunk: AudioChunk,
+        recoveryGuard: SendspinClockRecoveryGuard,
+    ) {
+        if (this.client !== client) return
+        val connectionToken = client.serverHello.value ?: return
+        val readingBeforeMapping = client.clockSync.recoveryReading()
+        if (!recoveryGuard.isClockReady(connectionToken, readingBeforeMapping)) return
+
         val nowUs = ClockSync.Companion.localMicros()
         val mappedUs = client.toLocalMicros(chunk.serverTimestampMicros)
+        val readingAfterMapping = client.clockSync.recoveryReading()
+        // Do not classify a chunk across a concurrent ClockSync update: its mapping may have
+        // used a different filter state than the reading that armed this generation.
+        if (readingAfterMapping != readingBeforeMapping) return
         val skewUs = mappedUs - nowUs
         val needsRecovery =
-            skewUs < -CLOCK_REALIGN_LATE_THRESHOLD_US ||
-                skewUs > CLOCK_REALIGN_FUTURE_THRESHOLD_US
-        if (!needsRecovery) return
+            skewUs < -CLOCK_RECOVERY_LATE_THRESHOLD_US ||
+                skewUs > CLOCK_RECOVERY_FUTURE_THRESHOLD_US
+        if (!recoveryGuard.recordChunk(connectionToken, needsRecovery)) return
 
-        val targetLocalUs = nowUs + CLOCK_REALIGN_TARGET_LEAD_US
-        val targetOffsetUs = chunk.serverTimestampMicros - targetLocalUs
-        runCatching {
-            ClockSyncReflection.realign(
-                clockSync = client.clockSync,
-                offsetMicros = targetOffsetUs,
-                localNowMicros = nowUs,
+        if (!scheduleClientRebuild("clock_discontinuity")) return
+        client.audioBuffer.flush()
+        if (abs(nowUs - lastClockRecoveryLogUs) >= CLOCK_RECOVERY_LOG_INTERVAL_US) {
+            lastClockRecoveryLogUs = nowUs
+            Timber.tag(TAG).w(
+                "Sendspin clock discontinuity: chunkTs=%d skew=%.1f ms; rebuilding client",
+                chunk.serverTimestampMicros,
+                skewUs / 1_000.0,
             )
-            client.audioBuffer.flush()
-        }.onSuccess {
-            if (abs(nowUs - lastClockRealignLogUs) >= CLOCK_REALIGN_LOG_INTERVAL_US) {
-                lastClockRealignLogUs = nowUs
-                Timber.tag(TAG).w(
-                    "Sendspin clock realigned for audio: chunkTs=%d skew=%.1f ms offset=%.1f ms",
-                    chunk.serverTimestampMicros,
-                    skewUs / 1_000.0,
-                    targetOffsetUs / 1_000.0,
-                )
-            }
-        }.onFailure { error ->
-            if (abs(nowUs - lastClockRealignLogUs) >= CLOCK_REALIGN_LOG_INTERVAL_US) {
-                lastClockRealignLogUs = nowUs
-                Timber.tag(TAG).w(
-                    error,
-                    "Sendspin clock realign failed: chunkTs=%d skew=%.1f ms",
-                    chunk.serverTimestampMicros,
-                    skewUs / 1_000.0,
-                )
-            }
         }
     }
 
@@ -811,15 +821,23 @@ class SendspinReceiverService : Service() {
                     )
                     stalledTicks = 0
                     lastRendered = -1L
-                    bootstrapJob?.cancel()
-                    bootstrapJob = scope.launch {
-                        teardownClient("stall_recovery")
-                        startServer(displayName, receiverClientId, lastPort, lastSoftwareVersion)
-                    }
+                    scheduleClientRebuild("stall_recovery")
                 }
             }
         }
     }
+
+    /** Schedules at most one client rebuild across the watchdog and clock-discontinuity paths. */
+    private fun scheduleClientRebuild(reason: String): Boolean =
+        synchronized(clientLifecycleLock) {
+            if (bootstrapJob?.isActive == true) return@synchronized false
+            bootstrapJob =
+                scope.launch {
+                    teardownClient(reason)
+                    startServer(displayName, receiverClientId, lastPort, lastSoftwareVersion)
+                }
+            true
+        }
 
     /**
      * Tear down everything [startServer] built (socket, host, audio, per-client
@@ -1504,13 +1522,20 @@ class SendspinReceiverService : Service() {
     }
 
     private fun discoverMusicAssistantServerUrl(serverId: String?): String? {
-        val candidates =
+        val fallbackCandidates =
             listOfNotNull(
-                remoteMusicAssistantUrl(),
                 storedMusicAssistantServerUrl(serverId),
                 SendspinReceiverSession.state.value.musicAssistantServerUrl,
             ).distinct()
-        val client = musicAssistantClient ?: return candidates.firstOrNull()
+        val candidates =
+            buildList {
+                // A socket address alone does not identify the active connection when a
+                // second server is handshaking. Try every public connection candidate and
+                // let the /info server-id check below select the active MA instance.
+                if (!serverId.isNullOrBlank()) addAll(inboundMusicAssistantUrls())
+                addAll(fallbackCandidates)
+            }.distinct()
+        val client = musicAssistantClient ?: return fallbackCandidates.firstOrNull()
         for (candidate in candidates) {
             val info =
                 runCatching { client.fetchInfo(candidate) }
@@ -1522,20 +1547,23 @@ class SendspinReceiverService : Service() {
                 return baseUrl
             }
         }
-        return candidates.firstOrNull()
+        // Never fall back to an unverified socket peer: it may be a second server that is
+        // only in the pending-handshake slot. Stored/session URLs are user- or ID-scoped.
+        return fallbackCandidates.firstOrNull()
     }
 
-    private fun remoteMusicAssistantUrl(): String? {
-        val host = serverHost ?: return null
-        val socket =
-            runCatching {
-                val field = host.javaClass.getDeclaredField("activeConn")
-                field.isAccessible = true
-                field.get(host) as? WebSocket
-            }.getOrNull()
-        val address = socket?.remoteSocketAddress?.address?.hostAddress ?: return null
-        val hostAddress = if (address.contains(":")) "[$address]" else address
-        return "http://$hostAddress:8095"
+    private fun inboundMusicAssistantUrls(): List<String> {
+        val host = serverHost ?: return emptyList()
+        return host.connections
+            .asSequence()
+            .filter { it.isOpen }
+            .mapNotNull { host.getRemoteSocketAddress(it)?.address?.hostAddress }
+            .distinct()
+            .map { address ->
+                val hostAddress = if (address.contains(":")) "[$address]" else address
+                "http://$hostAddress:8095"
+            }
+            .toList()
     }
 
     private fun musicAssistantToken(serverId: String?, serverUrl: String?): String? {
@@ -1974,41 +2002,6 @@ class SendspinReceiverService : Service() {
         nm.createNotificationChannel(channel)
     }
 
-    private object ClockSyncReflection {
-        private val lockField = ClockSync::class.java.privateField("lock")
-        private val xOffsetField = ClockSync::class.java.privateField("xOffset")
-        private val xDriftField = ClockSync::class.java.privateField("xDrift")
-        private val p00Field = ClockSync::class.java.privateField("p00")
-        private val p01Field = ClockSync::class.java.privateField("p01")
-        private val p10Field = ClockSync::class.java.privateField("p10")
-        private val p11Field = ClockSync::class.java.privateField("p11")
-        private val lastPredictTimeMicrosField = ClockSync::class.java.privateField("lastPredictTimeMicros")
-        private val sampleCountField = ClockSync::class.java.privateField("sampleCount")
-        private val lastOffsetMicrosField = ClockSync::class.java.privateField("lastOffsetMicros")
-        private val lastDriftPpmField = ClockSync::class.java.privateField("lastDriftPpm")
-        private val lastRttMicrosField = ClockSync::class.java.privateField("lastRttMicros")
-
-        fun realign(clockSync: ClockSync, offsetMicros: Long, localNowMicros: Long) {
-            val lock = lockField.get(clockSync) ?: clockSync
-            synchronized(lock) {
-                xOffsetField.setDouble(clockSync, offsetMicros.toDouble())
-                xDriftField.setDouble(clockSync, 0.0)
-                p00Field.setDouble(clockSync, CLOCK_REALIGN_P00)
-                p01Field.setDouble(clockSync, 0.0)
-                p10Field.setDouble(clockSync, 0.0)
-                p11Field.setDouble(clockSync, CLOCK_REALIGN_P11)
-                lastPredictTimeMicrosField.setLong(clockSync, localNowMicros)
-                sampleCountField.setInt(clockSync, 0)
-                lastOffsetMicrosField.setDouble(clockSync, offsetMicros.toDouble())
-                lastDriftPpmField.setDouble(clockSync, 0.0)
-                lastRttMicrosField.setLong(clockSync, 0L)
-            }
-        }
-
-        private fun Class<*>.privateField(name: String): Field =
-            getDeclaredField(name).apply { isAccessible = true }
-    }
-
     companion object {
         const val NOTIFICATION_CHANNEL_ID: String = "sendspin_receiver"
         const val NOTIFICATION_ID: Int = 0x5E2D // "SEND"
@@ -2035,12 +2028,10 @@ class SendspinReceiverService : Service() {
         private const val ANDROID_AUDIO_OUTPUT_DELAY_MS = 80
         private const val REQUIRED_LEAD_TIME_MS = 120
         private const val MIN_BUFFER_MS = 120
-        private const val CLOCK_REALIGN_LATE_THRESHOLD_US = 1_000_000L
-        private const val CLOCK_REALIGN_FUTURE_THRESHOLD_US = 5_000_000L
-        private const val CLOCK_REALIGN_TARGET_LEAD_US = 200_000L
-        private const val CLOCK_REALIGN_LOG_INTERVAL_US = 5_000_000L
-        private const val CLOCK_REALIGN_P00 = 1.0E12
-        private const val CLOCK_REALIGN_P11 = 1.0E-6
+        private const val CLOCK_RECOVERY_LATE_THRESHOLD_US = 1_000_000L
+        private const val CLOCK_RECOVERY_FUTURE_THRESHOLD_US = 5_000_000L
+        private const val CLOCK_RECOVERY_REQUIRED_OUTLIERS = 3
+        private const val CLOCK_RECOVERY_LOG_INTERVAL_US = 5_000_000L
         private const val VISUALIZER_BUFFER_CAPACITY_BYTES = 4096
         private const val VISUALIZER_RATE_MAX = 15
         private const val VISUALIZER_BIN_COUNT = 16

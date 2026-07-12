@@ -1,14 +1,5 @@
 package dev.jdtech.jellyfin.network
 
-import com.hierynomus.msdtyp.AccessMask
-import com.hierynomus.msfscc.FileAttributes
-import com.hierynomus.mssmb2.SMB2CreateDisposition
-import com.hierynomus.mssmb2.SMB2CreateOptions
-import com.hierynomus.mssmb2.SMB2ShareAccess
-import com.hierynomus.smbj.SMBClient
-import com.hierynomus.smbj.SmbConfig
-import com.hierynomus.smbj.auth.AuthenticationContext
-import com.hierynomus.smbj.share.DiskShare
 import dev.jdtech.jellyfin.network.SmbConnectionTarget
 import dev.jdtech.jellyfin.network.SmbPathNormalizer
 import java.io.InputStream
@@ -26,14 +17,6 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 class SmbFileClient : NetworkFileClient {
-
-    private val config = SmbConfig.builder()
-        .withTimeout(15, TimeUnit.SECONDS)
-        .withSoTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-    private val client = SMBClient(config)
-
     override suspend fun listFiles(
         host: String,
         shareName: String,
@@ -41,20 +24,24 @@ class SmbFileClient : NetworkFileClient {
         credentials: NetworkCredentials,
     ): List<NetworkFileEntry> = withContext(Dispatchers.IO) {
         val target = requireTarget(host, shareName)
-        useShare(target.host, target.shareName, credentials) { share ->
-            val normalizedPath = SmbPathNormalizer.normalizeRelativePath(path)
-            share.list(normalizedPath).mapNotNull { info ->
-                val name = info.fileName
-                if (name == "." || name == "..") return@mapNotNull null
-                val fullPath = if (normalizedPath.isEmpty()) name else "$normalizedPath/$name"
-                val isDir = info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
-                NetworkFileEntry(
-                    name = name,
-                    path = fullPath,
-                    isDirectory = isDir,
-                    size = info.endOfFile,
-                    lastModified = info.lastWriteTime?.toEpochMillis(),
-                )
+        val normalizedPath = SmbPathNormalizer.normalizeRelativePath(path)
+        useSmbFile(target, normalizedPath, credentials) { directory ->
+            val children = directory.listFiles()
+            try {
+                children.mapNotNull { child ->
+                    val name = child.getName().trimEnd('/', '\\')
+                    if (name == "." || name == ".." || name.isEmpty()) return@mapNotNull null
+                    val isDirectory = child.isDirectory
+                    NetworkFileEntry(
+                        name = name,
+                        path = if (normalizedPath.isEmpty()) name else "$normalizedPath/$name",
+                        isDirectory = isDirectory,
+                        size = if (isDirectory) 0L else child.length(),
+                        lastModified = child.lastModified().takeIf { it > 0L },
+                    )
+                }
+            } finally {
+                children.forEach { child -> runCatching { child.close() } }
             }
         }
     }
@@ -67,55 +54,38 @@ class SmbFileClient : NetworkFileClient {
         offset: Long,
     ): InputStream = withContext(Dispatchers.IO) {
         val target = requireTarget(host, shareName)
-        val connection = client.connect(target.host)
+        require(offset >= 0L) { "SMB read offset must not be negative" }
+        val context = createBrowserContext(credentials, anonymous = false)
+        val file = createOwnedSmbFile(context) { smbUrl(target, filePath) }
         try {
-            val authContext = credentials.toAuthContext()
-            val session = connection.authenticate(authContext)
+            val inputStream = file.openInputStream()
             try {
-                val share = session.connectShare(target.shareName) as DiskShare
-                try {
-                    val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
-                    val file = share.openFile(
-                        normalizedPath,
-                        setOf(AccessMask.GENERIC_READ),
-                        null,
-                        setOf(SMB2ShareAccess.FILE_SHARE_READ),
-                        SMB2CreateDisposition.FILE_OPEN,
-                        setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
-                    )
-                    try {
-                        val inputStream = file.inputStream
-                        if (offset > 0) {
-                            skipFully(inputStream, offset)
-                        }
+                if (offset > 0L) skipFully(inputStream, offset)
+                object : InputStream() {
+                    private var closed = false
 
-                        // Wrap to close resources when stream is closed
-                        object : InputStream() {
-                            override fun read(): Int = inputStream.read()
-                            override fun read(b: ByteArray, off: Int, len: Int): Int = inputStream.read(b, off, len)
-                            override fun available(): Int = inputStream.available()
-                            override fun close() {
-                                try { inputStream.close() } catch (_: Exception) {}
-                                try { file.close() } catch (_: Exception) {}
-                                try { share.close() } catch (_: Exception) {}
-                                try { session.close() } catch (_: Exception) {}
-                                try { connection.close() } catch (_: Exception) {}
-                            }
-                        }
-                    } catch (e: Exception) {
-                        try { file.close() } catch (_: Exception) {}
-                        throw e
+                    override fun read(): Int = inputStream.read()
+
+                    override fun read(b: ByteArray, off: Int, len: Int): Int =
+                        inputStream.read(b, off, len)
+
+                    override fun available(): Int = inputStream.available()
+
+                    override fun close() {
+                        if (closed) return
+                        closed = true
+                        runCatching { inputStream.close() }
+                        runCatching { file.close() }
+                        runCatching { context.close() }
                     }
-                } catch (e: Exception) {
-                    try { share.close() } catch (_: Exception) {}
-                    throw e
                 }
-            } catch (e: Exception) {
-                try { session.close() } catch (_: Exception) {}
+            } catch (e: Throwable) {
+                runCatching { inputStream.close() }
                 throw e
             }
-        } catch (e: Exception) {
-            try { connection.close() } catch (_: Exception) {}
+        } catch (e: Throwable) {
+            runCatching { file.close() }
+            runCatching { context.close() }
             throw e
         }
     }
@@ -127,11 +97,7 @@ class SmbFileClient : NetworkFileClient {
         credentials: NetworkCredentials,
     ): Long = withContext(Dispatchers.IO) {
         val target = requireTarget(host, shareName)
-        useShare(target.host, target.shareName, credentials) { share ->
-            val normalizedPath = SmbPathNormalizer.normalizeRelativePath(filePath)
-            val info = share.getFileInformation(normalizedPath)
-            info.standardInformation.endOfFile
-        }
+        useSmbFile(target, filePath, credentials) { file -> file.length() }
     }
 
     override suspend fun testConnection(
@@ -141,8 +107,9 @@ class SmbFileClient : NetworkFileClient {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val target = requireTarget(host, shareName)
-            useShare(target.host, target.shareName, credentials) { share ->
-                share.list("").size >= 0
+            useSmbFile(target, "", credentials) { directory ->
+                val children = directory.listFiles()
+                children.forEach { child -> runCatching { child.close() } }
             }
             true
         } catch (e: Exception) {
@@ -183,12 +150,17 @@ class SmbFileClient : NetworkFileClient {
         host: String,
         context: CIFSContext,
     ): List<DiscoveredSmbServerShare> {
-        val server = SmbFile("smb://$host/", context)
+        val server = createOwnedSmbFile(context) { "smb://${host.toSmbUrlHost()}/" }
         return try {
-            server.listFiles()
-                .mapNotNull { file -> file.toDiscoveredServerShare() }
-                .distinctBy { it.name.lowercase() }
-                .sortedBy { it.name.lowercase() }
+            val children = server.listFiles()
+            try {
+                children
+                    .mapNotNull { file -> file.toDiscoveredServerShare() }
+                    .distinctBy { it.name.lowercase() }
+                    .sortedBy { it.name.lowercase() }
+            } finally {
+                children.forEach { child -> runCatching { child.close() } }
+            }
         } finally {
             try { server.close() } catch (_: Exception) {}
             try { context.close() } catch (_: Exception) {}
@@ -207,21 +179,26 @@ class SmbFileClient : NetworkFileClient {
             setProperty("jcifs.smb.client.soTimeout", TimeUnit.SECONDS.toMillis(15).toString())
         }
         val baseContext = BaseContext(PropertyConfiguration(properties))
-        if (anonymous) {
-            return baseContext.withAnonymousCredentials()
-        }
-
-        val username = credentials.username?.takeIf { it.isNotBlank() }
-        return if (username == null) {
-            baseContext.withGuestCrendentials()
-        } else {
-            baseContext.withCredentials(
-                NtlmPasswordAuthenticator(
-                    credentials.domain.orEmpty(),
-                    username,
-                    credentials.password.orEmpty(),
-                )
-            )
+        return try {
+            if (anonymous) {
+                baseContext.withAnonymousCredentials()
+            } else {
+                val username = credentials.username?.takeIf { it.isNotBlank() }
+                if (username == null) {
+                    baseContext.withGuestCrendentials()
+                } else {
+                    baseContext.withCredentials(
+                        NtlmPasswordAuthenticator(
+                            credentials.domain.orEmpty(),
+                            username,
+                            credentials.password.orEmpty(),
+                        )
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            runCatching { baseContext.close() }
+            throw error
         }
     }
 
@@ -244,42 +221,38 @@ class SmbFileClient : NetworkFileClient {
         return DiscoveredSmbServerShare(name = shareName)
     }
 
-    private inline fun <T> useShare(
-        host: String,
-        shareName: String,
+    private inline fun <T> useSmbFile(
+        target: SmbConnectionTarget,
+        path: String,
         credentials: NetworkCredentials,
-        block: (DiskShare) -> T,
+        block: (SmbFile) -> T,
     ): T {
-        val connection = client.connect(host)
+        val context = createBrowserContext(credentials, anonymous = false)
+        val file = createOwnedSmbFile(context) { smbUrl(target, path) }
         try {
-            val authContext = credentials.toAuthContext()
-            val session = connection.authenticate(authContext)
-            try {
-                val share = session.connectShare(shareName) as DiskShare
-                try {
-                    return block(share)
-                } finally {
-                    try { share.close() } catch (_: Exception) {}
-                }
-            } finally {
-                try { session.close() } catch (_: Exception) {}
-            }
+            return block(file)
         } finally {
-            try { connection.close() } catch (_: Exception) {}
+            runCatching { file.close() }
+            runCatching { context.close() }
         }
     }
 
-    private fun NetworkCredentials.toAuthContext(): AuthenticationContext {
-        return if (username.isNullOrBlank()) {
-            AuthenticationContext.guest()
-        } else {
-            AuthenticationContext(
-                username,
-                password?.toCharArray() ?: charArrayOf(),
-                domain,
-            )
+    private inline fun createOwnedSmbFile(context: CIFSContext, url: () -> String): SmbFile =
+        try {
+            SmbFile(url(), context)
+        } catch (error: Throwable) {
+            runCatching { context.close() }
+            throw error
         }
+
+    private fun smbUrl(target: SmbConnectionTarget, path: String): String {
+        val normalizedPath = SmbPathNormalizer.normalizeRelativePath(path)
+        val base = "smb://${target.host.toSmbUrlHost()}/${target.shareName.trim('/', '\\')}/"
+        return if (normalizedPath.isEmpty()) base else "$base$normalizedPath"
     }
+
+    private fun String.toSmbUrlHost(): String =
+        if (contains(':') && !startsWith('[')) "[$this]" else this
 
     private fun requireTarget(host: String, shareName: String): SmbConnectionTarget {
         val target = SmbPathNormalizer.normalizeConnectionTarget(host, shareName)

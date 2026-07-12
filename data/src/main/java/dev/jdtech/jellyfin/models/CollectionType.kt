@@ -1,17 +1,18 @@
 package dev.jdtech.jellyfin.models
 
-enum class CollectionType(val type: String) {
-    Movies("movies"),
-    TvShows("tvshows"),
-    HomeVideos("homevideos"),
-    Music("music"),
-    Playlists("playlists"),
-    Books("books"),
-    LiveTv("livetv"),
-    BoxSets("boxsets"),
-    Mixed("null"),
-    Folders("folders"),
-    Unknown("unknown");
+enum class CollectionType(val type: String, private val legacySavedStateValue: String) {
+    // Keep these values explicit: older Beam builds persisted enum names, which R8 may rewrite.
+    Movies("movies", "Movies"),
+    TvShows("tvshows", "TvShows"),
+    HomeVideos("homevideos", "HomeVideos"),
+    Music("music", "Music"),
+    Playlists("playlists", "Playlists"),
+    Books("books", "Books"),
+    LiveTv("livetv", "LiveTv"),
+    BoxSets("boxsets", "BoxSets"),
+    Mixed("null", "Mixed"),
+    Folders("folders", "Folders"),
+    Unknown("unknown", "Unknown");
 
     companion object {
         val defaultValue = Unknown
@@ -27,11 +28,9 @@ enum class CollectionType(val type: String) {
                 return Mixed
             }
 
-            return try {
-                entries.first { it.type == string }
-            } catch (e: NoSuchElementException) {
-                defaultValue
-            }
+            return entries.firstOrNull {
+                it.type == string || it.legacySavedStateValue == string
+            } ?: defaultValue
         }
     }
 }
