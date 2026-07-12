@@ -16,8 +16,8 @@ const HOME_ITEM_FIELDS = [
   'OfficialRating',
   'ProductionYear',
   'RunTimeTicks',
-  'MediaSources',
-  'People',
+
+
 ].join(',');
 const HOME_IMAGE_TYPES = 'Primary,Backdrop,Logo';
 
