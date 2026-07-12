@@ -291,7 +291,7 @@ Independent toggle under **Settings → Security → Encrypt new downloads**:
 
 ## SpatialFin Web App
 
-SpatialFin provides a web-based version of the app accessible at [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web). The web application is built with WebXR and statically hosted via GitHub Pages (source in the `./docs/web` directory).
+SpatialFin provides an alpha web-based version of the app accessible at [spatialfin.martinez.fyi/web](https://spatialfin.martinez.fyi/web). The web application is built with WebXR using [XR Blocks](https://xrblocks.github.io/) and statically hosted via GitHub Pages (source in the `./docs/web` directory).
 
 ### Connecting with Tailscale
 
