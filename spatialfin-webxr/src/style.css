@@ -642,20 +642,47 @@ canvas {
 }
 
 .library-tile {
+  position: relative;
+  overflow: hidden;
   background: #111318;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
+  min-height: 160px;
+  cursor: pointer;
+  transition: transform 0.2s, border-color 0.2s;
+  text-align: left;
+}
+
+.library-art {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  transition: transform 0.2s;
+}
+.library-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(17, 19, 24, 0.95) 0%, rgba(17, 19, 24, 0.7) 100%);
+}
+
+.library-content {
+  position: relative;
+  z-index: 1;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  cursor: pointer;
-  transition: transform 0.2s, background 0.2s;
-  text-align: left;
+  height: 100%;
 }
+
 .library-tile:hover {
   transform: translateY(-2px);
-  background: #1a222c;
+  border-color: #a4c9fe;
+}
+.library-tile:hover .library-art {
+  transform: scale(1.05);
 }
 .library-tile .library-icon {
   font-size: 1.5rem;

@@ -11,6 +11,7 @@ import {
   fetchViews,
   fetchItem,
   extractMediaPills,
+  type JellyfinImageType,
   type JellyfinItem,
   type JellyfinView,
 } from './api';
@@ -168,7 +169,10 @@ export class BrowserApp {
           <h2>My Media</h2>
           <div class="library-grid" style="margin-bottom: 2rem;">
             ${this.views.map(view => `<button class="library-tile" data-view-id="${view.Id}">
-              <span class="library-icon">▣</span><strong>${this.escape(view.Name)}</strong><span>Browse library</span>
+              <div class="library-art" aria-hidden="true"></div>
+              <div class="library-content">
+                <span class="library-icon">▣</span><strong>${this.escape(view.Name)}</strong><span>Browse library</span>
+              </div>
             </button>`).join('')}
           </div>
         </section>
@@ -194,6 +198,8 @@ export class BrowserApp {
     if (this.views.length > 0) {
       this.content.querySelectorAll<HTMLButtonElement>('.my-media .library-tile').forEach((btn, index) => {
         btn.addEventListener('click', () => void this.showLibrary(this.views[index]));
+        const art = btn.querySelector('.library-art');
+        if (art) void this.setImage(art as HTMLElement, this.views[index], 'Primary');
       });
     }
     const shelfRoot = this.content.querySelector<HTMLElement>('.browser-shelves')!;
@@ -256,7 +262,7 @@ export class BrowserApp {
     return card;
   }
 
-  private async setImage(element: Element, item: JellyfinItem, type: 'Primary' | 'Backdrop') {
+  private async setImage(element: HTMLElement, item: { Id: string, ImageTags?: Record<string, string>, BackdropImageTags?: string[] }, type: JellyfinImageType = 'Primary') {
     // Browser automation exercises interaction and navigation separately from
     // XR texture upload; skipping remote artwork there keeps the headless
     // renderer within its GPU-memory budget.

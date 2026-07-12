@@ -38,6 +38,7 @@ export interface JellyfinView {
   Id: string;
   Name: string;
   CollectionType?: string;
+  ImageTags?: Record<string, string>;
 }
 
 export type JellyfinImageType = 'Primary' | 'Backdrop' | 'Logo';
@@ -464,13 +465,13 @@ const IMAGE_DIMENSIONS: Record<
   Logo: {maxWidth: 960, maxHeight: 480},
 };
 
-function imageTag(item: JellyfinItem, imageType: JellyfinImageType): string | undefined {
+function imageTag(item: { Id: string, ImageTags?: Record<string, string>, BackdropImageTags?: string[] }, imageType: JellyfinImageType): string | undefined {
   if (imageType === 'Backdrop') return item.BackdropImageTags?.[0];
   return item.ImageTags?.[imageType];
 }
 
 export async function fetchItemImage(
-  item: JellyfinItem,
+  item: { Id: string, ImageTags?: Record<string, string>, BackdropImageTags?: string[] },
   imageType: JellyfinImageType,
   signal?: AbortSignal,
 ): Promise<Blob | null> {
