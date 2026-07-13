@@ -17,6 +17,7 @@ const HOME_ITEM_FIELDS = [
   'OfficialRating',
   'ProductionYear',
   'RunTimeTicks',
+  'SeriesId',
 
 
 ].join(',');
@@ -67,13 +68,31 @@ export interface JellyfinPerson {
 export interface JellyfinMediaStream {
   Type?: 'Audio' | 'Video' | 'Subtitle';
   Codec?: string;
+  Title?: string;
   DisplayTitle?: string;
   Language?: string;
+  Index?: number;
   IsDefault?: boolean;
+  IsForced?: boolean;
+  IsHearingImpaired?: boolean;
+  IsExternal?: boolean;
+  IsTextSubtitleStream?: boolean;
+  SupportsExternalStream?: boolean;
+  DeliveryMethod?: 'Embed' | 'External' | 'Encode' | 'Drop' | string;
+  DeliveryUrl?: string | null;
+  IsExternalUrl?: boolean | null;
   Profile?: string;
   Width?: number;
   Height?: number;
   ChannelLayout?: string;
+}
+
+export interface JellyfinMediaAttachment {
+  Codec?: string;
+  Index?: number;
+  FileName?: string;
+  MimeType?: string;
+  DeliveryUrl?: string | null;
 }
 
 export interface JellyfinItem {
@@ -91,6 +110,7 @@ export interface JellyfinItem {
   ParentIndexNumber?: number;
   IndexNumber?: number;
   SeriesName?: string;
+  SeriesId?: string;
   SeasonName?: string;
   UserData?: JellyfinUserData;
   ImageTags?: {
@@ -111,6 +131,7 @@ export interface JellyfinMediaSourceInfo {
   DefaultAudioStreamIndex?: number | null;
   VideoCodec?: string;
   MediaStreams?: JellyfinMediaStream[];
+  MediaAttachments?: JellyfinMediaAttachment[];
 }
 
 export interface JellyfinPlaybackInfoResponse {
@@ -125,6 +146,27 @@ export interface JellyfinPlaybackInfo {
   mediaSourceId?: string;
   playSessionId?: string;
   requiredHeaders: Record<string, string>;
+  subtitleTracks: JellyfinSubtitleTrack[];
+  fontUrls: string[];
+  audioStreams: JellyfinMediaStream[];
+  defaultAudioStreamIndex?: number;
+}
+
+export interface JellyfinPlaybackOptions {
+  mediaSourceId?: string;
+  audioStreamIndex?: number;
+}
+
+/** A raw text subtitle sidecar returned for the selected Jellyfin media source. */
+export interface JellyfinSubtitleTrack {
+  index: number;
+  codec: string;
+  label: string;
+  language: string;
+  url: string;
+  isDefault: boolean;
+  isForced: boolean;
+  isHearingImpaired: boolean;
 }
 
 interface QueryResult<T> {
@@ -197,6 +239,90 @@ function resolveServerPath(path: string): string {
     return new URL(relativePath, serverUrl.origin).toString();
   }
   return new URL(`${basePath}${relativePath}`, serverUrl.origin).toString();
+}
+
+const WEB_TEXT_SUBTITLE_CODECS = new Set([
+  'ass',
+  'ssa',
+  'srt',
+  'subrip',
+  'vtt',
+  'webvtt',
+]);
+
+function normalizedSubtitleCodec(codec: string | undefined): string {
+  const normalized = codec?.trim().toLowerCase() ?? '';
+  if (normalized === 'webvtt') return 'vtt';
+  if (normalized === 'subrip') return 'srt';
+  return normalized;
+}
+
+function isJapaneseLanguage(language: string | undefined): boolean {
+  const normalized = language?.trim().toLowerCase().split(/[-_]/)[0] ?? '';
+  return normalized === 'ja' || normalized === 'jpn';
+}
+
+function subtitleTracksForSource(source: JellyfinMediaSourceInfo): JellyfinSubtitleTrack[] {
+  const tracks = (source.MediaStreams ?? [])
+    .filter((stream) => {
+      if (stream.Type !== 'Subtitle' || !stream.DeliveryUrl?.trim()) return false;
+      if (stream.IsTextSubtitleStream === false) return false;
+      return WEB_TEXT_SUBTITLE_CODECS.has(stream.Codec?.trim().toLowerCase() ?? '');
+    })
+    .map((stream, ordinal): JellyfinSubtitleTrack => {
+      const language = stream.Language?.trim() ?? '';
+      const codec = normalizedSubtitleCodec(stream.Codec);
+      return {
+        index: Number.isInteger(stream.Index) ? stream.Index! : ordinal,
+        codec,
+        label: stream.DisplayTitle?.trim() || stream.Title?.trim() || language || `Subtitle ${ordinal + 1}`,
+        language,
+        url: resolveServerPath(stream.DeliveryUrl!.trim()),
+        isDefault: stream.IsDefault === true,
+        isForced: stream.IsForced === true,
+        isHearingImpaired: stream.IsHearingImpaired === true,
+      };
+    });
+
+  // Some servers repeat a sidecar entry when both Embed and External profiles
+  // match. The exact server-provided DeliveryUrl is authoritative; only remove
+  // byte-for-byte URL duplicates.
+  return tracks.filter((track, index) =>
+    tracks.findIndex((candidate) => candidate.url === track.url) === index);
+}
+
+function isFontAttachment(attachment: JellyfinMediaAttachment): boolean {
+  const name = attachment.FileName?.toLowerCase() ?? '';
+  const mime = attachment.MimeType?.toLowerCase() ?? '';
+  const codec = attachment.Codec?.toLowerCase() ?? '';
+  return (
+    mime.includes('font') ||
+    mime.includes('truetype') ||
+    mime.includes('opentype') ||
+    /\.(?:ttf|otf|ttc|otc)$/.test(name) ||
+    /(?:ttf|otf|ttc|otc)/.test(codec)
+  );
+}
+
+function fontUrlsForSource(
+  itemId: string,
+  source: JellyfinMediaSourceInfo,
+): string[] {
+  const mediaSourceId = source.Id?.trim();
+  if (!mediaSourceId) return [];
+  return (source.MediaAttachments ?? [])
+    .filter(isFontAttachment)
+    .map((attachment) => {
+      if (attachment.DeliveryUrl?.trim()) {
+        return resolveServerPath(attachment.DeliveryUrl.trim());
+      }
+      if (!Number.isInteger(attachment.Index)) return null;
+      return buildUrl(
+        `/Videos/${encodeURIComponent(itemId)}/${encodeURIComponent(mediaSourceId)}/Attachments/${attachment.Index}`,
+      ).toString();
+    })
+    .filter((url): url is string => Boolean(url))
+    .filter((url, index, urls) => urls.indexOf(url) === index);
 }
 
 /** Preserve a configured Jellyfin base path on root-relative HLS child URLs. */
@@ -536,6 +662,7 @@ export function buildPlaybackStreamUrl(
   itemId: string,
   source: JellyfinMediaSourceInfo,
   playSessionId?: string,
+  audioStreamIndex = source.DefaultAudioStreamIndex ?? undefined,
 ): string {
   if (source.TranscodingUrl?.trim()) {
     return resolveServerPath(source.TranscodingUrl.trim());
@@ -553,7 +680,7 @@ export function buildPlaybackStreamUrl(
     DeviceId: getDeviceId(),
     MediaSourceId: mediaSourceId,
     PlaySessionId: playSessionId,
-    AudioStreamIndex: source.DefaultAudioStreamIndex,
+    AudioStreamIndex: audioStreamIndex,
     VideoCodec: 'h264',
     AudioCodec: 'aac',
     MaxAudioChannels: 2,
@@ -561,60 +688,114 @@ export function buildPlaybackStreamUrl(
     SegmentContainer: 'ts',
     AllowVideoStreamCopy: true,
     AllowAudioStreamCopy: true,
+    // Raw External profiles below remain the primary path. Keeping manifest
+    // subtitles enabled preserves a native WebVTT fallback for older servers
+    // that omit DeliveryUrl; styled ASS never uses that lossy rendition when
+    // its original sidecar is available.
     EnableSubtitlesInManifest: true,
   }).toString();
+}
+
+function rankPlaybackSources(sources: JellyfinMediaSourceInfo[]): JellyfinMediaSourceInfo | undefined {
+  return sources
+    .filter((candidate) =>
+      Boolean(candidate.TranscodingUrl?.trim()) ||
+      Boolean(candidate.Id && candidate.SupportsTranscoding !== false))
+    .map((candidate, ordinal) => {
+      const codecs = (candidate.MediaStreams ?? [])
+        .filter((stream) => stream.Type === 'Subtitle')
+        .map((stream) => normalizedSubtitleCodec(stream.Codec));
+      // Anime releases often offer several versions of one episode. Prefer a
+      // version that preserves authored ASS/SSA over a plain-subtitle version,
+      // then retain the server's normal transcoding/direct-stream priority.
+      const score =
+        (codecs.some((codec) => codec === 'ass' || codec === 'ssa') ? 1_000 : 0) +
+        (candidate.TranscodingUrl?.trim() ? 100 : 0) +
+        (candidate.SupportsTranscoding ? 20 : 0) -
+        ordinal;
+      return {candidate, score};
+    })
+    .sort((left, right) => right.score - left.score)[0]?.candidate
+    ?? sources.find((candidate) => Boolean(candidate.Id));
+}
+
+function selectPlaybackSource(
+  sources: JellyfinMediaSourceInfo[],
+  preferredMediaSourceId?: string,
+): JellyfinMediaSourceInfo | undefined {
+  const preferredId = preferredMediaSourceId?.trim();
+  if (preferredId) {
+    const preferred = rankPlaybackSources(sources.filter((source) => source.Id === preferredId));
+    if (preferred) return preferred;
+  }
+  return rankPlaybackSources(sources);
 }
 
 export async function fetchPlaybackInfo(
   itemId: string,
   signal?: AbortSignal,
+  options: JellyfinPlaybackOptions = {},
 ): Promise<JellyfinPlaybackInfo> {
   const userId = requireUserId();
-  const response = await requestJson<JellyfinPlaybackInfoResponse>(
+  const requestedMediaSourceId = options.mediaSourceId?.trim() || undefined;
+  const requestedAudioStreamIndex = Number.isInteger(options.audioStreamIndex)
+    ? options.audioStreamIndex
+    : undefined;
+  const playbackRequestBody = {
+    UserId: userId,
+    MediaSourceId: requestedMediaSourceId,
+    AudioStreamIndex: requestedAudioStreamIndex,
+    MaxStreamingBitrate: MAX_STREAMING_BITRATE,
+    MaxAudioChannels: 2,
+    EnableDirectPlay: false,
+    EnableDirectStream: true,
+    EnableTranscoding: true,
+    AllowVideoStreamCopy: true,
+    AllowAudioStreamCopy: true,
+    DeviceProfile: {
+      Name: 'SpatialFin WebXR HLS',
+      MaxStreamingBitrate: MAX_STREAMING_BITRATE,
+      MaxStaticBitrate: MAX_STREAMING_BITRATE,
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [
+        {
+          Container: 'ts',
+          Type: 'Video',
+          VideoCodec: 'h264',
+          AudioCodec: 'aac',
+          Protocol: 'hls',
+          EstimateContentLength: false,
+          EnableMpegtsM2TsMode: false,
+          TranscodeSeekInfo: 'Auto',
+          CopyTimestamps: false,
+          Context: 'Streaming',
+          EnableSubtitlesInManifest: true,
+          MaxAudioChannels: '2',
+          MinSegments: 1,
+          SegmentLength: 0,
+          BreakOnNonKeyFrames: false,
+          Conditions: [],
+          EnableAudioVbrEncoding: true,
+        },
+      ],
+      CodecProfiles: [],
+      ContainerProfiles: [],
+      SubtitleProfiles: [
+        {Format: 'ass', Method: 'External'},
+        {Format: 'ssa', Method: 'External'},
+        {Format: 'srt', Method: 'External'},
+        {Format: 'subrip', Method: 'External'},
+        {Format: 'vtt', Method: 'External'},
+        {Format: 'webvtt', Method: 'External'},
+      ],
+    },
+  };
+  let response = await requestJson<JellyfinPlaybackInfoResponse>(
     `/Items/${encodeURIComponent(itemId)}/PlaybackInfo`,
     {
       method: 'POST',
       signal,
-      json: {
-        UserId: userId,
-        MaxStreamingBitrate: MAX_STREAMING_BITRATE,
-        MaxAudioChannels: 2,
-        EnableDirectPlay: false,
-        EnableDirectStream: true,
-        EnableTranscoding: true,
-        AllowVideoStreamCopy: true,
-        AllowAudioStreamCopy: true,
-        DeviceProfile: {
-          Name: 'SpatialFin WebXR HLS',
-          MaxStreamingBitrate: MAX_STREAMING_BITRATE,
-          MaxStaticBitrate: MAX_STREAMING_BITRATE,
-          DirectPlayProfiles: [],
-          TranscodingProfiles: [
-            {
-              Container: 'ts',
-              Type: 'Video',
-              VideoCodec: 'h264',
-              AudioCodec: 'aac',
-              Protocol: 'hls',
-              EstimateContentLength: false,
-              EnableMpegtsM2TsMode: false,
-              TranscodeSeekInfo: 'Auto',
-              CopyTimestamps: false,
-              Context: 'Streaming',
-              EnableSubtitlesInManifest: true,
-              MaxAudioChannels: '2',
-              MinSegments: 1,
-              SegmentLength: 0,
-              BreakOnNonKeyFrames: false,
-              Conditions: [],
-              EnableAudioVbrEncoding: true,
-            },
-          ],
-          CodecProfiles: [],
-          ContainerProfiles: [],
-          SubtitleProfiles: [],
-        },
-      },
+      json: playbackRequestBody,
     },
   );
 
@@ -627,15 +808,62 @@ export async function fetchPlaybackInfo(
     throw new JellyfinApiError(messages[response.ErrorCode]);
   }
 
-  const sources = response.MediaSources ?? [];
-  const source =
-    sources.find((candidate) => Boolean(candidate.TranscodingUrl?.trim())) ??
-    sources.find((candidate) => candidate.SupportsTranscoding && Boolean(candidate.Id)) ??
-    sources.find((candidate) => Boolean(candidate.Id));
+  let source = selectPlaybackSource(response.MediaSources ?? [], requestedMediaSourceId);
   if (!source) {
     throw new JellyfinApiError(
       'Jellyfin did not return a playable media source for this item.',
     );
+  }
+  // Keep the complete source inventory from the discovery response. Some
+  // servers narrow MediaStreams to the active rendition after an audio-pinned
+  // renegotiation; losing the other streams here would make manual switching
+  // impossible precisely when hls.js exposes only one audio track.
+  const metadataSource = source;
+  let negotiatedAudioStreamIndex = requestedAudioStreamIndex
+    ?? source.DefaultAudioStreamIndex
+    ?? undefined;
+
+  // Android's anime default is original/Japanese audio. A Jellyfin
+  // TranscodingUrl is commonly pinned to one audio stream, so changing only
+  // hls.js's audioTrack is insufficient. When a raw text-subtitle source exposes
+  // Japanese audio, renegotiate once with its actual stream index.
+  const hasRawTextSubtitles = (source.MediaStreams ?? []).some((stream) =>
+    stream.Type === 'Subtitle' && WEB_TEXT_SUBTITLE_CODECS.has(
+      normalizedSubtitleCodec(stream.Codec),
+    ));
+  const preferredJapaneseAudio = hasRawTextSubtitles
+    ? (source.MediaStreams ?? []).find((stream) =>
+        stream.Type === 'Audio' && isJapaneseLanguage(stream.Language))
+    : undefined;
+  if (
+    requestedAudioStreamIndex === undefined &&
+    source.Id &&
+    Number.isInteger(preferredJapaneseAudio?.Index) &&
+    preferredJapaneseAudio!.Index !== source.DefaultAudioStreamIndex
+  ) {
+    const renegotiated = await requestJson<JellyfinPlaybackInfoResponse>(
+      `/Items/${encodeURIComponent(itemId)}/PlaybackInfo`,
+      {
+        method: 'POST',
+        signal,
+        json: {
+          ...playbackRequestBody,
+          MediaSourceId: source.Id,
+          AudioStreamIndex: preferredJapaneseAudio!.Index,
+        },
+      },
+    );
+    if (!renegotiated.ErrorCode) {
+      const renegotiatedSource = selectPlaybackSource(
+        renegotiated.MediaSources ?? [],
+        source.Id,
+      );
+      if (renegotiatedSource) {
+        response = renegotiated;
+        source = renegotiatedSource;
+        negotiatedAudioStreamIndex = preferredJapaneseAudio!.Index;
+      }
+    }
   }
 
   const headers = new Headers(getAuthHeaders({accept: '*/*'}));
@@ -645,9 +873,13 @@ export async function fetchPlaybackInfo(
 
   const playSessionId = response.PlaySessionId?.trim() || undefined;
   return {
-    streamUrl: buildPlaybackStreamUrl(itemId, source, playSessionId),
+    streamUrl: buildPlaybackStreamUrl(itemId, source, playSessionId, negotiatedAudioStreamIndex),
     mediaSourceId: source.Id?.trim() || undefined,
     playSessionId,
     requiredHeaders: Object.fromEntries(headers.entries()),
+    subtitleTracks: subtitleTracksForSource(metadataSource),
+    fontUrls: fontUrlsForSource(itemId, metadataSource),
+    audioStreams: (metadataSource.MediaStreams ?? []).filter((stream) => stream.Type === 'Audio'),
+    defaultAudioStreamIndex: negotiatedAudioStreamIndex,
   };
 }

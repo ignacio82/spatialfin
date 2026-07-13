@@ -7,6 +7,29 @@ on:
     branches: [ "main" ]
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: spatialfin-webxr
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: spatialfin-webxr/package-lock.json
+
+    - name: Install web dependencies
+      run: npm ci
+
+    - name: Build and run WebXR browser integration tests
+      run: npm run verify
+
   build:
     runs-on: ubuntu-latest
 

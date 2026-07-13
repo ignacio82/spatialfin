@@ -1,11 +1,19 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 const puppeteer = require('puppeteer');
 
 const artworkPng = fs.readFileSync(path.join(__dirname, 'public', 'app-icon.png'));
+const animeSubtitleAss = fs.readFileSync(
+  path.join(__dirname, 'test-fixtures', 'anime-styled.ass'),
+  'utf8',
+);
+const animeSubtitleFont = fs.readFileSync(
+  path.join(__dirname, 'public', 'libass', 'default.woff2'),
+);
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -34,6 +42,16 @@ async function waitForServer(url) {
   throw new Error(`Vite did not start at ${url}`);
 }
 
+async function waitForRecordedRequest(requests, predicate, description) {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const match = requests.find(predicate);
+    if (match) return match;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for ${description}. Requests: ${JSON.stringify(requests)}`);
+}
+
 async function startVite() {
   if (process.env.BASE_URL) return {baseUrl: process.env.BASE_URL, process: null};
   const port = await getFreePort();
@@ -54,6 +72,48 @@ async function startVite() {
     throw new Error(`${error.message}\n${output}`);
   }
   return {baseUrl, process: child};
+}
+
+async function startFontFixtureServer() {
+  const port = await getFreePort();
+  const requests = [];
+  const server = http.createServer((request, response) => {
+    const url = new URL(request.url, `http://127.0.0.1:${port}`);
+    requests.push({
+      method: request.method,
+      path: `${url.pathname}${url.search}`,
+      authorization: request.headers.authorization,
+    });
+    if (/^\/Videos\/episode-1\/mock-media-source\/Attachments\/(0|1)$/.test(url.pathname)) {
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'font/woff2',
+        'Content-Length': animeSubtitleFont.length,
+      });
+      response.end(animeSubtitleFont);
+      return;
+    }
+    if (url.pathname === '/Videos/episode-1/mock-media-source/Subtitles/3/Stream.ssa') {
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'text/x-ssa',
+        'Content-Length': Buffer.byteLength(animeSubtitleAss),
+      });
+      response.end(animeSubtitleAss);
+      return;
+    }
+    response.writeHead(404, {'Access-Control-Allow-Origin': '*'});
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    requests,
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
 }
 
 function mockJson(request, body, status = 200) {
@@ -135,8 +195,26 @@ async function pixelStats(page, screenshot) {
   }, Buffer.from(screenshot).toString('base64'));
 }
 
+async function subtitleCanvasAlphaStats(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+    if (!(canvas instanceof HTMLCanvasElement)) return null;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let nontransparent = 0;
+    let opaque = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 0) nontransparent++;
+      if (pixels[index] > 192) opaque++;
+    }
+    return {width: canvas.width, height: canvas.height, nontransparent, opaque};
+  });
+}
+
 async function run() {
   const vite = await startVite();
+  const fontFixture = await startFontFixtureServer();
   const browser = await puppeteer.launch({
     headless: true,
     args: [
@@ -150,6 +228,8 @@ async function run() {
   const browserErrors = [];
   const requests = [];
   let loginAttempts = 0;
+  let subtitleMockSession = null;
+  let pageInterceptionEnabled = true;
 
   try {
     const page = await browser.newPage();
@@ -161,9 +241,10 @@ async function run() {
 
     await page.setRequestInterception(true);
     page.on('request', (request) => {
+      if (!pageInterceptionEnabled) return;
       const url = new URL(request.url());
       if (url.hostname !== 'mock-jellyfin.test') {
-        request.continue();
+        void request.continue().catch(() => undefined);
         return;
       }
       const apiPath = url.pathname.startsWith('/jellyfin-proxy/')
@@ -254,15 +335,93 @@ async function run() {
             SeriesName: 'Lantern Valley', ParentIndexNumber: 1, IndexNumber: index + 1,
           }))});
       }
+      if (/^\/(?:Users\/[^/]+\/)?Items\/[^/]+$/.test(apiPath)) {
+        const itemId = apiPath.split('/').pop();
+        return void mockJson(request, mockItem(
+          itemId,
+          itemId === 'movies-1' ? 'Mock Movie 1' : 'Mock Item',
+          'Movie',
+          1,
+          {Genres: ['Animation']},
+        ));
+      }
       if (/^\/Items\/[^/]+\/PlaybackInfo$/.test(apiPath)) {
+        const playbackRequest = JSON.parse(request.postData() || '{}');
+        const requestedAudioStreamIndex = Number.isInteger(playbackRequest.AudioStreamIndex)
+          ? playbackRequest.AudioStreamIndex
+          : 1;
         return void mockJson(request, {
           MediaSources: [{
             Id: 'mock-media-source',
             SupportsTranscoding: true,
-            TranscodingUrl: '/Videos/episode-1/master.m3u8?MediaSourceId=mock-media-source&PlaySessionId=mock-play-session',
+            TranscodingUrl: `/Videos/episode-1/master.m3u8?MediaSourceId=mock-media-source&PlaySessionId=mock-play-session&AudioStreamIndex=${requestedAudioStreamIndex}`,
             RequiredHttpHeaders: {'X-Mock-Playback': 'spatialfin'},
+            DefaultAudioStreamIndex: requestedAudioStreamIndex,
+            MediaStreams: [
+              ...(playbackRequest.AudioStreamIndex === undefined || requestedAudioStreamIndex === 0 ? [{
+                Type: 'Audio',
+                Codec: 'aac',
+                Index: 0,
+                DisplayTitle: 'Japanese AAC Stereo',
+                Language: 'jpn',
+                IsDefault: true,
+              }] : []),
+              ...(playbackRequest.AudioStreamIndex === undefined || requestedAudioStreamIndex === 1 ? [{
+                Type: 'Audio',
+                Codec: 'aac',
+                Index: 1,
+                DisplayTitle: 'English AAC Stereo',
+                Language: 'eng',
+                IsDefault: false,
+              }] : []),
+              {
+                Type: 'Subtitle',
+                Codec: 'ass',
+                Index: 2,
+                DisplayTitle: 'English - Full dialogue (ASS)',
+                Language: 'eng',
+                IsDefault: true,
+                IsForced: false,
+                IsTextSubtitleStream: true,
+                DeliveryMethod: 'External',
+                DeliveryUrl: '/Videos/episode-1/mock-media-source/Subtitles/2/Stream.ass',
+              },
+              {
+                Type: 'Subtitle',
+                Codec: 'ssa',
+                Index: 3,
+                DisplayTitle: 'English - Signs & Songs (SSA)',
+                Language: 'eng',
+                IsDefault: false,
+                IsForced: true,
+                IsTextSubtitleStream: true,
+                DeliveryMethod: 'External',
+                DeliveryUrl: `${fontFixture.baseUrl}/Videos/episode-1/mock-media-source/Subtitles/3/Stream.ssa`,
+              },
+            ],
+            MediaAttachments: [{
+              Codec: 'ttf',
+              Index: 0,
+              FileName: 'LiberationSans-Regular.woff2',
+              MimeType: 'font/ttf',
+              DeliveryUrl: `${fontFixture.baseUrl}/Videos/episode-1/mock-media-source/Attachments/0?api_key=mock-access-token`,
+            }, {
+              Codec: 'otf',
+              Index: 1,
+              FileName: 'AnimeSigns-Alternate.woff2',
+              MimeType: 'font/otf',
+              DeliveryUrl: `${fontFixture.baseUrl}/Videos/episode-1/mock-media-source/Attachments/1?api_key=mock-access-token`,
+            }],
           }],
           PlaySessionId: 'mock-play-session',
+        });
+      }
+      if (/^\/Videos\/episode-1\/mock-media-source\/Subtitles\/(2\/Stream\.ass|3\/Stream\.ssa)$/.test(apiPath)) {
+        return void request.respond({
+          status: 200,
+          contentType: apiPath.endsWith('.ssa') ? 'text/x-ssa' : 'text/x-ass',
+          headers: {'Access-Control-Allow-Origin': '*'},
+          body: animeSubtitleAss,
         });
       }
       if (/^\/Videos\/[^/]+\/master\.m3u8$/.test(apiPath)) {
@@ -448,10 +607,68 @@ async function run() {
     await page.screenshot({path: browserScreenshotPath});
     await page.click('[data-browser-route="libraries"]');
     await page.waitForFunction(() => document.querySelector('.browser-page-heading h1')?.textContent === 'Libraries');
-    await page.click('.library-tile');
-    await page.waitForSelector('.media-grid .media-card');
+    await page.$eval('.library-tile', (element) => element.click());
+    try {
+      await page.waitForSelector('.media-grid .media-card');
+    } catch (error) {
+      const browserState = await page.$eval('#browser-app', (element) => element.textContent);
+      throw new Error(`${error.message}\nBrowser state: ${browserState}\nRequests: ${JSON.stringify(requests.slice(-20))}\nErrors: ${browserErrors.join('\n')}`);
+    }
+    await page.$eval('.media-grid .media-card', (element) => element.click());
+    await page.waitForFunction(() =>
+      document.querySelector('.detail-page h1')?.textContent === 'Mock Movie 1');
+    await page.evaluate(() => {
+      localStorage.setItem(
+        'spatialfin_subtitle_preferences_v1',
+        JSON.stringify({'movies-1': null}),
+      );
+    });
+    await page.$eval('.detail-page .primary-action', (element) => element.click());
+    await page.waitForFunction(() => {
+      const player = document.querySelector('#browser-player');
+      const audio = document.querySelector('#browser-audio-select');
+      return player && !player.hidden && audio && !audio.disabled && audio.options.length === 2;
+    }, {timeout: 20_000});
+    assert.equal(await page.$eval('#browser-audio-select', (element) => element.value), '0');
+    assert.ok(requests.some(({method, path: requestPath, body}) => {
+      if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
+      const requestBody = JSON.parse(body);
+      return requestBody.MediaSourceId === 'mock-media-source' && requestBody.AudioStreamIndex === 0;
+    }), 'anime playback should pin Japanese/original audio even when Jellyfin defaults to English');
+    await page.select('#browser-audio-select', '1');
+    await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath, body}) => {
+        if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
+        const requestBody = JSON.parse(body);
+        return requestBody.MediaSourceId === 'mock-media-source' && requestBody.AudioStreamIndex === 1;
+      },
+      'the browser audio renegotiation',
+    );
+    await page.waitForFunction(() => {
+      const preferences = JSON.parse(localStorage.getItem('spatialfin_audio_preferences_v1') || '{}');
+      return typeof preferences['movies-1'] === 'string' && preferences['movies-1'].includes('en');
+    }, {timeout: 20_000});
+    assert.equal(await page.$eval('#browser-audio-select', (element) => element.value), '1');
+    const browserEnglishNegotiations = requests.filter(({method, path: requestPath, body}) => {
+      if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
+      return JSON.parse(body).AudioStreamIndex === 1;
+    }).length;
+    await page.$eval('#browser-player-close', (element) => element.click());
+    await page.waitForFunction(() => document.querySelector('#browser-player')?.hidden === true);
+    await page.$eval('.detail-page .primary-action', (element) => element.click());
+    await page.waitForFunction(() => {
+      const audio = document.querySelector('#browser-audio-select');
+      return audio && !audio.disabled && audio.options.length === 2 && audio.value === '1';
+    }, {timeout: 20_000});
+    assert.ok(requests.filter(({method, path: requestPath, body}) => {
+      if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
+      return JSON.parse(body).AudioStreamIndex === 1;
+    }).length > browserEnglishNegotiations, 'the per-series browser audio choice should be renegotiated on replay');
+    await page.$eval('#browser-player-close', (element) => element.click());
+    await page.waitForFunction(() => document.querySelector('#browser-player')?.hidden === true);
     await page.waitForFunction(() => !document.querySelector('#enter-xr-button')?.disabled);
-    await page.click('#enter-xr-button');
+    await page.$eval('#enter-xr-button', (element) => element.click());
 
     await waitForCanvasScreen(page, 'home');
     await page.waitForFunction(() => window.xb?.core?.scriptsManager?.initializingScripts?.size === 0);
@@ -519,17 +736,6 @@ async function run() {
     assert.ok(pixels.visible / pixels.sampled > 0.1, 'rendered home should not be blank');
     assert.ok(pixels.bright > 1_000, 'rendered home should contain visible UI');
 
-    await page.evaluate(() => {
-      window.__spatialfinExitXrCount = 0;
-      window.addEventListener('spatialfin:exit-xr', () => { window.__spatialfinExitXrCount++; });
-    });
-    await activateCanvasZone(page, 'Android XR home surface', 'close');
-    assert.equal(await page.evaluate(() => window.__spatialfinExitXrCount), 1, 'Exit XR should request the active XR session to end');
-    await page.waitForSelector('#browser-app:not([hidden])');
-    await page.waitForFunction(() => !document.querySelector('#enter-xr-button')?.disabled);
-    await page.click('#enter-xr-button');
-    await page.waitForSelector('#browser-app[hidden]');
-
     await activateCanvasZone(page, 'Android XR home surface', 'hero-featured-series-1');
     await waitForCanvasScreen(page, 'details');
     await page.waitForFunction(() => {
@@ -552,6 +758,12 @@ async function run() {
     });
     await activateCanvasZone(page, 'Android XR home surface', 'library-episode-1');
     await waitForCanvasScreen(page, 'details');
+    await page.evaluate(() => {
+      localStorage.setItem(
+        'spatialfin_subtitle_preferences_v1',
+        JSON.stringify({'Lantern Valley': null}),
+      );
+    });
     await activateCanvasZone(page, 'Android XR home surface', 'detail-play');
 
     await page.waitForFunction(() => {
@@ -603,8 +815,278 @@ async function run() {
     assert.ok(Math.abs(playerScene.affordance.height - 5.3) < 1e-4);
     assert.ok(playerScene.transportLabels.includes('Rewind') && playerScene.transportLabels.includes('Chapters'));
     assert.ok(playerScene.stageLabels.includes('Smaller') && playerScene.stageLabels.includes('Lock'));
-    assert.ok(playerScene.trackLabels.includes('Subtitles') && playerScene.trackLabels.includes('Flat'));
+    assert.ok(playerScene.trackLabels.includes('Flat'));
     assert.ok(playerScene.sessionLabels.includes('Cast') && playerScene.sessionLabels.includes('SyncPlay'));
+
+    const playbackInfoRequest = requests.find(({method, path: requestPath}) =>
+      method === 'POST' && requestPath === '/jellyfin-proxy/Items/episode-1/PlaybackInfo');
+    assert.ok(playbackInfoRequest?.body, 'XR playback should negotiate a Jellyfin device profile');
+    const playbackInfoBody = JSON.parse(playbackInfoRequest.body);
+    const externalSubtitleProfiles = playbackInfoBody.DeviceProfile.SubtitleProfiles
+      .filter(({Method}) => Method === 'External')
+      .map(({Format}) => Format.toLowerCase());
+    assert.ok(externalSubtitleProfiles.includes('ass'), 'PlaybackInfo should advertise raw external ASS');
+    assert.ok(externalSubtitleProfiles.includes('ssa'), 'PlaybackInfo should advertise raw external SSA');
+
+    await activateCanvasZone(page, 'Track options orbiter', 'audio');
+    await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath, body}) => {
+        if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/episode-1/PlaybackInfo' || !body) return false;
+        const requestBody = JSON.parse(body);
+        return requestBody.MediaSourceId === 'mock-media-source' && requestBody.AudioStreamIndex === 1;
+      },
+      'the XR audio renegotiation',
+    );
+    await page.waitForFunction(() => {
+      const preferences = JSON.parse(localStorage.getItem('spatialfin_audio_preferences_v1') || '{}');
+      let labels = [];
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Track options orbiter') labels = object.userData.uiLabels || [];
+      });
+      return typeof preferences['Lantern Valley'] === 'string' &&
+        preferences['Lantern Valley'].includes('en') &&
+        labels.some((label) => label.includes('English AAC Stereo'));
+    }, {timeout: 20_000});
+    await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath}) =>
+        method === 'GET' && requestPath.includes('AudioStreamIndex=1'),
+      'the XR audio-pinned HLS stream',
+    );
+
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      const state = player?.userData.subtitleRendererStateForAutomation?.();
+      return typeof player?.userData.selectSubtitleForAutomation === 'function' && state?.trackCount === 2;
+    }, {timeout: 20_000});
+    await page.evaluate(async () => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      await player.userData.selectSubtitleForAutomation(-1);
+    });
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      return player?.userData.subtitleRendererStateForAutomation?.().selectedIndex === -1;
+    }, {timeout: 20_000});
+    await page.waitForNetworkIdle({idleTime: 250, timeout: 10_000});
+    pageInterceptionEnabled = false;
+    await page.setRequestInterception(false);
+    subtitleMockSession = await page.createCDPSession();
+    subtitleMockSession.on('Fetch.requestPaused', async ({requestId, request}) => {
+      const url = new URL(request.url);
+      const authorization = Object.entries(request.headers)
+        .find(([name]) => name.toLowerCase() === 'authorization')?.[1];
+      requests.push({
+        method: request.method,
+        path: `${url.pathname}${url.search}`,
+        authorization,
+      });
+      const corsHeaders = [
+        {name: 'Access-Control-Allow-Origin', value: '*'},
+        {name: 'Access-Control-Allow-Headers', value: '*'},
+        {name: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS'},
+      ];
+      try {
+        if (request.method === 'OPTIONS') {
+          await subtitleMockSession.send('Fetch.fulfillRequest', {
+            requestId,
+            responseCode: 204,
+            responseHeaders: corsHeaders,
+          });
+        } else {
+          await subtitleMockSession.send('Fetch.fulfillRequest', {
+            requestId,
+            responseCode: 200,
+            responseHeaders: [
+              ...corsHeaders,
+              {name: 'Content-Type', value: 'text/x-ass'},
+            ],
+            body: Buffer.from(animeSubtitleAss).toString('base64'),
+          });
+        }
+      } catch {
+        // The request can disappear if the selected track is changed quickly.
+      }
+    });
+    await subtitleMockSession.send('Fetch.enable', {patterns: [{
+      urlPattern: '*mock-jellyfin.test*/jellyfin-proxy/Videos/episode-1/mock-media-source/Subtitles/2/Stream.ass*',
+      requestStage: 'Request',
+    }]});
+    await page.evaluate(() => {
+      let track;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Track options orbiter') track = object;
+      });
+      const subtitles = track?.hitZones.find((zone) => zone.id === 'subtitles');
+      if (!subtitles) throw new Error('XR subtitle selector is unavailable');
+      subtitles.action();
+    });
+    const assSubtitleRequest = await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath}) => method === 'GET' && requestPath.startsWith('/jellyfin-proxy/Videos/episode-1/mock-media-source/Subtitles/2/Stream.ass'),
+      'the selected raw ASS subtitle',
+    );
+    let subtitleFontRequest;
+    let secondSubtitleFontRequest;
+    try {
+      subtitleFontRequest = await waitForRecordedRequest(
+        fontFixture.requests,
+        ({method, path: requestPath}) => method === 'GET' && requestPath.startsWith('/Videos/episode-1/mock-media-source/Attachments/0?'),
+        'the selected subtitle attachment font',
+      );
+      secondSubtitleFontRequest = await waitForRecordedRequest(
+        fontFixture.requests,
+        ({method, path: requestPath}) => method === 'GET' && requestPath.startsWith('/Videos/episode-1/mock-media-source/Attachments/1?'),
+        'the second selected subtitle attachment font',
+      );
+    } catch (error) {
+      const subtitleState = await page.evaluate(() => {
+        let player;
+        window.xb?.scene?.traverse((object) => {
+          if (object.name === 'Player: Mock Episode 1') player = object;
+        });
+        return player?.userData.subtitleRendererStateForAutomation?.() ?? null;
+      });
+      throw new Error(`${error.message}\nSubtitle state: ${JSON.stringify(subtitleState)}\nBrowser errors: ${browserErrors.join('\n')}`);
+    }
+    assert.ok(assSubtitleRequest.authorization?.includes('Token="mock-access-token"'), 'raw ASS should use the Jellyfin session');
+    assert.equal(subtitleFontRequest.authorization, undefined, 'worker font fetch should not expose an Authorization header');
+    assert.equal(secondSubtitleFontRequest.authorization, undefined, 'second worker font fetch should not expose an Authorization header');
+    assert.ok(subtitleFontRequest.path.includes('api_key=mock-access-token'), 'worker font fetch should authenticate with Jellyfin api_key');
+    assert.ok(secondSubtitleFontRequest.path.includes('api_key=mock-access-token'), 'second worker font fetch should authenticate with Jellyfin api_key');
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      const state = player?.userData.subtitleRendererStateForAutomation?.();
+      return state?.selectedIndex === 0 && state.ready === true;
+    }, {timeout: 20_000});
+    await page.evaluate(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      player.userData.setSubtitleTimeForAutomation(3);
+    });
+    try {
+      await page.waitForFunction(() => {
+        let player;
+        window.xb.scene.traverse((object) => {
+          if (object.name === 'Player: Mock Episode 1') player = object;
+        });
+        const state = player?.userData.subtitleRendererStateForAutomation?.();
+        if (state?.selectedIndex !== 0 || state.ready !== true) return false;
+        const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+        if (!(canvas instanceof HTMLCanvasElement)) return false;
+        const context = canvas.getContext('2d');
+        if (!context) return false;
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let visible = 0;
+        for (let index = 3; index < pixels.length; index += 16) {
+          if (pixels[index] > 0 && ++visible >= 100) return true;
+        }
+        return false;
+      }, {timeout: 20_000, polling: 100});
+    } catch (error) {
+      const subtitleDiagnostics = await page.evaluate(() => {
+        let player;
+        window.xb?.scene?.traverse((object) => {
+          if (object.name === 'Player: Mock Episode 1') player = object;
+        });
+        return player?.userData.subtitleRendererStateForAutomation?.() ?? null;
+      });
+      throw new Error(`${error.message}\nSubtitle state: ${JSON.stringify(subtitleDiagnostics)}\nBrowser errors: ${browserErrors.join('\n')}`);
+    }
+    const firstSubtitlePixels = await subtitleCanvasAlphaStats(page);
+    assert.ok(firstSubtitlePixels?.nontransparent > 1_000, 'libass should paint the styled ASS fixture into the XR canvas');
+    assert.ok(firstSubtitlePixels?.opaque > 100, 'the rendered ASS fixture should have solid glyph pixels');
+    const cjkSubtitlePixels = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return 0;
+      const context = canvas.getContext('2d');
+      if (!context) return 0;
+      // The fixture's Noto Sans JP event is centered at ASS (640, 360), which
+      // maps into this otherwise-empty center band of the 2048x1152 overlay.
+      const pixels = context.getImageData(640, 480, 768, 200).data;
+      let visible = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0) visible++;
+      }
+      return visible;
+    });
+    assert.ok(cjkSubtitlePixels > 500, 'bundled Noto Sans JP should render the Japanese ASS fixture event');
+    const workerFontResources = (await Promise.all(page.workers().map(async (worker) => {
+      try {
+        return await worker.evaluate(() => performance.getEntriesByType('resource').map((entry) => ({
+          name: entry.name,
+          initiatorType: entry.initiatorType,
+        })));
+      } catch {
+        return [];
+      }
+    }))).flat();
+    assert.ok(
+      workerFontResources.some(({name}) => new URL(name).pathname === '/web/libass/noto-sans-jp.woff2'),
+      `libass worker should GET bundled Noto Sans JP; resources: ${JSON.stringify(workerFontResources)}`,
+    );
+
+    const firstSubtitleLabels = await page.evaluate(() => {
+      let labels = [];
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Track options orbiter') labels = object.userData.uiLabels || [];
+      });
+      return labels;
+    });
+    await activateCanvasZone(page, 'Track options orbiter', 'subtitles');
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      return player?.userData.subtitleRendererStateForAutomation?.().selectedIndex === 1;
+    }, {timeout: 20_000});
+    await waitForRecordedRequest(
+      fontFixture.requests,
+      ({method, path: requestPath}) => method === 'GET' && requestPath.startsWith('/Videos/episode-1/mock-media-source/Subtitles/3/Stream.ssa'),
+      'the cycled raw SSA subtitle',
+    );
+    await page.waitForFunction((previousLabels) => {
+      let labels = [];
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Track options orbiter') labels = object.userData.uiLabels || [];
+      });
+      return JSON.stringify(labels) !== JSON.stringify(previousLabels);
+    }, {timeout: 20_000}, firstSubtitleLabels);
+
+    await activateCanvasZone(page, 'Track options orbiter', 'subtitles');
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      if (player?.userData.subtitleRendererStateForAutomation?.().selectedIndex !== -1) return false;
+      const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return false;
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] !== 0) return false;
+      }
+      return true;
+    }, {timeout: 20_000, polling: 100});
+    const subtitlesOffPixels = await subtitleCanvasAlphaStats(page);
+    assert.equal(subtitlesOffPixels?.nontransparent, 0, 'cycling past the final subtitle should clear the XR overlay');
 
     const movement = await page.evaluate(() => {
       let screen;
@@ -680,13 +1162,19 @@ async function run() {
     assert.ok(projections[1].minZ < -40 && projections[1].maxZ > 40);
     assert.ok(projections[0].stageLabels.includes('Recenter'), 'immersive projections should expose Android-style recentering');
 
+    await subtitleMockSession?.send('Fetch.disable');
+    await subtitleMockSession?.detach();
+    subtitleMockSession = null;
+    pageInterceptionEnabled = true;
+    await page.setRequestInterception(true);
     await activateCanvasZone(page, 'Android XR transport controls', 'back');
     await waitForCanvasScreen(page, 'home');
     assert.equal(await page.evaluate(() => document.querySelectorAll('video:not(#browser-video)').length), 0);
     assert.equal(await page.$eval('#browser-video', (video) => video.getAttribute('src')), null);
     assert.equal(
-      await page.evaluate(() => document.querySelectorAll('canvas[width="2048"][height="1024"]').length),
+      await page.evaluate(() => document.querySelectorAll('canvas[width="2048"][height="1152"]').length),
       0,
+      'leaving XR playback should dispose the libass subtitle canvas',
     );
     assert.ok(requests.some(({method, path: requestPath, body}) =>
       method === 'POST' && requestPath === '/jellyfin-proxy/Items/episode-1/PlaybackInfo' && body?.includes('DeviceProfile')));
@@ -698,6 +1186,19 @@ async function run() {
     assert.ok(playbackLnaRequests.some(({url, targetAddressSpace}) =>
       url.includes('/Videos/episode-1/master.m3u8?') && targetAddressSpace === 'local'));
 
+    await page.evaluate(() => {
+      window.__spatialfinExitXrCount = 0;
+      window.addEventListener('spatialfin:exit-xr', () => { window.__spatialfinExitXrCount++; });
+    });
+    await activateCanvasZone(page, 'Android XR home surface', 'close');
+    assert.equal(await page.evaluate(() => window.__spatialfinExitXrCount), 1, 'Exit XR should request the active XR session to end');
+    await page.waitForSelector('#browser-app:not([hidden])');
+
+    await subtitleMockSession?.send('Fetch.disable');
+    await subtitleMockSession?.detach();
+    subtitleMockSession = null;
+    pageInterceptionEnabled = true;
+    await page.setRequestInterception(true);
     await page.reload({waitUntil: 'networkidle2'});
     await page.waitForSelector('#login-overlay:not([hidden])');
     await page.waitForFunction(() => document.querySelector('#login-error')?.textContent?.includes('no longer points'));
@@ -705,6 +1206,7 @@ async function run() {
 
     const relevantErrors = browserErrors.filter((message) =>
       !message.includes('Failed to load resource') &&
+      !message.includes('libass: Failed to load fonctconfig fonts!') &&
       !message.includes('Automatic fallback to software WebGL'));
     assert.deepEqual(relevantErrors, [], `unexpected browser errors: ${relevantErrors.join('\n')}`);
 
@@ -714,6 +1216,7 @@ async function run() {
       homeLabels: homeScene.labels,
       playerProjection: playerScene.projection,
       movementDepth: movement.depth,
+      subtitlePixels: firstSubtitlePixels,
       requests: requests.length,
       pixelStats: pixels,
       screenshots: {
@@ -725,6 +1228,7 @@ async function run() {
     }, null, 2));
   } finally {
     await browser.close();
+    await fontFixture.close();
     vite.process?.kill('SIGTERM');
   }
 }

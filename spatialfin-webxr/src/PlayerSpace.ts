@@ -1,11 +1,25 @@
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import Hls, {FetchLoader} from 'hls.js';
-import {fetchPlaybackInfo, resolveJellyfinRequestUrl, type JellyfinItem} from './api';
+import {
+  fetchPlaybackInfo,
+  resolveJellyfinRequestUrl,
+  type JellyfinItem,
+  type JellyfinMediaStream,
+  type JellyfinPlaybackInfo,
+  type JellyfinSubtitleTrack,
+} from './api';
 import {CanvasView, fillRoundedRect, formatClock, type CanvasPointer} from './CanvasView';
 import {getAuthHeaders, getServerUrl, mediaUrlWithAccessToken} from './auth';
 import {HomeSpace} from './HomeSpace';
 import {createJellyfinRequest, fetchJellyfin, streamingFetchSupported} from './network';
+import {
+  AnimeSubtitleRenderer,
+  chooseInitialAudioStreamIndex,
+  chooseInitialSubtitleTrack,
+  rememberAudioSelection,
+  rememberSubtitleSelection,
+} from './AnimeSubtitleRenderer';
 
 const VIDEO_DEPTH_METERS = 6;
 const UI_DEPTH_METERS = 2;
@@ -48,6 +62,15 @@ interface OrbiterButton {
   active?: boolean;
   disabled?: boolean;
   action: () => void;
+}
+
+interface PlaybackRestoreState {
+  position: number;
+  paused: boolean;
+  playbackRate: number;
+  nativeSubtitleTrack: number;
+  nativeSubtitleDisplay: boolean;
+  subtitlesVisible: boolean;
 }
 
 class TransportView extends CanvasView {
@@ -395,6 +418,16 @@ export class PlayerSpace extends xb.Script {
   private controlsVisible = true;
   private moveInProgress = false;
   private subtitlesVisible = true;
+  private subtitleTracks: JellyfinSubtitleTrack[] = [];
+  private subtitleFontUrls: string[] = [];
+  private subtitleAudioStreams: JellyfinMediaStream[] = [];
+  private defaultAudioStreamIndex: number | undefined;
+  private selectedAudioStreamIndex: number | undefined;
+  private selectedSubtitleIndex = -1;
+  private subtitleRenderer: AnimeSubtitleRenderer | null = null;
+  private subtitleAbortController: AbortController | null = null;
+  private subtitleGeneration = 0;
+  private forcedSubtitleTime: number | null = null;
   private readonly trackedTextTracks = new Set<TextTrack>();
   private theaterMode = false;
   private screenDepth = VIDEO_DEPTH_METERS;
@@ -406,7 +439,11 @@ export class PlayerSpace extends xb.Script {
   private progressInterval: number | null = null;
   private aiResetTimeout: number | null = null;
   private playbackAbortController: AbortController | null = null;
+  private audioSwitchAbortController: AbortController | null = null;
   private progressAbortController: AbortController | null = null;
+  private audioSwitchGeneration = 0;
+  private audioSwitchInProgress = false;
+  private pendingPlaybackRestore: PlaybackRestoreState | null = null;
   private lifecycleGeneration = 0;
   private disposed = false;
   private mediaSourceId: string | undefined;
@@ -471,7 +508,9 @@ export class PlayerSpace extends xb.Script {
 
     const subtitleCanvas = document.createElement('canvas');
     subtitleCanvas.width = 2048;
-    subtitleCanvas.height = 1024;
+    // Keep the subtitle raster at the same 16:9 aspect as the video surface.
+    // The old 2:1 canvas stretched every ASS position and glyph vertically.
+    subtitleCanvas.height = 1152;
     subtitleCanvas.hidden = true;
     const subtitleContainer = document.createElement('div');
     subtitleContainer.hidden = true;
@@ -490,6 +529,22 @@ export class PlayerSpace extends xb.Script {
       this.isPlaying = true;
       this.setControlsVisible(false);
     };
+    this.userData.selectSubtitleForAutomation = (index: number) => {
+      void this.selectExternalSubtitle(index, false);
+    };
+    this.userData.setSubtitleTimeForAutomation = (seconds: number) => {
+      this.forcedSubtitleTime = seconds;
+      this.subtitleRenderer?.setCurrentTime(seconds);
+      if (this.subtitleTexture) this.subtitleTexture.needsUpdate = true;
+    };
+    this.userData.subtitleRendererStateForAutomation = () => ({
+      selectedIndex: this.selectedSubtitleIndex,
+      trackCount: this.subtitleTracks.length,
+      ready: this.subtitleRenderer?.ready ?? false,
+      canvas: this.subtitleCanvas
+        ? {width: this.subtitleCanvas.width, height: this.subtitleCanvas.height}
+        : null,
+    });
   }
 
   private createTexturesAndSubtitles() {
@@ -498,10 +553,9 @@ export class PlayerSpace extends xb.Script {
     this.videoTexture.colorSpace = THREE.SRGBColorSpace;
     this.subtitleTexture = new THREE.CanvasTexture(this.subtitleCanvas);
     this.subtitleTexture.colorSpace = THREE.SRGBColorSpace;
-    // The overlay texture is kept alive even when no track is selected. Native
-    // WebVTT cues from the negotiated HLS subtitle rendition are drawn into it
-    // when a subtitle track is selected; this avoids creating a libass worker
-    // with no concrete subtitle source.
+    // The overlay texture is kept alive even when no track is selected. A
+    // libass worker is created only after Jellyfin returns a concrete raw
+    // sidecar; native HLS text remains a compatibility fallback.
   }
 
   private readonly handleVideoPlay = () => {
@@ -509,6 +563,7 @@ export class PlayerSpace extends xb.Script {
     this.isPlaying = true;
     this.setStatus(`Spatial Playback · ${this.playbackSpeed.toFixed(2).replace(/\.00$/, '')}×`);
     this.controlsHideAt = performance.now() + CONTROLS_AUTO_HIDE_MS;
+    this.subtitleRenderer?.setPaused(false, this.videoElement?.currentTime ?? 0);
     if (!this.playbackStartedReported) {
       this.playbackStartedReported = true;
       void this.reportPlaybackLifecycle('/Sessions/Playing');
@@ -519,6 +574,7 @@ export class PlayerSpace extends xb.Script {
     if (this.disposed) return;
     this.isPlaying = false;
     this.setStatus('Paused');
+    this.subtitleRenderer?.setPaused(true, this.videoElement?.currentTime ?? 0);
     this.revealControls('paused');
     void this.reportProgress(true);
   };
@@ -533,7 +589,7 @@ export class PlayerSpace extends xb.Script {
   private readonly handleLoadedMetadata = () => {
     this.setStatus('Ready');
     this.refreshControls();
-    void this.tryPlay();
+    if (!this.restorePlaybackState()) void this.tryPlay();
   };
 
   private readonly handleTextTracksChanged = () => {
@@ -561,12 +617,72 @@ export class PlayerSpace extends xb.Script {
 
   private async startPlayback(generation: number, signal: AbortSignal): Promise<void> {
     this.setStatus('Loading stream…');
-    const playback = await fetchPlaybackInfo(this.item.Id, signal);
+    const initialPlayback = await fetchPlaybackInfo(this.item.Id, signal);
+    if (!this.isCurrentGeneration(generation)) return;
+    const initialAudioStreamIndex = chooseInitialAudioStreamIndex(
+      this.item,
+      initialPlayback.subtitleTracks,
+      initialPlayback.audioStreams,
+      initialPlayback.defaultAudioStreamIndex,
+    );
+    let playback = initialPlayback;
+    if (
+      Number.isInteger(initialAudioStreamIndex) &&
+      initialAudioStreamIndex !== initialPlayback.defaultAudioStreamIndex
+    ) {
+      playback = await fetchPlaybackInfo(this.item.Id, signal, {
+        mediaSourceId: initialPlayback.mediaSourceId,
+        audioStreamIndex: initialAudioStreamIndex,
+      });
+      if (!this.isCurrentGeneration(generation)) return;
+    }
+    const video = this.videoElement;
+    if (!video) return;
+    // A selected transcoding URL can expose only its active rendition. Keep
+    // the complete source metadata from the first negotiation for XR cycling.
+    this.subtitleTracks = initialPlayback.subtitleTracks.length > 0
+      ? initialPlayback.subtitleTracks
+      : playback.subtitleTracks;
+    this.subtitleFontUrls = initialPlayback.fontUrls.length > 0
+      ? initialPlayback.fontUrls
+      : playback.fontUrls;
+    this.subtitleAudioStreams = initialPlayback.audioStreams.length > 0
+      ? initialPlayback.audioStreams
+      : playback.audioStreams;
+    this.defaultAudioStreamIndex = initialAudioStreamIndex
+      ?? playback.defaultAudioStreamIndex;
+    this.selectedAudioStreamIndex = this.defaultAudioStreamIndex
+      ?? this.subtitleAudioStreams.find((stream) => stream.IsDefault)?.Index
+      ?? this.subtitleAudioStreams[0]?.Index;
+    if (this.subtitleTracks.length > 0) {
+      const initial = chooseInitialSubtitleTrack(
+        this.item,
+        this.subtitleTracks,
+        this.subtitleAudioStreams,
+        this.defaultAudioStreamIndex,
+      );
+      this.subtitlesVisible = initial.index >= 0;
+      this.updateSubtitleMeshVisibility();
+      if (initial.index >= 0) void this.selectExternalSubtitle(initial.index, false);
+    }
+
+    this.attachPlaybackStream(playback, generation);
+  }
+
+  private attachPlaybackStream(
+    playback: JellyfinPlaybackInfo,
+    generation: number,
+    restore: PlaybackRestoreState | null = null,
+  ) {
     if (!this.isCurrentGeneration(generation)) return;
     const video = this.videoElement;
     if (!video) return;
     this.mediaSourceId = playback.mediaSourceId;
     this.playSessionId = playback.playSessionId;
+    this.pendingPlaybackRestore = restore;
+    if (restore) video.pause();
+    this.hls?.destroy();
+    this.hls = null;
 
     if (Hls.isSupported()) {
       const headers = new Headers(getAuthHeaders());
@@ -591,34 +707,82 @@ export class PlayerSpace extends xb.Script {
             },
           });
       this.hls = hls;
-      hls.loadSource(playback.streamUrl);
-      hls.attachMedia(video);
+      if (this.subtitleTracks.length > 0) {
+        hls.subtitleTrack = -1;
+        hls.subtitleDisplay = false;
+      }
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (this.isCurrentGeneration(generation)) {
+        if (this.isCurrentGeneration(generation) && this.hls === hls) {
+          if (restore && this.subtitleTracks.length === 0) {
+            hls.subtitleTrack = restore.nativeSubtitleTrack;
+            hls.subtitleDisplay = restore.nativeSubtitleDisplay;
+            this.subtitlesVisible = restore.subtitlesVisible;
+            this.updateSubtitleMeshVisibility();
+          }
           this.syncNativeSubtitleTracks();
           this.refreshControls();
-          void this.tryPlay();
+          if (!restore) void this.tryPlay();
         }
       });
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-        if (this.isCurrentGeneration(generation)) {
+        if (this.isCurrentGeneration(generation) && this.hls === hls) {
           this.syncNativeSubtitleTracks();
           this.refreshControls();
         }
       });
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+        if (this.isCurrentGeneration(generation) && this.hls === hls) this.refreshControls();
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal && this.isCurrentGeneration(generation)) {
+        if (data.fatal && this.isCurrentGeneration(generation) && this.hls === hls) {
+          this.pendingPlaybackRestore = null;
+          this.audioSwitchInProgress = false;
           this.setStatus('Stream unavailable');
           this.revealControls('hls-error');
         }
       });
+      hls.loadSource(playback.streamUrl);
+      hls.attachMedia(video);
       return;
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = mediaUrlWithAccessToken(playback.streamUrl);
       return;
     }
+    this.pendingPlaybackRestore = null;
+    this.audioSwitchInProgress = false;
     this.setStatus('HLS is not supported by this browser');
+  }
+
+  private restorePlaybackState(): boolean {
+    const video = this.videoElement;
+    const restore = this.pendingPlaybackRestore;
+    if (!video || !restore || video.readyState < HTMLMediaElement.HAVE_METADATA) return false;
+    this.pendingPlaybackRestore = null;
+    video.playbackRate = restore.playbackRate;
+    this.playbackSpeed = restore.playbackRate;
+    if (Number.isFinite(restore.position)) {
+      try {
+        video.currentTime = restore.position;
+      } catch {
+        // Some native HLS implementations defer seeking until data is loaded.
+      }
+    }
+    const position = video.currentTime;
+    this.subtitleRenderer?.setRate(restore.playbackRate);
+    this.subtitleRenderer?.setCurrentTime(position);
+    if (restore.paused) {
+      video.pause();
+      this.subtitleRenderer?.setPaused(true, position);
+      this.isPlaying = false;
+      this.setStatus('Paused');
+    } else {
+      this.subtitleRenderer?.setPaused(false, position);
+      void this.tryPlay();
+    }
+    this.audioSwitchInProgress = false;
+    this.refreshControls();
+    return true;
   }
 
   private async tryPlay() {
@@ -667,7 +831,8 @@ export class PlayerSpace extends xb.Script {
     rightSubtitles.name = 'Right-eye subtitles';
     leftSubtitles.userData.subtitle = true;
     rightSubtitles.userData.subtitle = true;
-    if (this.is3D) this.applySideBySideUVs(leftSubtitles, rightSubtitles);
+    // The subtitle canvas is one full-frame overlay, not a packed SBS frame.
+    // Cropping its UVs like the video made each eye see half of every caption.
     xb.showOnlyInLeftEye(leftSubtitles);
     xb.showOnlyInRightEye(rightSubtitles);
     leftSubtitles.visible = this.subtitlesVisible;
@@ -837,22 +1002,32 @@ export class PlayerSpace extends xb.Script {
   }
 
   private trackButtons(): OrbiterButton[] {
-    const audioTracks = this.hls?.audioTracks ?? [];
-    const subtitleTracks = this.hls?.subtitleTracks ?? [];
+    const nativeSubtitleTracks = this.hls?.subtitleTracks ?? [];
     const currentLevel = this.hls?.currentLevel ?? -1;
     const levels = this.hls?.levels ?? [];
-    const audioLabel = audioTracks.length > 1
-      ? `Audio ${Math.max(1, (this.hls?.audioTrack ?? 0) + 1)}/${audioTracks.length}`
-      : this.videoElement?.muted ? 'Muted' : 'Audio';
-    const subtitleLabel = subtitleTracks.length > 0
-      ? this.hls?.subtitleTrack === -1 ? 'Subtitles off' : `Sub ${Math.max(1, (this.hls?.subtitleTrack ?? 0) + 1)}/${subtitleTracks.length}`
-      : 'Subtitles';
+    const currentAudioStream = this.currentAudioStream();
+    const audioName = currentAudioStream
+      ? this.audioStreamLabel(currentAudioStream)
+      : this.hls?.audioTracks[this.hls.audioTrack]?.name
+        || this.hls?.audioTracks[this.hls.audioTrack]?.lang
+        || 'Audio';
+    const audioLabel = this.videoElement?.muted ? `Muted · ${audioName}` : audioName;
+    const selectedStyledTrack = this.subtitleTracks[this.selectedSubtitleIndex];
+    const subtitleLabel = this.subtitleTracks.length > 0
+      ? selectedStyledTrack
+        ? `${selectedStyledTrack.label} · ${selectedStyledTrack.codec.toUpperCase()}`
+        : 'Subtitles off'
+      : nativeSubtitleTracks.length > 0
+        ? this.hls?.subtitleTrack === -1
+          ? 'Subtitles off'
+          : `Sub ${Math.max(1, (this.hls?.subtitleTrack ?? 0) + 1)}/${nativeSubtitleTracks.length}`
+        : 'Subtitles';
     const qualityLabel = currentLevel < 0
       ? 'Auto'
       : `${levels[currentLevel]?.height ?? 'HD'}p`;
     return [
       {id: 'subtitles', icon: 'CC', label: subtitleLabel, active: this.subtitlesVisible, action: () => this.cycleSubtitleTrack()},
-      {id: 'audio', icon: this.videoElement?.muted ? '×♪' : '♪', label: audioLabel, active: !this.videoElement?.muted, action: () => this.cycleAudioTrack()},
+      {id: 'audio', icon: this.videoElement?.muted ? '×♪' : '♪', label: audioLabel, active: !this.videoElement?.muted, disabled: this.audioSwitchInProgress, action: () => this.cycleAudioTrack()},
       {id: 'quality', icon: 'HD', label: qualityLabel, action: () => this.cycleQuality()},
       {id: 'speed', icon: `${this.playbackSpeed.toFixed(2).replace(/\.00$/, '')}×`, label: 'Speed', active: this.playbackSpeed !== 1, action: () => this.cycleSpeed()},
       {id: 'projection', icon: this.mode === 'flat' ? '▭' : this.mode === '180' ? '◒' : '◉', label: this.mode === 'flat' ? 'Flat' : `${this.mode}°`, active: this.mode !== 'flat', action: () => this.cycleProjection()},
@@ -980,6 +1155,13 @@ export class PlayerSpace extends xb.Script {
   }
 
   private cycleSubtitleTrack() {
+    if (this.subtitleTracks.length > 0) {
+      const next = this.selectedSubtitleIndex >= this.subtitleTracks.length - 1
+        ? -1
+        : this.selectedSubtitleIndex + 1;
+      void this.selectExternalSubtitle(next, true);
+      return;
+    }
     const hls = this.hls;
     const tracks = hls?.subtitleTracks ?? [];
     if (!hls || tracks.length === 0) {
@@ -996,17 +1178,166 @@ export class PlayerSpace extends xb.Script {
     this.refreshControls();
   }
 
-  private cycleAudioTrack() {
-    const hls = this.hls;
-    const tracks = hls?.audioTracks ?? [];
-    if (!hls || tracks.length <= 1) {
-      this.toggleMute();
+  private async selectExternalSubtitle(index: number, remember: boolean) {
+    const track = this.subtitleTracks[index] ?? null;
+    const generation = ++this.subtitleGeneration;
+    this.subtitleAbortController?.abort();
+    this.subtitleAbortController = null;
+    this.subtitleRenderer?.dispose();
+    this.subtitleRenderer = null;
+    this.selectedSubtitleIndex = track ? index : -1;
+    this.subtitlesVisible = Boolean(track);
+    this.updateSubtitleMeshVisibility();
+    this.clearSubtitleCanvas();
+    if (!track) {
+      if (remember) rememberSubtitleSelection(this.item, null);
+      this.showTransientStatus('Subtitles off');
+      this.refreshControls();
+      window.requestAnimationFrame(() => {
+        if (generation === this.subtitleGeneration && this.selectedSubtitleIndex === -1) {
+          this.clearSubtitleCanvas();
+        }
+      });
       return;
     }
-    const next = (hls.audioTrack + 1) % tracks.length;
-    hls.audioTrack = next;
-    this.showTransientStatus(`Audio track · ${tracks[next].name || tracks[next].lang || next + 1}`);
+
+    this.showTransientStatus(`Loading subtitles · ${track.label}`);
     this.refreshControls();
+    const controller = new AbortController();
+    this.subtitleAbortController = controller;
+    try {
+      const renderer = await AnimeSubtitleRenderer.create({
+        track,
+        fontUrls: this.subtitleFontUrls,
+        canvas: this.subtitleCanvas ?? undefined,
+        signal: controller.signal,
+        onReady: () => {
+          if (generation !== this.subtitleGeneration) return;
+          this.showTransientStatus(`Subtitles · ${track.label}`);
+          this.refreshControls();
+        },
+        onError: (error) => {
+          if (generation !== this.subtitleGeneration) return;
+          console.error('Styled subtitle renderer failed:', error);
+          this.subtitleRenderer = null;
+          this.selectedSubtitleIndex = -1;
+          this.subtitlesVisible = false;
+          this.updateSubtitleMeshVisibility();
+          this.setStatus('Styled subtitle renderer unavailable');
+          this.clearSubtitleCanvas();
+          this.revealControls('subtitle-error');
+        },
+      });
+      if (controller.signal.aborted || generation !== this.subtitleGeneration) {
+        renderer.dispose();
+        return;
+      }
+      this.subtitleRenderer = renderer;
+      if (remember) rememberSubtitleSelection(this.item, track);
+      renderer.resize(this.subtitleCanvas?.width ?? 2048, this.subtitleCanvas?.height ?? 1152);
+      renderer.setRate(this.videoElement?.playbackRate ?? 1);
+      renderer.setPaused(this.videoElement?.paused ?? true, this.videoElement?.currentTime ?? 0);
+    } catch (error) {
+      if (controller.signal.aborted || generation !== this.subtitleGeneration) return;
+      console.error('Could not load styled subtitles:', error);
+      this.selectedSubtitleIndex = -1;
+      this.subtitlesVisible = false;
+      this.updateSubtitleMeshVisibility();
+      this.clearSubtitleCanvas();
+      this.setStatus(error instanceof Error ? error.message : 'Could not load subtitles');
+      this.revealControls('subtitle-load-error');
+      this.refreshControls();
+    } finally {
+      if (this.subtitleAbortController === controller) this.subtitleAbortController = null;
+    }
+  }
+
+  private cycleAudioTrack() {
+    if (this.audioSwitchInProgress) return;
+    const streams = this.subtitleAudioStreams.filter((stream) =>
+      Number.isInteger(stream.Index));
+    if (streams.length <= 1) {
+      const current = this.currentAudioStream() ?? streams[0];
+      this.showTransientStatus(current
+        ? `Audio track · ${this.audioStreamLabel(current)}`
+        : 'No alternate audio tracks');
+      return;
+    }
+    const current = streams.findIndex((stream) =>
+      stream.Index === this.selectedAudioStreamIndex);
+    const next = streams[(current + 1) % streams.length];
+    void this.switchAudioStream(next);
+  }
+
+  private currentAudioStream(): JellyfinMediaStream | undefined {
+    return this.subtitleAudioStreams.find((stream) =>
+      stream.Index === this.selectedAudioStreamIndex)
+      ?? this.subtitleAudioStreams.find((stream) =>
+        stream.Index === this.defaultAudioStreamIndex)
+      ?? this.subtitleAudioStreams.find((stream) => stream.IsDefault)
+      ?? this.subtitleAudioStreams[0];
+  }
+
+  private audioStreamLabel(stream: JellyfinMediaStream): string {
+    const title = stream.DisplayTitle?.trim() || stream.Title?.trim();
+    const language = stream.Language?.trim();
+    if (title && language) return `${title} · ${language}`;
+    return title || language || stream.Codec?.toUpperCase() || 'Audio';
+  }
+
+  private async switchAudioStream(stream: JellyfinMediaStream) {
+    if (!Number.isInteger(stream.Index)) return;
+    const video = this.videoElement;
+    if (!video) return;
+    const lifecycleGeneration = this.lifecycleGeneration;
+    const switchGeneration = ++this.audioSwitchGeneration;
+    this.audioSwitchAbortController?.abort();
+    const controller = new AbortController();
+    this.audioSwitchAbortController = controller;
+    this.audioSwitchInProgress = true;
+    const restore: PlaybackRestoreState = {
+      position: video.currentTime,
+      paused: video.paused,
+      playbackRate: video.playbackRate,
+      nativeSubtitleTrack: this.hls?.subtitleTrack ?? -1,
+      nativeSubtitleDisplay: this.hls?.subtitleDisplay ?? false,
+      subtitlesVisible: this.subtitlesVisible,
+    };
+    this.showTransientStatus(`Switching audio · ${this.audioStreamLabel(stream)}`);
+    this.refreshControls();
+    let attached = false;
+    try {
+      const playback = await fetchPlaybackInfo(this.item.Id, controller.signal, {
+        mediaSourceId: this.mediaSourceId,
+        audioStreamIndex: stream.Index,
+      });
+      if (
+        controller.signal.aborted ||
+        switchGeneration !== this.audioSwitchGeneration ||
+        !this.isCurrentGeneration(lifecycleGeneration)
+      ) return;
+      this.selectedAudioStreamIndex = stream.Index;
+      this.defaultAudioStreamIndex = stream.Index;
+      this.attachPlaybackStream(playback, lifecycleGeneration, restore);
+      attached = true;
+      rememberAudioSelection(this.item, stream);
+      this.showTransientStatus(`Audio track · ${this.audioStreamLabel(stream)}`);
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        switchGeneration !== this.audioSwitchGeneration ||
+        !this.isCurrentGeneration(lifecycleGeneration)
+      ) return;
+      console.error('Could not switch audio track:', error);
+      this.setStatus(error instanceof Error ? error.message : 'Could not switch audio track');
+      this.revealControls('audio-switch-error');
+    } finally {
+      if (this.audioSwitchAbortController === controller) {
+        this.audioSwitchAbortController = null;
+        if (!attached) this.audioSwitchInProgress = false;
+        this.refreshControls();
+      }
+    }
   }
 
   private cycleQuality() {
@@ -1052,6 +1383,7 @@ export class PlayerSpace extends xb.Script {
     const canvas = this.subtitleCanvas;
     const context = canvas?.getContext('2d');
     if (!canvas || !context) return;
+    if (this.selectedSubtitleIndex >= 0) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
     if (!this.subtitlesVisible) {
       if (this.subtitleTexture) this.subtitleTexture.needsUpdate = true;
@@ -1081,17 +1413,11 @@ export class PlayerSpace extends xb.Script {
     if (this.subtitleTexture) this.subtitleTexture.needsUpdate = true;
   }
 
-  private toggleMute() {
-    if (!this.videoElement) return;
-    this.videoElement.muted = !this.videoElement.muted;
-    this.showTransientStatus(this.videoElement.muted ? 'Audio muted' : 'Audio on');
-    this.refreshControls();
-  }
-
   private cycleSpeed() {
     const speeds = [0.75, 1, 1.25, 1.5, 2];
     this.playbackSpeed = speeds[(speeds.indexOf(this.playbackSpeed) + 1) % speeds.length];
     if (this.videoElement) this.videoElement.playbackRate = this.playbackSpeed;
+    this.subtitleRenderer?.setRate(this.playbackSpeed);
     this.showTransientStatus(`Playback speed · ${this.playbackSpeed}×`);
     this.refreshControls();
   }
@@ -1272,7 +1598,17 @@ export class PlayerSpace extends xb.Script {
   }
 
   override update() {
-    if (this.isPlaying && this.subtitleTexture) this.subtitleTexture.needsUpdate = true;
+    if (this.subtitleRenderer) {
+      this.subtitleRenderer.setCurrentTime(
+        this.forcedSubtitleTime ?? this.videoElement?.currentTime ?? 0,
+      );
+      // libass blends in its worker and posts the completed frame
+      // asynchronously, so keep the CanvasTexture upload polling at display
+      // cadence while a styled track is active.
+      if (this.subtitleTexture) this.subtitleTexture.needsUpdate = true;
+    } else if (this.isPlaying && this.subtitleTexture) {
+      this.subtitleTexture.needsUpdate = true;
+    }
     if (this.isPlaying && this.controlsVisible && !this.moveInProgress && performance.now() >= this.controlsHideAt) {
       this.setControlsVisible(false);
     }
@@ -1294,9 +1630,19 @@ export class PlayerSpace extends xb.Script {
     this.progressInterval = null;
     this.aiResetTimeout = null;
     this.playbackAbortController?.abort();
+    this.audioSwitchAbortController?.abort();
     this.progressAbortController?.abort();
+    this.subtitleAbortController?.abort();
     this.playbackAbortController = null;
+    this.audioSwitchAbortController = null;
     this.progressAbortController = null;
+    this.audioSwitchGeneration++;
+    this.audioSwitchInProgress = false;
+    this.pendingPlaybackRestore = null;
+    this.subtitleAbortController = null;
+    this.subtitleGeneration++;
+    this.subtitleRenderer?.dispose();
+    this.subtitleRenderer = null;
     this.hls?.destroy();
     this.hls = null;
     const video = this.videoElement;
@@ -1337,5 +1683,12 @@ export class PlayerSpace extends xb.Script {
     this.theaterDome = null;
     this.mediaSourceId = undefined;
     this.playSessionId = undefined;
+    this.subtitleTracks = [];
+    this.subtitleFontUrls = [];
+    this.subtitleAudioStreams = [];
+    this.defaultAudioStreamIndex = undefined;
+    this.selectedAudioStreamIndex = undefined;
+    this.selectedSubtitleIndex = -1;
+    this.forcedSubtitleTime = null;
   }
 }

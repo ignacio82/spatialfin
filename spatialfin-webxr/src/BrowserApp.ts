@@ -14,10 +14,19 @@ import {
   resolveJellyfinRequestUrl,
   type JellyfinImageType,
   type JellyfinItem,
+  type JellyfinPlaybackInfo,
   type JellyfinView,
 } from './api';
 import {mediaUrlWithAccessToken} from './auth';
 import {createJellyfinRequest, streamingFetchSupported} from './network';
+import {
+  AnimeSubtitleRenderer,
+  chooseInitialAudioStreamIndex,
+  chooseInitialSubtitleTrack,
+  rememberAudioSelection,
+  rememberSubtitleSelection,
+  subtitleLanguageMatches,
+} from './AnimeSubtitleRenderer';
 
 interface BrowserShelf {
   title: string;
@@ -46,8 +55,17 @@ export class BrowserApp {
   private readonly video: HTMLVideoElement;
   private readonly playerTitle: HTMLElement;
   private readonly playerStatus: HTMLElement;
+  private readonly audioSelect: HTMLSelectElement;
+  private readonly subtitleSelect: HTMLSelectElement;
   private readonly objectUrls = new Set<string>();
   private hls: Hls | null = null;
+  private subtitleRenderer: AnimeSubtitleRenderer | null = null;
+  private subtitleAbortController: AbortController | null = null;
+  private playback: JellyfinPlaybackInfo | null = null;
+  private playingItem: JellyfinItem | null = null;
+  private subtitleGeneration = 0;
+  private playbackGeneration = 0;
+  private playbackAbortController: AbortController | null = null;
   private views: JellyfinView[] = [];
   private visible = false;
   private readonly automationMode = new URLSearchParams(window.location.search).has('xrAutomation');
@@ -59,10 +77,18 @@ export class BrowserApp {
     this.video = this.requireElement<HTMLVideoElement>('#browser-video');
     this.playerTitle = this.requireElement('#browser-player-title');
     this.playerStatus = this.requireElement('#browser-player-status');
+    this.audioSelect = this.requireElement<HTMLSelectElement>('#browser-audio-select');
+    this.subtitleSelect = this.requireElement<HTMLSelectElement>('#browser-subtitle-select');
     document.querySelectorAll<HTMLButtonElement>('[data-browser-route]').forEach((button) => {
       button.addEventListener('click', () => void this.showRoute(button.dataset.browserRoute ?? 'home'));
     });
     document.querySelector('#browser-player-close')?.addEventListener('click', () => this.closePlayer());
+    this.subtitleSelect.addEventListener('change', () => {
+      void this.selectSubtitle(Number(this.subtitleSelect.value), true);
+    });
+    this.audioSelect.addEventListener('change', () => {
+      void this.selectAudio(Number(this.audioSelect.value), true);
+    });
   }
 
   async show() {
@@ -282,56 +308,312 @@ export class BrowserApp {
   }
 
   private async play(item: JellyfinItem) {
+    this.resetPlayback();
+    const generation = ++this.playbackGeneration;
+    const playbackController = new AbortController();
+    this.playbackAbortController = playbackController;
     this.player.hidden = false;
     this.playerTitle.textContent = item.Name;
     this.playerStatus.textContent = 'Preparing stream…';
     try {
-      const playback = await fetchPlaybackInfo(item.Id);
-      this.hls?.destroy();
-      this.hls = null;
-      if (Hls.isSupported()) {
-        this.hls = streamingFetchSupported()
-          ? new Hls({
-              loader: FetchLoader,
-              fetchSetup: (context, init) => {
-                const headers = new Headers(init.headers);
-                for (const [name, value] of Object.entries(playback.requiredHeaders)) {
-                  headers.set(name, value);
-                }
-                return createJellyfinRequest(
-                  resolveJellyfinRequestUrl(context.url),
-                  {...init, headers},
-                );
-              },
-            })
-          : new Hls({
-              xhrSetup: (request, requestUrl) => {
-                request.open('GET', resolveJellyfinRequestUrl(requestUrl), true);
-                for (const [name, value] of Object.entries(playback.requiredHeaders)) {
-                  request.setRequestHeader(name, value);
-                }
-              },
-            });
-        this.hls.loadSource(playback.streamUrl);
-        this.hls.attachMedia(this.video);
-      } else {
-        this.video.src = mediaUrlWithAccessToken(playback.streamUrl);
+      const discoveredPlayback = await fetchPlaybackInfo(item.Id, playbackController.signal);
+      let playback = discoveredPlayback;
+      if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
+      const preferredAudioIndex = chooseInitialAudioStreamIndex(
+        item,
+        playback.subtitleTracks,
+        playback.audioStreams,
+        playback.defaultAudioStreamIndex,
+      );
+      if (
+        Number.isInteger(preferredAudioIndex) &&
+        preferredAudioIndex !== playback.defaultAudioStreamIndex
+      ) {
+        const negotiatedPlayback = await fetchPlaybackInfo(item.Id, playbackController.signal, {
+          mediaSourceId: playback.mediaSourceId,
+          audioStreamIndex: preferredAudioIndex,
+        });
+        if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
+        playback = {
+          ...negotiatedPlayback,
+          audioStreams: discoveredPlayback.audioStreams.length > 0
+            ? discoveredPlayback.audioStreams
+            : negotiatedPlayback.audioStreams,
+          subtitleTracks: discoveredPlayback.subtitleTracks.length > 0
+            ? discoveredPlayback.subtitleTracks
+            : negotiatedPlayback.subtitleTracks,
+          fontUrls: discoveredPlayback.fontUrls.length > 0
+            ? discoveredPlayback.fontUrls
+            : negotiatedPlayback.fontUrls,
+        };
       }
+      this.playback = playback;
+      this.playingItem = item;
+      this.populateAudioSelect(playback);
+      this.populateSubtitleSelect(playback);
+      this.attachPlaybackStream(playback, generation);
       this.playerStatus.textContent = '';
+      const initialSubtitle = chooseInitialSubtitleTrack(
+        item,
+        playback.subtitleTracks,
+        playback.audioStreams,
+        playback.defaultAudioStreamIndex,
+      );
+      this.subtitleSelect.value = String(initialSubtitle.index);
+      if (initialSubtitle.index >= 0) void this.selectSubtitle(initialSubtitle.index, false);
       await this.video.play().catch(() => undefined);
     } catch (error) {
+      if (playbackController.signal.aborted || generation !== this.playbackGeneration) return;
       this.playerStatus.textContent = error instanceof Error ? error.message : 'Unable to start playback.';
+    } finally {
+      if (this.playbackAbortController === playbackController) {
+        this.playbackAbortController = null;
+      }
     }
   }
 
   private closePlayer() {
+    this.resetPlayback();
+    this.player.hidden = true;
+    this.playerStatus.textContent = '';
+  }
+
+  private resetPlayback() {
+    this.playbackGeneration++;
+    this.playbackAbortController?.abort();
+    this.playbackAbortController = null;
+    this.subtitleGeneration++;
+    this.subtitleAbortController?.abort();
+    this.subtitleAbortController = null;
+    this.subtitleRenderer?.dispose();
+    this.subtitleRenderer = null;
     this.hls?.destroy();
     this.hls = null;
     this.video.pause();
     this.video.removeAttribute('src');
     this.video.load();
-    this.player.hidden = true;
-    this.playerStatus.textContent = '';
+    this.playback = null;
+    this.playingItem = null;
+    this.audioSelect.replaceChildren(new Option('Default', '-1'));
+    this.audioSelect.value = '-1';
+    this.audioSelect.disabled = true;
+    this.subtitleSelect.replaceChildren(new Option('Off', '-1'));
+    this.subtitleSelect.value = '-1';
+    this.subtitleSelect.disabled = true;
+  }
+
+  private populateSubtitleSelect(playback: JellyfinPlaybackInfo) {
+    const options = [new Option('Off', '-1')];
+    playback.subtitleTracks.forEach((track, index) => {
+      const roles = [
+        track.codec.toUpperCase(),
+        track.isForced ? 'Forced / signs' : null,
+        track.isHearingImpaired ? 'SDH' : null,
+      ].filter(Boolean).join(' · ');
+      options.push(new Option(`${track.label}${roles ? ` — ${roles}` : ''}`, String(index)));
+    });
+    this.subtitleSelect.replaceChildren(...options);
+    this.subtitleSelect.value = '-1';
+    this.subtitleSelect.disabled = playback.subtitleTracks.length === 0;
+  }
+
+  private populateAudioSelect(playback: JellyfinPlaybackInfo) {
+    const options = playback.audioStreams.map((stream, ordinal) => {
+      const index = Number.isInteger(stream.Index) ? stream.Index! : ordinal;
+      const label = stream.DisplayTitle?.trim()
+        || stream.Title?.trim()
+        || stream.Language?.trim()
+        || `Audio ${ordinal + 1}`;
+      const details = [stream.Codec?.toUpperCase(), stream.ChannelLayout]
+        .filter(Boolean)
+        .join(' · ');
+      return new Option(`${label}${details ? ` — ${details}` : ''}`, String(index));
+    });
+    this.audioSelect.replaceChildren(...options);
+    this.audioSelect.value = String(playback.defaultAudioStreamIndex ?? options[0]?.value ?? -1);
+    this.audioSelect.disabled = options.length < 2;
+  }
+
+  private attachPlaybackStream(
+    playback: JellyfinPlaybackInfo,
+    generation: number,
+    resume?: {position: number; paused: boolean},
+  ) {
+    this.hls?.destroy();
+    this.hls = null;
+
+    const restorePlayback = () => {
+      if (generation !== this.playbackGeneration || !resume) return;
+      if (Number.isFinite(resume.position) && resume.position > 0) {
+        this.video.currentTime = resume.position;
+      }
+      if (!resume.paused) void this.video.play().catch(() => undefined);
+    };
+
+    if (!Hls.isSupported()) {
+      this.video.src = mediaUrlWithAccessToken(playback.streamUrl);
+      if (resume) this.video.addEventListener('loadedmetadata', restorePlayback, {once: true});
+      return;
+    }
+
+    const hls = streamingFetchSupported()
+      ? new Hls({
+          loader: FetchLoader,
+          fetchSetup: (context, init) => {
+            const headers = new Headers(init.headers);
+            for (const [name, value] of Object.entries(playback.requiredHeaders)) {
+              headers.set(name, value);
+            }
+            return createJellyfinRequest(
+              resolveJellyfinRequestUrl(context.url),
+              {...init, headers},
+            );
+          },
+        })
+      : new Hls({
+          xhrSetup: (request, requestUrl) => {
+            request.open('GET', resolveJellyfinRequestUrl(requestUrl), true);
+            for (const [name, value] of Object.entries(playback.requiredHeaders)) {
+              request.setRequestHeader(name, value);
+            }
+          },
+        });
+    this.hls = hls;
+    hls.loadSource(playback.streamUrl);
+    hls.attachMedia(this.video);
+    if (playback.subtitleTracks.length > 0) {
+      hls.subtitleTrack = -1;
+      hls.subtitleDisplay = false;
+    }
+    const applyNegotiatedAudio = () => {
+      if (this.hls !== hls || generation !== this.playbackGeneration) return;
+      const selected = playback.audioStreams.find((stream) =>
+        stream.Index === playback.defaultAudioStreamIndex);
+      const preferredLanguage = selected?.Language;
+      const preferredLabel = (selected?.DisplayTitle || selected?.Title || '').toLowerCase();
+      const exactIndex = hls.audioTracks.findIndex((track) =>
+        subtitleLanguageMatches(track.lang, preferredLanguage) &&
+        (!preferredLabel || track.name?.toLowerCase().includes(preferredLabel)));
+      const languageIndex = hls.audioTracks.findIndex((track) =>
+        subtitleLanguageMatches(track.lang, preferredLanguage));
+      const index = exactIndex >= 0 ? exactIndex : languageIndex;
+      if (index >= 0) hls.audioTrack = index;
+    };
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      applyNegotiatedAudio();
+      restorePlayback();
+    });
+    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, applyNegotiatedAudio);
+  }
+
+  private async selectAudio(index: number, remember: boolean) {
+    const currentPlayback = this.playback;
+    const item = this.playingItem;
+    const stream = currentPlayback?.audioStreams.find((candidate) => candidate.Index === index);
+    if (!currentPlayback || !item || !stream || !Number.isInteger(stream.Index)) return;
+    if (stream.Index === currentPlayback.defaultAudioStreamIndex) {
+      if (remember) rememberAudioSelection(item, stream);
+      return;
+    }
+
+    const resume = {position: this.video.currentTime, paused: this.video.paused};
+    const previousIndex = currentPlayback.defaultAudioStreamIndex;
+    const generation = ++this.playbackGeneration;
+    this.playbackAbortController?.abort();
+    const controller = new AbortController();
+    this.playbackAbortController = controller;
+    this.audioSelect.disabled = true;
+    this.playerStatus.textContent = `Switching to ${stream.DisplayTitle || stream.Title || stream.Language || 'audio track'}…`;
+    try {
+      const negotiatedPlayback = await fetchPlaybackInfo(item.Id, controller.signal, {
+        mediaSourceId: currentPlayback.mediaSourceId,
+        audioStreamIndex: stream.Index,
+      });
+      if (controller.signal.aborted || generation !== this.playbackGeneration) return;
+      // Audio-pinned Jellyfin responses may describe only the active rendition.
+      // Preserve the discovery inventory so the user can switch back again.
+      const playback: JellyfinPlaybackInfo = {
+        ...negotiatedPlayback,
+        audioStreams: currentPlayback.audioStreams.length > 0
+          ? currentPlayback.audioStreams
+          : negotiatedPlayback.audioStreams,
+        subtitleTracks: currentPlayback.subtitleTracks.length > 0
+          ? currentPlayback.subtitleTracks
+          : negotiatedPlayback.subtitleTracks,
+        fontUrls: currentPlayback.fontUrls.length > 0
+          ? currentPlayback.fontUrls
+          : negotiatedPlayback.fontUrls,
+      };
+      this.playback = playback;
+      this.populateAudioSelect(playback);
+      this.attachPlaybackStream(playback, generation, resume);
+      if (remember) rememberAudioSelection(item, stream);
+      this.playerStatus.textContent = '';
+    } catch (error) {
+      if (controller.signal.aborted || generation !== this.playbackGeneration) return;
+      this.audioSelect.value = String(previousIndex ?? -1);
+      this.audioSelect.disabled = currentPlayback.audioStreams.length < 2;
+      this.playerStatus.textContent = error instanceof Error
+        ? error.message
+        : 'Could not switch audio tracks.';
+    } finally {
+      if (this.playbackAbortController === controller) this.playbackAbortController = null;
+    }
+  }
+
+  private async selectSubtitle(index: number, remember: boolean) {
+    const playback = this.playback;
+    const item = this.playingItem;
+    if (!playback || !item) return;
+    const track = playback.subtitleTracks[index] ?? null;
+    const generation = ++this.subtitleGeneration;
+    this.subtitleAbortController?.abort();
+    this.subtitleRenderer?.dispose();
+    this.subtitleRenderer = null;
+    this.subtitleSelect.value = track ? String(index) : '-1';
+    if (!track) {
+      if (remember) rememberSubtitleSelection(item, null);
+      this.playerStatus.textContent = '';
+      return;
+    }
+
+    const controller = new AbortController();
+    this.subtitleAbortController = controller;
+    this.playerStatus.textContent = `Loading ${track.label}…`;
+    try {
+      const renderer = await AnimeSubtitleRenderer.create({
+        track,
+        fontUrls: playback.fontUrls,
+        video: this.video,
+        signal: controller.signal,
+        onReady: () => {
+          if (generation === this.subtitleGeneration) this.playerStatus.textContent = '';
+        },
+        onError: (error) => {
+          if (generation !== this.subtitleGeneration) return;
+          console.error('Styled subtitle renderer failed:', error);
+          this.subtitleRenderer = null;
+          this.subtitleSelect.value = '-1';
+          this.playerStatus.textContent = 'Styled subtitles could not be rendered; video playback is continuing.';
+        },
+      });
+      if (generation !== this.subtitleGeneration || controller.signal.aborted) {
+        renderer.dispose();
+        return;
+      }
+      this.subtitleRenderer = renderer;
+      if (remember) rememberSubtitleSelection(item, track);
+      this.playerStatus.textContent = '';
+    } catch (error) {
+      if (controller.signal.aborted || generation !== this.subtitleGeneration) return;
+      console.error('Could not load styled subtitles:', error);
+      this.playerStatus.textContent = error instanceof Error
+        ? error.message
+        : 'Could not load the selected subtitle track.';
+      this.subtitleSelect.value = '-1';
+    } finally {
+      if (this.subtitleAbortController === controller) this.subtitleAbortController = null;
+    }
   }
 
   private loading(message: string) {

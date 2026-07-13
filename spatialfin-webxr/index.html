@@ -127,9 +127,25 @@
     <section id="browser-player" class="browser-player" aria-label="Video player" hidden>
       <div class="browser-player-toolbar">
         <strong id="browser-player-title">Now playing</strong>
+        <label class="browser-track-control" for="browser-audio-select">
+          Audio
+          <select id="browser-audio-select" disabled>
+            <option value="-1">Default</option>
+          </select>
+        </label>
+        <label class="browser-track-control" for="browser-subtitle-select">
+          Subtitles
+          <select id="browser-subtitle-select" disabled>
+            <option value="-1">Off</option>
+          </select>
+        </label>
         <button id="browser-player-close" type="button" aria-label="Close player">Close</button>
       </div>
-      <video id="browser-video" controls playsinline></video>
+      <div class="browser-video-stage">
+        <div class="browser-video-surface">
+          <video id="browser-video" controls playsinline></video>
+        </div>
+      </div>
       <p id="browser-player-status" role="status"></p>
     </section>
 

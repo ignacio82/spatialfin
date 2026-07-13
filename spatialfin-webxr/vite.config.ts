@@ -3,6 +3,44 @@ import {resolve} from 'node:path';
 import {defineConfig, loadEnv} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const NOTO_SANS_JP_PATH = resolve(
+  process.cwd(),
+  'node_modules/@fontsource/noto-sans-jp/files/noto-sans-jp-japanese-400-normal.woff2',
+);
+
+function subtitleFallbackFontPlugin() {
+  const route = '/web/libass/noto-sans-jp.woff2';
+  const middleware = () => (
+    request: {url?: string},
+    response: {setHeader(name: string, value: string): void; end(body: Buffer): void},
+    next: () => void,
+  ) => {
+    if (request.url?.split('?')[0] !== route) {
+      next();
+      return;
+    }
+    response.setHeader('Content-Type', 'font/woff2');
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    response.end(readFileSync(NOTO_SANS_JP_PATH));
+  };
+  return {
+    name: 'spatialfin-subtitle-fallback-font',
+    configureServer(server: {middlewares: {use(handler: ReturnType<typeof middleware>): void}}) {
+      server.middlewares.use(middleware());
+    },
+    configurePreviewServer(server: {middlewares: {use(handler: ReturnType<typeof middleware>): void}}) {
+      server.middlewares.use(middleware());
+    },
+    buildStart() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'libass/noto-sans-jp.woff2',
+        source: readFileSync(NOTO_SANS_JP_PATH),
+      });
+    },
+  };
+}
+
 function readBoolean(value: string | undefined, name: string): boolean {
   if (value === undefined || value === '' || value === 'false') {
     return false;
@@ -50,10 +88,15 @@ export default defineConfig(({mode}) => {
   return {
     base: '/web/',
     plugins: [
+      subtitleFallbackFontPlugin(),
       VitePWA({
         registerType: 'autoUpdate',
         workbox: {
-          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+          // The libass fallback font is needed just as early as its worker and
+          // WASM binary. Workbox's default extension set does not include
+          // fonts, which made offline/PWA subtitle startup fail.
+          globPatterns: ['**/*.{js,css,html,png,svg,webp,woff,woff2,ttf,otf,wasm,webmanifest}']
         },
         manifest: {
           name: 'SpatialFin WebXR',
