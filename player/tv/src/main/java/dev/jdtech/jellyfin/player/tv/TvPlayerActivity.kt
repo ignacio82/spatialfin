@@ -1274,7 +1274,7 @@ private fun TvUpNextCard(
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = Color(0xF20D1824),
-        modifier = Modifier.width(468.dp),
+        modifier = Modifier.width(500.dp),
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -1355,9 +1355,7 @@ private fun TvUpNextPlayButton(
     val content = if (isFocused) Color.Black else MaterialTheme.colorScheme.onPrimary
     Surface(
         onClick = onClick,
-        modifier = modifier
-            .height(48.dp)
-            .focusable(interactionSource = interactionSource),
+        modifier = modifier.height(48.dp),
         shape = RoundedCornerShape(999.dp),
         color = container,
         contentColor = content,
@@ -1660,7 +1658,8 @@ private fun TvOverlayTextButton(
     val isFocused by interactionSource.collectIsFocusedAsState()
     TextButton(
         onClick = onClick,
-        modifier = modifier.focusable(interactionSource = interactionSource),
+        modifier = modifier,
+        interactionSource = interactionSource,
         colors =
             ButtonDefaults.textButtonColors(
                 containerColor =
@@ -1672,7 +1671,12 @@ private fun TvOverlayTextButton(
                 contentColor = Color.White,
             ),
     ) {
-        Text(label, color = Color.White)
+        Text(
+            text = label, 
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

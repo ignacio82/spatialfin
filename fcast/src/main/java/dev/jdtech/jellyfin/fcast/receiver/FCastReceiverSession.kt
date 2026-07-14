@@ -36,6 +36,8 @@ import timber.log.Timber
  */
 class FCastReceiverSession(
     private val socket: Socket,
+    inputStream: java.io.InputStream,
+    private val isWebSocket: Boolean = false,
     private val router: FCastIngressRouter,
     private val receiverInfo: InitialReceiverMessage,
     parentScope: CoroutineScope,
@@ -47,7 +49,7 @@ class FCastReceiverSession(
 ) {
 
     private val output: DataOutputStream = DataOutputStream(socket.getOutputStream().buffered())
-    private val input: DataInputStream = DataInputStream(socket.getInputStream().buffered())
+    private val input: DataInputStream = DataInputStream(inputStream)
     private val writeMutex = Mutex()
     private val closed = AtomicBoolean(false)
     private val readerJob: Job
@@ -70,7 +72,7 @@ class FCastReceiverSession(
             while (!closed.get()) {
                 val msg = withContext(Dispatchers.IO) {
                     try {
-                        FCastFrame.read(input)
+                        FCastFrame.read(input, isWebSocket)
                     } catch (e: IOException) {
                         Timber.tag(TAG).w(e, "FCast session %s read failed", remoteAddress)
                         null
@@ -144,7 +146,7 @@ class FCastReceiverSession(
         writeMutex.withLock {
             withContext(Dispatchers.IO) {
                 try {
-                    FCastFrame.write(output, message)
+                    FCastFrame.write(output, message, isWebSocket)
                 } catch (e: IOException) {
                     Timber.tag(TAG).w(e, "FCast session %s write failed; closing", remoteAddress)
                     close()

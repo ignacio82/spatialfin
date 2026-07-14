@@ -40,9 +40,34 @@ object FCastFrame {
 
     /** Convenience: write a message to a [DataOutputStream] and flush. */
     @Throws(IOException::class)
-    fun write(out: DataOutputStream, message: FCastMessage) {
-        out.write(encode(message))
-        out.flush()
+    fun write(out: DataOutputStream, message: FCastMessage, isWebSocket: Boolean = false) {
+        if (isWebSocket) {
+            val body = encodeBody(message)
+            val size = 1 + body.size
+            require(size <= FCAST_MAX_PACKET_BYTES) {
+                "FCast packet exceeds 32KB limit (size=$size)"
+            }
+            val fcastData = ByteArray(size)
+            fcastData[0] = message.opcode.code.toByte()
+            if (body.isNotEmpty()) {
+                System.arraycopy(body, 0, fcastData, 1, body.size)
+            }
+            out.write(0x82) // FIN + Binary frame
+            if (fcastData.size <= 125) {
+                out.write(fcastData.size)
+            } else if (fcastData.size <= 65535) {
+                out.write(126)
+                out.writeShort(fcastData.size)
+            } else {
+                out.write(127)
+                out.writeLong(fcastData.size.toLong())
+            }
+            out.write(fcastData)
+            out.flush()
+        } else {
+            out.write(encode(message))
+            out.flush()
+        }
     }
 
     /**
@@ -50,7 +75,54 @@ object FCastFrame {
      * frames (oversize, unknown opcode, malformed JSON).
      */
     @Throws(IOException::class)
-    fun read(input: DataInputStream): FCastMessage? {
+    fun read(input: DataInputStream, isWebSocket: Boolean = false): FCastMessage? {
+        if (isWebSocket) {
+            while (true) {
+                val b0 = try { input.readUnsignedByte() } catch (e: EOFException) { return null }
+                val wsOpcode = b0 and 0x0F
+                if (wsOpcode == 8) return null // Close frame
+
+                val b1 = input.readUnsignedByte()
+                val masked = (b1 and 0x80) != 0
+                var payloadLen = (b1 and 0x7F).toLong()
+                if (payloadLen == 126L) {
+                    payloadLen = input.readUnsignedShort().toLong()
+                } else if (payloadLen == 127L) {
+                    payloadLen = input.readLong()
+                }
+
+                val maskKey = if (masked) {
+                    ByteArray(4).also { input.readFully(it) }
+                } else {
+                    null
+                }
+
+                val payload = ByteArray(payloadLen.toInt())
+                input.readFully(payload)
+
+                if (maskKey != null) {
+                    for (i in payload.indices) {
+                        payload[i] = (payload[i].toInt() xor maskKey[i % 4].toInt()).toByte()
+                    }
+                }
+
+                if (wsOpcode == 9 || wsOpcode == 10) {
+                    continue
+                }
+
+                if (wsOpcode == 1 || wsOpcode == 2) {
+                    if (payload.isEmpty()) throw IOException("Empty websocket frame payload for FCast")
+                    val fcastOpcodeByte = payload[0].toInt() and 0xFF
+                    val fcastOpcode = FCastOpcode.fromCode(fcastOpcodeByte)
+                        ?: throw IOException("FCast unknown opcode: $fcastOpcodeByte")
+                    val body = ByteArray(payload.size - 1)
+                    if (body.isNotEmpty()) {
+                        System.arraycopy(payload, 1, body, 0, body.size)
+                    }
+                    return decode(fcastOpcode, body)
+                }
+            }
+        }
         val sizeBytes = ByteArray(Int.SIZE_BYTES)
         val read = input.readFullyOrEof(sizeBytes)
         if (!read) return null

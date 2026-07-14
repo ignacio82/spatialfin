@@ -36,6 +36,11 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+let companionUrl = '';
+export let seerrEnabled = false;
+export let seerrUrl = '';
+export let seerrApiKey = '';
+
 export interface JellyfinView {
   Id: string;
   Name: string;
@@ -98,6 +103,7 @@ export interface JellyfinMediaAttachment {
 export interface JellyfinItem {
   Id: string;
   Name: string;
+  OriginalTitle?: string;
   Type?: string;
   Overview?: string;
   Genres?: string[];
@@ -105,6 +111,7 @@ export interface JellyfinItem {
   CriticRating?: number;
   OfficialRating?: string;
   ProductionYear?: number;
+  PremiereDate?: string;
   RunTimeTicks?: number;
   PrimaryImageAspectRatio?: number;
   ParentIndexNumber?: number;
@@ -132,6 +139,18 @@ export interface JellyfinMediaSourceInfo {
   VideoCodec?: string;
   MediaStreams?: JellyfinMediaStream[];
   MediaAttachments?: JellyfinMediaAttachment[];
+}
+
+export interface SeerrResult {
+  id: number;
+  mediaType: 'movie' | 'tv';
+  title?: string;
+  name?: string;
+  overview?: string;
+  posterPath?: string;
+  backdropPath?: string;
+  releaseDate?: string;
+  firstAirDate?: string;
 }
 
 export interface JellyfinPlaybackInfoResponse {
@@ -199,6 +218,25 @@ export class JellyfinApiError extends Error {
 
   get isUnauthorized(): boolean {
     return this.status === 401;
+  }
+}
+
+export function setCompanionUrl(url: string) {
+  companionUrl = url;
+}
+
+export async function fetchPreferences() {
+  if (!companionUrl) return;
+  try {
+    const res = await fetch(`${companionUrl}/api/preferences`);
+    if (res.ok) {
+      const data = await res.json();
+      seerrEnabled = data.seerr_enabled === true;
+      seerrUrl = (data.seerr_url || '').replace(/\/+$/, '');
+      seerrApiKey = data.seerr_api_key || '';
+    }
+  } catch (e) {
+    console.error('Failed to fetch preferences', e);
   }
 }
 
@@ -420,6 +458,23 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   }
 }
 
+
+
+export async function searchSeerr(query: string): Promise<SeerrResult[]> {
+  if (!seerrEnabled || !seerrUrl || !seerrApiKey) return [];
+  try {
+    const res = await fetch(`${seerrUrl}/api/v1/search?query=${encodeURIComponent(query)}`, {
+      headers: { 'X-Api-Key': seerrApiKey }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.results || []).filter((r: any) => r.mediaType === 'movie' || r.mediaType === 'tv');
+  } catch (e) {
+    console.error('Seerr search failed:', e);
+    return [];
+  }
+}
+
 export async function fetchViews(): Promise<JellyfinView[]> {
   const data = await requestJson<QueryResult<JellyfinView>>('/UserViews', {
     query: {
@@ -492,6 +547,55 @@ export async function fetchItems(parentId: string): Promise<JellyfinItem[]> {
   return validItems(data.Items);
 }
 
+export function movieVersionGroupKey(item: JellyfinItem): string | null {
+  if (item.Type !== 'Movie') return null;
+  const title = (item.OriginalTitle && item.OriginalTitle.trim().length > 0) ? item.OriginalTitle : item.Name;
+  if (!title) return null;
+  
+  const baseTitle = title.toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^]]*]/g, " ")
+    .replace(/\{[^}]*}/g, " ")
+    .replace(/\b(3d|sbs|hsbs|fsbs|tab|tb|top.?bottom|ou|over.?under|half.?sbs|full.?sbs|mv-hevc|mvhevc|spatial|spatial\.video|4k|uhd|2160p|1080p|720p|bluray|blu.?ray|remux|hevc|x264|x265|av1|hdr10|hdr|dv|dovi|dolby.?vision)\b/g, " ")
+    .replace(/\b(3d|sbs|hsbs|fsbs|tab|tb|top.?bottom|half.?sbs|full.?sbs)\b/g, " ")
+    .replace(/\.(mkv|mp4|avi|mov|m4v)$/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+    
+  const year = item.ProductionYear || (item.PremiereDate ? new Date(item.PremiereDate).getFullYear() : 'unknown');
+  return `${baseTitle}|${year}`;
+}
+
+export function deduplicateMovieVersions(items: JellyfinItem[]): JellyfinItem[] {
+  const groups = new Map<string, JellyfinItem[]>();
+  
+  for (const item of items) {
+    const key = movieVersionGroupKey(item) ?? item.Id;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+  
+  const deduplicated: JellyfinItem[] = [];
+  for (const group of groups.values()) {
+    // Sort logic: prioritize resumable, then unplayed, then anything
+    group.sort((a, b) => {
+      const aTicks = a.UserData?.PlaybackPositionTicks || 0;
+      const bTicks = b.UserData?.PlaybackPositionTicks || 0;
+      if (aTicks > 0 && bTicks === 0) return -1;
+      if (bTicks > 0 && aTicks === 0) return 1;
+      
+      const aPlayed = a.UserData?.Played ? 1 : 0;
+      const bPlayed = b.UserData?.Played ? 1 : 0;
+      if (aPlayed !== bPlayed) return aPlayed - bPlayed;
+      
+      return 0;
+    });
+    deduplicated.push(group[0]);
+  }
+  
+  return deduplicated;
+}
+
 export async function fetchSuggestions(
   limit = 6,
   signal?: AbortSignal,
@@ -510,7 +614,7 @@ export async function fetchSuggestions(
     },
     signal,
   });
-  return validItems(data.Items);
+  return deduplicateMovieVersions(validItems(data.Items));
 }
 
 export async function fetchResumeItems(
@@ -532,7 +636,7 @@ export async function fetchResumeItems(
     },
     signal,
   });
-  return validItems(data.Items);
+  return deduplicateMovieVersions(validItems(data.Items)).filter(item => !item.UserData?.Played);
 }
 
 export async function fetchNextUp(
@@ -555,7 +659,7 @@ export async function fetchNextUp(
     },
     signal,
   });
-  return validItems(data.Items);
+  return deduplicateMovieVersions(validItems(data.Items));
 }
 
 export async function fetchLatestMedia(
@@ -576,7 +680,7 @@ export async function fetchLatestMedia(
     },
     signal,
   });
-  return itemsFromResponse(data);
+  return deduplicateMovieVersions(itemsFromResponse(data));
 }
 
 export async function fetchEpisodes(
@@ -598,6 +702,81 @@ export async function fetchEpisodes(
       },
     },
   );
+  return validItems(data.Items);
+}
+
+export async function fetchSeasons(
+  seriesId: string,
+): Promise<JellyfinItem[]> {
+  const data = await requestJson<QueryResult<JellyfinItem>>(
+    `/Shows/${encodeURIComponent(seriesId)}/Seasons`,
+    {
+      query: {
+        userId: requireUserId(),
+        fields: HOME_ITEM_FIELDS,
+        enableImages: true,
+        enableImageTypes: HOME_IMAGE_TYPES,
+        imageTypeLimit: 1,
+        enableUserData: true,
+      },
+    },
+  );
+  return validItems(data.Items);
+}
+
+export async function fetchSeasonEpisodes(
+  seriesId: string,
+  seasonId: string,
+): Promise<JellyfinItem[]> {
+  const data = await requestJson<QueryResult<JellyfinItem>>(
+    `/Shows/${encodeURIComponent(seriesId)}/Episodes`,
+    {
+      query: {
+        userId: requireUserId(),
+        seasonId,
+        fields: HOME_ITEM_FIELDS,
+        enableImages: true,
+        enableImageTypes: HOME_IMAGE_TYPES,
+        imageTypeLimit: 1,
+        enableUserData: true,
+        sortBy: 'ParentIndexNumber,IndexNumber',
+      },
+    },
+  );
+  return validItems(data.Items);
+}
+
+export async function searchItems(searchTerm: string, includeItemTypes: string = 'Movie,Series'): Promise<JellyfinItem[]> {
+  const data = await requestJson<QueryResult<JellyfinItem>>('/Items', {
+    query: {
+      userId: requireUserId(),
+      searchTerm,
+      recursive: true,
+      includeItemTypes,
+      fields: HOME_ITEM_FIELDS,
+      enableImages: true,
+      enableImageTypes: HOME_IMAGE_TYPES,
+      imageTypeLimit: 1,
+      enableUserData: true,
+    },
+  });
+  return validItems(data.Items);
+}
+
+export async function fetchItemsByPerson(personId: string, includeItemTypes: string = 'Movie,Series'): Promise<JellyfinItem[]> {
+  const data = await requestJson<QueryResult<JellyfinItem>>('/Items', {
+    query: {
+      userId: requireUserId(),
+      personIds: personId,
+      recursive: true,
+      includeItemTypes,
+      fields: HOME_ITEM_FIELDS,
+      enableImages: true,
+      enableImageTypes: HOME_IMAGE_TYPES,
+      imageTypeLimit: 1,
+      enableUserData: true,
+    },
+  });
   return validItems(data.Items);
 }
 

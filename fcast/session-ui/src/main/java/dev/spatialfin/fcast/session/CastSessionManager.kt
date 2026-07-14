@@ -387,7 +387,7 @@ class CastSessionManager @Inject constructor(
                 val receiver = controller.activeReceiver.value ?: return@collect
                 val key = "${receiver.host}:${receiver.port}"
                 val appName = initial.appName?.trim().orEmpty()
-                val isSpatialFinPeer = appName.startsWith("SpatialFin", ignoreCase = true)
+                val isSpatialFinPeer = appName.startsWith("SpatialFin", ignoreCase = true) && !appName.contains("Web", ignoreCase = true)
                 peerCapabilityCache[key] = buildSet {
                     if (isSpatialFinPeer) {
                         add(CastCapability.NativeAss)

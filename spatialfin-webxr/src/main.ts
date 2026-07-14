@@ -1,15 +1,22 @@
 import 'xrblocks/addons/simulator/SimulatorAddons.js';
 import * as xb from 'xrblocks';
+import { Html5Qrcode } from 'html5-qrcode';
 import {
   getGeminiKey,
   getServerUrl,
   isAuthenticated,
   JellyfinAuthError,
   login,
+  loginViaCompanion,
+  loginViaCompanionSetupToken,
   logout,
   normalizeServerUrl,
   validateSession,
+  saveSession,
+  getCompanionUrl,
 } from './auth';
+import type { AuthSession } from './auth';
+import { FCastClient } from './fcast';
 import {
   browserClassifiesAddressSpace,
   createJellyfinRequest,
@@ -21,6 +28,10 @@ import './style.css';
 
 const loginOverlay = document.querySelector<HTMLElement>('#login-overlay');
 const loginForm = document.querySelector<HTMLFormElement>('#login-form');
+const companionLoginForm = document.querySelector<HTMLFormElement>('#companion-login-form');
+const companionIpInput = document.querySelector<HTMLInputElement>('#companion-ip');
+const scanQrButton = document.querySelector<HTMLButtonElement>('#scan-qr-button');
+const qrReaderElement = document.querySelector<HTMLElement>('#qr-reader');
 const serverInput = document.querySelector<HTMLInputElement>('#server');
 const usernameInput = document.querySelector<HTMLInputElement>('#username');
 const passwordInput = document.querySelector<HTMLInputElement>('#password');
@@ -34,6 +45,22 @@ const sessionServer = document.querySelector<HTMLElement>('#session-server');
 const signOutButton = document.querySelector<HTMLButtonElement>('#sign-out-button');
 const browserSignOutButton = document.querySelector<HTMLButtonElement>('#browser-sign-out-button');
 const enterXrButton = document.querySelector<HTMLButtonElement>('#enter-xr-button');
+const switchUserButton = document.querySelector<HTMLButtonElement>('#switch-user-button');
+const browserSwitchUserButton = document.querySelector<HTMLButtonElement>('#browser-switch-user-button');
+
+const userSelectionDialog = document.querySelector<HTMLDialogElement>('#user-selection-dialog');
+const userSelectionList = document.querySelector<HTMLElement>('#user-selection-list');
+const cancelUserSelectionButton = document.querySelector<HTMLButtonElement>('#cancel-user-selection');
+
+const castButton = document.querySelector<HTMLButtonElement>('#browser-cast-button');
+const receiveButton = document.querySelector<HTMLButtonElement>('#browser-receive-button');
+const castSelectionDialog = document.querySelector<HTMLDialogElement>('#cast-selection-dialog');
+const castSelectionList = document.querySelector<HTMLElement>('#cast-selection-list');
+const cancelCastSelectionButton = document.querySelector<HTMLButtonElement>('#cancel-cast-selection');
+
+let currentFCastClient: FCastClient | null = null;
+let currentReceiverWs: WebSocket | null = null;
+
 const browserApp = new BrowserApp();
 
 let xrStartPromise: Promise<void> | null = null;
@@ -95,6 +122,347 @@ function clearError() {
   errorMessage.hidden = true;
 }
 
+if (cancelCastSelectionButton && castSelectionDialog) {
+  cancelCastSelectionButton.onclick = () => {
+    castSelectionDialog.close();
+  };
+}
+
+if (castButton) {
+  castButton.onclick = async () => {
+    if (currentFCastClient) {
+      currentFCastClient.disconnect();
+      currentFCastClient = null;
+      castButton.textContent = 'Cast';
+      return;
+    }
+
+    const companionUrl = getCompanionUrl();
+    if (!companionUrl) {
+      alert('You must connect via the Companion App to discover Cast receivers.');
+      return;
+    }
+    
+    castButton.textContent = 'Searching...';
+    try {
+      const res = await fetch(`${companionUrl}/api/fcast/receivers`);
+      const receivers = await res.json();
+      
+      if (castSelectionList && castSelectionDialog) {
+        castSelectionList.innerHTML = '';
+        receivers.forEach((receiver: any) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'connect-button';
+          btn.style.marginTop = '8px';
+          btn.textContent = `${receiver.name}`;
+          btn.onclick = () => {
+            castSelectionDialog.close();
+            connectToReceiver(receiver.ip, receiver.port, receiver.name);
+          };
+          castSelectionList.appendChild(btn);
+        });
+        
+        if (receivers.length === 0) {
+          const msg = document.createElement('p');
+          msg.textContent = 'No receivers found on the local network.';
+          castSelectionList.appendChild(msg);
+        }
+        
+        castSelectionDialog.showModal();
+      }
+    } catch (e) {
+      alert('Failed to fetch receivers: ' + e);
+    } finally {
+      castButton.textContent = 'Cast';
+    }
+  };
+}
+
+if (receiveButton) {
+  receiveButton.onclick = () => {
+    if (currentReceiverWs) {
+      currentReceiverWs.close();
+      currentReceiverWs = null;
+      receiveButton.textContent = 'Enable Receiver';
+      return;
+    }
+    const companionUrlStr = getCompanionUrl();
+    if (!companionUrlStr) {
+      alert('You must connect via the Companion App to act as a receiver.');
+      return;
+    }
+    
+    receiveButton.textContent = 'Connecting...';
+    try {
+      const companionUrl = new URL(companionUrlStr);
+      // Ensure we use ws or wss based on the companion url protocol
+      const protocol = companionUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${companionUrl.host}/api/fcast/receive`;
+      currentReceiverWs = new WebSocket(wsUrl);
+      currentReceiverWs.binaryType = 'arraybuffer';
+      
+      let playbackUpdateInterval = 0;
+
+      const sendFcastMessage = (opcode: number, payloadObj?: any) => {
+        if (!currentReceiverWs || currentReceiverWs.readyState !== WebSocket.OPEN) return;
+        if (payloadObj) {
+          const jsonStr = JSON.stringify(payloadObj);
+          const jsonBytes = new TextEncoder().encode(jsonStr);
+          const buffer = new Uint8Array(1 + jsonBytes.length);
+          buffer[0] = opcode;
+          buffer.set(jsonBytes, 1);
+          currentReceiverWs.send(buffer);
+        } else {
+          currentReceiverWs.send(new Uint8Array([opcode]));
+        }
+      };
+
+      const startBeacons = (syncCadenceHz: number = 1) => {
+        if (playbackUpdateInterval) window.clearInterval(playbackUpdateInterval);
+        const video = document.querySelector<HTMLVideoElement>('#browser-video');
+        playbackUpdateInterval = window.setInterval(() => {
+          if (!video) return;
+          sendFcastMessage(6, {
+            generationTime: Date.now(),
+            state: video.paused ? 2 : 1,
+            time: video.currentTime,
+            duration: video.duration || 0,
+            speed: video.playbackRate,
+            monotonicSampleMs: Math.round(performance.now())
+          });
+        }, 1000 / syncCadenceHz);
+      };
+
+      const stopBeacons = () => {
+        if (playbackUpdateInterval) {
+          window.clearInterval(playbackUpdateInterval);
+          playbackUpdateInterval = 0;
+        }
+      };
+      
+      currentReceiverWs.onopen = () => {
+        receiveButton.textContent = 'Disable Receiver';
+      };
+      
+      currentReceiverWs.onclose = () => {
+        currentReceiverWs = null;
+        stopBeacons();
+        if (receiveButton) receiveButton.textContent = 'Enable Receiver';
+      };
+      
+      currentReceiverWs.onmessage = (event) => {
+        const data = event.data;
+        if (data instanceof ArrayBuffer) {
+          const view = new Uint8Array(data);
+          if (view.length === 0) return;
+          const opcode = view[0];
+          let payload: any = null;
+          if (view.length > 1) {
+            try {
+              const jsonStr = new TextDecoder().decode(view.subarray(1));
+              if (jsonStr.trim()) payload = JSON.parse(jsonStr);
+            } catch (e) {
+              console.error("Error decoding receiver payload", e);
+            }
+          }
+
+          const video = document.querySelector<HTMLVideoElement>('#browser-video');
+          const player = document.querySelector<HTMLElement>('#browser-player');
+          const audioOverlay = document.querySelector<HTMLElement>('#audio-receiver-overlay');
+          
+          if (opcode === 1 && payload) {
+            // Opcode 1: Play
+            console.log("Received PLAY command:", JSON.stringify(payload, null, 2));
+            if (video) {
+              video.src = payload.url;
+            }
+            
+            const splitAvRole = payload.metadata?.custom?.splitAv?.role?.toLowerCase();
+            console.log("Split A/V role:", splitAvRole);
+            
+            if (splitAvRole === 'audio') {
+              // ── Audio-only mode: show receiver overlay, hide video player ──
+              if (player) player.hidden = true;
+              if (video) {
+                video.muted = false;
+                video.style.visibility = 'hidden';
+                video.style.position = 'absolute';
+              }
+              
+              if (audioOverlay) {
+                audioOverlay.hidden = false;
+                
+                // Title
+                const titleEl = document.getElementById('audio-receiver-title');
+                if (titleEl) titleEl.textContent = payload.metadata?.title || 'Cast Audio';
+                
+                // Thumbnail backdrop
+                const bgEl = audioOverlay.querySelector<HTMLElement>('.audio-receiver-bg');
+                const artworkEl = document.getElementById('audio-receiver-artwork');
+                const thumbUrl = payload.metadata?.image;
+                if (thumbUrl && bgEl) {
+                  bgEl.style.backgroundImage = `url(${thumbUrl})`;
+                }
+                if (thumbUrl && artworkEl) {
+                  artworkEl.innerHTML = `<img src="${thumbUrl}" alt="Artwork" />`;
+                }
+                
+                // Codec badge
+                const codecBadge = document.getElementById('audio-receiver-codec-badge');
+                if (codecBadge) {
+                  const audio = payload.metadata?.custom?.audio;
+                  if (audio) {
+                    const codec = (audio.sourceCodec || '').toUpperCase();
+                    const mode = audio.transcoded ? 'Transcode' : 'Direct Play';
+                    const lang = (audio.preferredLanguage || '').toUpperCase();
+                    codecBadge.textContent = [codec, mode, lang].filter(Boolean).join(' · ');
+                  } else {
+                    codecBadge.textContent = '';
+                  }
+                }
+                
+                // Status badge — playing
+                const statusBadge = document.getElementById('audio-receiver-status-badge');
+                if (statusBadge) {
+                  statusBadge.className = 'audio-receiver-badge audio-receiver-badge--status';
+                  statusBadge.innerHTML = '<span class="audio-receiver-pulse"></span> Playing';
+                }
+                
+                // Stop button
+                const stopBtn = document.getElementById('audio-receiver-stop');
+                if (stopBtn) {
+                  stopBtn.onclick = () => {
+                    sendFcastMessage(4); // Stop opcode
+                    if (video) { video.pause(); video.src = ''; }
+                    audioOverlay.hidden = true;
+                    if (video) { video.style.visibility = ''; video.style.position = ''; }
+                  };
+                }
+              }
+              
+              const syncCadenceHz = payload.metadata?.custom?.splitAv?.syncCadenceHz || 1;
+              startBeacons(syncCadenceHz);
+              if (video) video.play().catch(e => console.error("Play failed", e));
+              
+            } else {
+              // ── Video mode (normal cast or video-only split) ──
+              if (audioOverlay) audioOverlay.hidden = true;
+              if (player) player.hidden = false;
+              if (video) {
+                video.style.visibility = '';
+                video.style.position = '';
+                video.muted = splitAvRole === 'video';
+              }
+              const playerTitle = document.querySelector<HTMLElement>('#browser-player-title');
+              if (playerTitle) playerTitle.textContent = payload.metadata?.title || 'Unknown Cast Media';
+              
+              const syncCadenceHz = payload.metadata?.custom?.splitAv?.syncCadenceHz || 1;
+              startBeacons(syncCadenceHz);
+              if (video) video.play().catch(e => console.error("Play failed", e));
+            }
+            
+          } else if (opcode === 2) {
+            // Pause
+            console.log("Received PAUSE");
+            if (video) video.pause();
+            const statusBadge = document.getElementById('audio-receiver-status-badge');
+            if (statusBadge && audioOverlay && !audioOverlay.hidden) {
+              statusBadge.className = 'audio-receiver-badge audio-receiver-badge--status audio-receiver-badge--paused';
+              statusBadge.innerHTML = '<span class="audio-receiver-pulse"></span> Paused';
+            }
+          } else if (opcode === 3) {
+            // Resume
+            console.log("Received RESUME");
+            if (video) video.play().catch(e => console.error(e));
+            const statusBadge = document.getElementById('audio-receiver-status-badge');
+            if (statusBadge && audioOverlay && !audioOverlay.hidden) {
+              statusBadge.className = 'audio-receiver-badge audio-receiver-badge--status';
+              statusBadge.innerHTML = '<span class="audio-receiver-pulse"></span> Playing';
+            }
+          } else if (opcode === 4) {
+            // Stop
+            console.log("Received STOP");
+            stopBeacons();
+            if (video) { video.pause(); video.src = ''; video.style.visibility = ''; video.style.position = ''; }
+            if (player) player.hidden = true;
+            if (audioOverlay) audioOverlay.hidden = true;
+          } else if (opcode === 5 && payload) {
+            // Seek
+            console.log("Received SEEK:", payload.time);
+            if (video && payload.time !== undefined) video.currentTime = payload.time;
+          } else if (opcode === 12 && payload) {
+            // Ping
+            const t2 = Math.round(performance.now());
+            sendFcastMessage(13, {
+              t1: payload.t1,
+              t2: t2,
+              t3: Math.round(performance.now())
+            });
+          }
+        }
+      };
+    } catch (e) {
+      console.error(e);
+      alert('Failed to start receiver connection.');
+      receiveButton.textContent = 'Enable Receiver';
+    }
+  };
+}
+
+function connectToReceiver(ip: string, port: number, name: string) {
+  if (currentFCastClient) {
+    currentFCastClient.disconnect();
+  }
+  currentFCastClient = new FCastClient(ip, port);
+  currentFCastClient.onConnect = () => {
+    if (castButton) {
+      castButton.textContent = `Disconnect (${name})`;
+    }
+  };
+  currentFCastClient.onDisconnect = () => {
+    currentFCastClient = null;
+    if (castButton) {
+      castButton.textContent = 'Cast';
+    }
+  };
+  currentFCastClient.onError = (err) => {
+    console.error('FCast error', err);
+    alert('Lost connection to the Cast receiver.');
+  };
+  currentFCastClient.connect();
+}
+
+browserApp.onPlayRequest = (item) => {
+  if (currentFCastClient && currentFCastClient['ws']?.readyState === WebSocket.OPEN) {
+    const serverUrl = getServerUrl();
+    const sessionStr = sessionStorage.getItem('spatialfin_session') || localStorage.getItem('spatialfin_session');
+    let accessToken = '';
+    if (sessionStr) {
+      try {
+        accessToken = JSON.parse(sessionStr).accessToken;
+      } catch (e) {}
+    }
+    
+    // Construct the stream URL
+    let streamUrl = `${serverUrl}/Videos/${item.Id}/stream?static=true`;
+    
+    currentFCastClient.sendMessage(1, {
+      container: 'video/mp4',
+      url: streamUrl,
+      headers: {
+        'X-Emby-Token': accessToken,
+      },
+      metadata: {
+        type: 1, // Video
+        title: item.Name,
+      }
+    });
+    return true; // Handled by FCast
+  }
+  return false;
+};
+
 function showLogin() {
   if (loginOverlay) loginOverlay.hidden = false;
   if (sessionBar) sessionBar.hidden = true;
@@ -114,6 +482,11 @@ async function showBrowserApp() {
       sessionServer.textContent = serverUrl;
     }
   }
+
+  const hasCompanion = !!getCompanionUrl();
+  if (switchUserButton) switchUserButton.hidden = !hasCompanion;
+  if (browserSwitchUserButton) browserSwitchUserButton.hidden = !hasCompanion;
+
   // Initialize the renderer and WebXR capability check in the background.
   // That leaves this page fully usable as a normal web app while ensuring the
   // single Enter XR click can call requestSession within the user's gesture.
@@ -218,6 +591,162 @@ async function handleLogin(event: SubmitEvent) {
   }
 }
 
+function promptUserSelection(sessions: AuthSession[]): Promise<AuthSession> {
+  return new Promise((resolve, reject) => {
+    if (!userSelectionDialog || !userSelectionList || !cancelUserSelectionButton) {
+      reject(new Error("UI not found for user selection"));
+      return;
+    }
+
+    userSelectionList.innerHTML = '';
+    sessions.forEach(session => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'connect-button';
+      btn.style.marginTop = '8px';
+      btn.textContent = `${session.userName} (${session.serverUrl})`;
+      btn.onclick = () => {
+        userSelectionDialog.close();
+        resolve(session);
+      };
+      userSelectionList.appendChild(btn);
+    });
+
+    cancelUserSelectionButton.onclick = () => {
+      userSelectionDialog.close();
+      reject(new Error("User selection cancelled"));
+    };
+
+    userSelectionDialog.showModal();
+  });
+}
+
+async function handleCompanionLogin(event: SubmitEvent) {
+  event.preventDefault();
+  if (!companionIpInput) return;
+
+  clearError();
+  setBusy(true, 'Fetching credentials from Companion App...');
+  const remember = rememberInput?.checked ?? false;
+
+  try {
+    const validSessions = await loginViaCompanion(companionIpInput.value);
+    
+    let selectedSession: AuthSession;
+    if (validSessions.length === 1) {
+      selectedSession = validSessions[0];
+    } else {
+      setBusy(false);
+      selectedSession = await promptUserSelection(validSessions);
+      setBusy(true, 'Finishing login...');
+    }
+    
+    saveSession(selectedSession, remember);
+    await showBrowserApp();
+  } catch (error) {
+    showLogin();
+    showError(error instanceof Error ? error.message : 'Unable to connect to Companion App.');
+  } finally {
+    setBusy(false);
+  }
+}
+
+let qrScanner: Html5Qrcode | null = null;
+async function startQrScanner() {
+  if (!qrReaderElement || !companionIpInput) return;
+  
+  if (qrScanner) {
+    await qrScanner.stop();
+    qrScanner.clear();
+    qrScanner = null;
+    qrReaderElement.style.display = 'none';
+    return;
+  }
+
+  qrReaderElement.style.display = 'block';
+  qrScanner = new Html5Qrcode("qr-reader");
+
+  try {
+    await qrScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      async (decodedText) => {
+        let companionUrl = '';
+        let setupToken = '';
+        
+        try {
+          if (decodedText.startsWith("sfcp:")) {
+            const data = decodedText.substring(5).split("|");
+            if (data.length === 2) {
+              companionUrl = data[0];
+              setupToken = data[1];
+            }
+          } else {
+            const payload = JSON.parse(decodedText);
+            if (payload.companion_url && payload.setup_token) {
+              companionUrl = payload.companion_url;
+              setupToken = payload.setup_token;
+            }
+          }
+        } catch (e) {
+          // ignore parsing errors
+        }
+
+        if (!companionUrl) {
+          // If not a valid setup token QR, maybe it's just an IP
+          const ipPort = decodedText.replace(/^fcast:\/\//i, '');
+          companionIpInput.value = ipPort;
+          
+          await qrScanner?.stop();
+          qrScanner?.clear();
+          qrScanner = null;
+          qrReaderElement.style.display = 'none';
+          
+          companionLoginForm?.dispatchEvent(new SubmitEvent('submit', { cancelable: true }));
+          return;
+        }
+        
+        // Stop scanner
+        await qrScanner?.stop();
+        qrScanner?.clear();
+        qrScanner = null;
+        qrReaderElement.style.display = 'none';
+        
+        // Login with setup token
+        clearError();
+        setBusy(true, 'Fetching configuration from Companion App...');
+        const remember = rememberInput?.checked ?? false;
+        try {
+          const validSessions = await loginViaCompanionSetupToken(companionUrl, setupToken);
+          
+          let selectedSession: AuthSession;
+          if (validSessions.length === 1) {
+            selectedSession = validSessions[0];
+          } else {
+            setBusy(false);
+            selectedSession = await promptUserSelection(validSessions);
+            setBusy(true, 'Finishing login...');
+          }
+          
+          saveSession(selectedSession, remember);
+          await showBrowserApp();
+        } catch (error) {
+          showLogin();
+          showError(error instanceof Error ? error.message : 'Unable to connect to Companion App.');
+        } finally {
+          setBusy(false);
+        }
+      },
+      () => {
+        // Ignore parse errors, just keep scanning
+      }
+    );
+  } catch (err) {
+    showError("Could not start camera for QR scanning.");
+    qrReaderElement.style.display = 'none';
+  }
+}
+
 async function restoreSession() {
   if (!isAuthenticated()) {
     showLogin();
@@ -248,9 +777,36 @@ async function restoreSession() {
   setBusy(false);
 }
 
+async function handleSwitchUser() {
+  const companionUrl = getCompanionUrl();
+  if (!companionUrl) return;
+
+  setBusy(true, 'Fetching users from Companion App...');
+  
+  try {
+    const validSessions = await loginViaCompanion(companionUrl);
+    setBusy(false);
+    
+    if (validSessions.length > 0) {
+      const selectedSession = await promptUserSelection(validSessions);
+      setBusy(true, 'Finishing login...');
+      saveSession(selectedSession, true);
+      window.location.reload();
+    }
+  } catch (error) {
+    showError(error instanceof Error ? error.message : 'Unable to switch user.');
+  } finally {
+    setBusy(false);
+  }
+}
+
 loginForm?.addEventListener('submit', (event) => void handleLogin(event));
+companionLoginForm?.addEventListener('submit', (event) => void handleCompanionLogin(event));
+scanQrButton?.addEventListener('click', () => void startQrScanner());
 signOutButton?.addEventListener('click', () => void logout());
 browserSignOutButton?.addEventListener('click', () => void logout());
+switchUserButton?.addEventListener('click', () => void handleSwitchUser());
+browserSwitchUserButton?.addEventListener('click', () => void handleSwitchUser());
 enterXrButton?.addEventListener('click', () => {
   enterXr();
 });

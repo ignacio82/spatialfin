@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://xrblocks.github.io" />
     <link rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
     <title>SpatialFin WebXR</title>
-    <script type="module" crossorigin src="/web/assets/index-CxpUsuhR.js"></script>
-    <link rel="stylesheet" crossorigin href="/web/assets/index-C2BEmVpx.css">
+    <script type="module" crossorigin src="/web/assets/index-CkIbRQYP.js"></script>
+    <link rel="stylesheet" crossorigin href="/web/assets/index-CDnDJNC6.css">
   <link rel="manifest" href="/web/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/web/registerSW.js"></script></head>
   <body>
     <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
@@ -23,8 +23,43 @@
       </section>
 
       <section class="login-pane">
-        <form id="login-form" novalidate>
-          <div class="form-header">
+        <div style="display: flex; flex-direction: column; gap: 48px; width: min(100%, 600px);">
+          
+          <form id="companion-login-form" novalidate>
+            <div class="form-header">
+              <p class="eyebrow">Auto-connect</p>
+              <h2>Use Companion App</h2>
+            </div>
+            
+            <label class="field" for="companion-ip">
+              <span>Companion App Address (IP:Port)</span>
+              <input
+                id="companion-ip"
+                name="companion-ip"
+                type="text"
+                inputmode="url"
+                autocomplete="url"
+                autocapitalize="none"
+                spellcheck="false"
+                placeholder="192.168.1.90:1982"
+                required
+              />
+            </label>
+            
+            <div class="credential-row">
+              <button class="connect-button" type="submit" style="margin-top: 24px;">
+                Get Credentials
+              </button>
+              <button id="scan-qr-button" class="connect-button" type="button" style="margin-top: 24px; background: #26343b; color: #a4c9fe;">
+                Scan QR Code
+              </button>
+            </div>
+            
+            <div id="qr-reader" style="margin-top: 24px; border-radius: 8px; overflow: hidden; display: none;"></div>
+          </form>
+
+          <form id="login-form" novalidate>
+            <div class="form-header">
             <p class="eyebrow">Server connection</p>
             <h2>Connect to Jellyfin</h2>
           </div>
@@ -98,15 +133,37 @@
           <p id="login-error" class="error-message" role="alert" hidden></p>
 
           <button id="connect-button" class="connect-button" type="submit">
-            Connect
+            Connect Manually
           </button>
         </form>
+        </div>
       </section>
     </main>
+
+    <dialog id="user-selection-dialog" class="user-selection-dialog">
+      <form method="dialog">
+        <h2>Select a User</h2>
+        <div id="user-selection-list" class="user-selection-list"></div>
+        <div style="margin-top: 16px; text-align: right;">
+          <button type="button" id="cancel-user-selection">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cast-selection-dialog" class="user-selection-dialog">
+      <form method="dialog">
+        <h2>Cast to Device</h2>
+        <div id="cast-selection-list" class="user-selection-list"></div>
+        <div style="margin-top: 16px; text-align: right;">
+          <button type="button" id="cancel-cast-selection">Cancel</button>
+        </div>
+      </form>
+    </dialog>
 
     <aside id="session-bar" class="session-bar" aria-label="Jellyfin session" hidden>
       <span class="session-mark" aria-hidden="true"></span>
       <span id="session-server"></span>
+      <button id="switch-user-button" type="button" hidden>Switch user</button>
       <button id="sign-out-button" type="button">Sign out</button>
     </aside>
 
@@ -121,6 +178,9 @@
           <button type="button" data-browser-route="libraries">Libraries</button>
         </nav>
         <button id="enter-xr-button" class="enter-xr-button" type="button">Enter XR</button>
+        <button id="browser-cast-button" class="browser-cast-button" type="button">Cast</button>
+        <button id="browser-receive-button" class="browser-cast-button" type="button">Enable Receiver</button>
+        <button id="browser-switch-user-button" class="browser-sign-out-button" type="button" hidden>Switch user</button>
         <button id="browser-sign-out-button" class="browser-sign-out-button" type="button">Sign out</button>
       </header>
       <section id="browser-content" class="browser-content" aria-live="polite"></section>

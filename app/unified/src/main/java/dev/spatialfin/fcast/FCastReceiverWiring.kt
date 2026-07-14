@@ -78,6 +78,7 @@ object FCastReceiverWiring {
             displayName = resolveDisplayName(prefs),
             port = receiverPort,
             appVersion = BuildConfig.VERSION_NAME,
+            companionUrl = runCatching { prefs.getValue(prefs.companionUrl) }.getOrNull()
         )
         Timber.i("FCast receiver service started")
         true

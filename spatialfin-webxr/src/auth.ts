@@ -19,6 +19,7 @@ export interface AuthSession {
   userId: string;
   userName: string;
   geminiKey?: string;
+  companionUrl?: string;
 }
 
 interface AuthenticationResult {
@@ -140,8 +141,14 @@ export function mediaUrlWithAccessToken(streamUrl: string): string {
   return url.toString();
 }
 
-export function getGeminiKey(): string | null {
-  return getSession()?.geminiKey ?? null;
+export function getGeminiKey(): string | undefined {
+  const s = getSession();
+  return s ? s.geminiKey : undefined;
+}
+
+export function getCompanionUrl(): string | undefined {
+  const s = getSession();
+  return s ? s.companionUrl : undefined;
 }
 
 export function getDeviceId(): string {
@@ -290,14 +297,11 @@ function networkErrorMessage(serverUrl: string, error: unknown): string {
   return `Could not reach ${serverUrl}. Check the address, TLS certificate, and Jellyfin CORS settings.`;
 }
 
-export async function login(
-  serverInput: string,
+export async function authenticateJellyfinUser(
+  serverUrl: string,
   username: string,
-  password: string,
-  geminiKey = '',
-  remember = true,
-): Promise<AuthSession> {
-  const serverUrl = normalizeServerUrl(serverInput);
+  password: string
+): Promise<{ accessToken: string, userId: string, userName: string }> {
   const normalizedUsername = username.trim();
   if (!normalizedUsername) {
     throw new JellyfinAuthError('Enter your Jellyfin username.');
@@ -346,12 +350,29 @@ export async function login(
   if (!result.AccessToken || !result.User?.Id) {
     throw new JellyfinAuthError('Jellyfin returned an incomplete login response.');
   }
-
-  const session: AuthSession = {
+  
+  return {
     accessToken: result.AccessToken,
-    serverUrl,
     userId: result.User.Id,
     userName: result.User.Name ?? normalizedUsername,
+  };
+}
+
+export async function login(
+  serverInput: string,
+  username: string,
+  password: string,
+  geminiKey = '',
+  remember = true,
+): Promise<AuthSession> {
+  const serverUrl = normalizeServerUrl(serverInput);
+  const authInfo = await authenticateJellyfinUser(serverUrl, username, password);
+
+  const session: AuthSession = {
+    accessToken: authInfo.accessToken,
+    serverUrl,
+    userId: authInfo.userId,
+    userName: authInfo.userName,
     geminiKey: geminiKey.trim() || undefined,
   };
 
@@ -360,6 +381,191 @@ export async function login(
   getStorage(remember).setItem(SESSION_KEY, JSON.stringify(session));
   clearLegacySession();
   return session;
+}
+
+async function resolveJellyfinUser(serverUrl: string, token: string): Promise<{id: string, name: string}> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(serverEndpoint(serverUrl, '/Users/Me'), {
+      headers: {
+        Authorization: getAuthorizationHeader(token),
+        Accept: 'application/json'
+      }
+    });
+  } catch (error) {
+    throw new JellyfinAuthError(networkErrorMessage(serverUrl, error));
+  }
+
+  if (!response.ok) {
+    throw new JellyfinAuthError('The provided access token was rejected by Jellyfin.', response.status);
+  }
+
+  const data = await response.json();
+  if (!data.Id) throw new JellyfinAuthError('Failed to resolve Jellyfin user ID.');
+  return { id: data.Id, name: data.Name };
+}
+
+export async function loginViaCompanion(companionIp: string): Promise<AuthSession[]> {
+  let url: URL;
+  try {
+    url = new URL(companionIp.startsWith('http') ? companionIp : `http://${companionIp}`);
+    if (!url.port) url.port = '1982';
+  } catch {
+    throw new JellyfinAuthError('Invalid Companion App address.');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${url.origin}/api/auth/credentials`);
+  } catch {
+    throw new JellyfinAuthError(`Could not reach the Companion App at ${url.origin}.`);
+  }
+
+  if (!response.ok) {
+    throw new JellyfinAuthError('Companion App did not return credentials.');
+  }
+
+  const credentialsList = await response.json();
+  const credentialsArray = Array.isArray(credentialsList) ? credentialsList : [credentialsList];
+  
+  if (credentialsArray.length === 0 || !credentialsArray[0].serverUrl || !credentialsArray[0].apiToken) {
+    throw new JellyfinAuthError('Companion App returned no valid credentials.');
+  }
+
+  let lastError: Error | null = null;
+  const validSessions: AuthSession[] = [];
+  
+  for (const cred of credentialsArray) {
+    if (!cred.serverUrl) continue;
+    if (!cred.apiToken && (!cred.username || !cred.password)) continue;
+    
+    try {
+      let authInfo: { accessToken: string, userId: string, userName: string } | null = null;
+      if (cred.apiToken) {
+        try {
+          const { id: realUserId, name: realUserName } = await resolveJellyfinUser(cred.serverUrl, cred.apiToken);
+          authInfo = { accessToken: cred.apiToken, userId: realUserId, userName: realUserName };
+        } catch (e) {
+          // Ignore, fallback to password
+        }
+      }
+      
+      if (!authInfo && cred.username && cred.password) {
+        authInfo = await authenticateJellyfinUser(cred.serverUrl, cred.username, cred.password);
+      }
+      
+      if (authInfo) {
+        validSessions.push({
+          accessToken: authInfo.accessToken,
+          serverUrl: cred.serverUrl,
+          userId: authInfo.userId,
+          userName: authInfo.userName,
+          companionUrl: url.origin,
+        });
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  if (validSessions.length === 0) {
+    throw lastError || new JellyfinAuthError('None of the configured Companion App users could log in.');
+  }
+
+  return validSessions;
+}
+
+export async function loginViaCompanionSetupToken(companionUrl: string, setupToken: string): Promise<AuthSession[]> {
+  let url: URL;
+  try {
+    url = new URL(companionUrl.startsWith('http') ? companionUrl : `http://${companionUrl}`);
+  } catch {
+    throw new JellyfinAuthError('Invalid Companion App address.');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${url.origin}/api/v1/config`, {
+      headers: {
+        'X-Setup-Token': setupToken
+      }
+    });
+  } catch {
+    throw new JellyfinAuthError(`Could not reach the Companion App at ${url.origin}.`);
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new JellyfinAuthError('Companion App rejected the setup token.');
+    }
+    throw new JellyfinAuthError('Companion App failed to return configuration.');
+  }
+
+  const config = await response.json();
+  
+  const validCreds: {serverUrl: string, token: string, username?: string, password?: string}[] = [];
+  for (const s of config.servers || []) {
+    const sUrl = s.addresses?.[0];
+    if (!sUrl) continue;
+    for (const u of s.users || []) {
+      validCreds.push({
+        serverUrl: sUrl, 
+        token: u.access_token || '',
+        username: u.username || u.name || '',
+        password: u.password || ''
+      });
+    }
+  }
+
+  if (validCreds.length === 0) {
+    throw new JellyfinAuthError('Companion App returned no users.');
+  }
+
+  let lastError: Error | null = null;
+  const validSessions: AuthSession[] = [];
+  
+  for (const cred of validCreds) {
+    try {
+      let authInfo: { accessToken: string, userId: string, userName: string } | null = null;
+      if (cred.token) {
+        try {
+          const { id: realUserId, name: realUserName } = await resolveJellyfinUser(cred.serverUrl, cred.token);
+          authInfo = { accessToken: cred.token, userId: realUserId, userName: realUserName };
+        } catch (e) {
+          // Ignore, fallback to password
+        }
+      }
+      
+      if (!authInfo && cred.username && cred.password) {
+        authInfo = await authenticateJellyfinUser(cred.serverUrl, cred.username, cred.password);
+      }
+      
+      if (authInfo) {
+        validSessions.push({
+          accessToken: authInfo.accessToken,
+          serverUrl: cred.serverUrl,
+          userId: authInfo.userId,
+          userName: authInfo.userName,
+          companionUrl: url.origin,
+        });
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  
+  if (validSessions.length === 0) {
+    throw lastError || new JellyfinAuthError('None of the configured Companion App users could log in.');
+  }
+
+  return validSessions;
+}
+
+export function saveSession(session: AuthSession, remember: boolean) {
+  sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
+  getStorage(remember).setItem(SESSION_KEY, JSON.stringify(session));
+  clearLegacySession();
 }
 
 export async function validateSession(): Promise<void> {

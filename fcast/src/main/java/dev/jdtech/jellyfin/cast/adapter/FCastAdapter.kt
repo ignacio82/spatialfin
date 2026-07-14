@@ -94,7 +94,8 @@ class FCastAdapter(
                     client.initialReceiver.collect { initial ->
                         val appName = initial.appName?.trim().orEmpty()
                         val isSpatialFinPeer =
-                            appName.startsWith("SpatialFin", ignoreCase = true)
+                            appName.startsWith("SpatialFin", ignoreCase = true) &&
+                            !appName.contains("Web", ignoreCase = true)
                         Timber.tag(TAG).i(
                             "FCast peer handshake: appName=%s appVersion=%s spatialFinPeer=%b",
                             appName, initial.appVersion.orEmpty(), isSpatialFinPeer,

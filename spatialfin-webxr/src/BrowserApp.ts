@@ -1,6 +1,5 @@
 import Hls, {FetchLoader} from 'hls.js';
 import {
-  fetchEpisodes,
   fetchItemImage,
   fetchItems,
   fetchLatestMedia,
@@ -10,10 +9,18 @@ import {
   fetchSuggestions,
   fetchViews,
   fetchItem,
+  fetchSeasons,
+  fetchSeasonEpisodes,
+  searchItems,
+  fetchItemsByPerson,
+  searchSeerr,
+  fetchPreferences,
+  movieVersionGroupKey,
   extractMediaPills,
   resolveJellyfinRequestUrl,
   type JellyfinImageType,
   type JellyfinItem,
+  type SeerrResult,
   type JellyfinPlaybackInfo,
   type JellyfinView,
 } from './api';
@@ -57,7 +64,11 @@ export class BrowserApp {
   private readonly playerStatus: HTMLElement;
   private readonly audioSelect: HTMLSelectElement;
   private readonly subtitleSelect: HTMLSelectElement;
+  private readonly searchInput: HTMLInputElement;
   private readonly objectUrls = new Set<string>();
+  
+  public onPlayRequest: ((item: JellyfinItem) => boolean) | null = null;
+  
   private hls: Hls | null = null;
   private subtitleRenderer: AnimeSubtitleRenderer | null = null;
   private subtitleAbortController: AbortController | null = null;
@@ -79,6 +90,7 @@ export class BrowserApp {
     this.playerStatus = this.requireElement('#browser-player-status');
     this.audioSelect = this.requireElement<HTMLSelectElement>('#browser-audio-select');
     this.subtitleSelect = this.requireElement<HTMLSelectElement>('#browser-subtitle-select');
+    this.searchInput = this.requireElement<HTMLInputElement>('#browser-search-input');
     document.querySelectorAll<HTMLButtonElement>('[data-browser-route]').forEach((button) => {
       button.addEventListener('click', () => void this.showRoute(button.dataset.browserRoute ?? 'home'));
     });
@@ -89,11 +101,25 @@ export class BrowserApp {
     this.audioSelect.addEventListener('change', () => {
       void this.selectAudio(Number(this.audioSelect.value), true);
     });
+
+    let searchTimeout: number;
+    this.searchInput?.addEventListener('input', () => {
+      window.clearTimeout(searchTimeout);
+      searchTimeout = window.setTimeout(() => {
+        const query = this.searchInput.value.trim();
+        if (query.length > 1) {
+          void this.performSearch(query);
+        } else if (query.length === 0) {
+          void this.showRoute('home');
+        }
+      }, 500);
+    });
   }
 
   async show() {
     this.visible = true;
     this.root.hidden = false;
+    await fetchPreferences();
     await this.showRoute(location.hash.replace('#', '') || 'home');
   }
 
@@ -170,20 +196,67 @@ export class BrowserApp {
     }
   }
 
+  private async performSearch(query: string) {
+    this.loading(`Searching for "${query}"…`);
+    try {
+      const [jellyfinResults, seerrResults] = await Promise.all([
+        searchItems(query),
+        searchSeerr(query)
+      ]);
+      this.renderSearchPage(query, jellyfinResults, seerrResults);
+    } catch (error) {
+      this.error(error);
+    }
+  }
+
+  private async performPersonSearch(personId: string, personName: string) {
+    this.loading(`Searching for "${personName}"…`);
+    try {
+      const [jellyfinResults, seerrResults] = await Promise.all([
+        fetchItemsByPerson(personId),
+        searchSeerr(personName)
+      ]);
+      this.renderSearchPage(personName, jellyfinResults, seerrResults);
+    } catch (error) {
+      this.error(error);
+    }
+  }
+
   private async showItem(item: JellyfinItem) {
-    if (item.Type === 'Series') {
+    if (item.Type === 'Season') {
       this.loading(`Loading ${item.Name}…`);
       try {
-        this.renderItemsPage(item.Name, await fetchEpisodes(item.Id), () => void this.showRoute('home'), item);
+        const episodes = await fetchSeasonEpisodes(item.SeriesId || '', item.Id);
+        this.renderItemsPage(item.Name, episodes, () => {
+          if (item.SeriesId) void this.showItem({Id: item.SeriesId, Type: 'Series'} as JellyfinItem);
+          else void this.showRoute('home');
+        }, { Id: item.SeriesId, Type: 'Series'} as JellyfinItem);
       } catch (error) {
         this.error(error);
       }
       return;
     }
+
     this.loading(`Loading ${item.Name}…`);
     try {
       const fullItem = await fetchItem(item.Id);
-      this.renderDetails(fullItem);
+      let versions: JellyfinItem[] = [];
+      let seasons: JellyfinItem[] = [];
+      let nextUp: JellyfinItem | undefined;
+
+      if (fullItem.Type === 'Movie') {
+        const key = movieVersionGroupKey(fullItem);
+        if (key) {
+           const searchResults = await searchItems(fullItem.Name);
+           versions = searchResults.filter(r => movieVersionGroupKey(r) === key).sort((a,b) => a.Id.localeCompare(b.Id));
+        }
+      } else if (fullItem.Type === 'Series') {
+        seasons = await fetchSeasons(fullItem.Id);
+        const nextUpItems = await fetchNextUp(1, fullItem.Id);
+        if (nextUpItems.length > 0) nextUp = nextUpItems[0];
+      }
+      
+      this.renderDetails(fullItem, versions, seasons, nextUp);
     } catch (error) {
       this.error(error);
     }
@@ -243,7 +316,25 @@ export class BrowserApp {
     items.forEach((item) => grid.append(this.createCard(item)));
   }
 
-  private renderDetails(item: JellyfinItem) {
+  private renderSearchPage(query: string, jellyfinItems: JellyfinItem[], seerrItems: SeerrResult[]) {
+    this.revokeImages();
+    this.content.innerHTML = `<div class="browser-page-heading"><h1>Search: ${this.escape(query)}</h1><p>Library</p></div><div class="media-grid" id="jellyfin-results"></div>`;
+    const jellyfinGrid = this.content.querySelector<HTMLElement>('#jellyfin-results')!;
+    
+    if (jellyfinItems.length > 0) {
+      jellyfinItems.forEach((item) => jellyfinGrid.append(this.createCard(item)));
+    } else {
+      jellyfinGrid.innerHTML = `<p style="color: #9eacb9;">No results in your library.</p>`;
+    }
+
+    if (seerrItems.length > 0) {
+      this.content.insertAdjacentHTML('beforeend', `<div class="browser-page-heading"><h1 style="margin-top: 24px;">Discover</h1><p>Powered by Jellyseerr</p></div><div class="media-grid" id="seerr-results"></div>`);
+      const seerrGrid = this.content.querySelector<HTMLElement>('#seerr-results')!;
+      seerrItems.forEach((item) => seerrGrid.append(this.createSeerrCard(item)));
+    }
+  }
+
+  private renderDetails(item: JellyfinItem, versions: JellyfinItem[] = [], seasons: JellyfinItem[] = [], nextUp?: JellyfinItem) {
     this.revokeImages();
     const pills = extractMediaPills(item);
     const pillsHtml = pills.length > 0 ? `<div class="detail-pills">${pills.map(p => `<span class="pill">${this.escape(p)}</span>`).join('')}</div>` : '';
@@ -253,21 +344,74 @@ export class BrowserApp {
       castHtml = `
         <div class="detail-cast" style="margin-top: 2rem;">
           <h3 style="font-size: 1.2rem; margin-bottom: 1rem; color: #e1e3e8;">Cast & Crew</h3>
-          <div class="cast-row" style="display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px;">
-            ${item.People.slice(0, 12).map(person => `
-              <div class="cast-card" style="flex: 0 0 auto; background: #1a222c; border-radius: 8px; padding: 12px; min-width: 140px;">
-                <strong style="display: block; font-size: 1rem; color: #fff; margin-bottom: 4px;">${this.escape(person.Name ?? 'Unknown')}</strong>
-                <span style="font-size: 0.85rem; color: #a4adc1;">${this.escape(person.Role || person.Type || '')}</span>
-              </div>
-            `).join('')}
-          </div>
+          <div class="media-row cast-row"></div>
         </div>
       `;
     }
 
-    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p><button class="primary-action" type="button" style="margin-top: 1.5rem;">▶ Play in browser</button>${castHtml}</div></section>`;
+    let versionSelectHtml = '';
+    if (versions.length > 1) {
+       versionSelectHtml = `
+         <div style="margin-top: 1rem;">
+           <label for="version-select" style="font-size: 0.85rem; color: #a4adc1; display: block; margin-bottom: 4px;">Select Version</label>
+           <select id="version-select" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px 12px; border-radius: 6px; font-size: 1rem;">
+             ${versions.map((v, idx) => `<option value="${v.Id}" ${v.Id === item.Id ? 'selected' : ''}>${this.escape(v.Name)} (Version ${idx+1})</option>`).join('')}
+           </select>
+         </div>
+       `;
+    }
+
+    let nextUpHtml = '';
+    if (nextUp) {
+       nextUpHtml = `
+         <div class="detail-next-up" style="margin-top: 2rem;">
+           <h3 style="font-size: 1.2rem; margin-bottom: 1rem; color: #e1e3e8;">Next Up</h3>
+           <div class="next-up-container"></div>
+         </div>
+       `;
+    }
+
+    let seasonsHtml = '';
+    if (seasons.length > 0) {
+       seasonsHtml = `
+         <div class="detail-seasons" style="margin-top: 2rem;">
+           <h3 style="font-size: 1.2rem; margin-bottom: 1rem; color: #e1e3e8;">Seasons</h3>
+           <div class="media-row seasons-row"></div>
+         </div>
+       `;
+    }
+
+    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p>${versionSelectHtml}<button class="primary-action" type="button" style="margin-top: 1.5rem;">▶ Play in browser</button></div><div class="detail-extra-rows" style="position: relative; z-index: 1; padding: 0 clamp(32px, 6vw, 88px) 40px;">${nextUpHtml}${seasonsHtml}${castHtml}</div></section>`;
+    
+    let playItem = item;
+    
     this.content.querySelector<HTMLButtonElement>('.back-button')?.addEventListener('click', () => void this.showRoute('home'));
-    this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.play(item));
+    this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.play(playItem));
+    
+    const versionSelect = this.content.querySelector<HTMLSelectElement>('#version-select');
+    if (versionSelect) {
+      versionSelect.addEventListener('change', () => {
+        const selectedId = versionSelect.value;
+        const selectedItem = versions.find(v => v.Id === selectedId);
+        if (selectedItem) playItem = selectedItem;
+      });
+    }
+
+    if (nextUp) {
+      const container = this.content.querySelector<HTMLElement>('.next-up-container')!;
+      container.append(this.createCard(nextUp));
+    }
+
+    if (seasons.length > 0) {
+      const row = this.content.querySelector<HTMLElement>('.seasons-row')!;
+      seasons.forEach(s => row.append(this.createCard(s)));
+    }
+
+    if (item.People && item.People.length > 0) {
+      const row = this.content.querySelector<HTMLElement>('.cast-row')!;
+      item.People.slice(0, 12).forEach(p => row.append(this.createCastCard(p)));
+    }
+
     void this.setImage(this.content.querySelector('.detail-backdrop')!, item, 'Backdrop');
   }
 
@@ -280,12 +424,59 @@ export class BrowserApp {
     return section;
   }
 
+  private createCastCard(person: any): HTMLButtonElement {
+    const card = document.createElement('button');
+    card.className = 'media-card cast-card';
+    card.innerHTML = `<span class="media-art" aria-hidden="true" style="border-radius: 50%; aspect-ratio: 1/1; background-color: #1a222c; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;"></span><strong style="margin-top: 8px;">${this.escape(person.Name ?? 'Unknown')}</strong><span class="media-meta">${this.escape(person.Role || person.Type || '')}</span>`;
+    
+    if (person.PrimaryImageTag && person.Id) {
+      const art = card.querySelector<HTMLElement>('.media-art')!;
+      art.style.backgroundImage = `url(${resolveJellyfinRequestUrl(`/Items/${person.Id}/Images/Primary?tag=${person.PrimaryImageTag}&maxWidth=240`)})`;
+    }
+    
+    card.addEventListener('click', () => {
+      if (person.Id) {
+        void this.performPersonSearch(person.Id, person.Name ?? 'Unknown');
+      } else {
+        void this.performSearch(person.Name ?? 'Unknown');
+      }
+    });
+    return card;
+  }
+
+  private createSeerrCard(item: SeerrResult): HTMLButtonElement {
+    const card = document.createElement('button');
+    card.className = 'media-card';
+    const title = item.title || item.name || 'Unknown';
+    const year = (item.releaseDate || item.firstAirDate || '').substring(0, 4);
+    const meta = [year, item.mediaType === 'tv' ? 'Series' : 'Movie'].filter(Boolean).join(' · ');
+    
+    card.innerHTML = `<span class="media-art" aria-hidden="true"></span><strong>${this.escape(title)}</strong><span class="media-meta">${this.escape(meta)}</span>`;
+    
+    if (item.posterPath) {
+      const art = card.querySelector<HTMLElement>('.media-art')!;
+      art.style.backgroundImage = `url(https://image.tmdb.org/t/p/w500${item.posterPath})`;
+    }
+    
+    // In a full implementation we would let the user request the item via Seerr API here.
+    card.addEventListener('click', () => {
+      alert('This item is available via Jellyseerr. In the Android app this would open the request screen.');
+    });
+    
+    return card;
+  }
+
   private createCard(item: JellyfinItem): HTMLButtonElement {
     const card = document.createElement('button');
     card.className = 'media-card';
     card.innerHTML = `<span class="media-art" aria-hidden="true"></span><strong>${this.escape(item.Name)}</strong><span class="media-meta">${this.escape(metadata(item))}</span>`;
     const watched = progress(item);
     if (watched !== null) card.querySelector('.media-art')!.insertAdjacentHTML('beforeend', `<i class="progress"><b style="width:${watched}%"></b></i>`);
+    if (item.UserData?.Played) {
+      card.querySelector('.media-art')!.insertAdjacentHTML('beforeend', `<i class="played-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </i>`);
+    }
     card.addEventListener('click', () => void this.showItem(item));
     void this.setImage(card.querySelector('.media-art')!, item, 'Primary');
     return card;
@@ -308,6 +499,9 @@ export class BrowserApp {
   }
 
   private async play(item: JellyfinItem) {
+    if (this.onPlayRequest && this.onPlayRequest(item)) {
+      return;
+    }
     this.resetPlayback();
     const generation = ++this.playbackGeneration;
     const playbackController = new AbortController();

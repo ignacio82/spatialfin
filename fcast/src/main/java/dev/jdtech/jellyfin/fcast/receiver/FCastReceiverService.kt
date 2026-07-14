@@ -18,7 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 
 /**
@@ -91,6 +97,7 @@ class FCastReceiverService : Service() {
         val displayName = intent?.getStringExtra(EXTRA_DISPLAY_NAME) ?: getString(applicationInfo.labelRes).orFallback("SpatialFin")
         val port = intent?.getIntExtra(EXTRA_PORT, FCAST_DEFAULT_PORT) ?: FCAST_DEFAULT_PORT
         val appVersion = intent?.getStringExtra(EXTRA_APP_VERSION)
+        val companionUrl = intent?.getStringExtra(EXTRA_COMPANION_URL)
 
         startForegroundCompat(displayName)
         // Idempotent guard. After a crash, the OS replays its START_STICKY
@@ -103,11 +110,11 @@ class FCastReceiverService : Service() {
         if (bootstrapJob?.isActive == true || server != null) {
             return START_STICKY
         }
-        bootstrapJob = scope.launch { startServer(displayName, port, appVersion) }
+        bootstrapJob = scope.launch { startServer(displayName, port, appVersion, companionUrl) }
         return START_STICKY
     }
 
-    private suspend fun startServer(displayName: String, port: Int, appVersion: String?) {
+    private suspend fun startServer(displayName: String, port: Int, appVersion: String?, companionUrl: String?) {
         val router = routerProvider.invoke() ?: FCastIngressRouter.NoOp
         val newServer = FCastReceiverServer(
             config = FCastReceiverServer.Config(
@@ -146,6 +153,41 @@ class FCastReceiverService : Service() {
             },
         )
         advertiser = ad
+
+        val client = OkHttpClient()
+        if (companionUrl != null && companionUrl.isNotBlank()) {
+            scope.launch(Dispatchers.IO) {
+                while (isActive) {
+                    try {
+                        val localIp = java.net.NetworkInterface.getNetworkInterfaces()
+                            ?.toList()
+                            .orEmpty()
+                            .flatMap { it.inetAddresses.toList() }
+                            .filterIsInstance<java.net.Inet4Address>()
+                            .filter { !it.isLoopbackAddress && it.hostAddress != null }
+                            .map { it.hostAddress!! }
+                            .firstOrNull() ?: "127.0.0.1"
+                            
+                        val body = """{"ip":"$localIp","port":${newServer.boundPort},"name":"$displayName"}"""
+                            .toRequestBody("application/json".toMediaType())
+                        
+                        val baseUrl = if (companionUrl.startsWith("http")) companionUrl else "http://$companionUrl"
+                        val parsedUrl = java.net.URL(baseUrl)
+                        val portOr1982 = if (parsedUrl.port > 0) parsedUrl.port else 1982
+                        val origin = "${parsedUrl.protocol}://${parsedUrl.host}:$portOr1982"
+                            
+                        val request = Request.Builder()
+                            .url("$origin/api/fcast/register")
+                            .post(body)
+                            .build()
+                        client.newCall(request).execute().use { it.close() }
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).d(e, "Companion app registration skipped or failed")
+                    }
+                    delay(30_000)
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -202,6 +244,7 @@ class FCastReceiverService : Service() {
         const val EXTRA_DISPLAY_NAME: String = "fcast.displayName"
         const val EXTRA_PORT: String = "fcast.port"
         const val EXTRA_APP_VERSION: String = "fcast.appVersion"
+        const val EXTRA_COMPANION_URL: String = "fcast.companionUrl"
 
         internal const val TAG: String = "FCastService"
 
@@ -217,11 +260,12 @@ class FCastReceiverService : Service() {
             routerProvider = provider
         }
 
-        fun start(context: Context, displayName: String, port: Int = FCAST_DEFAULT_PORT, appVersion: String? = null) {
+        fun start(context: Context, displayName: String, port: Int = FCAST_DEFAULT_PORT, appVersion: String? = null, companionUrl: String? = null) {
             val intent = Intent(context, FCastReceiverService::class.java).apply {
                 putExtra(EXTRA_DISPLAY_NAME, displayName)
                 putExtra(EXTRA_PORT, port)
                 appVersion?.let { putExtra(EXTRA_APP_VERSION, it) }
+                companionUrl?.let { putExtra(EXTRA_COMPANION_URL, it) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

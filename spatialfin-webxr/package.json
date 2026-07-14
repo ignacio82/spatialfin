@@ -29,6 +29,7 @@
     "@pmndrs/uikit": "^1.0.74",
     "@sparkjsdev/spark": "^2.1.0",
     "hls.js": "^1.6.16",
+    "html5-qrcode": "^2.3.8",
     "lit": "^3.3.3",
     "openai": "^6.45.0",
     "three": "^0.184.0",

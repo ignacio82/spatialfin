@@ -105,15 +105,65 @@ class FCastReceiverServer(
                     try { socket.accept() } catch (_: Exception) { null }
                 } ?: break
                 client.tcpNoDelay = true
-                val session = FCastReceiverSession(
-                    socket = client,
-                    router = routerFactory(),
-                    receiverInfo = info,
-                    parentScope = scope,
-                    nowMs = config.clock,
-                    onDisconnect = { sessions.remove(it) },
-                )
-                sessions.add(session)
+                
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val inputStream = java.io.PushbackInputStream(client.getInputStream().buffered(), 4)
+                        val prefix = ByteArray(4)
+                        var read = 0
+                        while (read < 4) {
+                            val n = inputStream.read(prefix, read, 4 - read)
+                            if (n == -1) break
+                            read += n
+                        }
+                        var isWebSocket = false
+                        if (read == 4 && String(prefix) == "GET ") {
+                            isWebSocket = true
+                            val headerBuilder = StringBuilder("GET ")
+                            var b = inputStream.read()
+                            while(b != -1) {
+                                headerBuilder.append(b.toChar())
+                                if (headerBuilder.endsWith("\r\n\r\n")) {
+                                    break
+                                }
+                                b = inputStream.read()
+                            }
+                            val headers = headerBuilder.toString()
+                            val keyMatch = Regex("Sec-WebSocket-Key:\\s*(.+?)\r\n", RegexOption.IGNORE_CASE).find(headers)
+                            val key = keyMatch?.groupValues?.get(1)?.trim()
+                            if (key != null) {
+                                val accept = java.util.Base64.getEncoder().encodeToString(
+                                    java.security.MessageDigest.getInstance("SHA-1").digest(
+                                        (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray(Charsets.UTF_8)
+                                    )
+                                )
+                                val out = client.getOutputStream()
+                                out.write(("HTTP/1.1 101 Switching Protocols\r\n" +
+                                        "Upgrade: websocket\r\n" +
+                                        "Connection: Upgrade\r\n" +
+                                        "Sec-WebSocket-Accept: $accept\r\n\r\n").toByteArray(Charsets.UTF_8))
+                                out.flush()
+                            }
+                        } else if (read > 0) {
+                            inputStream.unread(prefix, 0, read)
+                        }
+
+                        val session = FCastReceiverSession(
+                            socket = client,
+                            inputStream = inputStream,
+                            isWebSocket = isWebSocket,
+                            router = routerFactory(),
+                            receiverInfo = info,
+                            parentScope = scope,
+                            nowMs = config.clock,
+                            onDisconnect = { sessions.remove(it) },
+                        )
+                        sessions.add(session)
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "FCast session init failed")
+                        try { client.close() } catch (_: Exception) {}
+                    }
+                }
             }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "FCast accept loop terminated")
