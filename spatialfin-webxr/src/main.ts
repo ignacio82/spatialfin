@@ -493,6 +493,29 @@ async function showBrowserApp() {
   if (switchUserButton) switchUserButton.hidden = !hasCompanion;
   if (browserSwitchUserButton) browserSwitchUserButton.hidden = !hasCompanion;
 
+  const castButton = document.getElementById('browser-cast-button') as HTMLButtonElement | null;
+  const receiveButton = document.getElementById('browser-receive-button') as HTMLButtonElement | null;
+  const castTooltipContainer = document.getElementById('cast-tooltip-container');
+  const receiveTooltipContainer = document.getElementById('receive-tooltip-container');
+
+  if (castButton && castTooltipContainer) {
+    castButton.disabled = !hasCompanion;
+    if (!hasCompanion) {
+      castTooltipContainer.classList.add('disabled-mode');
+    } else {
+      castTooltipContainer.classList.remove('disabled-mode');
+    }
+  }
+
+  if (receiveButton && receiveTooltipContainer) {
+    receiveButton.disabled = !hasCompanion;
+    if (!hasCompanion) {
+      receiveTooltipContainer.classList.add('disabled-mode');
+    } else {
+      receiveTooltipContainer.classList.remove('disabled-mode');
+    }
+  }
+
   // Initialize the renderer and WebXR capability check in the background.
   // That leaves this page fully usable as a normal web app while ensuring the
   // single Enter XR click can call requestSession within the user's gesture.
