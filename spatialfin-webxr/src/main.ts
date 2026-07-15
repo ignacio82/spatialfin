@@ -30,6 +30,8 @@ import './style.css';
 const loginOverlay = document.querySelector<HTMLElement>('#login-overlay');
 const loginForm = document.querySelector<HTMLFormElement>('#login-form');
 const companionLoginForm = document.querySelector<HTMLFormElement>('#companion-login-form');
+const tabBtnCompanion = document.querySelector<HTMLButtonElement>('#tab-btn-companion');
+const tabBtnManual = document.querySelector<HTMLButtonElement>('#tab-btn-manual');
 const companionIpInput = document.querySelector<HTMLInputElement>('#companion-ip');
 const scanQrButton = document.querySelector<HTMLButtonElement>('#scan-qr-button');
 const qrReaderElement = document.querySelector<HTMLElement>('#qr-reader');
@@ -921,6 +923,25 @@ async function handleSwitchUser() {
 
 loginForm?.addEventListener('submit', (event) => void handleLogin(event));
 companionLoginForm?.addEventListener('submit', (event) => void handleCompanionLogin(event));
+
+tabBtnCompanion?.addEventListener('click', () => {
+  tabBtnCompanion.classList.add('is-active');
+  tabBtnCompanion.setAttribute('aria-selected', 'true');
+  tabBtnManual?.classList.remove('is-active');
+  tabBtnManual?.setAttribute('aria-selected', 'false');
+  companionLoginForm?.removeAttribute('hidden');
+  loginForm?.setAttribute('hidden', '');
+});
+
+tabBtnManual?.addEventListener('click', () => {
+  tabBtnManual.classList.add('is-active');
+  tabBtnManual.setAttribute('aria-selected', 'true');
+  tabBtnCompanion?.classList.remove('is-active');
+  tabBtnCompanion?.setAttribute('aria-selected', 'false');
+  loginForm?.removeAttribute('hidden');
+  companionLoginForm?.setAttribute('hidden', '');
+});
+
 scanQrButton?.addEventListener('click', () => void startQrScanner());
 signOutButton?.addEventListener('click', () => void logout());
 browserSignOutButton?.addEventListener('click', () => void logout());

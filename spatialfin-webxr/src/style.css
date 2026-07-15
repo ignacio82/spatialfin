@@ -138,9 +138,62 @@ h2 {
   justify-content: center;
   padding: clamp(28px, 7vw, 104px);
 }
-.login-pane > div {
+.login-container {
+  width: min(100%, 600px);
   margin-top: auto;
   margin-bottom: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tab switcher */
+.login-tabs {
+  display: flex;
+  background: #141a22;
+  padding: 6px;
+  border-radius: 30px;
+  border: 1px solid #2a323c;
+  margin-bottom: 32px;
+  width: 100%;
+}
+
+.login-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #8a9daf;
+  padding: 10px 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border-radius: 24px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  text-transform: none;
+}
+
+.login-tab:hover {
+  color: #f7fafc;
+}
+
+.login-tab.is-active {
+  background: linear-gradient(135deg, #1b344c 0%, #244766 100%);
+  color: #a4c9fe;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.tab-badge {
+  font-size: 0.65rem;
+  background: rgba(164, 201, 254, 0.15);
+  color: #a4c9fe;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 #login-form {
@@ -785,47 +838,81 @@ canvas {
 
 @media (max-width: 760px) {
   .login-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(180px, 34vh) 1fr;
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    grid-template-rows: none;
     overflow-y: auto;
+    background: #090b0f;
+    min-height: 100dvh;
   }
 
   .brand-pane {
-    min-height: 180px;
-    padding: 28px 24px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 16px;
+    min-height: auto;
+    padding: 24px 20px 12px;
+    background: transparent;
     border-right: 0;
-    border-bottom: 1px solid #2a323c;
+    border-bottom: none;
+    overflow: visible;
   }
 
   .brand-art {
-    width: min(82vw, 400px);
-    transform: translate(36%, -4%);
+    position: relative;
+    width: 48px;
+    height: 48px;
+    max-width: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+    border-radius: 12px;
+    box-shadow: 0 0 16px rgba(164, 201, 254, 0.35);
   }
 
   .brand-copy {
     margin-top: 0;
     padding-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .brand-pane .eyebrow {
+    display: none;
   }
 
   h1 {
-    font-size: 3.25rem;
+    font-size: 1.8rem;
+    line-height: 1.1;
   }
 
   h2 {
-    font-size: 1.85rem;
+    font-size: 1.5rem;
   }
 
   .brand-summary {
-    margin-top: 10px;
+    margin-top: 0;
+    font-size: 0.82rem;
+    color: #98a7b5;
   }
 
   .login-pane {
-    align-items: flex-start;
-    padding: 30px 24px 42px;
+    align-items: center;
+    padding: 16px 20px 48px;
+    justify-content: flex-start;
+  }
+
+  .login-container {
+    margin: 0;
+    width: 100%;
   }
 
   .form-header {
-    margin-bottom: 26px;
+    margin-bottom: 24px;
   }
 
   .credential-row {

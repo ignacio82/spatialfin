@@ -55,10 +55,10 @@
         cursor: not-allowed;
       }
     </style>
-    <script type="module" crossorigin src="/web/assets/index-Y04LT_O0.js"></script>
+    <script type="module" crossorigin src="/web/assets/index-BKDFO422.js"></script>
     <link rel="modulepreload" crossorigin href="/web/assets/rolldown-runtime-QTnfLwEv.js">
     <link rel="modulepreload" crossorigin href="/web/assets/three.module-N1hBQQ4j.js">
-    <link rel="stylesheet" crossorigin href="/web/assets/index-YdWHZOXA.css">
+    <link rel="stylesheet" crossorigin href="/web/assets/index-OzRTfKOe.css">
   <link rel="manifest" href="/web/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/web/registerSW.js"></script></head>
   <body>
     <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
@@ -72,7 +72,15 @@
       </section>
 
       <section class="login-pane">
-        <div style="display: flex; flex-direction: column; gap: 48px; width: min(100%, 600px);">
+        <div class="login-container">
+          <div class="login-tabs" role="tablist">
+            <button type="button" id="tab-btn-companion" class="login-tab is-active" role="tab" aria-selected="true" aria-controls="companion-login-form">
+              Companion App <span class="tab-badge">Recommended</span>
+            </button>
+            <button type="button" id="tab-btn-manual" class="login-tab" role="tab" aria-selected="false" aria-controls="login-form">
+              Manual Connect
+            </button>
+          </div>
           
           <form id="companion-login-form" novalidate>
             <div class="form-header">
@@ -107,7 +115,7 @@
             <div id="qr-reader" style="margin-top: 24px; border-radius: 8px; overflow: hidden; display: none;"></div>
           </form>
 
-          <form id="login-form" novalidate>
+          <form id="login-form" novalidate hidden>
             <div class="form-header">
             <p class="eyebrow">Server connection</p>
             <h2>Connect to Jellyfin</h2>
