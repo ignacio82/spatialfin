@@ -20,6 +20,9 @@ import {
   rememberAudioSelection,
   rememberSubtitleSelection,
 } from './AnimeSubtitleRenderer';
+import { syncPlayCoordinator } from './SyncPlayCoordinator';
+import { offlineMediaRepository } from './OfflineMediaRepository';
+
 
 const VIDEO_DEPTH_METERS = 6;
 const UI_DEPTH_METERS = 2;
@@ -477,6 +480,20 @@ export class PlayerSpace extends xb.Script {
       this.installAutomationHooks();
       this.progressInterval = window.setInterval(() => void this.reportProgress(), 10_000);
 
+      syncPlayCoordinator.setHost({
+        player: this.videoElement,
+        currentItemId: this.item.Id,
+        currentItemTitle: this.item.Name,
+        replaceItems: () => {}, // WebXR single item context for now
+        initializePlayer: (itemId, _startFromBeginning, _autoPlay) => {
+          // Simplistic play next for web app
+          this.showTransientStatus(`SyncPlay requested switch to item: ${itemId}`);
+        }
+      });
+      syncPlayCoordinator.addStateListener(() => {
+        this.sessionView?.refresh();
+      });
+
       const playbackAbortController = new AbortController();
       this.playbackAbortController = playbackAbortController;
       void this.startPlayback(generation, playbackAbortController.signal)
@@ -568,6 +585,7 @@ export class PlayerSpace extends xb.Script {
       this.playbackStartedReported = true;
       void this.reportPlaybackLifecycle('/Sessions/Playing');
     }
+    syncPlayCoordinator.reportPlaybackEvent('Play', (this.videoElement?.currentTime ?? 0) * 10_000_000);
   };
 
   private readonly handleVideoPause = () => {
@@ -577,13 +595,19 @@ export class PlayerSpace extends xb.Script {
     this.subtitleRenderer?.setPaused(true, this.videoElement?.currentTime ?? 0);
     this.revealControls('paused');
     void this.reportProgress(true);
+    syncPlayCoordinator.reportPlaybackEvent('Pause', (this.videoElement?.currentTime ?? 0) * 10_000_000);
   };
 
   private readonly handleVideoError = () => {
-    if (!this.disposed) {
-      this.setStatus('Playback error');
-      this.revealControls('error');
-    }
+    if (this.disposed) return;
+    this.setStatus('Playback error');
+    this.revealControls('error');
+    console.error('Video element error:', this.videoElement?.error);
+  };
+
+  private readonly handleVideoSeeked = () => {
+    if (this.disposed) return;
+    syncPlayCoordinator.reportPlaybackEvent('Seek', (this.videoElement?.currentTime ?? 0) * 10_000_000);
   };
 
   private readonly handleLoadedMetadata = () => {
@@ -609,6 +633,7 @@ export class PlayerSpace extends xb.Script {
     if (!video) return;
     video.addEventListener('play', this.handleVideoPlay);
     video.addEventListener('pause', this.handleVideoPause);
+    video.addEventListener('seeked', this.handleVideoSeeked);
     video.addEventListener('error', this.handleVideoError);
     video.addEventListener('loadedmetadata', this.handleLoadedMetadata);
     video.textTracks.addEventListener('addtrack', this.handleTextTracksChanged);
@@ -617,6 +642,19 @@ export class PlayerSpace extends xb.Script {
 
   private async startPlayback(generation: number, signal: AbortSignal): Promise<void> {
     this.setStatus('Loading stream…');
+    
+    // Check if downloaded offline
+    if (await offlineMediaRepository.isItemDownloaded(this.item.Id)) {
+      const offlineUrl = await offlineMediaRepository.getMediaFileUrl(this.item.Id);
+      if (offlineUrl && this.videoElement) {
+        this.videoElement.src = offlineUrl;
+        this.setStatus('Ready (Offline)');
+        this.refreshControls();
+        void this.tryPlay();
+        return;
+      }
+    }
+
     const initialPlayback = await fetchPlaybackInfo(this.item.Id, signal);
     if (!this.isCurrentGeneration(generation)) return;
     const initialAudioStreamIndex = chooseInitialAudioStreamIndex(
@@ -1036,9 +1074,19 @@ export class PlayerSpace extends xb.Script {
   }
 
   private sessionButtons(): OrbiterButton[] {
+    const isSyncActive = syncPlayCoordinator.isActive();
     return [
       {id: 'cast', icon: '▧', label: 'Cast', action: () => this.showTransientStatus('Cast controls are available in native SpatialFin.')},
-      {id: 'syncplay', icon: '⌁', label: 'SyncPlay', action: () => this.showTransientStatus('SyncPlay is not available in this browser session.')},
+      {
+        id: 'syncplay',
+        icon: isSyncActive ? '⌁ (Active)' : '⌁',
+        label: isSyncActive ? 'Leave Group' : 'Create Group',
+        active: isSyncActive,
+        action: () => {
+          if (isSyncActive) void syncPlayCoordinator.leaveGroup();
+          else void syncPlayCoordinator.createGroup();
+        }
+      },
       {id: 'info', icon: 'ⓘ', label: 'Info', action: () => this.showTransientStatus(this.item.Overview?.slice(0, 120) || this.item.Name)},
       {id: 'voice', icon: '●', label: xb.ai.isAvailable() ? 'Ask AI' : 'Voice', disabled: !xb.ai.isAvailable(), action: () => void this.askAi()},
     ];
@@ -1619,10 +1667,12 @@ export class PlayerSpace extends xb.Script {
     }
   }
 
-  override dispose() {
+  override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.lifecycleGeneration++;
+    syncPlayCoordinator.setHost(null);
+    window.clearInterval(this.progressInterval ?? undefined);
     if (this.playbackStartedReported) void this.reportPlaybackLifecycle('/Sessions/Playing/Stopped', true);
     this.isPlaying = false;
     if (this.progressInterval !== null) window.clearInterval(this.progressInterval);
@@ -1649,6 +1699,7 @@ export class PlayerSpace extends xb.Script {
     if (video) {
       video.removeEventListener('play', this.handleVideoPlay);
       video.removeEventListener('pause', this.handleVideoPause);
+      video.removeEventListener('seeked', this.handleVideoSeeked);
       video.removeEventListener('error', this.handleVideoError);
       video.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
       video.textTracks.removeEventListener('addtrack', this.handleTextTracksChanged);

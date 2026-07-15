@@ -69,6 +69,7 @@ interface HomeCanvasActions {
   showMedia: () => void;
   showLibrary: (view: JellyfinView) => void;
   showSettings: () => void;
+  showRemote: () => void;
   refresh: () => void;
   signOut: () => void;
   close: () => void;
@@ -283,7 +284,8 @@ class HomeCanvasView extends CanvasView {
     });
 
     this.drawTextPill('settings', '◎  Settings', 1056, y, 180, 64, this.actions.showSettings);
-    this.drawTextPill('close', '×  Exit XR', 1250, y, 134, 64, this.actions.close);
+    this.drawTextPill('remote', '📱  Remote', 1250, y, 170, 64, this.actions.showRemote);
+    this.drawTextPill('close', '×  Exit XR', 1434, y, 134, 64, this.actions.close);
   }
 
   private drawHeaderPill(
@@ -883,7 +885,8 @@ export class HomeSpace extends xb.Script {
       showHome: () => canvas.setScreen({kind: 'home'}),
       showMedia: () => this.showAllMedia('Media'),
       showLibrary: (view) => void this.openLibrary(view),
-      showSettings: () => canvas.setScreen({kind: 'settings'}),
+      showSettings: () => this.showSettings(),
+      showRemote: () => this.showRemote(),
       refresh: () => void this.loadHome(),
       signOut: () => void logout(),
       close: () => {
@@ -1023,6 +1026,19 @@ export class HomeSpace extends xb.Script {
 
   private uniqueItems(items: JellyfinItem[]): JellyfinItem[] {
     return [...new Map(items.map((item) => [item.Id, item])).values()];
+  }
+
+  private showSettings() {
+    this.canvas?.setScreen({kind: 'settings'});
+  }
+
+  private showRemote() {
+    import('./RemoteControlSpace').then(({RemoteControlSpace}) => {
+      let existing = Array.from(xb.scene.children).find(c => c instanceof RemoteControlSpace);
+      if (!existing) {
+        xb.add(new RemoteControlSpace());
+      }
+    });
   }
 
   override dispose() {

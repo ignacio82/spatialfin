@@ -203,6 +203,7 @@ if (receiveButton) {
       currentReceiverWs.binaryType = 'arraybuffer';
       
       let playbackUpdateInterval = 0;
+      let splitAvRole: string | undefined;
 
       const sendFcastMessage = (opcode: number, payloadObj?: any) => {
         if (!currentReceiverWs || currentReceiverWs.readyState !== WebSocket.OPEN) return;
@@ -278,7 +279,7 @@ if (receiveButton) {
               video.src = payload.url;
             }
             
-            const splitAvRole = payload.metadata?.custom?.splitAv?.role?.toLowerCase();
+            splitAvRole = payload.metadata?.custom?.splitAv?.role?.toLowerCase();
             console.log("Split A/V role:", splitAvRole);
             
             if (splitAvRole === 'audio') {
