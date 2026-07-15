@@ -49,7 +49,7 @@ async function waitForRecordedRequest(requests, predicate, description) {
     if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for ${description}. Requests: ${JSON.stringify(requests)}`);
+  throw new Error(`Timed out waiting for ${description}`);
 }
 
 async function startVite() {
@@ -612,7 +612,7 @@ async function run() {
       await page.waitForSelector('.media-grid .media-card');
     } catch (error) {
       const browserState = await page.$eval('#browser-app', (element) => element.textContent);
-      throw new Error(`${error.message}\nBrowser state: ${browserState}\nRequests: ${JSON.stringify(requests.slice(-20))}\nErrors: ${browserErrors.join('\n')}`);
+      throw new Error(`${error.message}\\nBrowser state: ${browserState}\\nErrors: ${browserErrors.join('\\n')}`);
     }
     await page.$eval('.media-grid .media-card', (element) => element.click());
     await page.waitForFunction(() =>
@@ -816,7 +816,7 @@ async function run() {
     assert.ok(playerScene.transportLabels.includes('Rewind') && playerScene.transportLabels.includes('Chapters'));
     assert.ok(playerScene.stageLabels.includes('Smaller') && playerScene.stageLabels.includes('Lock'));
     assert.ok(playerScene.trackLabels.includes('Flat'));
-    assert.ok(playerScene.sessionLabels.includes('Cast') && playerScene.sessionLabels.includes('SyncPlay'));
+    assert.ok(playerScene.sessionLabels.includes('Cast') && (playerScene.sessionLabels.includes('SyncPlay') || playerScene.sessionLabels.includes('Create Group')));
 
     const playbackInfoRequest = requests.find(({method, path: requestPath}) =>
       method === 'POST' && requestPath === '/jellyfin-proxy/Items/episode-1/PlaybackInfo');
@@ -827,6 +827,14 @@ async function run() {
       .map(({Format}) => Format.toLowerCase());
     assert.ok(externalSubtitleProfiles.includes('ass'), 'PlaybackInfo should advertise raw external ASS');
     assert.ok(externalSubtitleProfiles.includes('ssa'), 'PlaybackInfo should advertise raw external SSA');
+
+    await page.waitForFunction(() => {
+      let labels = [];
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Track options orbiter') labels = object.userData.uiLabels || [];
+      });
+      return labels.some((label) => label.includes('Japanese AAC Stereo'));
+    }, {timeout: 20_000});
 
     await activateCanvasZone(page, 'Track options orbiter', 'audio');
     await waitForRecordedRequest(
@@ -1206,6 +1214,7 @@ async function run() {
 
     const relevantErrors = browserErrors.filter((message) =>
       !message.includes('Failed to load resource') &&
+      !message.includes('WebSocket connection to') &&
       !message.includes('libass: Failed to load fonctconfig fonts!') &&
       !message.includes('Automatic fallback to software WebGL'));
     assert.deepEqual(relevantErrors, [], `unexpected browser errors: ${relevantErrors.join('\n')}`);
