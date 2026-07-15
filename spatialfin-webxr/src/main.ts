@@ -607,6 +607,16 @@ async function startXR() {
   if (xrStartPromise) return xrStartPromise;
 
   xrStartPromise = (async () => {
+    // Load XR Blocks' stylesheet lazily — its global resets (body bg,
+    // button uppercase, link color, font) break the login page when
+    // loaded eagerly in <head>.
+    if (!document.querySelector('link[href*="xrblocks.github.io/css/xr.css"]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://xrblocks.github.io/css/xr.css';
+      document.head.appendChild(link);
+    }
+
     (window as typeof window & {xb?: typeof xb}).xb = xb;
 
     const options = new xb.Options();
