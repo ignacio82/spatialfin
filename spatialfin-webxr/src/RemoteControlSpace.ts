@@ -1,6 +1,6 @@
 import * as xb from 'xrblocks';
 import { remoteControlCoordinator, type RemoteSession } from './RemoteControlCoordinator';
-import { CanvasView, fillRoundedRect } from './CanvasView';
+import { CanvasView, fillRoundedRect, type CanvasPointer } from './CanvasView';
 
 interface RemoteControlCanvasActions {
   selectSession: (id: string | null) => void;
@@ -12,6 +12,9 @@ class RemoteControlCanvasView extends CanvasView {
   private sessions: RemoteSession[] = [];
   private selectedSessionId: string | null = null;
   private readonly actions: RemoteControlCanvasActions;
+  private scrollY = 0;
+  private pointerStartY = 0;
+  private scrollStartY = 0;
 
   constructor(actions: RemoteControlCanvasActions) {
     super(600, 800);
@@ -24,6 +27,30 @@ class RemoteControlCanvasView extends CanvasView {
     this.selectedSessionId = remoteControlCoordinator.getSelectedSessionId();
     this.redraw();
   };
+
+  protected override onCanvasPointerDown(pointer: CanvasPointer): boolean {
+    this.pointerStartY = pointer.y;
+    this.scrollStartY = this.scrollY;
+    return true;
+  }
+
+  protected override onCanvasPointerMove(pointer: CanvasPointer): boolean {
+    const delta = pointer.y - this.pointerStartY;
+    const listHeight = this.sessions.length * 120;
+    const viewHeight = this.selectedSessionId ? 420 : 700; 
+    const maxScroll = Math.max(0, listHeight - viewHeight);
+    
+    let newScrollY = this.scrollStartY - delta;
+    if (newScrollY < 0) newScrollY = 0;
+    if (newScrollY > maxScroll) newScrollY = maxScroll;
+    
+    if (this.scrollY !== newScrollY) {
+      this.scrollY = newScrollY;
+      this.redraw();
+      return true;
+    }
+    return false;
+  }
 
   override dispose(): void {
     super.dispose();
@@ -62,61 +89,80 @@ class RemoteControlCanvasView extends CanvasView {
     }
 
     // Sessions List
+    this.context.save();
+    this.context.beginPath();
+    this.context.rect(0, 100, this.logicalWidth, this.selectedSessionId ? 420 : 700);
+    this.context.clip();
+
     for (const session of this.sessions) {
       const isSelected = session.Id === this.selectedSessionId;
       
-      const bgColor = isSelected ? '#3b82f6' : '#1f2937';
-      fillRoundedRect(this.context, bgColor, 40, y, 520, 100, 16);
+      const drawY = y - this.scrollY;
       
-      this.context.fillStyle = '#ffffff';
-      this.context.font = '600 24px "Inter", sans-serif';
-      this.context.textAlign = 'left';
-      this.context.fillText(session.DeviceName || session.Client, 60, y + 40);
-      
-      this.context.fillStyle = '#9ca3af';
-      this.context.font = '400 20px "Inter", sans-serif';
-      if (session.NowPlayingItem) {
-        this.context.fillText(`Playing: ${session.NowPlayingItem.Name}`, 60, y + 70);
-      } else {
-        this.context.fillText('Idle', 60, y + 70);
-      }
+      if (drawY > -120 && drawY < 800) {
+        const bgColor = isSelected ? '#3b82f6' : '#1f2937';
+        fillRoundedRect(this.context, bgColor, 40, drawY, 520, 100, 16);
+        
+        this.context.fillStyle = '#ffffff';
+        this.context.font = '600 24px "Inter", sans-serif';
+        this.context.textAlign = 'left';
+        this.context.fillText(session.DeviceName || session.Client, 60, drawY + 40);
+        
+        this.context.fillStyle = '#9ca3af';
+        this.context.font = '400 20px "Inter", sans-serif';
+        if (session.NowPlayingItem) {
+          this.context.fillText(`Playing: ${session.NowPlayingItem.Name}`, 60, drawY + 70);
+        } else {
+          this.context.fillText('Idle', 60, drawY + 70);
+        }
 
-      this.hitZones.push({
-        id: `session-${session.Id}`,
-        x: 40, y, width: 520, height: 100,
-        action: () => this.actions.selectSession(isSelected ? null : session.Id)
-      });
+        this.hitZones.push({
+          id: `session-${session.Id}`,
+          x: 40, y: drawY, width: 520, height: 100,
+          action: () => this.actions.selectSession(isSelected ? null : session.Id)
+        });
+      }
       y += 120;
     }
+    this.context.restore();
 
     // Controls for selected session
     if (this.selectedSessionId) {
-      y = this.logicalHeight - 200;
+      y = this.logicalHeight - 280;
       
-      fillRoundedRect(this.context, '#1f2937', 40, y, 520, 160, 24);
+      fillRoundedRect(this.context, '#1f2937', 40, y, 520, 240, 24);
       
-      // Playback Controls
+      // Playback Controls (Row 1)
       const btnSize = 64;
       const spacing = 32;
       const startX = 40 + (520 - (btnSize * 4 + spacing * 3)) / 2;
       
-      const drawBtn = (icon: string, dx: number, actionStr: string) => {
-        fillRoundedRect(this.context, '#374151', dx, y + 48, btnSize, btnSize, btnSize / 2);
+      const drawBtn = (icon: string, dx: number, dy: number, actionStr: string) => {
+        fillRoundedRect(this.context, '#374151', dx, dy, btnSize, btnSize, btnSize / 2);
         this.context.fillStyle = '#ffffff';
         this.context.font = '32px sans-serif';
         this.context.textAlign = 'center';
-        this.context.fillText(icon, dx + btnSize / 2, y + 48 + 42);
+        this.context.fillText(icon, dx + btnSize / 2, dy + 42);
         this.hitZones.push({
           id: `btn-${actionStr}`,
-          x: dx, y: y + 48, width: btnSize, height: btnSize,
+          x: dx, y: dy, width: btnSize, height: btnSize,
           action: () => this.actions.sendCommand(actionStr)
         });
       };
 
-      drawBtn('⏮', startX, 'PreviousTrack');
-      drawBtn('⏯', startX + btnSize + spacing, 'PlayPause');
-      drawBtn('⏹', startX + (btnSize + spacing) * 2, 'Stop');
-      drawBtn('⏭', startX + (btnSize + spacing) * 3, 'NextTrack');
+      const row1Y = y + 40;
+      drawBtn('⏮', startX, row1Y, 'PreviousTrack');
+      drawBtn('⏯', startX + btnSize + spacing, row1Y, 'PlayPause');
+      drawBtn('⏹', startX + (btnSize + spacing) * 2, row1Y, 'Stop');
+      drawBtn('⏭', startX + (btnSize + spacing) * 3, row1Y, 'NextTrack');
+      
+      // Volume & Seek Controls (Row 2)
+      const row2Y = y + 130;
+      const row2StartX = 40 + (520 - (btnSize * 4 + spacing * 3)) / 2;
+      drawBtn('🔉', row2StartX, row2Y, 'VolumeDown');
+      drawBtn('🔊', row2StartX + btnSize + spacing, row2Y, 'VolumeUp');
+      drawBtn('⏪', row2StartX + (btnSize + spacing) * 2, row2Y, 'Rewind');
+      drawBtn('⏩', row2StartX + (btnSize + spacing) * 3, row2Y, 'FastForward');
     }
   }
 }

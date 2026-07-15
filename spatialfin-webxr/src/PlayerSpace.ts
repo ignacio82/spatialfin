@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import Hls, {FetchLoader} from 'hls.js';
 import {
+  fetchItem,
   fetchPlaybackInfo,
   resolveJellyfinRequestUrl,
   type JellyfinItem,
@@ -398,7 +399,7 @@ export class ScreenView extends xb.View {
 }
 
 export class PlayerSpace extends xb.Script {
-  private readonly item: JellyfinItem;
+  private item: JellyfinItem;
   private readonly screenGroup: ScreenView;
   private videoElement: HTMLVideoElement | null = null;
   private subtitleCanvas: HTMLCanvasElement | null = null;
@@ -486,9 +487,9 @@ export class PlayerSpace extends xb.Script {
         currentItemId: this.item.Id,
         currentItemTitle: this.item.Name,
         replaceItems: () => {}, // WebXR single item context for now
-        initializePlayer: (itemId, _startFromBeginning, _autoPlay) => {
-          // Simplistic play next for web app
+        initializePlayer: (itemId, _startFromBeginning, autoPlay, startPositionTicks) => {
           this.showTransientStatus(`SyncPlay requested switch to item: ${itemId}`);
+          void this.switchItem(itemId, autoPlay, startPositionTicks);
         }
       });
       syncPlayCoordinator.addStateListener(() => {
@@ -512,6 +513,68 @@ export class PlayerSpace extends xb.Script {
     } catch (error) {
       this.dispose();
       throw error;
+    }
+  }
+
+  private async switchItem(itemId: string, autoPlay: boolean, startPositionTicks?: number) {
+    try {
+      this.setStatus('Loading stream…');
+      this.refreshControls();
+
+      const newItem = await fetchItem(itemId);
+      this.item = newItem;
+      this.name = `Player: ${newItem.Name}`;
+
+      // Cleanup previous playback
+      this.playbackAbortController?.abort();
+      if (this.hls) {
+        this.hls.destroy();
+        this.hls = null;
+      }
+      this.mediaSourceId = undefined;
+      this.playSessionId = undefined;
+      this.trackedTextTracks.clear();
+      if (this.videoElement) {
+        this.videoElement.src = '';
+        this.videoElement.removeAttribute('src');
+      }
+
+      const generation = ++this.lifecycleGeneration;
+
+      syncPlayCoordinator.setHost({
+        player: this.videoElement,
+        currentItemId: this.item.Id,
+        currentItemTitle: this.item.Name,
+        replaceItems: () => {},
+        initializePlayer: (itemId, _startFromBeginning, autoPlay, startPositionTicks) => {
+          this.showTransientStatus(`SyncPlay requested switch to item: ${itemId}`);
+          void this.switchItem(itemId, autoPlay, startPositionTicks);
+        }
+      });
+
+      if (startPositionTicks !== undefined && startPositionTicks > 0) {
+        this.pendingPlaybackRestore = {
+          position: startPositionTicks / 10_000_000,
+          paused: !autoPlay,
+          playbackRate: 1,
+          nativeSubtitleTrack: -1,
+          nativeSubtitleDisplay: false,
+          subtitlesVisible: this.subtitlesVisible,
+          selectedSubtitleIndex: -1,
+        };
+      } else {
+        this.pendingPlaybackRestore = null;
+      }
+
+      this.playbackAbortController = new AbortController();
+      void this.startPlayback(generation, this.playbackAbortController.signal).catch(e => {
+        if (!this.isCurrentGeneration(generation)) return;
+        this.setStatus(e instanceof Error ? e.message : 'The stream could not be prepared');
+        this.revealControls('playback-error');
+      });
+    } catch (e) {
+      this.setStatus(`Error switching item: ${e instanceof Error ? e.message : String(e)}`);
+      this.refreshControls();
     }
   }
 

@@ -250,6 +250,14 @@ if (receiveButton) {
         currentReceiverWs = null;
         stopBeacons();
         if (receiveButton) receiveButton.textContent = 'Enable Receiver';
+        
+        // Ensure UI is torn down on disconnect
+        const video = document.querySelector<HTMLVideoElement>('#browser-video');
+        const player = document.querySelector<HTMLElement>('#browser-player');
+        const audioOverlay = document.querySelector<HTMLElement>('#audio-receiver-overlay');
+        if (video) { video.pause(); video.src = ''; video.style.visibility = ''; video.style.position = ''; }
+        if (player) player.hidden = true;
+        if (audioOverlay) audioOverlay.hidden = true;
       };
       
       currentReceiverWs.onmessage = (event) => {
