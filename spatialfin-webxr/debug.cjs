@@ -580,7 +580,8 @@ async function run() {
     await page.click('#connect-button');
     await page.waitForFunction(() => document.querySelector('#login-error')?.textContent?.includes('rejected'));
     assert.equal(await page.$eval('#login-overlay', (element) => element.hidden), false);
-    await page.click('#connect-button');
+    await page.waitForFunction(() => !document.querySelector('#connect-button')?.disabled);
+    await page.$eval('#connect-button', (element) => element.click());
     await page.waitForFunction(() => sessionStorage.getItem('spatialfin_session_v1') !== null);
     assert.equal(await page.evaluate(() => localStorage.getItem('spatialfin_session_v1')), null);
 
