@@ -496,6 +496,17 @@ export class PlayerSpace extends xb.Script {
         this.sessionView?.refresh();
       });
 
+      const ticks = this.item.UserData?.PlaybackPositionTicks ?? 0;
+      this.pendingPlaybackRestore = {
+        position: ticks / 10_000_000,
+        paused: false,
+        playbackRate: 1,
+        nativeSubtitleTrack: -1,
+        nativeSubtitleDisplay: false,
+        subtitlesVisible: false,
+        selectedSubtitleIndex: -1,
+      };
+
       const playbackAbortController = new AbortController();
       this.playbackAbortController = playbackAbortController;
       void this.startPlayback(generation, playbackAbortController.signal)
@@ -552,19 +563,16 @@ export class PlayerSpace extends xb.Script {
         }
       });
 
-      if (startPositionTicks !== undefined && startPositionTicks > 0) {
-        this.pendingPlaybackRestore = {
-          position: startPositionTicks / 10_000_000,
-          paused: !autoPlay,
-          playbackRate: 1,
-          nativeSubtitleTrack: -1,
-          nativeSubtitleDisplay: false,
-          subtitlesVisible: this.subtitlesVisible,
-          selectedSubtitleIndex: -1,
-        };
-      } else {
-        this.pendingPlaybackRestore = null;
-      }
+      const ticks = startPositionTicks ?? this.item.UserData?.PlaybackPositionTicks ?? 0;
+      this.pendingPlaybackRestore = {
+        position: ticks / 10_000_000,
+        paused: !autoPlay,
+        playbackRate: 1,
+        nativeSubtitleTrack: -1,
+        nativeSubtitleDisplay: false,
+        subtitlesVisible: this.subtitlesVisible,
+        selectedSubtitleIndex: -1,
+      };
 
       this.playbackAbortController = new AbortController();
       void this.startPlayback(generation, this.playbackAbortController.signal).catch(e => {

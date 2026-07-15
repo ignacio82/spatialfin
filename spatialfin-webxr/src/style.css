@@ -59,11 +59,17 @@ summary:focus-visible {
   background: rgba(9, 11, 15, 0.97);
 }
 
-.brand-pane,
-.login-pane {
+.brand-pane {
   min-width: 0;
   display: flex;
   align-items: center;
+}
+
+.login-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .brand-pane {
@@ -131,6 +137,10 @@ h2 {
 .login-pane {
   justify-content: center;
   padding: clamp(28px, 7vw, 104px);
+}
+.login-pane > div {
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 #login-form {
