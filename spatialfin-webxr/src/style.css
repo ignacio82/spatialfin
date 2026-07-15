@@ -519,9 +519,15 @@ canvas {
   line-height: 1.55;
 }
 
+.browser-hero-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 24px;
+}
+
 .primary-action {
   min-height: 44px;
-  margin-top: 12px;
   padding: 0 18px;
   color: #061522;
   background: #a4c9fe;
@@ -531,6 +537,26 @@ canvas {
 }
 
 .primary-action:hover { background: #c8e1ff; }
+
+.secondary-action {
+  min-height: 44px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-radius: 8px;
+  font: 600 15px system-ui, sans-serif;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease-out;
+  border: none;
+  cursor: pointer;
+}
+
+.secondary-action:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
 
 .browser-shelf { margin-top: 42px; }
 .browser-shelf h2 { margin: 0 0 14px; color: #edf2f7; font-size: 1.22rem; }

@@ -3,6 +3,7 @@ import {
   getDeviceId,
   getServerUrl,
   getUserId,
+  getAccessToken,
 } from './auth';
 import {fetchJellyfin} from './network';
 
@@ -1061,4 +1062,20 @@ export async function fetchPlaybackInfo(
     audioStreams: (metadataSource.MediaStreams ?? []).filter((stream) => stream.Type === 'Audio'),
     defaultAudioStreamIndex: negotiatedAudioStreamIndex,
   };
+}
+export async function toggleFavorite(itemId: string, isFavorite: boolean): Promise<JellyfinItem> {
+  const url = resolveJellyfinRequestUrl(`/Users/${getUserId()}/FavoriteItems/${itemId}`);
+  const response = await fetch(url, {
+    method: isFavorite ? 'POST' : 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) throw new Error('Failed to toggle favorite');
+  return response.json();
+}
+
+export function getDownloadUrl(itemId: string): string {
+  const urlString = resolveJellyfinRequestUrl(`/Items/${itemId}/Download`);
+  const url = new URL(urlString, window.location.href);
+  url.searchParams.set('api_key', getAccessToken() || '');
+  return url.toString();
 }
