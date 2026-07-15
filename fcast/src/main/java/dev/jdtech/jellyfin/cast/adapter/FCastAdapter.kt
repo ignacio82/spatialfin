@@ -132,6 +132,7 @@ class FCastAdapter(
             positionSeconds = media.startPositionMs / 1000.0,
             title = media.title,
             thumbnailUrl = media.posterUrl,
+            subtitleTracks = media.subtitleTracks,
         )
         client.play(play)
     }

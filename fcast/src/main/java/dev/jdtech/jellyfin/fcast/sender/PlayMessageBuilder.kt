@@ -42,6 +42,11 @@ object PlayMessageBuilder {
          * multi-audio containers and need to mirror the sender's language policy.
          */
         preferredAudioLanguage: String? = null,
+        /**
+         * SpatialFin extension: external subtitle tracks. The receiver can use these to render
+         * subtitles natively without needing to fetch from the server again.
+         */
+        subtitleTracks: List<dev.jdtech.jellyfin.cast.CastMedia.SubtitleTrack>? = null,
     ): PlayMessage = PlayMessage(
         container = container,
         url = url,
@@ -52,13 +57,13 @@ object PlayMessageBuilder {
         metadata = if (
             title != null || thumbnailUrl != null ||
             sourceAudioCodec != null || audioTranscoded != null ||
-            preferredAudioLanguage != null
+            preferredAudioLanguage != null || !subtitleTracks.isNullOrEmpty()
         ) {
             MetadataObject(
                 type = METADATA_TYPE_GENERIC,
                 title = title,
                 thumbnailUrl = thumbnailUrl,
-                custom = buildAudioCustom(sourceAudioCodec, audioTranscoded, preferredAudioLanguage),
+                custom = buildCustomMetadata(sourceAudioCodec, audioTranscoded, preferredAudioLanguage, subtitleTracks),
             )
         } else {
             null
@@ -71,23 +76,39 @@ object PlayMessageBuilder {
      * the field per the v3 spec's `ignoreUnknownKeys` semantics; SpatialFin receivers read it
      * and render under the title.
      */
-    private fun buildAudioCustom(
+    private fun buildCustomMetadata(
         sourceAudioCodec: String?,
         audioTranscoded: Boolean?,
         preferredAudioLanguage: String?,
+        subtitleTracks: List<dev.jdtech.jellyfin.cast.CastMedia.SubtitleTrack>?,
     ): JsonObject? {
-        if (sourceAudioCodec == null && audioTranscoded == null && preferredAudioLanguage == null) return null
+        if (sourceAudioCodec == null && audioTranscoded == null && preferredAudioLanguage == null && subtitleTracks.isNullOrEmpty()) return null
         return buildJsonObject {
-            put(
-                "audio",
-                buildJsonObject {
-                    sourceAudioCodec?.let { put("sourceCodec", it) }
-                    audioTranscoded?.let { put("transcoded", it) }
-                    preferredAudioLanguage?.let { put("preferredLanguage", it) }
-                },
-            )
+            if (sourceAudioCodec != null || audioTranscoded != null || preferredAudioLanguage != null) {
+                put(
+                    "audio",
+                    buildJsonObject {
+                        sourceAudioCodec?.let { put("sourceCodec", it) }
+                        audioTranscoded?.let { put("transcoded", it) }
+                        preferredAudioLanguage?.let { put("preferredLanguage", it) }
+                    },
+                )
+            }
+            if (!subtitleTracks.isNullOrEmpty()) {
+                put("subtitles", kotlinx.serialization.json.buildJsonArray {
+                    for (track in subtitleTracks) {
+                        add(buildJsonObject {
+                            put("url", track.url)
+                            put("language", track.language)
+                            track.label?.let { put("label", it) }
+                            put("mimeType", track.mimeType)
+                        })
+                    }
+                })
+            }
         }
     }
+
 
     /**
      * Best-effort MIME inference for cases where the streaming layer doesn't carry one.

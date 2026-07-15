@@ -22,7 +22,8 @@ import {
   createJellyfinRequest,
   localNetworkTargetForRequest,
 } from './network';
-import {HomeSpace} from './HomeSpace';
+import { HomeSpace } from './HomeSpace';
+import { AnimeSubtitleRenderer } from './AnimeSubtitleRenderer';
 import {BrowserApp} from './BrowserApp';
 import './style.css';
 
@@ -204,6 +205,8 @@ if (receiveButton) {
       
       let playbackUpdateInterval = 0;
       let splitAvRole: string | undefined;
+      let activeSubtitleRenderer: AnimeSubtitleRenderer | null = null;
+      let currentSubtitleTracks: any[] = [];
 
       const sendFcastMessage = (opcode: number, payloadObj?: any) => {
         if (!currentReceiverWs || currentReceiverWs.readyState !== WebSocket.OPEN) return;
@@ -258,6 +261,10 @@ if (receiveButton) {
         if (video) { video.pause(); video.src = ''; video.style.visibility = ''; video.style.position = ''; }
         if (player) player.hidden = true;
         if (audioOverlay) audioOverlay.hidden = true;
+        if (activeSubtitleRenderer) {
+          activeSubtitleRenderer.dispose();
+          activeSubtitleRenderer = null;
+        }
       };
       
       currentReceiverWs.onmessage = (event) => {
@@ -285,6 +292,23 @@ if (receiveButton) {
             console.log("Received PLAY command:", JSON.stringify(payload, null, 2));
             if (video) {
               video.src = payload.url;
+            }
+            
+            if (activeSubtitleRenderer) {
+              activeSubtitleRenderer.dispose();
+              activeSubtitleRenderer = null;
+            }
+            currentSubtitleTracks = payload.metadata?.custom?.subtitles || [];
+            if (currentSubtitleTracks.length > 0) {
+              const tracks = currentSubtitleTracks.map((sub: any, i: number) => ({
+                id: String(i),
+                name: sub.label || sub.language || `Track ${i + 1}`,
+                isSelected: false
+              }));
+              sendFcastMessage(100, {
+                audioTracks: [],
+                subtitleTracks: tracks
+              });
             }
             
             splitAvRole = payload.metadata?.custom?.splitAv?.role?.toLowerCase();
@@ -402,6 +426,10 @@ if (receiveButton) {
             if (video) { video.pause(); video.src = ''; video.style.visibility = ''; video.style.position = ''; }
             if (player) player.hidden = true;
             if (audioOverlay) audioOverlay.hidden = true;
+            if (activeSubtitleRenderer) {
+              activeSubtitleRenderer.dispose();
+              activeSubtitleRenderer = null;
+            }
           } else if (opcode === 5 && payload) {
             // Seek
             console.log("Received SEEK:", payload.time);
@@ -414,6 +442,49 @@ if (receiveButton) {
               t2: t2,
               t3: Math.round(performance.now())
             });
+          } else if (opcode === 101 && payload) {
+            // SpatialFinSetTrack
+            console.log("Received SpatialFinSetTrack:", JSON.stringify(payload));
+            if (payload.type === 3) { // 3 is TRACK_TYPE_TEXT in ExoPlayer/Media3
+              if (activeSubtitleRenderer) {
+                activeSubtitleRenderer.dispose();
+                activeSubtitleRenderer = null;
+              }
+              if (payload.trackId !== "off") {
+                const subIndex = parseInt(payload.trackId, 10);
+                const trackInfo = currentSubtitleTracks[subIndex];
+                if (trackInfo && video) {
+                  const codec = trackInfo.url.endsWith('.ass') ? 'ass' : 
+                                (trackInfo.mimeType?.includes('ssa') ? 'ass' : 'srt');
+                  AnimeSubtitleRenderer.create({
+                    track: {
+                      index: subIndex,
+                      codec: codec,
+                      label: trackInfo.label || '',
+                      language: trackInfo.language || '',
+                      url: trackInfo.url,
+                      isDefault: false,
+                      isForced: false,
+                      isHearingImpaired: false
+                    },
+                    fontUrls: [],
+                    video: video
+                  }).then(renderer => {
+                    activeSubtitleRenderer = renderer;
+                  }).catch(e => console.error("Failed to start subtitle renderer", e));
+                }
+              }
+              // Echo track selection state back
+              const updatedTracks = currentSubtitleTracks.map((sub: any, i: number) => ({
+                id: String(i),
+                name: sub.label || sub.language || `Track ${i + 1}`,
+                isSelected: String(i) === payload.trackId
+              }));
+              sendFcastMessage(100, {
+                audioTracks: [],
+                subtitleTracks: updatedTracks
+              });
+            }
           }
         }
       };
