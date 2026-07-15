@@ -24,7 +24,8 @@ export interface SyncPlayHost {
   initializePlayer: (
     itemId: string,
     startFromBeginning: boolean,
-    autoPlay: boolean
+    autoPlay: boolean,
+    startPositionTicks?: number
   ) => void;
 }
 
@@ -265,10 +266,7 @@ export class SyncPlayCoordinator {
 
       if (this.host.currentItemId !== targetItem.ItemId) {
         this.applyRemoteSync(() => {
-          this.host!.initializePlayer(targetItem.ItemId, startPositionTicks <= 0, isPlaying);
-          if (startPositionTicks > 0 && this.host!.player) {
-            this.host!.player.currentTime = startPositionTicks / 10_000_000;
-          }
+          this.host!.initializePlayer(targetItem.ItemId, startPositionTicks <= 0, isPlaying, startPositionTicks);
         });
       } else {
         this.applyRemoteSync(() => {

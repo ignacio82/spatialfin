@@ -74,6 +74,7 @@ interface PlaybackRestoreState {
   nativeSubtitleTrack: number;
   nativeSubtitleDisplay: boolean;
   subtitlesVisible: boolean;
+  selectedSubtitleIndex: number;
 }
 
 class TransportView extends CanvasView {
@@ -807,6 +808,9 @@ export class PlayerSpace extends xb.Script {
       }
     }
     const position = video.currentTime;
+    if (this.selectedSubtitleIndex !== restore.selectedSubtitleIndex) {
+      void this.selectExternalSubtitle(restore.selectedSubtitleIndex, false);
+    }
     this.subtitleRenderer?.setRate(restore.playbackRate);
     this.subtitleRenderer?.setCurrentTime(position);
     if (restore.paused) {
@@ -1350,6 +1354,7 @@ export class PlayerSpace extends xb.Script {
       nativeSubtitleTrack: this.hls?.subtitleTrack ?? -1,
       nativeSubtitleDisplay: this.hls?.subtitleDisplay ?? false,
       subtitlesVisible: this.subtitlesVisible,
+      selectedSubtitleIndex: this.selectedSubtitleIndex,
     };
     this.showTransientStatus(`Switching audio · ${this.audioStreamLabel(stream)}`);
     this.refreshControls();

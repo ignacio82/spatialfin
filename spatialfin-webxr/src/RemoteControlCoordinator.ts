@@ -102,10 +102,10 @@ export class RemoteControlCoordinator {
     if (!serverUrl) return;
 
     try {
-      await fetch(`${serverUrl}/Sessions/${this.selectedSessionId}/Command/${command}`, {
+      await fetch(`${serverUrl}/Sessions/${this.selectedSessionId}/Command`, {
         method: 'POST',
         headers: getAuthHeaders(true),
-        body: JSON.stringify({ Arguments: args })
+        body: JSON.stringify({ Name: command, Arguments: args })
       });
     } catch (e) {
       console.warn(`Failed to send general command ${command}`, e);
