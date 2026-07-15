@@ -365,7 +365,10 @@ if (receiveButton) {
           } else if (opcode === 2) {
             // Pause
             console.log("Received PAUSE");
-            if (video) video.pause();
+            if (video) {
+              video.pause();
+              video.muted = true;
+            }
             const statusBadge = document.getElementById('audio-receiver-status-badge');
             if (statusBadge && audioOverlay && !audioOverlay.hidden) {
               statusBadge.className = 'audio-receiver-badge audio-receiver-badge--status audio-receiver-badge--paused';
@@ -374,7 +377,10 @@ if (receiveButton) {
           } else if (opcode === 3) {
             // Resume
             console.log("Received RESUME");
-            if (video) video.play().catch(e => console.error(e));
+            if (video) {
+              video.muted = splitAvRole === 'video';
+              video.play().catch(e => console.error(e));
+            }
             const statusBadge = document.getElementById('audio-receiver-status-badge');
             if (statusBadge && audioOverlay && !audioOverlay.hidden) {
               statusBadge.className = 'audio-receiver-badge audio-receiver-badge--status';
