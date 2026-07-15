@@ -466,9 +466,15 @@ canvas {
   width: 300px;
 }
 
+.browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .enter-xr-button {
   min-height: 40px;
-  margin-left: auto;
   padding: 0 16px;
   color: #dcecff;
   background: #1b344c;
@@ -821,9 +827,61 @@ canvas {
 
 @media (max-width: 680px) {
   .browser-app { padding: 0 16px 40px; }
-  .browser-header { gap: 8px; min-height: 68px; }
-  .browser-brand span { display: none; }
-  .browser-nav button { padding: 0 8px; }
+  
+  .browser-header {
+    display: grid;
+    grid-template-areas:
+      "brand actions"
+      "nav search";
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 12px 16px;
+    min-height: auto;
+    padding: 12px 0;
+    background: #090b0f;
+  }
+
+  .browser-brand {
+    grid-area: brand;
+  }
+  
+  .browser-brand span {
+    display: none;
+  }
+  
+  .browser-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 0;
+    justify-self: end;
+  }
+
+  .browser-nav {
+    grid-area: nav;
+    display: flex;
+    gap: 4px;
+  }
+
+  .browser-nav button {
+    padding: 0 8px;
+  }
+
+  .search-container {
+    grid-area: search;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .browser-search-input {
+    width: 100%;
+  }
+
+  .browser-search-input:focus {
+    width: 100%;
+  }
+
   .enter-xr-button { padding: 0 10px; font-size: .78rem; }
   .browser-sign-out-button { display: none; }
   .browser-hero { min-height: 420px; }
