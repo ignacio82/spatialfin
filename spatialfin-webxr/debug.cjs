@@ -232,7 +232,7 @@ async function run() {
   let pageInterceptionEnabled = true;
 
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage(); page.on("console", msg => console.log("BROWSER: " + msg.text())); page.on("pageerror", err => console.log("BROWSER ERROR: " + err.toString()));
     await page.setViewport({width: 1440, height: 900, deviceScaleFactor: 1});
     page.on('pageerror', (error) => browserErrors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
@@ -574,6 +574,11 @@ async function run() {
 
     await page.setViewport({width: 1440, height: 900, deviceScaleFactor: 1});
     await page.screenshot({path: '/tmp/spatialfin-webxr-login-desktop.png'});
+    
+    // Switch to Manual Connect tab (added in user's UI redesign)
+    const tabBtn = await page.$('#tab-btn-manual');
+    if (tabBtn) await tabBtn.click();
+    
     await page.type('#server', 'http://mock-jellyfin.test/jellyfin-proxy');
     await page.type('#username', 'demo');
     await page.type('#password', 'password');

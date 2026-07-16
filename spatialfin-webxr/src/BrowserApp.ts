@@ -20,6 +20,7 @@ import {
   resolveJellyfinRequestUrl,
   toggleFavorite,
   getDownloadUrl,
+  getVersionChipLabel,
   type JellyfinImageType,
   type JellyfinItem,
   type SeerrResult,
@@ -375,8 +376,8 @@ export class BrowserApp {
        versionSelectHtml = `
          <div style="margin-top: 1rem;">
            <label for="version-select" style="font-size: 0.85rem; color: #a4adc1; display: block; margin-bottom: 4px;">Select Version</label>
-           <select id="version-select" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px 12px; border-radius: 6px; font-size: 1rem;">
-             ${versions.map((v, idx) => `<option value="${v.Id}" ${v.Id === item.Id ? 'selected' : ''}>${this.escape(v.Name)} (Version ${idx+1})</option>`).join('')}
+           <select id="version-select" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px 12px; border-radius: 6px; font-size: 1rem; cursor: pointer;">
+             ${versions.map((v) => `<option value="${v.Id}" style="background: #111318; color: white;" ${v.Id === item.Id ? 'selected' : ''}>${this.escape(getVersionChipLabel(v))}</option>`).join('')}
            </select>
          </div>
        `;

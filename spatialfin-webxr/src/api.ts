@@ -114,6 +114,7 @@ export interface JellyfinItem {
   ProductionYear?: number;
   PremiereDate?: string;
   RunTimeTicks?: number;
+  Video3DFormat?: string;
   PrimaryImageAspectRatio?: number;
   ParentIndexNumber?: number;
   IndexNumber?: number;
@@ -132,6 +133,8 @@ export interface JellyfinItem {
 
 export interface JellyfinMediaSourceInfo {
   Id?: string | null;
+  Name?: string;
+  Path?: string;
   SupportsTranscoding?: boolean;
   SupportsDirectStream?: boolean;
   TranscodingUrl?: string | null;
@@ -1078,4 +1081,44 @@ export function getDownloadUrl(itemId: string): string {
   const url = new URL(urlString, window.location.href);
   url.searchParams.set('api_key', getAccessToken() || '');
   return url.toString();
+}
+
+export function getVersionChipLabel(item: JellyfinItem): string {
+  const sources = item.MediaSources || [];
+  const sourceNames = sources.flatMap(s => [s.Name || '', s.Path || '']);
+  const haystacks = [item.Video3DFormat || '', item.Name || '', ...sourceNames].join(' ').toLowerCase();
+
+  let stereoMode = 'MONO';
+  if (/\b(mv-hevc|mvhevc|spatial|spatial[\s.-]?video)\b/.test(haystacks)) {
+    stereoMode = 'MULTIVIEW';
+  } else if (/\b(tab|tb|top[\s.-]?bottom|top[\s.-]?and[\s.-]?bottom|ou|over[\s.-]?under|3d[\s.-]?(tab|tb|ou))\b/.test(haystacks)) {
+    stereoMode = 'TOP_BOTTOM';
+  } else if (/\b(hsbs|half[\s.-]?sbs|fsbs|full[\s.-]?sbs|sbs|side[\s.-]?by[\s.-]?side|3d[\s.-]?h?sbs)\b/.test(haystacks)) {
+    stereoMode = 'SIDE_BY_SIDE';
+  } else if (/\b3d\b/.test(haystacks)) {
+    stereoMode = 'SIDE_BY_SIDE';
+  }
+
+  let stereoLabel = '2D';
+  if (stereoMode === 'SIDE_BY_SIDE') stereoLabel = '3D SBS';
+  if (stereoMode === 'TOP_BOTTOM') stereoLabel = '3D T/B';
+  if (stereoMode === 'MULTIVIEW') stereoLabel = 'Spatial';
+
+  let qualityLabel: string | null = null;
+  for (const name of sourceNames) {
+    const match = name.toLowerCase().match(/(4k|2160p|1080p|720p)/);
+    if (match) {
+      const value = match[1].toUpperCase();
+      if (value === '4K' || value === '2160P') {
+        qualityLabel = value === '4K' ? '4K' : '2160P';
+      } else if (value === '1080P') {
+        qualityLabel = '1080P';
+      } else if (value === '720P') {
+        qualityLabel = '720P';
+      }
+      break;
+    }
+  }
+
+  return qualityLabel ? `${stereoLabel} ${qualityLabel}` : stereoLabel;
 }
