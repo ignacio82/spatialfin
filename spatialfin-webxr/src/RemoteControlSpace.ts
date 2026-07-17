@@ -31,11 +31,14 @@ class RemoteControlCanvasView extends CanvasView {
   protected override onCanvasPointerDown(pointer: CanvasPointer): boolean {
     this.pointerStartY = pointer.y;
     this.scrollStartY = this.scrollY;
-    return true;
+    return false;
   }
 
   protected override onCanvasPointerMove(pointer: CanvasPointer): boolean {
     const delta = pointer.y - this.pointerStartY;
+    if (Math.abs(delta) > 10) {
+      this.suppressNextTrigger = true;
+    }
     const listHeight = this.sessions.length * 120;
     const viewHeight = this.selectedSessionId ? 420 : 700; 
     const maxScroll = Math.max(0, listHeight - viewHeight);

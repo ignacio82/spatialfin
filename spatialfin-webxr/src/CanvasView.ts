@@ -36,7 +36,7 @@ export abstract class CanvasView extends xb.View {
   protected hitZones: CanvasHitZone[] = [];
   protected hoveredZoneId: string | null = null;
   protected pointerDown: CanvasPointer | null = null;
-  private suppressNextTrigger = false;
+  protected suppressNextTrigger = false;
 
   constructor(
     logicalWidth: number,
@@ -82,6 +82,23 @@ export abstract class CanvasView extends xb.View {
     this.context = context;
     this.texture = texture;
     this.name = options.name ?? 'Canvas UI';
+
+    Object.defineProperty(this, 'draggingMode', {
+      get: () => {
+        for (let id = 0; id < this.ux.hovered.length; id++) {
+          if (this.ux.hovered[id]) {
+            const pointer = this.pointerForId(id);
+            if (pointer && this.zoneAt(pointer.x, pointer.y)) {
+              return xb.DragMode.DO_NOT_DRAG;
+            }
+          }
+        }
+        return xb.DragMode.TRANSLATING;
+      },
+      set: () => {},
+      configurable: true,
+      enumerable: true,
+    });
   }
 
   protected abstract draw(): void;

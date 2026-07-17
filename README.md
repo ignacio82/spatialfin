@@ -312,6 +312,16 @@ Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavaila
    *(On Windows, omit `sudo`)*
 4. Connect in the web app using your Tailscale domain (e.g., `https://your-server.taild5c213.ts.net`). You do not need to append the `:8096` port.
 
+### Limitations vs. Native Android App
+
+As the Web App runs entirely inside standard browser sandboxes (via WebXR), it lacks direct access to native system APIs and hardware decoding paths. It has the following limitations:
+- **Audio Output**: Standard flat stereo audio only. Head-tracked spatial audio panning is not supported (the audio plays directly from the browser's video element without Web Audio API spatialization).
+- **Video & HDR**: Supports high-bitrate streaming up to 4K resolution, but High Dynamic Range (HDR) formats (HDR10, Dolby Vision) are not supported (they are tone-mapped to SDR by WebGL).
+- **Local Storage & Offline**: Does not support offline downloads, local file playback, or network shares (SMB/NFS).
+- **Companion Integration**: Zero-type QR configuration and companion pre-authentication are not supported.
+- **Controls & Performance**: Early testing alpha client with basic WebXR controller/simulator support and higher CPU/GPU overhead.
+
+
 ## Architecture
 
 SpatialFin is a multi-module Android project. `:app:unified` is the only application module — it ships a single APK that branches at runtime on device class (XR / phone / TV). Shared build configuration lives in `build-logic/` convention plugins (`spatialfin.android.library` / `spatialfin.android.compose`) so each module's build script stays small. The table below is a selected overview; `GEMINI.md` has the authoritative, exhaustive module map.

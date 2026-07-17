@@ -420,6 +420,15 @@
                                         <li><strong>Fallback:</strong> If the browser blocks local HTTP, use Jellyfin HTTPS, self-host SpatialFin with its same-origin proxy, or join the browser and server to the same tailnet and run <code>sudo tailscale serve --bg 8096</code>. Then connect to the resulting <code>https://server.tailnet.ts.net</code> URL.</li>
                                     </ul>
                                 </div>
+                                <div class="explorer-group">
+                                    <h4>Limitations vs. Native App</h4>
+                                    <ul class="explorer-list">
+                                        <li><strong>Audio Output:</strong> Standard flat stereo audio only (no dynamic head-tracked spatial audio panning).</li>
+                                        <li><strong>Video &amp; HDR:</strong> High-bitrate 4K is supported, but HDR (HDR10, Dolby Vision) formats are tone-mapped to SDR by WebGL.</li>
+                                        <li><strong>Offline &amp; Storage:</strong> Offline downloads, local file playback, and network shares (SMB/NFS) are not supported.</li>
+                                        <li><strong>Companion Sync:</strong> Zero-type setup QR scanning and remote companion configuration are unavailable.</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                     </div>

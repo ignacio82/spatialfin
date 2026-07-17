@@ -126,12 +126,15 @@ class HomeCanvasView extends CanvasView {
   protected override onCanvasPointerDown(pointer: CanvasPointer): boolean {
     this.pointerStartY = pointer.y;
     this.scrollStartY = this.scrollY;
-    return true;
+    return false;
   }
 
   protected override onCanvasPointerMove(pointer: CanvasPointer): boolean {
     if (this.screen.kind !== 'home') return false;
     const delta = pointer.y - this.pointerStartY;
+    if (Math.abs(delta) > 10) {
+      this.suppressNextTrigger = true;
+    }
     const maxScroll = Math.max(0, 100 + 260 + 200 + this.model.shelves.length * 260 - PANEL_HEIGHT_DP);
     const newScrollY = THREE.MathUtils.clamp(this.scrollStartY - delta, 0, maxScroll);
     if (this.scrollY !== newScrollY) {
