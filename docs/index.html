@@ -423,9 +423,10 @@
                                 <div class="explorer-group">
                                     <h4>Limitations vs. Native App</h4>
                                     <ul class="explorer-list">
-                                        <li><strong>Audio Output:</strong> Standard flat stereo audio only (no dynamic head-tracked spatial audio panning).</li>
-                                        <li><strong>Video &amp; HDR:</strong> High-bitrate 4K is supported, but HDR (HDR10, Dolby Vision) formats are tone-mapped to SDR by WebGL.</li>
-                                        <li><strong>Offline &amp; Storage:</strong> Offline downloads, local file playback, and network shares (SMB/NFS) are not supported.</li>
+                                        <li><strong>Audio Output:</strong> Web Audio API 5.1/7.1 &amp; Dolby Atmos HRTF spatialization supported, but no dynamic head-tracked orientation updates.</li>
+                                        <li><strong>Video &amp; HDR:</strong> High-bitrate 4K, HEVC, AV1, and HDR streams supported via direct play, tone-mapped to SDR by WebGL canvas rendering.</li>
+                                        <li><strong>Offline &amp; Storage:</strong> Offline downloads, local file playback, and network shares (SMB/NFS) are unavailable.</li>
+                                        <li><strong>Voice &amp; AI:</strong> On-device LiteRT Gemma voice control, palm gesture activation, and subtitle context buffer are unavailable.</li>
                                         <li><strong>Companion Sync:</strong> Zero-type setup QR scanning and remote companion configuration are unavailable.</li>
                                     </ul>
                                 </div>

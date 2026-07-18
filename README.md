@@ -315,9 +315,11 @@ Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavaila
 ### Limitations vs. Native Android App
 
 As the Web App runs entirely inside standard browser sandboxes (via WebXR), it lacks direct access to native system APIs and hardware decoding paths. It has the following limitations:
-- **Audio Output**: Standard flat stereo audio only. Head-tracked spatial audio panning is not supported (the audio plays directly from the browser's video element without Web Audio API spatialization).
-- **Video & HDR**: Supports high-bitrate streaming up to 4K resolution, but High Dynamic Range (HDR) formats (HDR10, Dolby Vision) are not supported (they are tone-mapped to SDR by WebGL).
+- **Audio Output**: Supports 5.1/7.1 surround sound and Dolby Atmos spatialization via Web Audio API HRTF panner nodes, but does not support dynamic head-tracked spatial audio orientation updates as you turn your head in WebXR.
+- **Video & HDR**: Direct-plays 4K HEVC, AV1, VP9, HDR10, HLG, and Dolby Vision streams on capable browsers, but HDR video is tone-mapped to SDR during WebGL spatial canvas rendering.
 - **Local Storage & Offline**: Does not support offline downloads, local file playback, or network shares (SMB/NFS).
+- **Voice Assistant & AI**: On-device LiteRT Gemma voice control, palm gesture activation, and 60-second rolling subtitle context buffer are unavailable.
+- **Music Assistant & SendSpin**: Music Assistant controller mode and SendSpin background audio receiver service are unavailable.
 - **Companion Integration**: Zero-type QR configuration and companion pre-authentication are not supported.
 - **Controls & Performance**: Early testing alpha client with basic WebXR controller/simulator support and higher CPU/GPU overhead.
 
