@@ -38,11 +38,28 @@ button {
   cursor: pointer;
 }
 
+button:focus,
 button:focus-visible,
+input:focus,
 input:focus-visible,
-summary:focus-visible {
-  outline: 2px solid #a4c9fe;
-  outline-offset: 3px;
+select:focus,
+select:focus-visible,
+summary:focus,
+summary:focus-visible,
+a:focus,
+a:focus-visible,
+[tabindex="0"]:focus,
+[tabindex="0"]:focus-visible,
+.media-card:focus,
+.ma-media-card:focus,
+.player-dialog-item:focus,
+.overflow-item:focus,
+.login-tab:focus {
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.7), inset 0 0 8px rgba(56, 189, 248, 0.3) !important;
+  transform: scale(1.02);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 [hidden] {

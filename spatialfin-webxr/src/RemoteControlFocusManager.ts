@@ -1,0 +1,259 @@
+/**
+ * Universal Remote Control & D-Pad Focus Manager for SpatialFin Web App.
+ * Enables 100% remote control operation (ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, Space, Escape, Backspace).
+ */
+export class RemoteControlFocusManager {
+  private static instance: RemoteControlFocusManager | null = null;
+  private enabled = true;
+
+  private constructor() {
+    window.addEventListener('keydown', this.handleKeyDown.bind(this), true);
+  }
+
+  public static init(): RemoteControlFocusManager {
+    if (!RemoteControlFocusManager.instance) {
+      RemoteControlFocusManager.instance = new RemoteControlFocusManager();
+    }
+    return RemoteControlFocusManager.instance;
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!target || !(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName;
+    return (
+      target.isContentEditable ||
+      tagName === 'INPUT' ||
+      tagName === 'TEXTAREA' ||
+      tagName === 'SELECT'
+    );
+  }
+
+  private handleKeyDown(event: KeyboardEvent) {
+    if (!this.enabled) return;
+
+    const key = event.key;
+
+    // Media keys from TV remotes
+    if (key === 'MediaPlayPause' || key === 'MediaPlay' || key === 'MediaPause') {
+      event.preventDefault();
+      const playpauseBtn = document.querySelector<HTMLButtonElement>('#browser-player-playpause, #ma-mini-playpause');
+      playpauseBtn?.click();
+      return;
+    }
+
+    if (key === 'MediaTrackNext' || key === 'MediaNextTrack') {
+      event.preventDefault();
+      const nextBtn = document.querySelector<HTMLButtonElement>('#browser-player-play-next, #browser-player-next-chapter, #ma-mini-next');
+      nextBtn?.click();
+      return;
+    }
+
+    if (key === 'MediaTrackPrevious' || key === 'MediaPreviousTrack') {
+      event.preventDefault();
+      const prevBtn = document.querySelector<HTMLButtonElement>('#browser-player-prev-chapter, #ma-mini-prev');
+      prevBtn?.click();
+      return;
+    }
+
+    // Directional D-pad keys
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+      const activeEl = document.activeElement;
+      const isInput = activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement;
+
+      // Range slider handling (e.g. scrubber, volume)
+      if (activeEl instanceof HTMLInputElement && activeEl.type === 'range') {
+        if (key === 'ArrowUp' || key === 'ArrowDown') {
+          event.preventDefault();
+          this.moveFocus(key === 'ArrowUp' ? 'up' : 'down');
+          return;
+        }
+        return; // Allow native left/right slider adjustment
+      }
+
+      if (isInput && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+        return; // Allow native text cursor navigation
+      }
+
+      event.preventDefault();
+      const dirMap: Record<string, 'up' | 'down' | 'left' | 'right'> = {
+        ArrowUp: 'up',
+        ArrowDown: 'down',
+        ArrowLeft: 'left',
+        ArrowRight: 'right',
+      };
+      this.moveFocus(dirMap[key]);
+      return;
+    }
+
+    // Enter / Space / Select for triggering focused element
+    if (key === 'Enter' || key === 'Select') {
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl instanceof HTMLElement && activeEl !== document.body) {
+        if (
+          !(activeEl instanceof HTMLButtonElement) &&
+          !(activeEl instanceof HTMLInputElement) &&
+          !(activeEl instanceof HTMLSelectElement) &&
+          !(activeEl instanceof HTMLAnchorElement)
+        ) {
+          event.preventDefault();
+          activeEl.click();
+        }
+      }
+      return;
+    }
+
+    // Escape / Backspace / GoBack for back/cancel
+    if (key === 'Escape' || key === 'GoBack' || (key === 'Backspace' && !this.isEditableTarget(event.target))) {
+      event.preventDefault();
+      this.handleBack();
+      return;
+    }
+  }
+
+  private getActiveContainer(): HTMLElement {
+    const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+    if (openDialog) return openDialog;
+
+    const playerDialogBackdrop = document.querySelector<HTMLElement>('#browser-player-dialog-backdrop:not([hidden])');
+    if (playerDialogBackdrop) return playerDialogBackdrop;
+
+    const overflowDropdown = document.querySelector<HTMLElement>('.hero-overflow-dropdown:not([hidden])');
+    if (overflowDropdown) return overflowDropdown;
+
+    const playerOverlay = document.querySelector<HTMLElement>('#browser-player:not([hidden])');
+    if (playerOverlay) return playerOverlay;
+
+    return document.body;
+  }
+
+  public moveFocus(direction: 'up' | 'down' | 'left' | 'right') {
+    const container = this.getActiveContainer();
+
+    const selector = [
+      'button:not([disabled])',
+      'input:not([disabled]):not([type="hidden"])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      'a[href]',
+      '[tabindex="0"]:not([disabled])',
+      '.media-card:not([disabled])',
+      '.ma-media-card:not([disabled])',
+      '.player-dialog-item',
+      '.overflow-item',
+      '.ma-track-row',
+    ].join(',');
+
+    const elements = Array.from(container.querySelectorAll<HTMLElement>(selector)).filter((el) => {
+      if (el.getAttribute('tabindex') === '-1') return false;
+      if (el.hidden || el.style.display === 'none' || el.style.visibility === 'hidden') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+
+    if (elements.length === 0) return;
+
+    let current = document.activeElement as HTMLElement | null;
+    if (!current || !container.contains(current) || current === document.body) {
+      elements[0].focus();
+      elements[0].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      return;
+    }
+
+    const currentRect = current.getBoundingClientRect();
+    const currentCenter = {
+      x: currentRect.left + currentRect.width / 2,
+      y: currentRect.top + currentRect.height / 2,
+    };
+
+    let bestCandidate: HTMLElement | null = null;
+    let bestScore = Infinity;
+
+    for (const el of elements) {
+      if (el === current) continue;
+      const rect = el.getBoundingClientRect();
+      const center = {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+
+      const dx = center.x - currentCenter.x;
+      const dy = center.y - currentCenter.y;
+
+      let isValidDirection = false;
+      let primaryDistance = 0;
+      let secondaryDistance = 0;
+
+      switch (direction) {
+        case 'up':
+          isValidDirection = dy < -2;
+          primaryDistance = Math.abs(dy);
+          secondaryDistance = Math.abs(dx);
+          break;
+        case 'down':
+          isValidDirection = dy > 2;
+          primaryDistance = Math.abs(dy);
+          secondaryDistance = Math.abs(dx);
+          break;
+        case 'left':
+          isValidDirection = dx < -2;
+          primaryDistance = Math.abs(dx);
+          secondaryDistance = Math.abs(dy);
+          break;
+        case 'right':
+          isValidDirection = dx > 2;
+          primaryDistance = Math.abs(dx);
+          secondaryDistance = Math.abs(dy);
+          break;
+      }
+
+      if (!isValidDirection) continue;
+
+      const score = primaryDistance + secondaryDistance * 2.5;
+      if (score < bestScore) {
+        bestScore = score;
+        bestCandidate = el;
+      }
+    }
+
+    if (bestCandidate) {
+      bestCandidate.focus();
+      bestCandidate.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  }
+
+  private handleBack() {
+    const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+    if (openDialog) {
+      openDialog.close();
+      return;
+    }
+
+    const playerDialogCloseBtn = document.querySelector<HTMLButtonElement>('#player-dialog-close');
+    const playerDialogBackdrop = document.querySelector<HTMLElement>('#browser-player-dialog-backdrop:not([hidden])');
+    if (playerDialogBackdrop && playerDialogCloseBtn) {
+      playerDialogCloseBtn.click();
+      return;
+    }
+
+    const overflowDropdown = document.querySelector<HTMLElement>('.hero-overflow-dropdown:not([hidden])');
+    if (overflowDropdown) {
+      overflowDropdown.hidden = true;
+      const toggleBtn = document.querySelector<HTMLButtonElement>('.hero-overflow-toggle-btn');
+      toggleBtn?.focus();
+      return;
+    }
+
+    const playerOverlay = document.querySelector<HTMLElement>('#browser-player:not([hidden])');
+    const playerBackBtn = document.querySelector<HTMLButtonElement>('#browser-player-back');
+    if (playerOverlay && playerBackBtn) {
+      playerBackBtn.click();
+      return;
+    }
+
+    const backBtn = document.querySelector<HTMLButtonElement>('.browser-content .back-button');
+    if (backBtn && backBtn.offsetParent !== null) {
+      backBtn.click();
+      return;
+    }
+  }
+}

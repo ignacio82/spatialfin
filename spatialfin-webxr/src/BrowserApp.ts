@@ -963,6 +963,7 @@ export class BrowserApp {
           fontUrls: discoveredPlayback.fontUrls.length > 0
             ? discoveredPlayback.fontUrls
             : negotiatedPlayback.fontUrls,
+          defaultAudioStreamIndex: preferredAudioIndex,
         };
       }
       this.playback = playback;
@@ -1205,7 +1206,8 @@ export class BrowserApp {
           streams.forEach((stream) => {
             const index = stream.Index ?? -1;
             const isSelected = index === this.playback?.defaultAudioStreamIndex;
-            const itemEl = document.createElement('div');
+            const itemEl = document.createElement('button');
+            itemEl.type = 'button';
             itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
             const title = stream.DisplayTitle || stream.Title || stream.Language || `Audio ${index}`;
             const details = [stream.Codec?.toUpperCase(), stream.ChannelLayout].filter(Boolean).join(' · ');
@@ -1223,7 +1225,8 @@ export class BrowserApp {
         this.playerDialogTitle.textContent = 'Select Subtitles';
         const tracks = this.playback?.subtitleTracks || [];
         
-        const offEl = document.createElement('div');
+        const offEl = document.createElement('button');
+        offEl.type = 'button';
         offEl.className = `player-dialog-item${this.selectedSubtitleIndex === -1 ? ' is-selected' : ''}`;
         offEl.innerHTML = `<span>Off</span>${this.selectedSubtitleIndex === -1 ? '✓' : ''}`;
         offEl.addEventListener('click', () => {
@@ -1234,7 +1237,8 @@ export class BrowserApp {
 
         tracks.forEach((track, idx) => {
           const isSelected = idx === this.selectedSubtitleIndex;
-          const itemEl = document.createElement('div');
+          const itemEl = document.createElement('button');
+          itemEl.type = 'button';
           itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
           const roles = [
             track.codec.toUpperCase(),
@@ -1262,7 +1266,8 @@ export class BrowserApp {
         ];
         options.forEach((opt) => {
           const isSelected = this.currentMaxBitrate === opt.bitrate;
-          const itemEl = document.createElement('div');
+          const itemEl = document.createElement('button');
+          itemEl.type = 'button';
           itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
           itemEl.innerHTML = `<span>${opt.label}</span>${isSelected ? '✓' : ''}`;
           itemEl.addEventListener('click', () => {
@@ -1284,7 +1289,8 @@ export class BrowserApp {
             const chapTime = chap.StartPositionTicks / 10_000_000;
             const nextChapTime = this.currentChapters[idx + 1] ? (this.currentChapters[idx + 1].StartPositionTicks / 10_000_000) : duration;
             const isSelected = currentTime >= chapTime && currentTime < nextChapTime;
-            const itemEl = document.createElement('div');
+            const itemEl = document.createElement('button');
+            itemEl.type = 'button';
             itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
             const timeStr = formatTime(chapTime);
             const title = chap.Name || `Chapter ${idx + 1}`;
@@ -1303,7 +1309,8 @@ export class BrowserApp {
         const sources = this.playingItem?.MediaSources || [];
         sources.forEach((src, idx) => {
           const isSelected = idx === 0;
-          const itemEl = document.createElement('div');
+          const itemEl = document.createElement('button');
+          itemEl.type = 'button';
           itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
           itemEl.innerHTML = `<span>${this.escape(src.Name || `Source ${idx + 1}`)}</span>${isSelected ? '✓' : ''}`;
           itemEl.addEventListener('click', () => {
@@ -1316,7 +1323,8 @@ export class BrowserApp {
       case 'syncplay': {
         this.playerDialogTitle.textContent = 'SyncPlay';
         const isSyncActive = syncPlayCoordinator.isActive();
-        const itemEl = document.createElement('div');
+        const itemEl = document.createElement('button');
+        itemEl.type = 'button';
         itemEl.className = `player-dialog-item${isSyncActive ? ' is-selected' : ''}`;
         itemEl.innerHTML = `<span>${isSyncActive ? 'Leave SyncPlay Group' : 'Create SyncPlay Group'}</span>`;
         itemEl.addEventListener('click', () => {
@@ -1342,6 +1350,10 @@ export class BrowserApp {
     }
 
     this.playerDialogBackdrop.hidden = false;
+    const selectedOrFirst =
+      this.playerDialogBody.querySelector<HTMLElement>('.player-dialog-item.is-selected') ||
+      this.playerDialogBody.querySelector<HTMLElement>('.player-dialog-item, button');
+    selectedOrFirst?.focus();
   }
 
   private closeDialog() {
@@ -1480,6 +1492,7 @@ export class BrowserApp {
         fontUrls: currentPlayback.fontUrls.length > 0
           ? currentPlayback.fontUrls
           : negotiatedPlayback.fontUrls,
+        defaultAudioStreamIndex: stream.Index,
       };
       this.playback = playback;
       this.attachPlaybackStream(playback, generation, resume);

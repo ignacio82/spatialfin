@@ -140,6 +140,10 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   overflowToggle.onclick = (e) => {
     e.stopPropagation();
     dropdown.hidden = !dropdown.hidden;
+    if (!dropdown.hidden) {
+      const firstOpt = dropdown.querySelector<HTMLElement>('button');
+      firstOpt?.focus();
+    }
   };
 
   document.addEventListener('click', () => {

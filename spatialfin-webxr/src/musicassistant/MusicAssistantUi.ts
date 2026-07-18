@@ -182,6 +182,7 @@ export class MusicAssistantUi {
     items.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = 'ma-track-row';
+      row.tabIndex = 0;
       row.style.fontSize = '0.9rem';
 
       const num = document.createElement('span');

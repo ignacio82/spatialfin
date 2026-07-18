@@ -1257,14 +1257,28 @@ async function run() {
     assert.ok(heroButtons.some(t => t.includes('Favorite')), 'Hero bar should have Favorite button');
     assert.ok(heroButtons.some(t => t.includes('More')), 'Hero bar should have Overflow More button');
 
-    // Click Overflow toggle button
-    await page.click('.hero-overflow-toggle-btn');
-    assert.equal(await page.evaluate(() => Boolean(document.querySelector('.hero-overflow-dropdown:not([hidden])'))), true, 'Overflow dropdown should open');
+    // Test D-Pad Remote Control Navigation
+    await page.keyboard.press('ArrowDown');
+    let focusedTag = await page.evaluate(() => document.activeElement?.tagName);
+    assert.ok(focusedTag && focusedTag !== 'BODY', 'Remote D-pad should focus an interactive element');
+
+    // Test Remote D-Pad opening Overflow Dropdown and selecting with Enter/Escape
+    await page.evaluate(() => document.querySelector('.hero-overflow-toggle-btn')?.focus());
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('.hero-overflow-dropdown:not([hidden])'))), true, 'Remote D-pad Enter should open overflow dropdown');
+    let focusedOverflowItem = await page.evaluate(() => document.activeElement?.classList.contains('overflow-item'));
+    assert.equal(focusedOverflowItem, true, 'Remote D-pad should focus first item in overflow dropdown');
+
+    // Press Escape on remote to close overflow
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('.hero-overflow-dropdown:not([hidden])'))), false, 'Remote D-pad Escape should close overflow dropdown');
 
     // Click Edit external IDs in overflow
+    await page.click('.hero-overflow-toggle-btn');
     await page.click('.hero-edit-ids-btn');
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#edit-external-ids-dialog')?.open)), true, 'Edit external IDs dialog should open');
-    await page.click('#edit-ext-ids-cancel');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('#edit-external-ids-dialog')?.open)), false, 'Remote D-pad Escape should close Edit external IDs dialog');
 
     await subtitleMockSession?.send('Fetch.disable');
     await subtitleMockSession?.detach();

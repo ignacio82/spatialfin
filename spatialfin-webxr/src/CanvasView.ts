@@ -35,6 +35,7 @@ export abstract class CanvasView extends xb.View {
 
   protected hitZones: CanvasHitZone[] = [];
   protected hoveredZoneId: string | null = null;
+  protected focusedZoneId: string | null = null;
   protected pointerDown: CanvasPointer | null = null;
   protected suppressNextTrigger = false;
 
@@ -115,7 +116,89 @@ export abstract class CanvasView extends xb.View {
   }
 
   protected isHovered(id: string): boolean {
-    return this.hoveredZoneId === id;
+    return this.hoveredZoneId === id || this.focusedZoneId === id;
+  }
+
+  public moveSpatialFocus(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+    const validZones = this.hitZones.filter((z) => !z.disabled);
+    if (validZones.length === 0) return false;
+
+    let current = validZones.find((z) => z.id === this.focusedZoneId);
+    if (!current) {
+      this.focusedZoneId = validZones[0].id;
+      this.redraw();
+      return true;
+    }
+
+    const currentCenter = {
+      x: current.x + current.width / 2,
+      y: current.y + current.height / 2,
+    };
+
+    let bestZone: CanvasHitZone | null = null;
+    let bestScore = Infinity;
+
+    for (const zone of validZones) {
+      if (zone.id === current.id) continue;
+      const center = {
+        x: zone.x + zone.width / 2,
+        y: zone.y + zone.height / 2,
+      };
+
+      const dx = center.x - currentCenter.x;
+      const dy = center.y - currentCenter.y;
+
+      let isValidDirection = false;
+      let primary = 0;
+      let secondary = 0;
+
+      switch (direction) {
+        case 'up':
+          isValidDirection = dy < -2;
+          primary = Math.abs(dy);
+          secondary = Math.abs(dx);
+          break;
+        case 'down':
+          isValidDirection = dy > 2;
+          primary = Math.abs(dy);
+          secondary = Math.abs(dx);
+          break;
+        case 'left':
+          isValidDirection = dx < -2;
+          primary = Math.abs(dx);
+          secondary = Math.abs(dy);
+          break;
+        case 'right':
+          isValidDirection = dx > 2;
+          primary = Math.abs(dx);
+          secondary = Math.abs(dy);
+          break;
+      }
+
+      if (!isValidDirection) continue;
+      const score = primary + secondary * 2.5;
+      if (score < bestScore) {
+        bestScore = score;
+        bestZone = zone;
+      }
+    }
+
+    if (bestZone) {
+      this.focusedZoneId = bestZone.id;
+      this.redraw();
+      return true;
+    }
+    return false;
+  }
+
+  public triggerFocusedZone(): boolean {
+    if (!this.focusedZoneId) return false;
+    const zone = this.hitZones.find((z) => z.id === this.focusedZoneId && !z.disabled);
+    if (zone) {
+      zone.action();
+      return true;
+    }
+    return false;
   }
 
   protected zoneAt(x: number, y: number): CanvasHitZone | undefined {

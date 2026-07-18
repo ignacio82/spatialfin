@@ -26,7 +26,10 @@ import { HomeSpace } from './HomeSpace';
 import { AnimeSubtitleRenderer } from './AnimeSubtitleRenderer';
 import {BrowserApp} from './BrowserApp';
 import { MusicAssistantUi } from './musicassistant/MusicAssistantUi';
+import { RemoteControlFocusManager } from './RemoteControlFocusManager';
 import './style.css';
+
+RemoteControlFocusManager.init();
 
 const loginOverlay = document.querySelector<HTMLElement>('#login-overlay');
 const loginForm = document.querySelector<HTMLFormElement>('#login-form');

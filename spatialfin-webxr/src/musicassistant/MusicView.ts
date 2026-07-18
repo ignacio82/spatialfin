@@ -144,7 +144,8 @@ export class MusicView {
     grid.className = 'ma-media-grid';
 
     albums.forEach((album) => {
-      const card = document.createElement('div');
+      const card = document.createElement('button');
+      card.type = 'button';
       card.className = 'ma-media-card';
 
       const img = document.createElement('img');
@@ -183,7 +184,8 @@ export class MusicView {
     grid.className = 'ma-media-grid';
 
     artists.forEach((artist) => {
-      const card = document.createElement('div');
+      const card = document.createElement('button');
+      card.type = 'button';
       card.className = 'ma-media-card';
 
       const img = document.createElement('img');
@@ -219,7 +221,8 @@ export class MusicView {
     grid.className = 'ma-media-grid';
 
     playlists.forEach((playlist) => {
-      const card = document.createElement('div');
+      const card = document.createElement('button');
+      card.type = 'button';
       card.className = 'ma-media-card';
 
       const img = document.createElement('img');
