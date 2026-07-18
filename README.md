@@ -316,8 +316,8 @@ Tailscale can provide a secure HTTPS endpoint when direct local HTTP is unavaila
 
 The Web App runs inside browser sandboxes (via WebXR) and provides a full spatial media experience:
 - **Offline & Local Media**: PWA offline installation, in-app video downloads (stored via OPFS & IndexedDB), local video file playback from device storage, and a standalone offline mode; network shares (SMB/NFS) remain native Android only.
-- **Music Assistant & SendSpin**: Full Music Assistant library browsing, search, mini-player control, queue management, and SendSpin background audio receiver support.
-- **Companion Integration**: Companion auto-connect, QR code setup token scanning, FCast casting, and remote receiver mode.
+- **Music Assistant & SendSpin**: Full Music Assistant library browsing, search, mini-player control, queue management, and SendSpin background audio receiver support (automatically configured during Companion app setup).
+- **Companion Integration**: Companion auto-connect, QR code setup token scanning (automatically configuring Jellyfin, Music Assistant, and SendSpin), FCast casting, and remote receiver mode.
 - **Audio Output**: Supports 5.1/7.1 surround sound and Dolby Atmos spatialization via Web Audio API HRTF panner nodes; dynamic head-tracked orientation updates as you turn your head require the native Android XR app.
 - **Video & HDR**: Direct-plays 4K HEVC, AV1, VP9, HDR10, HLG, and Dolby Vision streams on capable browsers; HDR video is tone-mapped to SDR during WebGL spatial canvas rendering.
 - **Voice & AI**: Cloud Gemini AI queries are supported via optional AI settings; on-device LiteRT Gemma models, palm gesture activation, and rolling subtitle context buffer are native Android app features.
