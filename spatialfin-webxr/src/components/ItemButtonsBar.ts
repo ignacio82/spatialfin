@@ -47,27 +47,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
     container.appendChild(restartBtn);
   }
 
-  // 3. Multitask / PiP Button
-  const pipBtn = document.createElement('button');
-  pipBtn.className = 'secondary-action hero-pip-btn';
-  pipBtn.type = 'button';
-  pipBtn.title = 'Multitask / Picture-in-Picture';
-  pipBtn.textContent = '🗗 Multitask';
-  pipBtn.onclick = async () => {
-    const video = document.querySelector<HTMLVideoElement>('#browser-video');
-    if (video && document.pictureInPictureEnabled && !document.pictureInPictureElement) {
-      try {
-        await video.requestPictureInPicture();
-      } catch (err) {
-        console.warn('Picture in Picture failed:', err);
-      }
-    } else {
-      options.onPlay(currentItem, false);
-    }
-  };
-  container.appendChild(pipBtn);
-
-  // 4. Watched Toggle Button
+  // 3. Watched Toggle Button
   const watchedBtn = document.createElement('button');
   watchedBtn.className = `secondary-action hero-watched-action ${isPlayed ? 'hero-action-active' : ''}`;
   watchedBtn.type = 'button';
