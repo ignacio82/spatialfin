@@ -1139,6 +1139,36 @@ export async function toggleFavorite(itemId: string, isFavorite: boolean): Promi
   return response.json();
 }
 
+export async function toggleItemPlayed(itemId: string, played: boolean): Promise<void> {
+  const url = resolveJellyfinRequestUrl(`/Users/${getUserId()}/PlayedItems/${itemId}`);
+  const response = await fetch(url, {
+    method: played ? 'POST' : 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) throw new JellyfinApiError('Failed to update watched status');
+}
+
+export async function fetchSimilarItems(
+  itemId: string,
+  limit = 12,
+): Promise<JellyfinItem[]> {
+  const data = await requestJson<QueryResult<JellyfinItem>>(
+    `/Items/${encodeURIComponent(itemId)}/Similar`,
+    {
+      query: {
+        userId: requireUserId(),
+        fields: HOME_ITEM_FIELDS,
+        enableImages: true,
+        enableImageTypes: HOME_IMAGE_TYPES,
+        imageTypeLimit: 1,
+        enableUserData: true,
+        limit: normalizeLimit(limit, 12),
+      },
+    },
+  );
+  return deduplicateMovieVersions(itemsFromResponse(data));
+}
+
 export function getDownloadUrl(itemId: string): string {
   const urlString = resolveJellyfinRequestUrl(`/Items/${itemId}/Download`);
   const url = new URL(urlString, window.location.href);

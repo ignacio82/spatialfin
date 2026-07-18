@@ -7,9 +7,12 @@ import {
   fetchLatestMedia,
   fetchNextUp,
   fetchResumeItems,
+  fetchSimilarItems,
   fetchSuggestions,
   fetchViews,
   extractMediaPills,
+  toggleFavorite,
+  toggleItemPlayed,
   JellyfinApiError,
   type JellyfinImageType,
   type JellyfinItem,
@@ -56,14 +59,16 @@ interface HomeModel {
 type HomeCanvasScreen =
   | {kind: 'loading'; title: string; body: string}
   | {kind: 'home'}
-  | {kind: 'details'; item: JellyfinItem}
+  | {kind: 'details'; item: JellyfinItem; episodes?: JellyfinItem[]; similar?: JellyfinItem[]}
   | {kind: 'library'; title: string; items: JellyfinItem[]}
   | {kind: 'settings'}
   | {kind: 'message'; title: string; body: string};
 
 interface HomeCanvasActions {
   openItem: (item: JellyfinItem) => void;
-  playItem: (item: JellyfinItem) => void;
+  playItem: (item: JellyfinItem, startFromBeginning?: boolean) => void;
+  togglePlayed: (item: JellyfinItem) => void;
+  toggleFavorite: (item: JellyfinItem) => void;
   openSeries: (item: JellyfinItem) => void;
   showHome: () => void;
   showMedia: () => void;
@@ -166,6 +171,10 @@ class HomeCanvasView extends CanvasView {
     return this.screen;
   }
 
+  requestRedraw() {
+    this.redraw();
+  }
+
   setArtwork(item: JellyfinItem, type: JellyfinImageType, image: ImageBitmap) {
     const key = imageKey(item, type);
     this.artwork.get(key)?.close();
@@ -198,7 +207,7 @@ class HomeCanvasView extends CanvasView {
         this.drawHome();
         break;
       case 'details':
-        this.drawDetails(this.screen.item);
+        this.drawDetails(this.screen);
         break;
       case 'library':
         this.drawLibrary(this.screen.title, this.screen.items);
@@ -430,27 +439,71 @@ class HomeCanvasView extends CanvasView {
     const gradient = ctx.createLinearGradient(x, y, x, y + height);
     gradient.addColorStop(0, 'rgba(0,0,0,0.08)');
     gradient.addColorStop(0.46, 'rgba(0,0,0,0.34)');
-    gradient.addColorStop(1, 'rgba(0,0,0,0.82)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0.88)');
     ctx.fillStyle = gradient;
     ctx.fillRect(x, y, width, height);
+
+    let badgeRight = x + width - 14;
+    if (item.UserData?.Played) {
+      badgeRight -= 26;
+      fillRoundedRect(ctx, '#e53935', badgeRight, y + 14, 26, 26, 13);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 14px system-ui, sans-serif';
+      ctx.fillText('✓', badgeRight + 13, y + 32);
+      badgeRight -= 6;
+    }
+    if (item.UserData?.IsFavorite) {
+      badgeRight -= 26;
+      fillRoundedRect(ctx, '#e53935', badgeRight, y + 14, 26, 26, 13);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 14px system-ui, sans-serif';
+      ctx.fillText('♥', badgeRight + 13, y + 32);
+      badgeRight -= 6;
+    }
+    if (item.UserData?.UnplayedItemCount && item.UserData.UnplayedItemCount > 0) {
+      const unplayedLabel = `${item.UserData.UnplayedItemCount}`;
+      ctx.font = '700 12px system-ui, sans-serif';
+      const unplayedWidth = ctx.measureText(unplayedLabel).width + 14;
+      badgeRight -= unplayedWidth;
+      fillRoundedRect(ctx, COLORS.primary, badgeRight, y + 14, unplayedWidth, 26, 13);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.onPrimary;
+      ctx.fillText(unplayedLabel, badgeRight + unplayedWidth / 2, y + 31);
+    }
 
     const rating = item.CommunityRating?.toFixed(1) ??
       (item.CriticRating !== undefined ? `${Math.round(item.CriticRating)}%` : null);
     let pillX = x + 20;
-    if (rating) pillX += this.drawMiniPill(`★ ${rating}`, pillX, y + height - 109) + 8;
+    if (rating) pillX += this.drawMiniPill(`★ ${rating}`, pillX, y + height - 116) + 8;
     for (const pill of extractMediaPills(item)) {
-      pillX += this.drawMiniPill(pill, pillX, y + height - 109) + 8;
+      pillX += this.drawMiniPill(pill, pillX, y + height - 116) + 8;
     }
     
     const genres = (item.Genres ?? []).slice(0, 3).join(', ');
     ctx.textAlign = 'left';
     ctx.fillStyle = '#d4d8de';
     ctx.font = '500 15px system-ui, sans-serif';
-    ctx.fillText(ellipsize(ctx, genres || item.Type || 'Video', width - 40), x + 20, y + height - 69);
+    ctx.fillText(ellipsize(ctx, genres || item.Type || 'Video', width - 40), x + 20, y + height - 78);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '650 27px system-ui, sans-serif';
-    ctx.fillText(ellipsize(ctx, item.Name, width - 40), x + 20, y + height - 30);
+    ctx.font = '650 25px system-ui, sans-serif';
+    ctx.fillText(ellipsize(ctx, item.Name, width - 40), x + 20, y + height - 46);
+
+    const progress = itemProgress(item);
+    if (progress !== null) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(x + 20, y + height - 40, width - 40, 4);
+      ctx.fillStyle = COLORS.primary;
+      ctx.fillRect(x + 20, y + height - 40, (width - 40) * progress, 4);
+    }
     ctx.restore();
+
+    const btnY = y + height - 38;
+    const playText = progress !== null ? '▶ Resume' : '▶ Play';
+    this.drawSmallActionButton(`hero-play-${item.Id}`, playText, x + 20, btnY, 92, 28, true, () => this.actions.playItem(item));
+    this.drawSmallActionButton(`hero-watched-${item.Id}`, item.UserData?.Played ? '✓ Watched' : '○ Mark', x + 120, btnY, 94, 28, item.UserData?.Played ?? false, () => this.actions.togglePlayed(item));
+    this.drawSmallActionButton(`hero-fav-${item.Id}`, item.UserData?.IsFavorite ? '♥ Fav' : '♡ Fav', x + 222, btnY, 70, 28, item.UserData?.IsFavorite ?? false, () => this.actions.toggleFavorite(item));
 
     const id = `hero-${item.Id}`;
     if (this.isHovered(id)) {
@@ -459,7 +512,30 @@ class HomeCanvasView extends CanvasView {
       roundedRect(ctx, x + 2, y + 2, width - 4, height - 4, 30);
       ctx.stroke();
     }
-    this.addHitZone({id, x, y, width, height, action: () => this.actions.openItem(item)});
+    this.addHitZone({id, x, y, width, height: height - 42, action: () => this.actions.openItem(item)});
+  }
+
+  private drawSmallActionButton(
+    id: string,
+    label: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    active: boolean,
+    action: () => void,
+  ) {
+    const ctx = this.context;
+    const hovered = this.isHovered(id);
+    const bg = active
+      ? (hovered ? '#64b5f6' : COLORS.primary)
+      : (hovered ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.6)');
+    fillRoundedRect(ctx, bg, x, y, width, height, height / 2);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = active ? COLORS.onPrimary : COLORS.onSurface;
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.fillText(label, x + width / 2, y + height / 2 + 4);
+    this.addHitZone({id, x, y, width, height, action});
   }
 
   private drawMiniPill(label: string, x: number, y: number): number {
@@ -502,6 +578,37 @@ class HomeCanvasView extends CanvasView {
         ctx.fillStyle = COLORS.surfaceHigh;
         ctx.fillRect(cardX, cardY, width, imageHeight);
       }
+
+      let shelfBadgeRight = cardX + width - 8;
+      if (item.UserData?.Played) {
+        shelfBadgeRight -= 22;
+        fillRoundedRect(ctx, '#e53935', shelfBadgeRight, cardY + 8, 22, 22, 11);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 13px system-ui, sans-serif';
+        ctx.fillText('✓', shelfBadgeRight + 11, cardY + 23);
+        shelfBadgeRight -= 6;
+      }
+      if (item.UserData?.IsFavorite) {
+        shelfBadgeRight -= 22;
+        fillRoundedRect(ctx, '#e53935', shelfBadgeRight, cardY + 8, 22, 22, 11);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 13px system-ui, sans-serif';
+        ctx.fillText('♥', shelfBadgeRight + 11, cardY + 23);
+        shelfBadgeRight -= 6;
+      }
+      if (item.UserData?.UnplayedItemCount && item.UserData.UnplayedItemCount > 0) {
+        const countStr = `${item.UserData.UnplayedItemCount}`;
+        ctx.font = '700 11px system-ui, sans-serif';
+        const badgeW = ctx.measureText(countStr).width + 12;
+        shelfBadgeRight -= badgeW;
+        fillRoundedRect(ctx, COLORS.primary, shelfBadgeRight, cardY + 8, badgeW, 22, 11);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = COLORS.onPrimary;
+        ctx.fillText(countStr, shelfBadgeRight + badgeW / 2, cardY + 22);
+      }
+
       const progress = itemProgress(item);
       if (progress !== null) {
         ctx.fillStyle = 'rgba(0,0,0,0.58)';
@@ -535,7 +642,10 @@ class HomeCanvasView extends CanvasView {
     });
   }
 
-  private drawDetails(item: JellyfinItem) {
+  private drawDetails(detailsScreen: {item: JellyfinItem; episodes?: JellyfinItem[]; similar?: JellyfinItem[]}) {
+    const item = detailsScreen.item;
+    const episodes = detailsScreen.episodes ?? [];
+    const similar = detailsScreen.similar ?? [];
     const ctx = this.context;
     const x = 112;
     const width = PANEL_WIDTH_DP - x;
@@ -596,9 +706,10 @@ class HomeCanvasView extends CanvasView {
     this.drawWrappedText(item.Overview || 'No synopsis is available.', infoX, 288, 910, 25, 3);
 
     const isSeries = item.Type === 'Series';
+    const hasProgress = itemProgress(item) !== null;
     this.drawActionButton(
       'detail-play',
-      isSeries ? '▶  Episodes' : itemProgress(item) ? '▶  Resume' : '▶  Play',
+      isSeries ? '▶  Episodes' : hasProgress ? '▶  Resume' : '▶  Play',
       158,
       454,
       210,
@@ -606,10 +717,33 @@ class HomeCanvasView extends CanvasView {
       true,
       () => isSeries ? this.actions.openSeries(item) : this.actions.playItem(item),
     );
-    this.drawActionButton('detail-restart', '↺', 384, 454, 68, 68, false, () => this.actions.playItem(item));
-    this.drawActionButton('detail-watched', item.UserData?.Played ? '✓' : '○', 468, 454, 68, 68, false, () => {});
-    this.drawActionButton('detail-favorite', '♡', 552, 454, 68, 68, false, () => {});
-    this.drawActionButton('detail-cast', '▧', 636, 454, 68, 68, false, () => {});
+    if (hasProgress) {
+      this.drawActionButton('detail-restart', '↺', 384, 454, 68, 68, false, () => this.actions.playItem(item, true));
+    }
+    const watchedX = hasProgress ? 468 : 384;
+    const favX = watchedX + 84;
+    const castX = favX + 84;
+    this.drawActionButton(
+      'detail-watched',
+      item.UserData?.Played ? '✓' : '○',
+      watchedX,
+      454,
+      68,
+      68,
+      item.UserData?.Played ?? false,
+      () => this.actions.togglePlayed(item),
+    );
+    this.drawActionButton(
+      'detail-favorite',
+      item.UserData?.IsFavorite ? '♥' : '♡',
+      favX,
+      454,
+      68,
+      68,
+      item.UserData?.IsFavorite ?? false,
+      () => this.actions.toggleFavorite(item),
+    );
+    this.drawActionButton('detail-cast', '▧', castX, 454, 68, 68, false, () => this.actions.showRemote());
 
     ctx.fillStyle = COLORS.onSurface;
     ctx.font = '700 18px system-ui, sans-serif';
@@ -618,28 +752,113 @@ class HomeCanvasView extends CanvasView {
     ctx.font = '500 17px system-ui, sans-serif';
     this.drawWrappedText(item.Overview || 'No synopsis is available.', 158, 620, 1160, 27, 4);
 
+    let currentSectionY = 740;
     if (item.People && item.People.length > 0) {
       ctx.fillStyle = COLORS.onSurface;
       ctx.font = '700 18px system-ui, sans-serif';
-      ctx.fillText('Cast & Crew', 158, 740);
+      ctx.fillText('Cast & Crew', 158, currentSectionY);
       let personX = 158;
       item.People.slice(0, 12).forEach((person) => {
         ctx.fillStyle = COLORS.surfaceHigh;
         ctx.beginPath();
-        ctx.arc(personX + 32, 780, 32, 0, Math.PI * 2);
+        ctx.arc(personX + 32, currentSectionY + 40, 32, 0, Math.PI * 2);
         ctx.fill();
         ctx.textAlign = 'center';
         ctx.fillStyle = COLORS.onSurface;
         ctx.font = '500 12px system-ui, sans-serif';
-        ctx.fillText(ellipsize(ctx, person.Name || '', 70), personX + 32, 824);
+        ctx.fillText(ellipsize(ctx, person.Name || '', 70), personX + 32, currentSectionY + 84);
         if (person.Role) {
           ctx.fillStyle = COLORS.onSurfaceMuted;
           ctx.font = '500 11px system-ui, sans-serif';
-          ctx.fillText(ellipsize(ctx, person.Role, 70), personX + 32, 838);
+          ctx.fillText(ellipsize(ctx, person.Role, 70), personX + 32, currentSectionY + 98);
         }
         personX += 80;
       });
       ctx.textAlign = 'left';
+      currentSectionY += 120;
+    }
+
+    if (episodes.length > 0) {
+      ctx.fillStyle = COLORS.onSurface;
+      ctx.font = '700 18px system-ui, sans-serif';
+      ctx.fillText(`Episodes (${episodes.length})`, 158, currentSectionY);
+      currentSectionY += 28;
+      const epW = 216;
+      const epH = 122;
+      const epGap = 16;
+      episodes.slice(0, 5).forEach((ep, idx) => {
+        const epX = 158 + idx * (epW + epGap);
+        const epId = `detail-ep-${ep.Id}`;
+        ctx.save();
+        roundedRect(ctx, epX, currentSectionY, epW, epH, 12);
+        ctx.clip();
+        const epImg = this.imageFor(ep, true);
+        if (epImg) drawCoverImage(ctx, epImg, epX, currentSectionY, epW, epH);
+        else {
+          ctx.fillStyle = COLORS.surfaceHigh;
+          ctx.fillRect(epX, currentSectionY, epW, epH);
+        }
+        if (ep.UserData?.Played) {
+          fillRoundedRect(ctx, '#e53935', epX + epW - 28, currentSectionY + 8, 22, 22, 11);
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '700 13px system-ui, sans-serif';
+          ctx.fillText('✓', epX + epW - 17, currentSectionY + 23);
+        }
+        ctx.restore();
+        if (this.isHovered(epId)) {
+          ctx.strokeStyle = COLORS.primary;
+          ctx.lineWidth = 3;
+          roundedRect(ctx, epX + 1.5, currentSectionY + 1.5, epW - 3, epH - 3, 11);
+          ctx.stroke();
+        }
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COLORS.onSurface;
+        ctx.font = '650 14px system-ui, sans-serif';
+        const epName = [
+          ep.ParentIndexNumber !== undefined ? `S${ep.ParentIndexNumber}` : null,
+          ep.IndexNumber !== undefined ? `E${ep.IndexNumber}` : null,
+          ep.Name,
+        ].filter(Boolean).join(' · ');
+        ctx.fillText(ellipsize(ctx, epName, epW), epX, currentSectionY + epH + 22);
+        this.addHitZone({id: epId, x: epX, y: currentSectionY, width: epW, height: epH + 28, action: () => this.actions.playItem(ep)});
+      });
+      currentSectionY += epH + 48;
+    }
+
+    if (similar.length > 0) {
+      ctx.fillStyle = COLORS.onSurface;
+      ctx.font = '700 18px system-ui, sans-serif';
+      ctx.fillText('More Like This', 158, currentSectionY);
+      currentSectionY += 28;
+      const simW = 216;
+      const simH = 122;
+      const simGap = 16;
+      similar.slice(0, 5).forEach((simItem, idx) => {
+        const simX = 158 + idx * (simW + simGap);
+        const simId = `detail-sim-${simItem.Id}`;
+        ctx.save();
+        roundedRect(ctx, simX, currentSectionY, simW, simH, 12);
+        ctx.clip();
+        const simImg = this.imageFor(simItem, true);
+        if (simImg) drawCoverImage(ctx, simImg, simX, currentSectionY, simW, simH);
+        else {
+          ctx.fillStyle = COLORS.surfaceHigh;
+          ctx.fillRect(simX, currentSectionY, simW, simH);
+        }
+        ctx.restore();
+        if (this.isHovered(simId)) {
+          ctx.strokeStyle = COLORS.primary;
+          ctx.lineWidth = 3;
+          roundedRect(ctx, simX + 1.5, currentSectionY + 1.5, simW - 3, simH - 3, 11);
+          ctx.stroke();
+        }
+        ctx.textAlign = 'left';
+        ctx.fillStyle = COLORS.onSurface;
+        ctx.font = '650 14px system-ui, sans-serif';
+        ctx.fillText(ellipsize(ctx, simItem.Name, simW), simX, currentSectionY + simH + 22);
+        this.addHitZone({id: simId, x: simX, y: currentSectionY, width: simW, height: simH + 28, action: () => this.actions.openItem(simItem)});
+      });
     }
 
     this.userData.uiLabels = [item.Name, isSeries ? 'Episodes' : 'Play', 'Overview'];
@@ -882,8 +1101,10 @@ export class HomeSpace extends xb.Script {
     panel.userData.worldScale = PANEL_WORLD_SCALE;
 
     const canvas = new HomeCanvasView({
-      openItem: (item) => this.openItem(item),
-      playItem: (item) => this.playItem(item),
+      openItem: (item) => void this.openItem(item),
+      playItem: (item, startFromBeginning) => this.playItem(item, startFromBeginning),
+      togglePlayed: (item) => void this.togglePlayed(item),
+      toggleFavorite: (item) => void this.toggleFavorite(item),
       openSeries: (item) => void this.openSeries(item),
       showHome: () => canvas.setScreen({kind: 'home'}),
       showMedia: () => this.showAllMedia('Media'),
@@ -900,6 +1121,34 @@ export class HomeSpace extends xb.Script {
     panel.updateLayouts();
     this.add(panel);
     this.canvas = canvas;
+  }
+
+  private async togglePlayed(item: JellyfinItem) {
+    const newPlayed = !(item.UserData?.Played);
+    if (!item.UserData) item.UserData = {};
+    item.UserData.Played = newPlayed;
+    this.canvas?.requestRedraw();
+    try {
+      await toggleItemPlayed(item.Id, newPlayed);
+    } catch (error) {
+      console.warn('Failed to update watched status:', error);
+      item.UserData.Played = !newPlayed;
+      this.canvas?.requestRedraw();
+    }
+  }
+
+  private async toggleFavorite(item: JellyfinItem) {
+    const newFavorite = !(item.UserData?.IsFavorite);
+    if (!item.UserData) item.UserData = {};
+    item.UserData.IsFavorite = newFavorite;
+    this.canvas?.requestRedraw();
+    try {
+      await toggleFavorite(item.Id, newFavorite);
+    } catch (error) {
+      console.warn('Failed to update favorite status:', error);
+      item.UserData.IsFavorite = !newFavorite;
+      this.canvas?.requestRedraw();
+    }
   }
 
   private async loadAppIcon() {
@@ -976,14 +1225,36 @@ export class HomeSpace extends xb.Script {
     }
   }
 
-  private openItem(item: JellyfinItem) {
+  private async openItem(item: JellyfinItem) {
+    const generation = ++this.requestGeneration;
     this.canvas?.setScreen({kind: 'details', item});
-    void this.loadArtwork([item]);
+    void this.loadArtwork([item, ...(item.People ?? []).map(() => item)]);
+    try {
+      const [episodes, similar] = await Promise.all([
+        item.Type === 'Series' ? fetchEpisodes(item.Id).catch(() => []) : Promise.resolve([]),
+        fetchSimilarItems(item.Id).catch(() => []),
+      ]);
+      if (generation !== this.requestGeneration || this.disposed) return;
+      this.canvas?.setScreen({kind: 'details', item, episodes, similar});
+      void this.loadArtwork([...episodes.slice(0, 10), ...similar.slice(0, 10)]);
+    } catch {
+      // Background load failed
+    }
   }
 
-  private playItem(item: JellyfinItem) {
+  private playItem(item: JellyfinItem, startFromBeginning = false) {
+    let playItemObj = item;
+    if (startFromBeginning && item.UserData) {
+      playItemObj = {
+        ...item,
+        UserData: {
+          ...item.UserData,
+          PlaybackPositionTicks: 0,
+        },
+      };
+    }
     this.removeFromParent();
-    xb.add(new PlayerSpace(item));
+    xb.add(new PlayerSpace(playItemObj));
   }
 
   private async openSeries(item: JellyfinItem) {
