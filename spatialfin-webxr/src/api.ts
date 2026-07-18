@@ -19,8 +19,8 @@ const HOME_ITEM_FIELDS = [
   'ProductionYear',
   'RunTimeTicks',
   'SeriesId',
-
-
+  'Chapters',
+  'MediaSources',
 ].join(',');
 const HOME_IMAGE_TYPES = 'Primary,Backdrop,Logo';
 
@@ -69,6 +69,12 @@ export interface JellyfinPerson {
   Type?: string;
   PrimaryImageTag?: string;
   Id?: string;
+}
+
+export interface JellyfinChapter {
+  StartPositionTicks: number;
+  Name?: string;
+  ImageTag?: string;
 }
 
 export interface JellyfinMediaStream {
@@ -128,6 +134,7 @@ export interface JellyfinItem {
   };
   BackdropImageTags?: string[];
   People?: JellyfinPerson[];
+  Chapters?: JellyfinChapter[];
   MediaSources?: JellyfinMediaSourceInfo[];
 }
 
@@ -178,6 +185,7 @@ export interface JellyfinPlaybackInfo {
 export interface JellyfinPlaybackOptions {
   mediaSourceId?: string;
   audioStreamIndex?: number;
+  maxBitrate?: number;
 }
 
 /** A raw text subtitle sidecar returned for the selected Jellyfin media source. */
@@ -924,11 +932,12 @@ export async function fetchPlaybackInfo(
   const requestedAudioStreamIndex = Number.isInteger(options.audioStreamIndex)
     ? options.audioStreamIndex
     : undefined;
+  const targetBitrate = options.maxBitrate && options.maxBitrate > 0 ? options.maxBitrate : MAX_STREAMING_BITRATE;
   const playbackRequestBody = {
     UserId: userId,
     MediaSourceId: requestedMediaSourceId,
     AudioStreamIndex: requestedAudioStreamIndex,
-    MaxStreamingBitrate: MAX_STREAMING_BITRATE,
+    MaxStreamingBitrate: targetBitrate,
     MaxAudioChannels: 2,
     EnableDirectPlay: false,
     EnableDirectStream: true,
@@ -937,8 +946,8 @@ export async function fetchPlaybackInfo(
     AllowAudioStreamCopy: true,
     DeviceProfile: {
       Name: 'SpatialFin WebXR HLS',
-      MaxStreamingBitrate: MAX_STREAMING_BITRATE,
-      MaxStaticBitrate: MAX_STREAMING_BITRATE,
+      MaxStreamingBitrate: targetBitrate,
+      MaxStaticBitrate: targetBitrate,
       DirectPlayProfiles: [],
       TranscodingProfiles: [
         {

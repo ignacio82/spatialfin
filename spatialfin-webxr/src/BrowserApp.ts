@@ -26,6 +26,7 @@ import {
   type SeerrResult,
   type JellyfinPlaybackInfo,
   type JellyfinView,
+  type JellyfinChapter,
 } from './api';
 import {mediaUrlWithAccessToken} from './auth';
 import {createJellyfinRequest, streamingFetchSupported} from './network';
@@ -37,6 +38,7 @@ import {
   rememberSubtitleSelection,
   subtitleLanguageMatches,
 } from './AnimeSubtitleRenderer';
+import { syncPlayCoordinator } from './SyncPlayCoordinator';
 
 interface BrowserShelf {
   title: string;
@@ -57,16 +59,65 @@ function progress(item: JellyfinItem): number | null {
   return position > 0 && runtime > 0 ? Math.min(100, (position / runtime) * 100) : null;
 }
 
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const totalSec = Math.floor(seconds);
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
 /** A browser-first Jellyfin client. XR is deliberately a separate opt-in mode. */
 export class BrowserApp {
   private readonly root: HTMLElement;
   private readonly content: HTMLElement;
   private readonly player: HTMLElement;
   private readonly video: HTMLVideoElement;
-  private readonly playerTitle: HTMLElement;
+  private readonly playerBackBtn: HTMLButtonElement;
+  private readonly playerItemTitle: HTMLElement;
+  private readonly playerItemSubtitle: HTMLElement;
+  private readonly playerMetaPill: HTMLElement;
+  private readonly playerCastBtn: HTMLButtonElement;
+  private readonly playerAudioBtn: HTMLButtonElement;
+  private readonly playerSubtitlesBtn: HTMLButtonElement;
+  private readonly playerChaptersBtn: HTMLButtonElement;
+  private readonly playerSourceBtn: HTMLButtonElement;
+  private readonly playerSyncplayBtn: HTMLButtonElement;
+  private readonly playerQualityBtn: HTMLButtonElement;
+  private readonly playerPrevChapterBtn: HTMLButtonElement;
+  private readonly playerRewindBtn: HTMLButtonElement;
+  private readonly playerPlaypauseBtn: HTMLButtonElement;
+  private readonly playIcon: SVGElement;
+  private readonly pauseIcon: SVGElement;
+  private readonly playerFfwdBtn: HTMLButtonElement;
+  private readonly playerNextChapterBtn: HTMLButtonElement;
+  private readonly playerSkipSegmentBtn: HTMLButtonElement;
+  private readonly playerPlayNextBtn: HTMLButtonElement;
+  private readonly playerPlayNextLabel: HTMLElement;
+  private readonly playerChapterTitle: HTMLElement;
+  private readonly playerTimeCurrent: HTMLElement;
+  private readonly playerTimeDuration: HTMLElement;
+  private readonly playerScrubberInput: HTMLInputElement;
+  private readonly playerScrubberFill: HTMLElement;
+  private readonly playerScrubberThumb: HTMLElement;
+  private readonly playerScrubberTicks: HTMLElement;
+  private readonly playerControlsOverlay: HTMLElement;
+  private readonly playerTouchInterceptor: HTMLElement;
+  private readonly playerPauseOverlay: HTMLElement;
+  private readonly pauseOverlayTitle: HTMLElement;
+  private readonly pauseOverlaySubtitle: HTMLElement;
+  private readonly pauseOverlayClock: HTMLElement;
+  private readonly pauseOverlayEta: HTMLElement;
+  private readonly playerLoadingSpinner: HTMLElement;
   private readonly playerStatus: HTMLElement;
-  private readonly audioSelect: HTMLSelectElement;
-  private readonly subtitleSelect: HTMLSelectElement;
+  private readonly playerDialogBackdrop: HTMLElement;
+  private readonly playerDialogTitle: HTMLElement;
+  private readonly playerDialogBody: HTMLElement;
+  private readonly playerDialogCloseBtn: HTMLButtonElement;
   private readonly searchInput: HTMLInputElement;
   private readonly objectUrls = new Set<string>();
   
@@ -84,26 +135,69 @@ export class BrowserApp {
   private visible = false;
   private readonly automationMode = new URLSearchParams(window.location.search).has('xrAutomation');
 
+  private controlsVisible = true;
+  private autoHideTimer: number | null = null;
+  private clockTimer: number | null = null;
+  private isDraggingScrubber = false;
+  private activeDialogType: string | null = null;
+  private currentChapters: JellyfinChapter[] = [];
+  private nextEpisodeItem: JellyfinItem | null = null;
+  private selectedSubtitleIndex = -1;
+  private currentMaxBitrate = 0;
+
   constructor() {
     this.root = this.requireElement('#browser-app');
     this.content = this.requireElement('#browser-content');
     this.player = this.requireElement('#browser-player');
     this.video = this.requireElement<HTMLVideoElement>('#browser-video');
-    this.playerTitle = this.requireElement('#browser-player-title');
+    this.playerBackBtn = this.requireElement<HTMLButtonElement>('#browser-player-back');
+    this.playerItemTitle = this.requireElement('#browser-player-title');
+    this.playerItemSubtitle = this.requireElement('#browser-player-subtitle');
+    this.playerMetaPill = this.requireElement('#browser-player-meta-pill');
+    this.playerCastBtn = this.requireElement<HTMLButtonElement>('#browser-player-cast-btn');
+    this.playerAudioBtn = this.requireElement<HTMLButtonElement>('#browser-player-audio-btn');
+    this.playerSubtitlesBtn = this.requireElement<HTMLButtonElement>('#browser-player-subtitles-btn');
+    this.playerChaptersBtn = this.requireElement<HTMLButtonElement>('#browser-player-chapters-btn');
+    this.playerSourceBtn = this.requireElement<HTMLButtonElement>('#browser-player-source-btn');
+    this.playerSyncplayBtn = this.requireElement<HTMLButtonElement>('#browser-player-syncplay-btn');
+    this.playerQualityBtn = this.requireElement<HTMLButtonElement>('#browser-player-quality-btn');
+    this.playerPrevChapterBtn = this.requireElement<HTMLButtonElement>('#browser-player-prev-chapter');
+    this.playerRewindBtn = this.requireElement<HTMLButtonElement>('#browser-player-rewind');
+    this.playerPlaypauseBtn = this.requireElement<HTMLButtonElement>('#browser-player-playpause');
+    this.playIcon = this.requireElement<SVGElement>('#playpause-icon-play');
+    this.pauseIcon = this.requireElement<SVGElement>('#playpause-icon-pause');
+    this.playerFfwdBtn = this.requireElement<HTMLButtonElement>('#browser-player-ffwd');
+    this.playerNextChapterBtn = this.requireElement<HTMLButtonElement>('#browser-player-next-chapter');
+    this.playerSkipSegmentBtn = this.requireElement<HTMLButtonElement>('#browser-player-skip-segment');
+    this.playerPlayNextBtn = this.requireElement<HTMLButtonElement>('#browser-player-play-next');
+    this.playerPlayNextLabel = this.requireElement('#player-play-next-label');
+    this.playerChapterTitle = this.requireElement('#browser-player-chapter-title');
+    this.playerTimeCurrent = this.requireElement('#browser-player-time-current');
+    this.playerTimeDuration = this.requireElement('#browser-player-time-duration');
+    this.playerScrubberInput = this.requireElement<HTMLInputElement>('#browser-player-scrubber-input');
+    this.playerScrubberFill = this.requireElement('#player-scrubber-fill');
+    this.playerScrubberThumb = this.requireElement('#player-scrubber-thumb');
+    this.playerScrubberTicks = this.requireElement('#player-scrubber-ticks');
+    this.playerControlsOverlay = this.requireElement('#browser-player-controls');
+    this.playerTouchInterceptor = this.requireElement('#browser-player-touch-interceptor');
+    this.playerPauseOverlay = this.requireElement('#browser-player-pause-overlay');
+    this.pauseOverlayTitle = this.requireElement('#pause-overlay-title');
+    this.pauseOverlaySubtitle = this.requireElement('#pause-overlay-subtitle');
+    this.pauseOverlayClock = this.requireElement('#pause-overlay-clock');
+    this.pauseOverlayEta = this.requireElement('#pause-overlay-eta');
+    this.playerLoadingSpinner = this.requireElement('#browser-player-loading-spinner');
     this.playerStatus = this.requireElement('#browser-player-status');
-    this.audioSelect = this.requireElement<HTMLSelectElement>('#browser-audio-select');
-    this.subtitleSelect = this.requireElement<HTMLSelectElement>('#browser-subtitle-select');
+    this.playerDialogBackdrop = this.requireElement('#browser-player-dialog-backdrop');
+    this.playerDialogTitle = this.requireElement('#player-dialog-title');
+    this.playerDialogBody = this.requireElement('#player-dialog-body');
+    this.playerDialogCloseBtn = this.requireElement<HTMLButtonElement>('#player-dialog-close');
     this.searchInput = this.requireElement<HTMLInputElement>('#browser-search-input');
+
     document.querySelectorAll<HTMLButtonElement>('[data-browser-route]').forEach((button) => {
       button.addEventListener('click', () => void this.showRoute(button.dataset.browserRoute ?? 'home'));
     });
-    document.querySelector('#browser-player-close')?.addEventListener('click', () => this.closePlayer());
-    this.subtitleSelect.addEventListener('change', () => {
-      void this.selectSubtitle(Number(this.subtitleSelect.value), true);
-    });
-    this.audioSelect.addEventListener('change', () => {
-      void this.selectAudio(Number(this.audioSelect.value), true);
-    });
+
+    this.bindPlayerEvents();
 
     let searchTimeout: number;
     this.searchInput?.addEventListener('input', () => {
@@ -536,7 +630,129 @@ export class BrowserApp {
     }
   }
 
+  private bindPlayerEvents() {
+    this.playerTouchInterceptor.addEventListener('click', () => this.toggleControls());
+    this.player.addEventListener('mousemove', () => this.resetAutoHideTimer());
+    this.playerBackBtn.addEventListener('click', () => this.closePlayer());
+    this.playerPlaypauseBtn.addEventListener('click', () => this.togglePlayPause());
+    this.playerRewindBtn.addEventListener('click', () => this.seekBy(-10));
+    this.playerFfwdBtn.addEventListener('click', () => this.seekBy(10));
+    this.playerPrevChapterBtn.addEventListener('click', () => this.seekChapter(-1));
+    this.playerNextChapterBtn.addEventListener('click', () => this.seekChapter(1));
+    this.playerPlayNextBtn.addEventListener('click', () => {
+      if (this.nextEpisodeItem) void this.openPlayer(this.nextEpisodeItem);
+    });
+    this.playerAudioBtn.addEventListener('click', () => this.openDialog('audio'));
+    this.playerSubtitlesBtn.addEventListener('click', () => this.openDialog('subtitles'));
+    this.playerQualityBtn.addEventListener('click', () => this.openDialog('quality'));
+    this.playerChaptersBtn.addEventListener('click', () => this.openDialog('chapters'));
+    this.playerSourceBtn.addEventListener('click', () => this.openDialog('source'));
+    this.playerSyncplayBtn.addEventListener('click', () => this.openDialog('syncplay'));
+    this.playerCastBtn.addEventListener('click', () => this.openDialog('cast'));
+    this.playerDialogCloseBtn.addEventListener('click', () => this.closeDialog());
+    this.playerDialogBackdrop.addEventListener('click', (e) => {
+      if (e.target === this.playerDialogBackdrop) this.closeDialog();
+    });
+
+    this.playerScrubberInput.addEventListener('input', () => {
+      this.isDraggingScrubber = true;
+      this.resetAutoHideTimer();
+      const pct = parseFloat(this.playerScrubberInput.value);
+      this.playerScrubberFill.style.width = `${pct}%`;
+      this.playerScrubberThumb.style.left = `${pct}%`;
+      const duration = this.video.duration || 0;
+      const scrubTime = (pct / 100) * duration;
+      this.playerTimeCurrent.textContent = formatTime(scrubTime);
+      this.updateChapterHeadline(scrubTime);
+    });
+
+    this.playerScrubberInput.addEventListener('change', () => {
+      const pct = parseFloat(this.playerScrubberInput.value);
+      const duration = this.video.duration || 0;
+      this.video.currentTime = (pct / 100) * duration;
+      this.isDraggingScrubber = false;
+      this.resetAutoHideTimer();
+    });
+
+    this.video.addEventListener('timeupdate', () => this.updatePlayerProgress());
+    this.video.addEventListener('play', () => {
+      this.playIcon.style.display = 'none';
+      this.pauseIcon.style.display = 'block';
+      this.playerLoadingSpinner.hidden = true;
+      this.resetAutoHideTimer();
+      this.updatePauseOverlay();
+    });
+    this.video.addEventListener('pause', () => {
+      this.playIcon.style.display = 'block';
+      this.pauseIcon.style.display = 'none';
+      this.clearAutoHideTimer();
+      this.setControlsVisible(true);
+      this.updatePauseOverlay();
+    });
+    this.video.addEventListener('waiting', () => {
+      this.playerLoadingSpinner.hidden = false;
+    });
+    this.video.addEventListener('playing', () => {
+      this.playerLoadingSpinner.hidden = true;
+    });
+    this.video.addEventListener('ended', () => {
+      this.playIcon.style.display = 'block';
+      this.pauseIcon.style.display = 'none';
+      if (this.nextEpisodeItem) {
+        void this.openPlayer(this.nextEpisodeItem);
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (this.player.hidden) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      switch (e.key) {
+        case ' ':
+        case 'k':
+        case 'K':
+          e.preventDefault();
+          this.togglePlayPause();
+          break;
+        case 'ArrowLeft':
+        case 'j':
+        case 'J':
+          e.preventDefault();
+          this.seekBy(-10);
+          break;
+        case 'ArrowRight':
+        case 'l':
+        case 'L':
+          e.preventDefault();
+          this.seekBy(10);
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          this.toggleFullscreen();
+          break;
+        case 'm':
+        case 'M':
+          e.preventDefault();
+          this.video.muted = !this.video.muted;
+          this.playerStatus.textContent = this.video.muted ? 'Muted' : 'Unmuted';
+          window.setTimeout(() => { if (this.playerStatus.textContent === 'Muted' || this.playerStatus.textContent === 'Unmuted') this.playerStatus.textContent = ''; }, 2000);
+          break;
+        case 'Escape':
+          if (this.activeDialogType) {
+            this.closeDialog();
+          } else {
+            this.closePlayer();
+          }
+          break;
+      }
+    });
+  }
+
   private async play(item: JellyfinItem) {
+    await this.openPlayer(item);
+  }
+
+  async openPlayer(item: JellyfinItem) {
     if (this.onPlayRequest && this.onPlayRequest(item)) {
       return;
     }
@@ -545,18 +761,83 @@ export class BrowserApp {
     const playbackController = new AbortController();
     this.playbackAbortController = playbackController;
     this.player.hidden = false;
-    this.playerTitle.textContent = item.Name;
+
+    this.playerItemTitle.textContent = item.Name;
+    if (item.Type === 'Episode') {
+      const parts: string[] = [];
+      if (item.SeriesName) parts.push(item.SeriesName);
+      if (item.ParentIndexNumber != null && item.IndexNumber != null) {
+        parts.push(`S${item.ParentIndexNumber}:E${item.IndexNumber}`);
+      } else if (item.IndexNumber != null) {
+        parts.push(`Episode ${item.IndexNumber}`);
+      }
+      this.playerItemSubtitle.textContent = parts.join(' · ');
+    } else {
+      const parts: string[] = [];
+      if (item.ProductionYear) parts.push(String(item.ProductionYear));
+      if (item.OfficialRating) parts.push(item.OfficialRating);
+      this.playerItemSubtitle.textContent = parts.join(' · ');
+    }
+
+    const pills = extractMediaPills(item);
+    if (pills.length > 0) {
+      this.playerMetaPill.textContent = pills.join(' · ');
+      this.playerMetaPill.hidden = false;
+    } else {
+      this.playerMetaPill.hidden = true;
+    }
+
     this.playerStatus.textContent = 'Preparing stream…';
+    this.playerLoadingSpinner.hidden = false;
+    this.setControlsVisible(true);
+    this.resetAutoHideTimer();
+
+    if (!this.clockTimer) {
+      this.clockTimer = window.setInterval(() => this.updatePauseOverlay(), 1000);
+    }
+
     try {
+      void fetchItem(item.Id, playbackController.signal).then((fullItem) => {
+        if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
+        this.currentChapters = fullItem.Chapters || [];
+        this.renderChapterTicks();
+        if (this.currentChapters.length > 0) {
+          this.playerChaptersBtn.hidden = false;
+          this.playerPrevChapterBtn.hidden = false;
+          this.playerNextChapterBtn.hidden = false;
+        } else {
+          this.playerChaptersBtn.hidden = true;
+          this.playerPrevChapterBtn.hidden = true;
+          this.playerNextChapterBtn.hidden = true;
+        }
+
+        const seriesId = fullItem.SeriesId || (fullItem.Type === 'Episode' ? item.SeriesId : undefined);
+        if (seriesId) {
+          void fetchNextUp(5, seriesId, playbackController.signal).then((nextItems) => {
+            if (generation !== this.playbackGeneration) return;
+            const candidate = nextItems.find((n) => n.Id !== item.Id);
+            if (candidate) {
+              this.nextEpisodeItem = candidate;
+              this.playerPlayNextLabel.textContent = `Play Next: ${candidate.Name}`;
+              this.playerPlayNextBtn.hidden = false;
+            } else {
+              this.playerPlayNextBtn.hidden = true;
+            }
+          }).catch(() => undefined);
+        }
+      }).catch(() => undefined);
+
       const discoveredPlayback = await fetchPlaybackInfo(item.Id, playbackController.signal);
       let playback = discoveredPlayback;
       if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
+
       const preferredAudioIndex = chooseInitialAudioStreamIndex(
         item,
         playback.subtitleTracks,
         playback.audioStreams,
         playback.defaultAudioStreamIndex,
       );
+
       if (
         Number.isInteger(preferredAudioIndex) &&
         preferredAudioIndex !== playback.defaultAudioStreamIndex
@@ -581,8 +862,10 @@ export class BrowserApp {
       }
       this.playback = playback;
       this.playingItem = item;
-      this.populateAudioSelect(playback);
-      this.populateSubtitleSelect(playback);
+
+      const sources = item.MediaSources || [];
+      this.playerSourceBtn.hidden = sources.length <= 1;
+
       this.attachPlaybackStream(playback, generation);
       this.playerStatus.textContent = '';
       const initialSubtitle = chooseInitialSubtitleTrack(
@@ -591,7 +874,7 @@ export class BrowserApp {
         playback.audioStreams,
         playback.defaultAudioStreamIndex,
       );
-      this.subtitleSelect.value = String(initialSubtitle.index);
+      this.selectedSubtitleIndex = initialSubtitle.index;
       if (initialSubtitle.index >= 0) void this.selectSubtitle(initialSubtitle.index, false);
       await this.video.play().catch(() => undefined);
     } catch (error) {
@@ -608,9 +891,18 @@ export class BrowserApp {
     this.resetPlayback();
     this.player.hidden = true;
     this.playerStatus.textContent = '';
+    if (this.clockTimer != null) {
+      window.clearInterval(this.clockTimer);
+      this.clockTimer = null;
+    }
+    this.closeDialog();
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
   }
 
   private resetPlayback() {
+    this.clearAutoHideTimer();
     this.playbackGeneration++;
     this.playbackAbortController?.abort();
     this.playbackAbortController = null;
@@ -626,44 +918,356 @@ export class BrowserApp {
     this.video.load();
     this.playback = null;
     this.playingItem = null;
-    this.audioSelect.replaceChildren(new Option('Default', '-1'));
-    this.audioSelect.value = '-1';
-    this.audioSelect.disabled = true;
-    this.subtitleSelect.replaceChildren(new Option('Off', '-1'));
-    this.subtitleSelect.value = '-1';
-    this.subtitleSelect.disabled = true;
+    this.currentChapters = [];
+    this.nextEpisodeItem = null;
+    this.selectedSubtitleIndex = -1;
+    this.isDraggingScrubber = false;
+    this.playerScrubberFill.style.width = '0%';
+    this.playerScrubberThumb.style.left = '0%';
+    this.playerScrubberInput.value = '0';
+    this.playerScrubberTicks.replaceChildren();
+    this.playerChapterTitle.hidden = true;
+    this.playerSkipSegmentBtn.hidden = true;
+    this.playerPlayNextBtn.hidden = true;
+    this.playerChaptersBtn.hidden = true;
+    this.playerPrevChapterBtn.hidden = true;
+    this.playerNextChapterBtn.hidden = true;
+    this.playerPauseOverlay.hidden = true;
   }
 
-  private populateSubtitleSelect(playback: JellyfinPlaybackInfo) {
-    const options = [new Option('Off', '-1')];
-    playback.subtitleTracks.forEach((track, index) => {
-      const roles = [
-        track.codec.toUpperCase(),
-        track.isForced ? 'Forced / signs' : null,
-        track.isHearingImpaired ? 'SDH' : null,
-      ].filter(Boolean).join(' · ');
-      options.push(new Option(`${track.label}${roles ? ` — ${roles}` : ''}`, String(index)));
-    });
-    this.subtitleSelect.replaceChildren(...options);
-    this.subtitleSelect.value = '-1';
-    this.subtitleSelect.disabled = playback.subtitleTracks.length === 0;
+  private updatePlayerProgress() {
+    const duration = this.video.duration || 0;
+    const current = this.video.currentTime || 0;
+    this.playerTimeCurrent.textContent = formatTime(current);
+    this.playerTimeDuration.textContent = formatTime(duration);
+
+    if (!this.isDraggingScrubber && duration > 0) {
+      const pct = (current / duration) * 100;
+      this.playerScrubberInput.value = pct.toFixed(1);
+      this.playerScrubberFill.style.width = `${pct}%`;
+      this.playerScrubberThumb.style.left = `${pct}%`;
+      this.updateChapterHeadline(current);
+    }
   }
 
-  private populateAudioSelect(playback: JellyfinPlaybackInfo) {
-    const options = playback.audioStreams.map((stream, ordinal) => {
-      const index = Number.isInteger(stream.Index) ? stream.Index! : ordinal;
-      const label = stream.DisplayTitle?.trim()
-        || stream.Title?.trim()
-        || stream.Language?.trim()
-        || `Audio ${ordinal + 1}`;
-      const details = [stream.Codec?.toUpperCase(), stream.ChannelLayout]
-        .filter(Boolean)
-        .join(' · ');
-      return new Option(`${label}${details ? ` — ${details}` : ''}`, String(index));
+  private renderChapterTicks() {
+    this.playerScrubberTicks.replaceChildren();
+    const duration = this.video.duration || (this.playingItem?.RunTimeTicks ? this.playingItem.RunTimeTicks / 10_000_000 : 0);
+    if (!duration || this.currentChapters.length === 0) return;
+    this.currentChapters.forEach((chap) => {
+      const startSec = chap.StartPositionTicks / 10_000_000;
+      const pct = (startSec / duration) * 100;
+      if (pct >= 0 && pct <= 100) {
+        const tick = document.createElement('div');
+        tick.className = 'player-chapter-tick';
+        tick.style.left = `${pct}%`;
+        this.playerScrubberTicks.appendChild(tick);
+      }
     });
-    this.audioSelect.replaceChildren(...options);
-    this.audioSelect.value = String(playback.defaultAudioStreamIndex ?? options[0]?.value ?? -1);
-    this.audioSelect.disabled = options.length < 2;
+  }
+
+  private updateChapterHeadline(currentTimeSec: number) {
+    if (this.currentChapters.length === 0) {
+      this.playerChapterTitle.hidden = true;
+      return;
+    }
+    const chapter = this.currentChapters.slice().reverse().find((c) => (c.StartPositionTicks / 10_000_000) <= currentTimeSec);
+    if (chapter && chapter.Name) {
+      this.playerChapterTitle.textContent = chapter.Name;
+      this.playerChapterTitle.hidden = false;
+    } else {
+      this.playerChapterTitle.hidden = true;
+    }
+  }
+
+  private updatePauseOverlay() {
+    if (!this.playingItem) return;
+    const title = this.playingItem.Name;
+    let subtitle = '';
+    if (this.playingItem.Type === 'Episode' && this.playingItem.SeriesName) {
+      subtitle = this.playingItem.SeriesName;
+    } else if (this.playingItem.ProductionYear) {
+      subtitle = String(this.playingItem.ProductionYear);
+    }
+    this.pauseOverlayTitle.textContent = title;
+    this.pauseOverlaySubtitle.textContent = subtitle;
+
+    const now = new Date();
+    this.pauseOverlayClock.textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    const duration = this.video.duration || 0;
+    const current = this.video.currentTime || 0;
+    const remainingSec = Math.max(0, duration - current);
+    const etaDate = new Date(Date.now() + remainingSec * 1000);
+    const etaClockStr = etaDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const remHours = Math.floor(remainingSec / 3600);
+    const remMins = Math.floor((remainingSec % 3600) / 60);
+    const remStr = remHours > 0 ? `${remHours}h ${remMins}m` : `${remMins}m`;
+
+    this.pauseOverlayEta.textContent = `Ends at ${etaClockStr} · ${remStr} left`;
+  }
+
+  private toggleControls() {
+    this.setControlsVisible(!this.controlsVisible);
+  }
+
+  private setControlsVisible(visible: boolean) {
+    this.controlsVisible = visible;
+    if (visible) {
+      this.playerControlsOverlay.classList.remove('is-hidden');
+      this.playerPauseOverlay.hidden = true;
+      this.resetAutoHideTimer();
+    } else {
+      this.playerControlsOverlay.classList.add('is-hidden');
+      if (this.video.paused) {
+        this.playerPauseOverlay.hidden = false;
+      }
+    }
+  }
+
+  private resetAutoHideTimer() {
+    this.clearAutoHideTimer();
+    if (!this.controlsVisible) {
+      this.setControlsVisible(true);
+    }
+    if (!this.video.paused) {
+      this.autoHideTimer = window.setTimeout(() => {
+        if (!this.video.paused && !this.isDraggingScrubber && !this.activeDialogType) {
+          this.setControlsVisible(false);
+        }
+      }, 5000);
+    }
+  }
+
+  private clearAutoHideTimer() {
+    if (this.autoHideTimer != null) {
+      window.clearTimeout(this.autoHideTimer);
+      this.autoHideTimer = null;
+    }
+  }
+
+  private seekChapter(direction: number) {
+    if (this.currentChapters.length === 0) return;
+    const currentTime = this.video.currentTime || 0;
+    const currentIndex = this.currentChapters.findIndex((c) => (c.StartPositionTicks / 10_000_000) > currentTime + 1);
+    let targetIndex = 0;
+    if (direction > 0) {
+      targetIndex = currentIndex >= 0 ? currentIndex : this.currentChapters.length - 1;
+    } else {
+      const prevIndex = (currentIndex >= 0 ? currentIndex : this.currentChapters.length) - 2;
+      targetIndex = Math.max(0, prevIndex);
+    }
+    const targetTime = this.currentChapters[targetIndex].StartPositionTicks / 10_000_000;
+    this.video.currentTime = targetTime;
+    this.resetAutoHideTimer();
+  }
+
+  private seekBy(seconds: number) {
+    const duration = this.video.duration || 0;
+    const newTime = Math.min(Math.max(0, (this.video.currentTime || 0) + seconds), duration);
+    this.video.currentTime = newTime;
+    this.resetAutoHideTimer();
+  }
+
+  private togglePlayPause() {
+    if (this.video.paused) {
+      void this.video.play().catch(() => undefined);
+    } else {
+      this.video.pause();
+    }
+    this.resetAutoHideTimer();
+  }
+
+  private toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      void this.player.requestFullscreen().catch(() => undefined);
+    } else {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  }
+
+  private openDialog(type: string) {
+    this.activeDialogType = type;
+    this.playerDialogBody.replaceChildren();
+
+    switch (type) {
+      case 'audio': {
+        this.playerDialogTitle.textContent = 'Select Audio Track';
+        const streams = this.playback?.audioStreams || [];
+        if (streams.length === 0) {
+          this.playerDialogBody.innerHTML = '<div class="player-dialog-item">No audio tracks available</div>';
+        } else {
+          streams.forEach((stream) => {
+            const index = stream.Index ?? -1;
+            const isSelected = index === this.playback?.defaultAudioStreamIndex;
+            const itemEl = document.createElement('div');
+            itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
+            const title = stream.DisplayTitle || stream.Title || stream.Language || `Audio ${index}`;
+            const details = [stream.Codec?.toUpperCase(), stream.ChannelLayout].filter(Boolean).join(' · ');
+            itemEl.innerHTML = `<span>${this.escape(title)}${details ? ` — <small>${this.escape(details)}</small>` : ''}</span>${isSelected ? '✓' : ''}`;
+            itemEl.addEventListener('click', () => {
+              void this.selectAudio(index, true);
+              this.closeDialog();
+            });
+            this.playerDialogBody.appendChild(itemEl);
+          });
+        }
+        break;
+      }
+      case 'subtitles': {
+        this.playerDialogTitle.textContent = 'Select Subtitles';
+        const tracks = this.playback?.subtitleTracks || [];
+        
+        const offEl = document.createElement('div');
+        offEl.className = `player-dialog-item${this.selectedSubtitleIndex === -1 ? ' is-selected' : ''}`;
+        offEl.innerHTML = `<span>Off</span>${this.selectedSubtitleIndex === -1 ? '✓' : ''}`;
+        offEl.addEventListener('click', () => {
+          void this.selectSubtitle(-1, true);
+          this.closeDialog();
+        });
+        this.playerDialogBody.appendChild(offEl);
+
+        tracks.forEach((track, idx) => {
+          const isSelected = idx === this.selectedSubtitleIndex;
+          const itemEl = document.createElement('div');
+          itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
+          const roles = [
+            track.codec.toUpperCase(),
+            track.isForced ? 'Forced' : null,
+            track.isHearingImpaired ? 'SDH' : null,
+          ].filter(Boolean).join(' · ');
+          itemEl.innerHTML = `<span>${this.escape(track.label)}${roles ? ` — <small>${this.escape(roles)}</small>` : ''}</span>${isSelected ? '✓' : ''}`;
+          itemEl.addEventListener('click', () => {
+            void this.selectSubtitle(idx, true);
+            this.closeDialog();
+          });
+          this.playerDialogBody.appendChild(itemEl);
+        });
+        break;
+      }
+      case 'quality': {
+        this.playerDialogTitle.textContent = 'Streaming Quality';
+        const options = [
+          { label: 'Auto (Recommended)', bitrate: 0 },
+          { label: '4K Ultra HD (120 Mbps)', bitrate: 120_000_000 },
+          { label: '1080p (20 Mbps)', bitrate: 20_000_000 },
+          { label: '720p (4 Mbps)', bitrate: 4_000_000 },
+          { label: '480p (1.5 Mbps)', bitrate: 1_500_000 },
+          { label: '360p (750 kbps)', bitrate: 750_000 },
+        ];
+        options.forEach((opt) => {
+          const isSelected = this.currentMaxBitrate === opt.bitrate;
+          const itemEl = document.createElement('div');
+          itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
+          itemEl.innerHTML = `<span>${opt.label}</span>${isSelected ? '✓' : ''}`;
+          itemEl.addEventListener('click', () => {
+            void this.changeQuality(opt.bitrate);
+            this.closeDialog();
+          });
+          this.playerDialogBody.appendChild(itemEl);
+        });
+        break;
+      }
+      case 'chapters': {
+        this.playerDialogTitle.textContent = 'Chapters';
+        if (this.currentChapters.length === 0) {
+          this.playerDialogBody.innerHTML = '<div class="player-dialog-item">No chapters available</div>';
+        } else {
+          const duration = this.video.duration || 1;
+          const currentTime = this.video.currentTime || 0;
+          this.currentChapters.forEach((chap, idx) => {
+            const chapTime = chap.StartPositionTicks / 10_000_000;
+            const nextChapTime = this.currentChapters[idx + 1] ? (this.currentChapters[idx + 1].StartPositionTicks / 10_000_000) : duration;
+            const isSelected = currentTime >= chapTime && currentTime < nextChapTime;
+            const itemEl = document.createElement('div');
+            itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
+            const timeStr = formatTime(chapTime);
+            const title = chap.Name || `Chapter ${idx + 1}`;
+            itemEl.innerHTML = `<span><small style="color: #4fc3f7; margin-right: 8px;">${timeStr}</small> ${this.escape(title)}</span>${isSelected ? '✓' : ''}`;
+            itemEl.addEventListener('click', () => {
+              this.video.currentTime = chapTime;
+              this.closeDialog();
+            });
+            this.playerDialogBody.appendChild(itemEl);
+          });
+        }
+        break;
+      }
+      case 'source': {
+        this.playerDialogTitle.textContent = 'Media Source';
+        const sources = this.playingItem?.MediaSources || [];
+        sources.forEach((src, idx) => {
+          const isSelected = idx === 0;
+          const itemEl = document.createElement('div');
+          itemEl.className = `player-dialog-item${isSelected ? ' is-selected' : ''}`;
+          itemEl.innerHTML = `<span>${this.escape(src.Name || `Source ${idx + 1}`)}</span>${isSelected ? '✓' : ''}`;
+          itemEl.addEventListener('click', () => {
+            this.closeDialog();
+          });
+          this.playerDialogBody.appendChild(itemEl);
+        });
+        break;
+      }
+      case 'syncplay': {
+        this.playerDialogTitle.textContent = 'SyncPlay';
+        const isSyncActive = syncPlayCoordinator.isActive();
+        const itemEl = document.createElement('div');
+        itemEl.className = `player-dialog-item${isSyncActive ? ' is-selected' : ''}`;
+        itemEl.innerHTML = `<span>${isSyncActive ? 'Leave SyncPlay Group' : 'Create SyncPlay Group'}</span>`;
+        itemEl.addEventListener('click', () => {
+          if (isSyncActive) {
+            void syncPlayCoordinator.leaveGroup();
+          } else {
+            void syncPlayCoordinator.createGroup();
+          }
+          this.closeDialog();
+        });
+        this.playerDialogBody.appendChild(itemEl);
+        break;
+      }
+      case 'cast': {
+        this.playerDialogTitle.textContent = 'Cast to Device';
+        const castBtn = document.querySelector<HTMLButtonElement>('#browser-cast-button');
+        if (castBtn) {
+          castBtn.click();
+        }
+        this.closeDialog();
+        return;
+      }
+    }
+
+    this.playerDialogBackdrop.hidden = false;
+  }
+
+  private closeDialog() {
+    this.activeDialogType = null;
+    this.playerDialogBackdrop.hidden = true;
+  }
+
+  private async changeQuality(bitrate: number) {
+    if (!this.playingItem) return;
+    this.currentMaxBitrate = bitrate;
+    const resume = { position: this.video.currentTime, paused: this.video.paused };
+    const generation = ++this.playbackGeneration;
+    this.playbackAbortController?.abort();
+    const controller = new AbortController();
+    this.playbackAbortController = controller;
+    this.playerStatus.textContent = 'Changing quality…';
+    try {
+      const negotiatedPlayback = await fetchPlaybackInfo(this.playingItem.Id, controller.signal, {
+        maxBitrate: bitrate > 0 ? bitrate : undefined,
+      });
+      if (controller.signal.aborted || generation !== this.playbackGeneration) return;
+      this.playback = negotiatedPlayback;
+      this.attachPlaybackStream(negotiatedPlayback, generation, resume);
+      this.playerStatus.textContent = '';
+      this.playerQualityBtn.classList.toggle('is-active', bitrate > 0);
+    } catch (err) {
+      if (controller.signal.aborted || generation !== this.playbackGeneration) return;
+      this.playerStatus.textContent = err instanceof Error ? err.message : 'Could not change quality.';
+    } finally {
+      if (this.playbackAbortController === controller) this.playbackAbortController = null;
+    }
   }
 
   private attachPlaybackStream(
@@ -749,12 +1353,10 @@ export class BrowserApp {
     }
 
     const resume = {position: this.video.currentTime, paused: this.video.paused};
-    const previousIndex = currentPlayback.defaultAudioStreamIndex;
     const generation = ++this.playbackGeneration;
     this.playbackAbortController?.abort();
     const controller = new AbortController();
     this.playbackAbortController = controller;
-    this.audioSelect.disabled = true;
     this.playerStatus.textContent = `Switching to ${stream.DisplayTitle || stream.Title || stream.Language || 'audio track'}…`;
     try {
       const negotiatedPlayback = await fetchPlaybackInfo(item.Id, controller.signal, {
@@ -762,8 +1364,6 @@ export class BrowserApp {
         audioStreamIndex: stream.Index,
       });
       if (controller.signal.aborted || generation !== this.playbackGeneration) return;
-      // Audio-pinned Jellyfin responses may describe only the active rendition.
-      // Preserve the discovery inventory so the user can switch back again.
       const playback: JellyfinPlaybackInfo = {
         ...negotiatedPlayback,
         audioStreams: currentPlayback.audioStreams.length > 0
@@ -777,14 +1377,11 @@ export class BrowserApp {
           : negotiatedPlayback.fontUrls,
       };
       this.playback = playback;
-      this.populateAudioSelect(playback);
       this.attachPlaybackStream(playback, generation, resume);
       if (remember) rememberAudioSelection(item, stream);
       this.playerStatus.textContent = '';
     } catch (error) {
       if (controller.signal.aborted || generation !== this.playbackGeneration) return;
-      this.audioSelect.value = String(previousIndex ?? -1);
-      this.audioSelect.disabled = currentPlayback.audioStreams.length < 2;
       this.playerStatus.textContent = error instanceof Error
         ? error.message
         : 'Could not switch audio tracks.';
@@ -802,7 +1399,8 @@ export class BrowserApp {
     this.subtitleAbortController?.abort();
     this.subtitleRenderer?.dispose();
     this.subtitleRenderer = null;
-    this.subtitleSelect.value = track ? String(index) : '-1';
+    this.selectedSubtitleIndex = track ? index : -1;
+    this.playerSubtitlesBtn.classList.toggle('is-active', track != null);
     if (!track) {
       if (remember) rememberSubtitleSelection(item, null);
       this.playerStatus.textContent = '';
@@ -825,7 +1423,8 @@ export class BrowserApp {
           if (generation !== this.subtitleGeneration) return;
           console.error('Styled subtitle renderer failed:', error);
           this.subtitleRenderer = null;
-          this.subtitleSelect.value = '-1';
+          this.selectedSubtitleIndex = -1;
+          this.playerSubtitlesBtn.classList.remove('is-active');
           this.playerStatus.textContent = 'Styled subtitles could not be rendered; video playback is continuing.';
         },
       });
@@ -842,7 +1441,8 @@ export class BrowserApp {
       this.playerStatus.textContent = error instanceof Error
         ? error.message
         : 'Could not load the selected subtitle track.';
-      this.subtitleSelect.value = '-1';
+      this.selectedSubtitleIndex = -1;
+      this.playerSubtitlesBtn.classList.remove('is-active');
     } finally {
       if (this.subtitleAbortController === controller) this.subtitleAbortController = null;
     }
@@ -875,7 +1475,7 @@ export class BrowserApp {
     return element.innerHTML;
   }
 
-  private requireElement<T extends HTMLElement = HTMLElement>(selector: string): T {
+  private requireElement<T extends Element = HTMLElement>(selector: string): T {
     const element = document.querySelector<T>(selector);
     if (!element) throw new Error(`Missing required browser UI element: ${selector}`);
     return element;
