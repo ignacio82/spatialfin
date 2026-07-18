@@ -4,6 +4,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import {
   getGeminiKey,
   getServerUrl,
+  getSession,
   isAuthenticated,
   JellyfinAuthError,
   login,
@@ -16,6 +17,7 @@ import {
   getCompanionUrl,
 } from './auth';
 import type { AuthSession } from './auth';
+import { MusicAssistantManager } from './musicassistant/MusicAssistantManager';
 import { FCastClient } from './fcast';
 import {
   browserClassifiesAddressSpace,
@@ -563,9 +565,28 @@ function showLogin() {
   serverInput?.focus();
 }
 
+function syncCompanionMusicAssistant() {
+  const session = getSession();
+  if (session?.musicAssistant?.url) {
+    const maManager = MusicAssistantManager.getInstance();
+    const currentConfig = maManager.getConfig();
+    if (
+      currentConfig.serverUrl !== session.musicAssistant.url ||
+      (session.musicAssistant.token && currentConfig.token !== session.musicAssistant.token)
+    ) {
+      console.log('[Companion Sync] Auto-configuring Music Assistant & SendSpin:', session.musicAssistant.url);
+      maManager.saveConfig({
+        serverUrl: session.musicAssistant.url,
+        token: session.musicAssistant.token || '',
+      });
+    }
+  }
+}
+
 async function showBrowserApp() {
   if (loginOverlay) loginOverlay.hidden = true;
   if (sessionBar) sessionBar.hidden = true;
+  syncCompanionMusicAssistant();
 
   const serverUrl = getServerUrl();
   if (sessionServer && serverUrl) {

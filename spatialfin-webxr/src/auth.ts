@@ -20,6 +20,12 @@ export interface AuthSession {
   userName: string;
   geminiKey?: string;
   companionUrl?: string;
+  musicAssistant?: {
+    url: string;
+    token?: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 interface AuthenticationResult {
@@ -461,6 +467,7 @@ export async function loginViaCompanion(companionIp: string): Promise<AuthSessio
           userId: authInfo.userId,
           userName: authInfo.userName,
           companionUrl: url.origin,
+          musicAssistant: cred.musicAssistant && cred.musicAssistant.url ? cred.musicAssistant : undefined,
         });
       }
     } catch (err) {
@@ -503,7 +510,7 @@ export async function loginViaCompanionSetupToken(companionUrl: string, setupTok
 
   const config = await response.json();
   
-  const validCreds: {serverUrl: string, token: string, username?: string, password?: string}[] = [];
+  const validCreds: {serverUrl: string, token: string, username?: string, password?: string, musicAssistant?: {url: string, token?: string, username?: string, password?: string}}[] = [];
   for (const s of config.servers || []) {
     const sUrl = s.addresses?.[0];
     if (!sUrl) continue;
@@ -512,7 +519,8 @@ export async function loginViaCompanionSetupToken(companionUrl: string, setupTok
         serverUrl: sUrl, 
         token: u.access_token || '',
         username: u.username || u.name || '',
-        password: u.password || ''
+        password: u.password || '',
+        musicAssistant: u.musicAssistant && u.musicAssistant.url ? u.musicAssistant : undefined,
       });
     }
   }
@@ -547,6 +555,7 @@ export async function loginViaCompanionSetupToken(companionUrl: string, setupTok
           userId: authInfo.userId,
           userName: authInfo.userName,
           companionUrl: url.origin,
+          musicAssistant: cred.musicAssistant,
         });
       }
     } catch (err) {
