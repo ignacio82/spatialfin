@@ -39,6 +39,7 @@ import {
 import { syncPlayCoordinator } from './SyncPlayCoordinator';
 import { MusicView } from './musicassistant/MusicView';
 import { createItemButtonsBar } from './components/ItemButtonsBar';
+import { offlineMediaRepository } from './OfflineMediaRepository';
 
 interface BrowserShelf {
   title: string;
@@ -232,6 +233,12 @@ export class BrowserApp {
     this.revokeImages();
   }
 
+  public async showOfflineMode() {
+    this.visible = true;
+    this.root.hidden = false;
+    await this.showRoute('offline');
+  }
+
   private async showRoute(route: string) {
     this.setActiveRoute(route);
     this.revokeImages();
@@ -243,12 +250,87 @@ export class BrowserApp {
       await this.showMusic();
       return;
     }
+    if (route === 'offline') {
+      await this.showOffline();
+      return;
+    }
     await this.showHome();
   }
 
   private async showMusic() {
     const musicView = new MusicView(this.content);
     await musicView.render();
+  }
+
+  private async showOffline() {
+    this.loading('Loading local and downloaded media…');
+    try {
+      const downloadedItems = await offlineMediaRepository.getAllDownloadedItems();
+      this.renderOfflinePage(downloadedItems);
+    } catch (error) {
+      this.error(error);
+    }
+  }
+
+  private renderOfflinePage(downloadedItems: JellyfinItem[]) {
+    this.content.innerHTML = `
+      <section class="browser-page-heading">
+        <p class="eyebrow">Offline Media</p>
+        <h1>Local Files & Downloaded Media</h1>
+        <p class="section-description">Play videos downloaded from Jellyfin or select any local video file from your device.</p>
+      </section>
+
+      <div class="offline-actions-card" style="background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,255,255,0.2); border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 32px;">
+        <h3 style="margin-top:0; margin-bottom: 8px; font-size: 20px; color: #fff;">Open Local Video File</h3>
+        <p style="color: #aeb4be; margin-bottom: 16px;">Play any video file (MP4, MKV, WebM) stored on your local disk in 2D or WebXR mode.</p>
+        <button type="button" id="btn-pick-local-file" class="primary-action hero-play-btn" style="display: inline-flex; align-items: center; gap: 8px; font-size: 16px; padding: 12px 24px;">
+          📂 Select Local Video File
+        </button>
+        <input type="file" id="local-file-input" accept="video/*,.mp4,.mkv,.webm,.avi,.mov" style="display: none;" />
+      </div>
+
+      <section class="home-shelf">
+        <h2>Downloaded Jellyfin Items (${downloadedItems.length})</h2>
+        <div class="shelf-grid offline-downloaded-grid"></div>
+      </section>
+    `;
+
+    const pickBtn = this.content.querySelector<HTMLButtonElement>('#btn-pick-local-file');
+    const fileInput = this.content.querySelector<HTMLInputElement>('#local-file-input');
+
+    if (pickBtn && fileInput) {
+      pickBtn.onclick = () => fileInput.click();
+      fileInput.onchange = () => {
+        const file = fileInput.files?.[0];
+        if (file) {
+          const objectUrl = URL.createObjectURL(file);
+          this.objectUrls.add(objectUrl);
+          const localItem: JellyfinItem = {
+            Id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            Name: file.name.replace(/\.[^/.]+$/, ''),
+            Type: 'Movie',
+            RunTimeTicks: 0,
+            MediaSources: [{
+              Id: `local_source_${Date.now()}`,
+              Path: file.name,
+              Container: file.name.split('.').pop() || 'mp4',
+              DirectStreamUrl: objectUrl,
+            }]
+          };
+          void this.openPlayer(localItem);
+        }
+      };
+    }
+
+    const grid = this.content.querySelector<HTMLElement>('.offline-downloaded-grid')!;
+    if (downloadedItems.length === 0) {
+      grid.innerHTML = `<p style="color: #aeb4be; grid-column: 1 / -1;">No downloaded Jellyfin media found. Download videos while connected to your server to play them offline.</p>`;
+    } else {
+      downloadedItems.forEach((item) => {
+        const card = this.createCard(item);
+        grid.appendChild(card);
+      });
+    }
   }
 
   private async showHome() {
@@ -799,6 +881,27 @@ export class BrowserApp {
     }
 
     try {
+      if (item.MediaSources?.[0]?.DirectStreamUrl?.startsWith('blob:')) {
+        this.playingItem = item;
+        this.video.src = item.MediaSources[0].DirectStreamUrl;
+        this.playerStatus.textContent = '';
+        this.playerLoadingSpinner.hidden = true;
+        this.video.play().catch((e) => console.error('Local play error', e));
+        return;
+      }
+
+      if (await offlineMediaRepository.isItemDownloaded(item.Id)) {
+        const offlineUrl = await offlineMediaRepository.getMediaFileUrl(item.Id);
+        if (offlineUrl) {
+          this.playingItem = item;
+          this.video.src = offlineUrl;
+          this.playerStatus.textContent = '';
+          this.playerLoadingSpinner.hidden = true;
+          this.video.play().catch((e) => console.error('Offline play error', e));
+          return;
+        }
+      }
+
       void fetchItem(item.Id, playbackController.signal).then((fullItem) => {
         if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
         this.currentChapters = fullItem.Chapters || [];

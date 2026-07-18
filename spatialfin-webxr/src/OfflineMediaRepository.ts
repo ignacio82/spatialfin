@@ -70,17 +70,56 @@ export class OfflineMediaRepository {
   }
 
   public async saveMediaFile(itemId: string, response: Response): Promise<void> {
+    return this.saveMediaFileWithProgress(itemId, response);
+  }
+
+  public async saveMediaFileWithProgress(
+    itemId: string,
+    response: Response,
+    onProgress?: (percent: number) => void
+  ): Promise<void> {
     try {
       const opfsRoot = await navigator.storage.getDirectory();
       const fileHandle = await opfsRoot.getFileHandle(`media_${itemId}.mp4`, { create: true });
       const writable = await fileHandle.createWritable();
+      const contentLengthStr = response.headers.get('content-length');
+      const totalBytes = contentLengthStr ? parseInt(contentLengthStr, 10) : 0;
+      let loadedBytes = 0;
+
       if (response.body) {
-        await response.body.pipeTo(writable);
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            await writable.write(value);
+            loadedBytes += value.byteLength;
+            if (totalBytes > 0 && onProgress) {
+              onProgress(Math.round((loadedBytes / totalBytes) * 100));
+            }
+          }
+        }
       }
+      await writable.close();
       console.log(`Saved media file for ${itemId} to OPFS`);
     } catch (e) {
       console.error('Failed to save media file to OPFS', e);
       throw e;
+    }
+  }
+
+  public async deleteDownloadedItem(itemId: string): Promise<void> {
+    const store = await this.getStore('readwrite');
+    await new Promise<void>((resolve, reject) => {
+      const request = store.delete(itemId);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const opfsRoot = await navigator.storage.getDirectory();
+      await opfsRoot.removeEntry(`media_${itemId}.mp4`);
+    } catch (e) {
+      // Ignore if file entry was missing
     }
   }
 

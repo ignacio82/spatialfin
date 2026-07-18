@@ -767,7 +767,17 @@ export class PlayerSpace extends xb.Script {
   private async startPlayback(generation: number, signal: AbortSignal): Promise<void> {
     this.setStatus('Loading stream…');
     
-    // Check if downloaded offline
+    // Check if local blob file or downloaded offline
+    if (this.item.MediaSources?.[0]?.DirectStreamUrl?.startsWith('blob:')) {
+      if (this.videoElement) {
+        this.videoElement.src = this.item.MediaSources[0].DirectStreamUrl;
+        this.setStatus('Ready (Local File)');
+        this.refreshControls();
+        void this.tryPlay();
+        return;
+      }
+    }
+
     if (await offlineMediaRepository.isItemDownloaded(this.item.Id)) {
       const offlineUrl = await offlineMediaRepository.getMediaFileUrl(this.item.Id);
       if (offlineUrl && this.videoElement) {

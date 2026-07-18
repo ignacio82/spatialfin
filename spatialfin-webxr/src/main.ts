@@ -882,23 +882,23 @@ async function restoreSession() {
 
   try {
     await validateSession();
+    await showBrowserApp();
   } catch (error) {
     const isTemporaryFailure =
       error instanceof JellyfinAuthError && error.isTransient;
-    if (!isTemporaryFailure) {
+    if (isTemporaryFailure || !navigator.onLine) {
+      console.warn('Network unavailable during session restore, launching offline mode');
+      if (loginOverlay) loginOverlay.hidden = true;
+      await browserApp.showOfflineMode();
+    } else {
       showLogin();
       showError(
         error instanceof Error ? error.message : 'The saved Jellyfin session is invalid.',
       );
-      setBusy(false);
-      return;
     }
-    // Preserve a valid saved session during temporary network failures. The
-    // spatial retry state provides another way to reconnect.
+  } finally {
+    setBusy(false);
   }
-
-  await showBrowserApp();
-  setBusy(false);
 }
 
 async function handleSwitchUser() {
@@ -943,6 +943,12 @@ tabBtnManual?.addEventListener('click', () => {
   tabBtnCompanion?.setAttribute('aria-selected', 'false');
   loginForm?.removeAttribute('hidden');
   companionLoginForm?.setAttribute('hidden', '');
+});
+
+const btnOfflineMode = document.querySelector<HTMLButtonElement>('#btn-offline-mode');
+btnOfflineMode?.addEventListener('click', () => {
+  if (loginOverlay) loginOverlay.hidden = true;
+  void browserApp.showOfflineMode();
 });
 
 scanQrButton?.addEventListener('click', () => void startQrScanner());

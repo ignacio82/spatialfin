@@ -233,6 +233,7 @@ async function run() {
 
   try {
     const page = await browser.newPage(); page.on("console", msg => console.log("BROWSER: " + msg.text())); page.on("pageerror", err => console.log("BROWSER ERROR: " + err.toString()));
+    page.setDefaultTimeout(60_000);
     await page.setViewport({width: 1440, height: 900, deviceScaleFactor: 1});
     page.on('pageerror', (error) => browserErrors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {

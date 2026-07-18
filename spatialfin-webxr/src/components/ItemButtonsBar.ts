@@ -6,6 +6,7 @@ import {
   updateItemExternalIds,
   type JellyfinItem,
 } from '../api';
+import { offlineMediaRepository } from '../OfflineMediaRepository';
 
 export interface ItemButtonsBarOptions {
   item: JellyfinItem;
@@ -202,13 +203,52 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   };
   dropdown.appendChild(qualityBtn);
 
-  // Overflow item: Download
-  const downloadLink = document.createElement('a');
-  downloadLink.className = 'overflow-item hero-download-btn';
-  downloadLink.href = getDownloadUrl(currentItem.Id);
-  downloadLink.download = '';
-  downloadLink.textContent = '⬇ Download Media';
-  dropdown.appendChild(downloadLink);
+  // Overflow item: Download / Offline Storage
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'overflow-item hero-download-btn';
+  downloadBtn.type = 'button';
+
+  const updateDownloadState = async () => {
+    const isDownloaded = await offlineMediaRepository.isItemDownloaded(currentItem.Id);
+    if (isDownloaded) {
+      downloadBtn.textContent = '🗑 Delete Offline Copy';
+    } else {
+      downloadBtn.textContent = '⬇ Download for Offline Playback';
+    }
+  };
+  void updateDownloadState();
+
+  downloadBtn.onclick = async () => {
+    dropdown.hidden = true;
+    const isDownloaded = await offlineMediaRepository.isItemDownloaded(currentItem.Id);
+    if (isDownloaded) {
+      if (confirm(`Remove offline copy of "${currentItem.Name}"?`)) {
+        await offlineMediaRepository.deleteDownloadedItem(currentItem.Id);
+        alert(`Deleted offline copy of "${currentItem.Name}".`);
+        void updateDownloadState();
+      }
+    } else {
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = '⏳ Downloading (0%)…';
+      try {
+        const downloadUrl = getDownloadUrl(currentItem.Id);
+        const resp = await fetch(downloadUrl);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        await offlineMediaRepository.saveMediaFileWithProgress(currentItem.Id, resp, (percent) => {
+          downloadBtn.textContent = `⏳ Downloading (${percent}%)…`;
+        });
+        await offlineMediaRepository.saveItemMetadata(currentItem);
+        alert(`"${currentItem.Name}" downloaded successfully for offline playback!`);
+      } catch (err) {
+        alert(`Download failed: ${err}`);
+      } finally {
+        downloadBtn.disabled = false;
+        void updateDownloadState();
+      }
+    }
+  };
+  dropdown.appendChild(downloadBtn);
 
   // Overflow item: Edit External IDs
   const editIdsBtn = document.createElement('button');

@@ -145,6 +145,8 @@ export interface JellyfinMediaSourceInfo {
   Id?: string | null;
   Name?: string;
   Path?: string;
+  Container?: string;
+  DirectStreamUrl?: string;
   SupportsTranscoding?: boolean;
   SupportsDirectStream?: boolean;
   TranscodingUrl?: string | null;
