@@ -632,16 +632,27 @@ async function run() {
     await page.$eval('.detail-page .primary-action', (element) => element.click());
     await page.waitForFunction(() => {
       const player = document.querySelector('#browser-player');
-      const audio = document.querySelector('#browser-audio-select');
-      return player && !player.hidden && audio && !audio.disabled && audio.options.length === 2;
+      const audioBtn = document.querySelector('#browser-player-audio-btn');
+      return player && !player.hidden && audioBtn && !audioBtn.hidden;
     }, {timeout: 20_000});
-    assert.equal(await page.$eval('#browser-audio-select', (element) => element.value), '0');
+    await page.$eval('#browser-player-audio-btn', (element) => element.click());
+    await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
+    const isJapaneseSelected = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('#browser-player-dialog-backdrop .player-dialog-item'));
+      const japaneseItem = items.find((el) => el.textContent.includes('Japanese'));
+      return japaneseItem ? japaneseItem.classList.contains('is-selected') : false;
+    });
+    assert.ok(isJapaneseSelected, 'Japanese audio should be selected initially');
     assert.ok(requests.some(({method, path: requestPath, body}) => {
       if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
       const requestBody = JSON.parse(body);
       return requestBody.MediaSourceId === 'mock-media-source' && requestBody.AudioStreamIndex === 0;
     }), 'anime playback should pin Japanese/original audio even when Jellyfin defaults to English');
-    await page.select('#browser-audio-select', '1');
+    await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('#browser-player-dialog-backdrop .player-dialog-item'));
+      const englishItem = items.find((el) => el.textContent.includes('English'));
+      if (englishItem) englishItem.click();
+    });
     await waitForRecordedRequest(
       requests,
       ({method, path: requestPath, body}) => {
@@ -655,23 +666,39 @@ async function run() {
       const preferences = JSON.parse(localStorage.getItem('spatialfin_audio_preferences_v1') || '{}');
       return typeof preferences['movies-1'] === 'string' && preferences['movies-1'].includes('en');
     }, {timeout: 20_000});
-    assert.equal(await page.$eval('#browser-audio-select', (element) => element.value), '1');
+    await page.$eval('#browser-player-audio-btn', (element) => element.click());
+    await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
+    const isEnglishSelected = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('#browser-player-dialog-backdrop .player-dialog-item'));
+      const englishItem = items.find((el) => el.textContent.includes('English'));
+      return englishItem ? englishItem.classList.contains('is-selected') : false;
+    });
+    assert.ok(isEnglishSelected, 'English audio should be selected after switching');
+    await page.$eval('#browser-player-dialog-backdrop', (element) => element.click());
     const browserEnglishNegotiations = requests.filter(({method, path: requestPath, body}) => {
       if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
       return JSON.parse(body).AudioStreamIndex === 1;
     }).length;
-    await page.$eval('#browser-player-close', (element) => element.click());
+    await page.$eval('#browser-player-back', (element) => element.click());
     await page.waitForFunction(() => document.querySelector('#browser-player')?.hidden === true);
     await page.$eval('.detail-page .primary-action', (element) => element.click());
     await page.waitForFunction(() => {
-      const audio = document.querySelector('#browser-audio-select');
-      return audio && !audio.disabled && audio.options.length === 2 && audio.value === '1';
+      const player = document.querySelector('#browser-player');
+      const audioBtn = document.querySelector('#browser-player-audio-btn');
+      return player && !player.hidden && audioBtn && !audioBtn.hidden;
     }, {timeout: 20_000});
-    assert.ok(requests.filter(({method, path: requestPath, body}) => {
-      if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
-      return JSON.parse(body).AudioStreamIndex === 1;
-    }).length > browserEnglishNegotiations, 'the per-series browser audio choice should be renegotiated on replay');
-    await page.$eval('#browser-player-close', (element) => element.click());
+    await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath, body}, index) => {
+        if (method !== 'POST' || requestPath !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !body) return false;
+        return JSON.parse(body).AudioStreamIndex === 1 && requests.slice(0, index).filter((r) => {
+          if (r.method !== 'POST' || r.path !== '/jellyfin-proxy/Items/movies-1/PlaybackInfo' || !r.body) return false;
+          return JSON.parse(r.body).AudioStreamIndex === 1;
+        }).length >= browserEnglishNegotiations;
+      },
+      'the per-series browser audio choice renegotiation on replay',
+    );
+    await page.$eval('#browser-player-back', (element) => element.click());
     await page.waitForFunction(() => document.querySelector('#browser-player')?.hidden === true);
     await page.waitForFunction(() => !document.querySelector('#enter-xr-button')?.disabled);
     await page.$eval('#enter-xr-button', (element) => element.click());
@@ -728,7 +755,7 @@ async function run() {
     assert.ok(homeScene.hitZoneIds.includes('settings') && homeScene.hitZoneIds.includes('close'));
     assert.ok(!homeScene.hitZoneIds.includes('search') && !homeScene.hitZoneIds.includes('rail-media') && !homeScene.hitZoneIds.includes('rail-multitask'));
     assert.ok(!homeScene.hitZoneIds.includes('rail-downloads') && !homeScene.hitZoneIds.includes('rail-voice'));
-    assert.ok(homeScene.hitZoneIds.filter((id) => id.startsWith('hero-')).length === 3, 'three Android-style heroes should render');
+    assert.ok(homeScene.hitZoneIds.filter((id) => id.startsWith('hero-') && !id.includes('-play-') && !id.includes('-watched-') && !id.includes('-fav-')).length === 3, 'three Android-style heroes should render');
     assert.equal(homeScene.invalidViewScales, 0);
     assert.ok(homeScene.scripts > 10);
     assert.ok(requests.some(({path: requestPath}) => requestPath.startsWith('/jellyfin-proxy/Items/Suggestions?')));

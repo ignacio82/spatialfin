@@ -125,9 +125,7 @@ class FCastSenderClientTest {
 
             sendToClient(FCastMessage.Version(VersionMessage(version = 2)))
             val negotiated = withTimeout(2_000) {
-                var v: Int?
-                while (true) { v = client.negotiatedVersion.value; if (v != null) break; Thread.sleep(10) }
-                v
+                client.negotiatedVersion.first { it != null }
             }
             assertEquals(2, negotiated)
         } finally {
@@ -150,6 +148,8 @@ class FCastSenderClientTest {
             // expose output for tests via thread-local channel
             outputChannel = output
             readyToSend.countDown()
+            // Send fake Initial message to unblock client's connect() handshake wait
+            FCastFrame.write(output, FCastMessage.Initial(dev.jdtech.jellyfin.fcast.protocol.InitialReceiverMessage(displayName = "fake", appName = "fake")))
             while (true) {
                 val frame = FCastFrame.read(input) ?: break
                 received.add(frame)
