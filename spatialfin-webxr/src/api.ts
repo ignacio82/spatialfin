@@ -5,6 +5,7 @@ import {
   getUserId,
   getAccessToken,
 } from './auth';
+import {detectClientCapabilities} from './MediaCapabilities';
 import {fetchJellyfin} from './network';
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -872,17 +873,13 @@ export function buildPlaybackStreamUrl(
     MediaSourceId: mediaSourceId,
     PlaySessionId: playSessionId,
     AudioStreamIndex: audioStreamIndex,
-    VideoCodec: 'h264',
-    AudioCodec: 'aac',
-    MaxAudioChannels: 2,
-    TranscodingContainer: 'ts',
-    SegmentContainer: 'ts',
+    VideoCodec: 'hevc,av1,vp9,h264',
+    AudioCodec: 'eac3,ac3,aac,flac,opus',
+    MaxAudioChannels: 8,
+    TranscodingContainer: 'mp4',
+    SegmentContainer: 'mp4',
     AllowVideoStreamCopy: true,
     AllowAudioStreamCopy: true,
-    // Raw External profiles below remain the primary path. Keeping manifest
-    // subtitles enabled preserves a native WebVTT fallback for older servers
-    // that omit DeliveryUrl; styled ASS never uses that lossy rendition when
-    // its original sidecar is available.
     EnableSubtitlesInManifest: true,
   }).toString();
 }
@@ -896,9 +893,6 @@ function rankPlaybackSources(sources: JellyfinMediaSourceInfo[]): JellyfinMediaS
       const codecs = (candidate.MediaStreams ?? [])
         .filter((stream) => stream.Type === 'Subtitle')
         .map((stream) => normalizedSubtitleCodec(stream.Codec));
-      // Anime releases often offer several versions of one episode. Prefer a
-      // version that preserves authored ASS/SSA over a plain-subtitle version,
-      // then retain the server's normal transcoding/direct-stream priority.
       const score =
         (codecs.some((codec) => codec === 'ass' || codec === 'ssa') ? 1_000 : 0) +
         (candidate.TranscodingUrl?.trim() ? 100 : 0) +
@@ -927,34 +921,66 @@ export async function fetchPlaybackInfo(
   signal?: AbortSignal,
   options: JellyfinPlaybackOptions = {},
 ): Promise<JellyfinPlaybackInfo> {
+  const caps = await detectClientCapabilities();
   const userId = requireUserId();
   const requestedMediaSourceId = options.mediaSourceId?.trim() || undefined;
   const requestedAudioStreamIndex = Number.isInteger(options.audioStreamIndex)
     ? options.audioStreamIndex
     : undefined;
   const targetBitrate = options.maxBitrate && options.maxBitrate > 0 ? options.maxBitrate : MAX_STREAMING_BITRATE;
+
+  const videoCodecs = ['h264'];
+  if (caps.supportsHevc) videoCodecs.push('hevc', 'h265');
+  if (caps.supportsAv1) videoCodecs.push('av1');
+  if (caps.supportsVp9Hdr) videoCodecs.push('vp9');
+
+  const audioCodecs = ['aac', 'mp3', 'flac', 'opus'];
+  if (caps.supportsEac3) audioCodecs.push('eac3');
+  if (caps.supportsAc3) audioCodecs.push('ac3');
+
+  const maxChannels = caps.maxAudioChannels;
+
   const playbackRequestBody = {
     UserId: userId,
     MediaSourceId: requestedMediaSourceId,
     AudioStreamIndex: requestedAudioStreamIndex,
     MaxStreamingBitrate: targetBitrate,
-    MaxAudioChannels: 2,
-    EnableDirectPlay: false,
+    MaxAudioChannels: maxChannels,
+    EnableDirectPlay: true,
     EnableDirectStream: true,
     EnableTranscoding: true,
     AllowVideoStreamCopy: true,
     AllowAudioStreamCopy: true,
     DeviceProfile: {
-      Name: 'SpatialFin WebXR HLS',
+      Name: 'SpatialFin WebXR HDR/Surround',
       MaxStreamingBitrate: targetBitrate,
       MaxStaticBitrate: targetBitrate,
-      DirectPlayProfiles: [],
+      DirectPlayProfiles: [
+        {
+          Container: 'mp4,m4v',
+          Type: 'Video',
+          VideoCodec: videoCodecs.join(','),
+          AudioCodec: audioCodecs.join(','),
+        },
+        {
+          Container: 'webm',
+          Type: 'Video',
+          VideoCodec: 'vp9,av1',
+          AudioCodec: 'opus,vorbis',
+        },
+        {
+          Container: 'mkv',
+          Type: 'Video',
+          VideoCodec: videoCodecs.join(','),
+          AudioCodec: audioCodecs.join(','),
+        },
+      ],
       TranscodingProfiles: [
         {
-          Container: 'ts',
+          Container: 'mp4',
           Type: 'Video',
-          VideoCodec: 'h264',
-          AudioCodec: 'aac',
+          VideoCodec: videoCodecs.join(','),
+          AudioCodec: audioCodecs.join(','),
           Protocol: 'hls',
           EstimateContentLength: false,
           EnableMpegtsM2TsMode: false,
@@ -962,7 +988,26 @@ export async function fetchPlaybackInfo(
           CopyTimestamps: false,
           Context: 'Streaming',
           EnableSubtitlesInManifest: true,
-          MaxAudioChannels: '2',
+          MaxAudioChannels: String(maxChannels),
+          MinSegments: 1,
+          SegmentLength: 0,
+          BreakOnNonKeyFrames: false,
+          Conditions: [],
+          EnableAudioVbrEncoding: true,
+        },
+        {
+          Container: 'ts',
+          Type: 'Video',
+          VideoCodec: 'h264',
+          AudioCodec: 'aac,ac3,eac3',
+          Protocol: 'hls',
+          EstimateContentLength: false,
+          EnableMpegtsM2TsMode: false,
+          TranscodeSeekInfo: 'Auto',
+          CopyTimestamps: false,
+          Context: 'Streaming',
+          EnableSubtitlesInManifest: true,
+          MaxAudioChannels: String(maxChannels),
           MinSegments: 1,
           SegmentLength: 0,
           BreakOnNonKeyFrames: false,
@@ -970,7 +1015,16 @@ export async function fetchPlaybackInfo(
           EnableAudioVbrEncoding: true,
         },
       ],
-      CodecProfiles: [],
+      CodecProfiles: [
+        {
+          Type: 'Video',
+          Codec: videoCodecs.join(','),
+          Conditions: [
+            {Condition: 'EqualsAny', Property: 'VideoRangeType', Value: 'SDR,HDR10,HLG,DOVI'},
+            {Condition: 'LessThanEqual', Property: 'VideoBitDepth', Value: '10'},
+          ],
+        },
+      ],
       ContainerProfiles: [],
       SubtitleProfiles: [
         {Format: 'ass', Method: 'External'},

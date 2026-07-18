@@ -453,6 +453,9 @@ export class PlayerSpace extends xb.Script {
   private disposed = false;
   private mediaSourceId: string | undefined;
   private playSessionId: string | undefined;
+  private audioContext: AudioContext | null = null;
+  private audioSourceNode: MediaElementAudioSourceNode | null = null;
+  private spatialPannerNodes: PannerNode[] = [];
   private playbackStartedReported = false;
 
   constructor(item: JellyfinItem) {
@@ -647,9 +650,58 @@ export class PlayerSpace extends xb.Script {
     // sidecar; native HLS text remains a compatibility fallback.
   }
 
+  private setupWebAudioSpatialization() {
+    if (this.audioContext || !this.videoElement) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as {webkitAudioContext: typeof AudioContext}).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const sourceNode = ctx.createMediaElementSource(this.videoElement);
+      const channelCount = sourceNode.channelCount || 2;
+      if (channelCount > 2 && 'createChannelSplitter' in ctx && 'createPanner' in ctx) {
+        const splitter = ctx.createChannelSplitter(channelCount);
+        sourceNode.connect(splitter);
+        const speakerAngles = channelCount === 6
+          ? [-30, 30, 0, 0, -110, 110]
+          : [-30, 30, 0, 0, -90, 90, -150, 150];
+        const distance = 3.0;
+        for (let i = 0; i < channelCount; i++) {
+          if (i === 3) {
+            const lfeFilter = ctx.createBiquadFilter();
+            lfeFilter.type = 'lowpass';
+            lfeFilter.frequency.value = 120;
+            splitter.connect(lfeFilter, i);
+            lfeFilter.connect(ctx.destination);
+            continue;
+          }
+          const angleRad = (speakerAngles[i] * Math.PI) / 180;
+          const panner = ctx.createPanner();
+          panner.panningModel = 'HRTF';
+          panner.distanceModel = 'inverse';
+          panner.positionX.value = Math.sin(angleRad) * distance;
+          panner.positionY.value = 0;
+          panner.positionZ.value = -Math.cos(angleRad) * distance;
+          splitter.connect(panner, i);
+          panner.connect(ctx.destination);
+          this.spatialPannerNodes.push(panner);
+        }
+      } else {
+        sourceNode.connect(ctx.destination);
+      }
+      this.audioContext = ctx;
+      this.audioSourceNode = sourceNode;
+    } catch {
+      // AudioContext creation or media element routing deferred
+    }
+  }
+
   private readonly handleVideoPlay = () => {
     if (this.disposed) return;
     this.isPlaying = true;
+    this.setupWebAudioSpatialization();
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      void this.audioContext.resume();
+    }
     this.setStatus(`Spatial Playback · ${this.playbackSpeed.toFixed(2).replace(/\.00$/, '')}×`);
     this.controlsHideAt = performance.now() + CONTROLS_AUTO_HIDE_MS;
     this.subtitleRenderer?.setPaused(false, this.videoElement?.currentTime ?? 0);
@@ -1771,6 +1823,15 @@ export class PlayerSpace extends xb.Script {
     this.subtitleRenderer = null;
     this.hls?.destroy();
     this.hls = null;
+    if (this.audioContext) {
+      if (this.audioSourceNode) {
+        this.audioSourceNode.disconnect();
+      }
+      void this.audioContext.close();
+      this.audioContext = null;
+      this.audioSourceNode = null;
+      this.spatialPannerNodes = [];
+    }
     const video = this.videoElement;
     if (video) {
       video.removeEventListener('play', this.handleVideoPlay);
