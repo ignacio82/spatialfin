@@ -612,8 +612,13 @@ async function run() {
       url.includes('/Items/Suggestions?') && targetAddressSpace === 'local'));
     const browserScreenshotPath = '/tmp/spatialfin-browser-home.png';
     await page.screenshot({path: browserScreenshotPath});
-    await page.click('[data-browser-route="libraries"]');
-    await page.waitForFunction(() => document.querySelector('.browser-page-heading h1')?.textContent === 'Libraries');
+    await page.$eval('[data-browser-route="libraries"]', (element) => element.click());
+    try {
+      await page.waitForFunction(() => document.querySelector('.browser-page-heading h1')?.textContent === 'Libraries');
+    } catch (error) {
+      const browserState = await page.$eval('#browser-app', (element) => element.textContent);
+      throw new Error(`${error.message}\nBrowser state: ${browserState}\nErrors: ${browserErrors.join('\n')}`);
+    }
     await page.$eval('.library-tile', (element) => element.click());
     try {
       await page.waitForSelector('.media-grid .media-card');
@@ -1243,11 +1248,11 @@ async function run() {
     await page.click('#ma-settings-close');
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), false, 'MA settings dialog should close');
 
-    await page.click('button[data-browser-route="music"]');
+    await page.$eval('button[data-browser-route="music"]', (element) => element.click());
     await page.waitForFunction(() => document.querySelector('#browser-content h2')?.textContent?.includes('Music Assistant'));
 
     // Verify Hero Actions Bar & Overflow Menu
-    await page.click('button[data-browser-route="home"]');
+    await page.$eval('button[data-browser-route="home"]', (element) => element.click());
     await page.waitForSelector('.browser-hero-actions');
     const heroButtons = await page.evaluate(() =>
       Array.from(document.querySelectorAll('.browser-hero-actions button')).map(b => b.textContent.trim())
