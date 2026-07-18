@@ -617,6 +617,58 @@ canvas {
   background: rgba(255, 255, 255, 0.15);
 }
 
+.secondary-action.hero-action-active {
+  background: rgba(164, 201, 254, 0.2);
+  color: #a4c9fe;
+  border: 1px solid rgba(164, 201, 254, 0.4);
+}
+
+.hero-overflow-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.hero-overflow-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 120;
+  min-width: 200px;
+  background: rgba(20, 24, 32, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  color: #e1e3e8;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.overflow-item:hover {
+  background: rgba(164, 201, 254, 0.15);
+  color: #a4c9fe;
+}
+
 .browser-shelf { margin-top: 42px; }
 .browser-shelf h2 { margin: 0 0 14px; color: #edf2f7; font-size: 1.22rem; }
 

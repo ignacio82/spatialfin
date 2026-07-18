@@ -1245,6 +1245,26 @@ async function run() {
     await page.click('button[data-browser-route="music"]');
     await page.waitForFunction(() => document.querySelector('#browser-content h2')?.textContent?.includes('Music Assistant'));
 
+    // Verify Hero Actions Bar & Overflow Menu
+    await page.click('button[data-browser-route="home"]');
+    await page.waitForSelector('.browser-hero-actions');
+    const heroButtons = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.browser-hero-actions button')).map(b => b.textContent.trim())
+    );
+    assert.ok(heroButtons.some(t => t.includes('Play')), 'Hero bar should have Play button');
+    assert.ok(heroButtons.some(t => t.includes('Watched')), 'Hero bar should have Watched button');
+    assert.ok(heroButtons.some(t => t.includes('Favorite')), 'Hero bar should have Favorite button');
+    assert.ok(heroButtons.some(t => t.includes('More')), 'Hero bar should have Overflow More button');
+
+    // Click Overflow toggle button
+    await page.click('.hero-overflow-toggle-btn');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('.hero-overflow-dropdown:not([hidden])'))), true, 'Overflow dropdown should open');
+
+    // Click Edit external IDs in overflow
+    await page.click('.hero-edit-ids-btn');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('#edit-external-ids-dialog')?.open)), true, 'Edit external IDs dialog should open');
+    await page.click('#edit-ext-ids-cancel');
+
     await subtitleMockSession?.send('Fetch.disable');
     await subtitleMockSession?.detach();
     subtitleMockSession = null;

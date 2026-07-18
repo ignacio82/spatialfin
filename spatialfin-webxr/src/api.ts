@@ -137,6 +137,8 @@ export interface JellyfinItem {
   People?: JellyfinPerson[];
   Chapters?: JellyfinChapter[];
   MediaSources?: JellyfinMediaSourceInfo[];
+  ProviderIds?: Record<string, string>;
+  RemoteTrailers?: Array<{ Url?: string }>;
 }
 
 export interface JellyfinMediaSourceInfo {
@@ -1146,6 +1148,36 @@ export async function toggleItemPlayed(itemId: string, played: boolean): Promise
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new JellyfinApiError('Failed to update watched status');
+}
+
+export async function refreshItemMetadata(itemId: string): Promise<void> {
+  const url = resolveJellyfinRequestUrl(`/Items/${encodeURIComponent(itemId)}/Refresh?MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=true`);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) throw new JellyfinApiError('Failed to refresh metadata');
+}
+
+export async function updateItemExternalIds(itemId: string, providerIds: Record<string, string>): Promise<void> {
+  const item = await fetchItem(itemId);
+  const updatedItem = {
+    ...item,
+    ProviderIds: {
+      ...(item.ProviderIds || {}),
+      ...providerIds,
+    },
+  };
+  const url = resolveJellyfinRequestUrl(`/Items/${encodeURIComponent(itemId)}`);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updatedItem),
+  });
+  if (!response.ok) throw new JellyfinApiError('Failed to update external IDs');
 }
 
 export async function fetchSimilarItems(

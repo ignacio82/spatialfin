@@ -55,10 +55,10 @@
         cursor: not-allowed;
       }
     </style>
-    <script type="module" crossorigin src="/web/assets/index-C9gzGsyz.js"></script>
+    <script type="module" crossorigin src="/web/assets/index-DmwSQWHG.js"></script>
     <link rel="modulepreload" crossorigin href="/web/assets/rolldown-runtime-QTnfLwEv.js">
     <link rel="modulepreload" crossorigin href="/web/assets/three.module-N1hBQQ4j.js">
-    <link rel="stylesheet" crossorigin href="/web/assets/index-hUg8-A75.css">
+    <link rel="stylesheet" crossorigin href="/web/assets/index-34qTZLps.css">
   <link rel="manifest" href="/web/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/web/registerSW.js"></script></head>
   <body>
     <main id="login-overlay" class="login-shell" aria-labelledby="app-title">
@@ -567,6 +567,68 @@
         <div style="margin-top: 20px; display: flex; justify-content: space-between;">
           <button type="button" id="ma-queue-clear" class="player-pill-btn">Clear Queue</button>
           <button type="button" id="ma-queue-done">Done</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="edit-external-ids-dialog" class="user-selection-dialog" style="max-width: 500px; width: 90%;">
+      <form method="dialog" id="edit-external-ids-form">
+        <h2>Edit External IDs</h2>
+        <p class="connection-help" style="margin-bottom: 16px;">
+          Update metadata provider IDs (IMDb, TMDB, TVDB) for this item.
+        </p>
+
+        <label class="field" for="ext-imdb-id">
+          <span>IMDb ID</span>
+          <input id="ext-imdb-id" name="imdbId" type="text" placeholder="tt1234567" />
+        </label>
+
+        <label class="field" for="ext-tmdb-id">
+          <span>TMDB ID</span>
+          <input id="ext-tmdb-id" name="tmdbId" type="text" placeholder="12345" />
+        </label>
+
+        <label class="field" for="ext-tvdb-id">
+          <span>TVDB ID</span>
+          <input id="ext-tvdb-id" name="tvdbId" type="text" placeholder="67890" />
+        </label>
+
+        <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+          <button type="button" id="edit-ext-ids-cancel">Cancel</button>
+          <button type="submit" class="connect-button" style="margin-top:0;">Save IDs</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="quality-selection-dialog" class="user-selection-dialog" style="max-width: 480px; width: 90%;">
+      <form method="dialog" id="quality-selection-form">
+        <h2>Playback Quality</h2>
+        <p class="connection-help" style="margin-bottom: 16px;">
+          Select maximum streaming bitrate. Lower bitrates transcode media on the Jellyfin server.
+        </p>
+        <div id="quality-options-list" class="user-selection-list">
+          <button type="button" class="connect-button" data-bitrate="0">Auto / Original Quality</button>
+          <button type="button" class="connect-button" data-bitrate="120000000">4K Ultra HD (120 Mbps)</button>
+          <button type="button" class="connect-button" data-bitrate="20000000">1080p Full HD (20 Mbps)</button>
+          <button type="button" class="connect-button" data-bitrate="8000000">1080p HD (8 Mbps)</button>
+          <button type="button" class="connect-button" data-bitrate="4000000">720p HD (4 Mbps)</button>
+          <button type="button" class="connect-button" data-bitrate="1500000">480p SD (1.5 Mbps)</button>
+        </div>
+        <div style="margin-top: 20px; text-align: right;">
+          <button type="button" id="quality-cancel-btn">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="version-selection-dialog" class="user-selection-dialog" style="max-width: 500px; width: 90%;">
+      <form method="dialog">
+        <h2>Select Media Version</h2>
+        <p class="connection-help" style="margin-bottom: 16px;">
+          Choose between available video versions on your server.
+        </p>
+        <div id="version-options-list" class="user-selection-list"></div>
+        <div style="margin-top: 20px; text-align: right;">
+          <button type="button" id="version-cancel-btn">Cancel</button>
         </div>
       </form>
     </dialog>

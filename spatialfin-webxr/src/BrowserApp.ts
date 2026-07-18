@@ -18,8 +18,6 @@ import {
   movieVersionGroupKey,
   extractMediaPills,
   resolveJellyfinRequestUrl,
-  toggleFavorite,
-  getDownloadUrl,
   getVersionChipLabel,
   type JellyfinImageType,
   type JellyfinItem,
@@ -40,6 +38,7 @@ import {
 } from './AnimeSubtitleRenderer';
 import { syncPlayCoordinator } from './SyncPlayCoordinator';
 import { MusicView } from './musicassistant/MusicView';
+import { createItemButtonsBar } from './components/ItemButtonsBar';
 
 interface BrowserShelf {
   title: string;
@@ -395,32 +394,22 @@ export class BrowserApp {
           <p class="eyebrow">Recommended for you</p>
           <h1>${lead ? this.escape(lead.Name) : 'Your media, your way'}</h1>
           <p>${lead ? this.escape(lead.Overview ?? 'Ready to watch.') : 'Browse your Jellyfin library in the browser or place it around you in XR.'}</p>
-          <div class="browser-hero-actions">
-            ${lead ? '<button class="primary-action" type="button">View details</button>' : ''}
-            ${lead ? `<button class="secondary-action hero-favorite-action" type="button" data-id="${lead.Id}" data-favorite="${lead.UserData?.IsFavorite ? 'true' : 'false'}">${lead.UserData?.IsFavorite ? '♥' : '♡'} Favorite</button>` : ''}
-            ${lead ? `<a class="secondary-action hero-download-action" href="${getDownloadUrl(lead.Id)}" download>Download</a>` : ''}
-          </div>
+          <div class="browser-hero-actions-slot"></div>
         </div>
       </section>
       ${myMediaHtml}
       <div class="browser-shelves"></div>`;
     if (lead) {
-      this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.showItem(lead));
-      this.content.querySelector<HTMLButtonElement>('.hero-favorite-action')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget as HTMLButtonElement;
-        const isFav = btn.dataset.favorite === 'true';
-        btn.disabled = true;
-        try {
-          const updated = await toggleFavorite(lead.Id, !isFav);
-          lead.UserData = updated.UserData;
-          btn.dataset.favorite = updated.UserData?.IsFavorite ? 'true' : 'false';
-          btn.textContent = `${updated.UserData?.IsFavorite ? '♥' : '♡'} Favorite`;
-        } catch (err) {
-          console.error('Failed to toggle favorite:', err);
-        } finally {
-          btn.disabled = false;
-        }
-      });
+      const heroSlot = this.content.querySelector<HTMLElement>('.browser-hero-actions-slot');
+      if (heroSlot) {
+        const buttonsBar = createItemButtonsBar({
+          item: lead,
+          onPlay: (itemToPlay) => void this.play(itemToPlay),
+          onShowDetails: () => void this.showItem(lead),
+          onMetadataUpdated: () => void this.showHome(),
+        });
+        heroSlot.replaceWith(buttonsBar);
+      }
       void this.setImage(this.content.querySelector('.browser-hero-art')!, lead, 'Backdrop');
     }
     if (this.views.length > 0) {
@@ -507,28 +496,31 @@ export class BrowserApp {
        `;
     }
 
-    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p>${versionSelectHtml}<div class="browser-hero-actions"><button class="primary-action" type="button">▶ Play in browser</button><button class="secondary-action detail-favorite-action" type="button" data-id="${item.Id}" data-favorite="${item.UserData?.IsFavorite ? 'true' : 'false'}">${item.UserData?.IsFavorite ? '♥' : '♡'} Favorite</button><a class="secondary-action detail-download-action" href="${getDownloadUrl(item.Id)}" download>Download</a></div></div><div class="detail-extra-rows" style="position: relative; z-index: 1; padding: 0 clamp(32px, 6vw, 88px) 40px;">${nextUpHtml}${seasonsHtml}${castHtml}</div></section>`;
+    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p>${versionSelectHtml}<div class="browser-hero-actions-slot"></div></div><div class="detail-extra-rows" style="position: relative; z-index: 1; padding: 0 clamp(32px, 6vw, 88px) 40px;">${nextUpHtml}${seasonsHtml}${castHtml}</div></section>`;
     
     let playItem = item;
     
     this.content.querySelector<HTMLButtonElement>('.back-button')?.addEventListener('click', () => void this.showRoute('home'));
-    this.content.querySelector<HTMLButtonElement>('.primary-action')?.addEventListener('click', () => void this.play(playItem));
-    
-    this.content.querySelector<HTMLButtonElement>('.detail-favorite-action')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget as HTMLButtonElement;
-      const isFav = btn.dataset.favorite === 'true';
-      btn.disabled = true;
-      try {
-        const updated = await toggleFavorite(item.Id, !isFav);
-        item.UserData = updated.UserData;
-        btn.dataset.favorite = updated.UserData?.IsFavorite ? 'true' : 'false';
-        btn.textContent = `${updated.UserData?.IsFavorite ? '♥' : '♡'} Favorite`;
-      } catch (err) {
-        console.error('Failed to toggle favorite:', err);
-      } finally {
-        btn.disabled = false;
-      }
-    });
+
+    const heroSlot = this.content.querySelector<HTMLElement>('.browser-hero-actions-slot');
+    if (heroSlot) {
+      const buttonsBar = createItemButtonsBar({
+        item,
+        versions,
+        onPlay: (itemToPlay, startFromBeginning) => {
+          const targetItem = itemToPlay || playItem;
+          if (startFromBeginning && targetItem.UserData) {
+            targetItem.UserData.PlaybackPositionTicks = 0;
+          }
+          void this.play(targetItem);
+        },
+        onVersionChange: (selectedVersion) => {
+          playItem = selectedVersion;
+        },
+        onMetadataUpdated: () => void this.showItem(item),
+      });
+      heroSlot.replaceWith(buttonsBar);
+    }
     
     const versionSelect = this.content.querySelector<HTMLSelectElement>('#version-select');
     if (versionSelect) {
