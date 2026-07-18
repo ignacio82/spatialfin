@@ -95,8 +95,27 @@ if (automationMode) {
 
 function setXrButtonState(label: string, disabled: boolean) {
   if (!enterXrButton) return;
-  enterXrButton.textContent = label;
+  const labelSpan = enterXrButton.querySelector<HTMLElement>('.button-label');
+  if (labelSpan) {
+    labelSpan.textContent = label;
+  }
+  enterXrButton.title = label;
+  enterXrButton.setAttribute('data-tooltip', label);
+  enterXrButton.setAttribute('aria-label', label);
   enterXrButton.disabled = disabled;
+}
+
+function setReceiveButtonState(text: string) {
+  if (!receiveButton) return;
+  const labelSpan = receiveButton.querySelector<HTMLElement>('.button-label');
+  if (labelSpan) {
+    labelSpan.textContent = text;
+  }
+  receiveButton.title = text;
+  receiveButton.setAttribute('data-tooltip', text);
+  receiveButton.setAttribute('aria-label', text);
+  receiveButton.classList.toggle('is-active', text.includes('Disable'));
+  receiveButton.classList.toggle('is-connecting', text.includes('Connecting'));
 }
 
 async function exitXrSession() {
@@ -195,7 +214,7 @@ if (receiveButton) {
     if (currentReceiverWs) {
       currentReceiverWs.close();
       currentReceiverWs = null;
-      receiveButton.textContent = 'Enable Receiver';
+      setReceiveButtonState('Enable Receiver');
       return;
     }
     const companionUrlStr = getCompanionUrl();
@@ -204,7 +223,7 @@ if (receiveButton) {
       return;
     }
     
-    receiveButton.textContent = 'Connecting...';
+    setReceiveButtonState('Connecting...');
     try {
       const companionUrl = new URL(companionUrlStr);
       // Ensure we use ws or wss based on the companion url protocol
@@ -256,13 +275,13 @@ if (receiveButton) {
       };
       
       currentReceiverWs.onopen = () => {
-        receiveButton.textContent = 'Disable Receiver';
+        setReceiveButtonState('Disable Receiver');
       };
       
       currentReceiverWs.onclose = () => {
         currentReceiverWs = null;
         stopBeacons();
-        if (receiveButton) receiveButton.textContent = 'Enable Receiver';
+        setReceiveButtonState('Enable Receiver');
         
         // Ensure UI is torn down on disconnect
         const video = document.querySelector<HTMLVideoElement>('#browser-video');
@@ -501,7 +520,7 @@ if (receiveButton) {
     } catch (e) {
       console.error(e);
       alert('Failed to start receiver connection.');
-      receiveButton.textContent = 'Enable Receiver';
+      setReceiveButtonState('Enable Receiver');
     }
   };
 }

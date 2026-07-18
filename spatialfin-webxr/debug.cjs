@@ -1242,7 +1242,7 @@ async function run() {
     await page.waitForSelector('#browser-app:not([hidden])');
 
     // Verify Music Assistant & SendSpin UI
-    await page.click('#ma-status-button');
+    await page.$eval('#ma-status-button', (element) => element.click());
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), true, 'MA settings dialog should open');
     await page.type('#ma-server-url', 'http://127.0.0.1:8095');
     await page.click('#ma-settings-close');
