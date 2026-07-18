@@ -229,11 +229,20 @@
         <nav class="browser-nav" aria-label="Library navigation">
           <button type="button" data-browser-route="home">Home</button>
           <button type="button" data-browser-route="libraries">Libraries</button>
+          <button type="button" data-browser-route="music">Music</button>
         </nav>
         <div class="search-container">
           <input type="search" id="browser-search-input" class="browser-search-input" placeholder="Search...">
         </div>
         <div class="browser-actions">
+          <button id="ma-status-button" class="ma-status-button" type="button" title="Music Assistant & SendSpin Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+            <span id="ma-status-badge" class="ma-status-badge">MA</span>
+          </button>
           <button id="enter-xr-button" class="enter-xr-button" type="button">Enter XR</button>
         <div id="cast-tooltip-container" class="companion-tooltip-container">
           <button id="browser-cast-button" class="browser-cast-button" type="button" aria-label="Cast">
@@ -265,6 +274,46 @@
         </div>
       </header>
       <section id="browser-content" class="browser-content" aria-live="polite"></section>
+
+      <!-- Music Assistant Docked Mini Player -->
+      <div id="ma-mini-player" class="ma-mini-player" hidden>
+        <div class="ma-mini-left">
+          <img id="ma-mini-artwork" class="ma-mini-artwork" src="" alt="" hidden />
+          <div class="ma-mini-track-info">
+            <div class="ma-mini-title-row">
+              <span id="ma-mini-title" class="ma-mini-title"></span>
+              <span id="ma-mini-badge" class="ma-mini-badge"></span>
+            </div>
+            <span id="ma-mini-artist" class="ma-mini-artist"></span>
+          </div>
+        </div>
+
+        <div class="ma-mini-center">
+          <div class="ma-mini-controls">
+            <button type="button" id="ma-mini-prev" class="player-icon-btn" title="Previous">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+            <button type="button" id="ma-mini-playpause" class="player-ctrl-btn main-play-btn" style="width: 40px; height: 40px; min-width: 40px;" title="Play/Pause">
+              <svg id="ma-mini-icon-play" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <svg id="ma-mini-icon-pause" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
+            </button>
+            <button type="button" id="ma-mini-next" class="player-icon-btn" title="Next">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="ma-mini-right">
+          <select id="ma-mini-target-player" class="ma-player-select-pill" title="Target Player"></select>
+          <button type="button" id="ma-mini-queue-btn" class="player-pill-btn">Queue</button>
+          <div class="ma-volume-box">
+            <button type="button" id="ma-mini-mute-btn" class="player-icon-btn" title="Mute/Unmute">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            </button>
+            <input type="range" id="ma-mini-volume" class="player-scrubber-input" min="0" max="100" value="100" style="width: 70px;" />
+          </div>
+        </div>
+      </div>
     </main>
 
     <section id="browser-player" class="browser-player" aria-label="Video player" hidden>
@@ -457,6 +506,66 @@
         </div>
       </div>
     </section>
+
+    <dialog id="ma-settings-dialog" class="user-selection-dialog">
+      <form method="dialog" id="ma-settings-form">
+        <h2>Music Assistant & SendSpin</h2>
+        <p class="connection-help" style="margin-bottom: 16px;">
+          Connect to your Music Assistant server to browse high-resolution music libraries and stream via synchronized SendSpin audio.
+        </p>
+
+        <label class="field" for="ma-server-url">
+          <span>Music Assistant Server URL</span>
+          <input
+            id="ma-server-url"
+            name="ma-server-url"
+            type="text"
+            inputmode="url"
+            placeholder="http://192.168.1.50:8095"
+            required
+          />
+        </label>
+
+        <label class="field" for="ma-token">
+          <span>Access Token (Optional)</span>
+          <input
+            id="ma-token"
+            name="ma-token"
+            type="password"
+            placeholder="Optional access token"
+          />
+        </label>
+
+        <label class="remember-option" for="ma-sendspin-enabled">
+          <input id="ma-sendspin-enabled" name="ma-sendspin-enabled" type="checkbox" checked />
+          <span>Enable local SendSpin browser audio receiver</span>
+        </label>
+
+        <label class="field" for="ma-player-select">
+          <span>Target Output Player</span>
+          <select id="ma-player-select" class="browser-search-input" style="width: 100%; margin-top: 6px;"></select>
+        </label>
+
+        <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
+          <button type="button" id="ma-settings-close">Cancel</button>
+          <button type="submit" class="connect-button" style="margin-top:0;">Save & Connect</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ma-queue-dialog" class="user-selection-dialog" style="max-width: 600px; width: 90%;">
+      <form method="dialog">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2>Music Assistant Queue</h2>
+          <button type="button" id="ma-queue-close" class="player-dialog-close-btn" style="background:none; border:none; color:inherit; font-size: 20px;">✕</button>
+        </div>
+        <div id="ma-queue-list" class="user-selection-list" style="max-height: 400px; overflow-y: auto; margin-top: 16px;"></div>
+        <div style="margin-top: 20px; display: flex; justify-content: space-between;">
+          <button type="button" id="ma-queue-clear" class="player-pill-btn">Clear Queue</button>
+          <button type="button" id="ma-queue-done">Done</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

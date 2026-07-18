@@ -39,6 +39,7 @@ import {
   subtitleLanguageMatches,
 } from './AnimeSubtitleRenderer';
 import { syncPlayCoordinator } from './SyncPlayCoordinator';
+import { MusicView } from './musicassistant/MusicView';
 
 interface BrowserShelf {
   title: string;
@@ -239,7 +240,16 @@ export class BrowserApp {
       await this.showLibraries();
       return;
     }
+    if (route === 'music') {
+      await this.showMusic();
+      return;
+    }
     await this.showHome();
+  }
+
+  private async showMusic() {
+    const musicView = new MusicView(this.content);
+    await musicView.render();
   }
 
   private async showHome() {

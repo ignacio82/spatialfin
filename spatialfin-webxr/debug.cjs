@@ -1235,6 +1235,16 @@ async function run() {
     assert.equal(await page.evaluate(() => window.__spatialfinExitXrCount), 1, 'Exit XR should request the active XR session to end');
     await page.waitForSelector('#browser-app:not([hidden])');
 
+    // Verify Music Assistant & SendSpin UI
+    await page.click('#ma-status-button');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), true, 'MA settings dialog should open');
+    await page.type('#ma-server-url', 'http://127.0.0.1:8095');
+    await page.click('#ma-settings-close');
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), false, 'MA settings dialog should close');
+
+    await page.click('button[data-browser-route="music"]');
+    await page.waitForFunction(() => document.querySelector('#browser-content h2')?.textContent?.includes('Music Assistant'));
+
     await subtitleMockSession?.send('Fetch.disable');
     await subtitleMockSession?.detach();
     subtitleMockSession = null;

@@ -25,6 +25,7 @@ import {
 import { HomeSpace } from './HomeSpace';
 import { AnimeSubtitleRenderer } from './AnimeSubtitleRenderer';
 import {BrowserApp} from './BrowserApp';
+import { MusicAssistantUi } from './musicassistant/MusicAssistantUi';
 import './style.css';
 
 const loginOverlay = document.querySelector<HTMLElement>('#login-overlay');
@@ -65,6 +66,8 @@ let currentFCastClient: FCastClient | null = null;
 let currentReceiverWs: WebSocket | null = null;
 
 const browserApp = new BrowserApp();
+const maUi = new MusicAssistantUi();
+(window as any).__maUi = maUi;
 
 let xrStartPromise: Promise<void> | null = null;
 const automationMode = new URLSearchParams(window.location.search).has('xrAutomation');

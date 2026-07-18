@@ -1667,3 +1667,247 @@ canvas {
   background: #2a323c;
   color: #fff;
 }
+
+/* Music Assistant & SendSpin Styles */
+.ma-status-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(164, 201, 254, 0.1);
+  color: #a4c9fe;
+  border: 1px solid rgba(164, 201, 254, 0.25);
+  border-radius: 20px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.ma-status-button:hover {
+  background: rgba(164, 201, 254, 0.2);
+  border-color: #a4c9fe;
+}
+
+.ma-status-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  background: #2a323c;
+  color: #aeb4be;
+}
+
+.ma-status-badge--connected {
+  background: #004d40;
+  color: #80cbd4;
+}
+
+.ma-mini-player {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 10px 24px;
+  background: rgba(17, 19, 24, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.ma-mini-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ma-mini-artwork {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #23272e;
+}
+
+.ma-mini-track-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ma-mini-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ma-mini-title {
+  font-weight: 650;
+  color: #f7fafc;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ma-mini-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(79, 195, 247, 0.15);
+  color: #4fc3f7;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(79, 195, 247, 0.3);
+}
+
+.ma-mini-artist {
+  font-size: 0.82rem;
+  color: #aeb4be;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ma-mini-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ma-mini-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ma-mini-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.ma-player-select-pill {
+  background: #1d2024;
+  color: #a4c9fe;
+  border: 1px solid #32353a;
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.ma-volume-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Media Grid & Cards */
+.ma-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 20px;
+  padding: 20px 0;
+}
+
+.ma-media-card {
+  position: relative;
+  background: #171a1f;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.ma-media-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(164, 201, 254, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.ma-card-art {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #23272e;
+}
+
+.ma-card-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #f7fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+.ma-card-subtitle {
+  font-size: 0.8rem;
+  color: #aeb4be;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+.ma-track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.ma-track-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.15s;
+}
+
+.ma-track-row:hover {
+  background: rgba(164, 201, 254, 0.08);
+}
+
+.ma-tab-nav {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+
+.ma-tab-btn {
+  background: transparent;
+  color: #aeb4be;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+}
+
+.ma-tab-btn.is-active,
+.ma-tab-btn:hover {
+  background: rgba(164, 201, 254, 0.12);
+  color: #a4c9fe;
+}
+
