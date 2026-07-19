@@ -220,7 +220,7 @@ Current limitation:
 
 - Media detail screens now favor larger headings, bigger metadata, and labeled action buttons so core actions are readable from a distance.
 - The XR player now includes a direct chapters dialog with previous/next chapter controls instead of relying only on scrub-bar markers.
-- Player panel placement is now restored from the last saved pose.
+- Player and app panel placement, zoom scale, and screen distance depth are persistently saved across sessions in both Android XR and WebXR.
 - Media, downloads, and settings now use larger XR browse headers, roomier grids, and larger settings rows instead of compact phone-style top bars and list density.
 - Collection browsing, About, and local video detail screens now follow the same XR-first header and spacing model, with larger action surfaces and more readable metadata.
 - Setup and onboarding screens now use wider XR forms, larger cards, larger confirmation dialogs, and more readable login/server selection flows instead of phone-scale layouts.

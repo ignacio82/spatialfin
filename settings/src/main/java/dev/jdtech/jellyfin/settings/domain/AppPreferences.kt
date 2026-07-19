@@ -187,6 +187,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrPlayerPanelRotZ = Preference("pref_xr_player_panel_rot_z", 0f)
     val xrPlayerPanelRotW = Preference("pref_xr_player_panel_rot_w", 1f)
     val xrPlayerPanelScale = Preference("pref_xr_player_panel_scale", 1.39f)
+    val xrPlayerPanelDepth = Preference("pref_xr_player_panel_depth", 6.0f)
     val xrPlayerPanelPoseVersion = Preference("pref_xr_player_panel_pose_version", 0)
     val xrAppPanelX = Preference("pref_xr_app_panel_x", 0f)
     val xrAppPanelY = Preference("pref_xr_app_panel_y", 0f)
@@ -195,6 +196,7 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val xrAppPanelRotY = Preference("pref_xr_app_panel_rot_y", 0f)
     val xrAppPanelRotZ = Preference("pref_xr_app_panel_rot_z", 0f)
     val xrAppPanelRotW = Preference("pref_xr_app_panel_rot_w", 1f)
+    val xrAppPanelScale = Preference("pref_xr_app_panel_scale", 1.0f)
     val xrAppPanelPoseVersion = Preference("pref_xr_app_panel_pose_version", 0)
 
     // XR Wall Anchoring (pin the flat cinema panel to a real wall via ARCore)

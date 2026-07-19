@@ -262,7 +262,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 |---|---|---|
 | App startup, device branching | `app/unified/.../UnifiedMainActivity.kt` | `Activity` + Compose |
 | Home-Space voice state machine | `app/unified/.../HomeVoiceController.kt` (+ `HomeVoicePolicy.kt`) | Compose-aware controller + pure policy |
-| XR app panel pose persistence | `app/unified/.../PanelPoseController.kt` (+ `PanelPosePolicy.kt`) | controller + pure policy |
+| XR app panel pose & scale persistence | `app/unified/.../PanelPoseController.kt` (+ `PanelPosePolicy.kt`, `PlayerPoseStorage.kt`, `spatialfin-webxr/src/PlayerSpace.ts`) | controller + pure policy + localStorage <!-- updated 2026-07-18: persistent zoom scale & distance depth for Android & Web XR --> |
 | XR space transitions (Home ↔ Full) | `app/unified/.../XrSpaceController.kt` | runtime controller |
 | XR immersive player Activity | `player/xr/.../XrPlayerActivity.kt` | `Activity` |
 | Home Space player | `player/xr/.../MultitaskPlayerActivity.kt` | `Activity` |

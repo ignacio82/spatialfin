@@ -484,15 +484,16 @@ canvas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
   min-height: 40px;
-  min-width: 44px;
-  padding: 0 14px;
+  min-width: 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
   color: #94a3b8;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -546,6 +547,7 @@ canvas {
   left: 50%;
   transform: translateX(-50%) translateY(-4px) scale(0.95);
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   white-space: nowrap;
   padding: 5px 10px;
@@ -559,12 +561,13 @@ canvas {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 1000;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s;
+  z-index: 90;
 }
 [data-tooltip]:hover::after,
 [data-tooltip]:focus-visible::after {
   opacity: 1;
+  visibility: visible;
   transform: translateX(-50%) translateY(0) scale(1);
 }
 
@@ -761,36 +764,46 @@ canvas {
   margin-top: 24px;
 }
 
-.primary-action {
+.browser-hero-actions button {
+  min-width: 44px;
+  width: 44px;
+  height: 44px;
   min-height: 44px;
-  padding: 0 18px;
-  color: #061522;
-  background: #a4c9fe;
-  border: 0;
-  border-radius: 7px;
-  font-weight: 800;
-}
-
-.primary-action:hover { background: #c8e1ff; }
-
-.secondary-action {
-  min-height: 44px;
-  padding: 0 16px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  border-radius: 8px;
-  font: 600 15px system-ui, sans-serif;
-  text-decoration: none;
+  padding: 0;
+  border-radius: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s ease-out;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.primary-action {
+  color: #061522;
+  background: #a4c9fe;
+  border: 0;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s ease-out, transform 0.15s ease-out;
+}
+
+.primary-action:hover {
+  background: #c8e1ff;
+  transform: translateY(-1px);
+}
+
+.secondary-action {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  text-decoration: none;
+  transition: background 0.15s ease-out, transform 0.15s ease-out;
   border: none;
   cursor: pointer;
 }
 
 .secondary-action:hover {
   background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
 }
 
 .secondary-action.hero-action-active {

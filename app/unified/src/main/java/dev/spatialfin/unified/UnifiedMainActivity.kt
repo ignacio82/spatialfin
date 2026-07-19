@@ -1144,11 +1144,14 @@ class UnifiedMainActivity : AppCompatActivity() {
         var controlsVisible by remember { mutableStateOf(true) }
         var hideTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-        LaunchedEffect(Unit) {
+        val savedAppPanelScale = remember { appPreferences.getValue(appPreferences.xrAppPanelScale).coerceIn(0.5f, 3.0f) }
+
+        LaunchedEffect(savedAppPanelScale) {
             Timber.i(
-                "FullSpaceContent: rendering SpatialPanel widthDp=%d heightDp=%d",
-                XR_APP_PANEL_WIDTH_DP,
-                XR_APP_PANEL_HEIGHT_DP,
+                "FullSpaceContent: rendering SpatialPanel widthDp=%d heightDp=%d scale=%.2f",
+                (XR_APP_PANEL_WIDTH_DP * savedAppPanelScale).toInt(),
+                (XR_APP_PANEL_HEIGHT_DP * savedAppPanelScale).toInt(),
+                savedAppPanelScale,
             )
         }
 
@@ -1162,8 +1165,8 @@ class UnifiedMainActivity : AppCompatActivity() {
         Subspace {
             SpatialPanel(
                 modifier = SubspaceModifier
-                    .width(XR_APP_PANEL_WIDTH_DP.dp)
-                    .height(XR_APP_PANEL_HEIGHT_DP.dp)
+                    .width((XR_APP_PANEL_WIDTH_DP * savedAppPanelScale).dp)
+                    .height((XR_APP_PANEL_HEIGHT_DP * savedAppPanelScale).dp)
                     .transformingMovable()
             ) {
                 // SpatialPanel scope: shared by NavigationRoot (inside the

@@ -114,16 +114,27 @@ export class RemoteControlFocusManager {
     const openDialog = document.querySelector<HTMLDialogElement>('dialog[open]');
     if (openDialog) return openDialog;
 
-    const playerDialogBackdrop = document.querySelector<HTMLElement>('#browser-player-dialog-backdrop:not([hidden])');
+    const playerDialogBackdrop = Array.from(document.querySelectorAll<HTMLElement>('#browser-player-dialog-backdrop')).find(el => !el.hidden && el.offsetWidth > 0);
     if (playerDialogBackdrop) return playerDialogBackdrop;
 
-    const overflowDropdown = document.querySelector<HTMLElement>('.hero-overflow-dropdown:not([hidden])');
+    const overflowDropdown = Array.from(document.querySelectorAll<HTMLElement>('.hero-overflow-dropdown')).find(el => !el.hidden && el.offsetWidth > 0);
     if (overflowDropdown) return overflowDropdown;
 
-    const playerOverlay = document.querySelector<HTMLElement>('#browser-player:not([hidden])');
+    const playerOverlay = Array.from(document.querySelectorAll<HTMLElement>('#browser-player')).find(el => !el.hidden && el.offsetWidth > 0);
     if (playerOverlay) return playerOverlay;
 
     return document.body;
+  }
+
+  private isVisuallyHidden(el: HTMLElement): boolean {
+    let curr: HTMLElement | null = el;
+    while (curr && curr !== document.body) {
+      if (curr.hidden || curr.style.display === 'none' || curr.style.visibility === 'hidden') {
+        return true;
+      }
+      curr = curr.parentElement;
+    }
+    return false;
   }
 
   public moveFocus(direction: 'up' | 'down' | 'left' | 'right') {
@@ -145,7 +156,7 @@ export class RemoteControlFocusManager {
 
     const elements = Array.from(container.querySelectorAll<HTMLElement>(selector)).filter((el) => {
       if (el.getAttribute('tabindex') === '-1') return false;
-      if (el.hidden || el.style.display === 'none' || el.style.visibility === 'hidden') return false;
+      if (this.isVisuallyHidden(el)) return false;
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
     });
@@ -154,8 +165,17 @@ export class RemoteControlFocusManager {
 
     let current = document.activeElement as HTMLElement | null;
     if (!current || !container.contains(current) || current === document.body) {
-      elements[0].focus();
-      elements[0].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      for (const el of elements) {
+        el.focus();
+        if (document.activeElement !== el) {
+          el.setAttribute('tabindex', '0');
+          el.focus();
+        }
+        if (document.activeElement === el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+          return;
+        }
+      }
       return;
     }
 
@@ -217,6 +237,10 @@ export class RemoteControlFocusManager {
 
     if (bestCandidate) {
       bestCandidate.focus();
+      if (document.activeElement !== bestCandidate) {
+        bestCandidate.setAttribute('tabindex', '0');
+        bestCandidate.focus();
+      }
       bestCandidate.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }

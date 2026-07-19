@@ -33,7 +33,9 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const playBtn = document.createElement('button');
   playBtn.className = 'primary-action hero-play-btn';
   playBtn.type = 'button';
-  playBtn.textContent = '▶ Play in browser';
+  playBtn.innerHTML = '<span aria-hidden="true">▶</span><span class="sr-only">Play in browser</span>';
+  playBtn.setAttribute('data-tooltip', 'Play in browser');
+  playBtn.setAttribute('aria-label', 'Play in browser');
   playBtn.onclick = () => options.onPlay(currentItem, false);
   container.appendChild(playBtn);
 
@@ -42,7 +44,9 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
     const restartBtn = document.createElement('button');
     restartBtn.className = 'secondary-action hero-restart-btn';
     restartBtn.type = 'button';
-    restartBtn.textContent = '↻ Restart';
+    restartBtn.innerHTML = '<span aria-hidden="true">↻</span><span class="sr-only">Restart from beginning</span>';
+    restartBtn.setAttribute('data-tooltip', 'Restart');
+    restartBtn.setAttribute('aria-label', 'Restart');
     restartBtn.onclick = () => options.onPlay(currentItem, true);
     container.appendChild(restartBtn);
   }
@@ -51,7 +55,13 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const watchedBtn = document.createElement('button');
   watchedBtn.className = `secondary-action hero-watched-action ${isPlayed ? 'hero-action-active' : ''}`;
   watchedBtn.type = 'button';
-  watchedBtn.textContent = isPlayed ? '✓ Watched' : '○ Watched';
+  const updateWatchedBtnUI = () => {
+    const label = isPlayed ? 'Watched' : 'Mark Watched';
+    watchedBtn.innerHTML = `<span aria-hidden="true">${isPlayed ? '✓' : '○'}</span><span class="sr-only">${label}</span>`;
+    watchedBtn.setAttribute('data-tooltip', isPlayed ? 'Watched' : 'Mark as Watched');
+    watchedBtn.setAttribute('aria-label', label);
+  };
+  updateWatchedBtnUI();
   watchedBtn.onclick = async () => {
     watchedBtn.disabled = true;
     try {
@@ -59,7 +69,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
       isPlayed = !isPlayed;
       if (!currentItem.UserData) currentItem.UserData = {};
       currentItem.UserData.Played = isPlayed;
-      watchedBtn.textContent = isPlayed ? '✓ Watched' : '○ Watched';
+      updateWatchedBtnUI();
       watchedBtn.classList.toggle('hero-action-active', isPlayed);
     } catch (e) {
       console.error('Failed to toggle watched state:', e);
@@ -73,14 +83,20 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const favBtn = document.createElement('button');
   favBtn.className = `secondary-action hero-favorite-action ${isFavorite ? 'hero-action-active' : ''}`;
   favBtn.type = 'button';
-  favBtn.textContent = isFavorite ? '♥ Favorite' : '♡ Favorite';
+  const updateFavBtnUI = () => {
+    const label = isFavorite ? 'Favorite' : 'Add Favorite';
+    favBtn.innerHTML = `<span aria-hidden="true">${isFavorite ? '♥' : '♡'}</span><span class="sr-only">${label}</span>`;
+    favBtn.setAttribute('data-tooltip', isFavorite ? 'Favorite' : 'Add to Favorites');
+    favBtn.setAttribute('aria-label', label);
+  };
+  updateFavBtnUI();
   favBtn.onclick = async () => {
     favBtn.disabled = true;
     try {
       const updated = await toggleFavorite(currentItem.Id, !isFavorite);
       isFavorite = Boolean(updated.UserData?.IsFavorite);
       currentItem.UserData = updated.UserData;
-      favBtn.textContent = isFavorite ? '♥ Favorite' : '♡ Favorite';
+      updateFavBtnUI();
       favBtn.classList.toggle('hero-action-active', isFavorite);
     } catch (e) {
       console.error('Failed to toggle favorite:', e);
@@ -94,8 +110,9 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const castBtn = document.createElement('button');
   castBtn.className = 'secondary-action hero-cast-btn';
   castBtn.type = 'button';
-  castBtn.title = 'Cast to device';
-  castBtn.textContent = '📡 Cast';
+  castBtn.innerHTML = '<span aria-hidden="true">📡</span><span class="sr-only">Cast to device</span>';
+  castBtn.setAttribute('data-tooltip', 'Cast to device');
+  castBtn.setAttribute('aria-label', 'Cast to device');
   castBtn.onclick = () => {
     const browserCastBtn = document.querySelector<HTMLButtonElement>('#browser-cast-button');
     if (browserCastBtn) {
@@ -111,7 +128,9 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const overflowToggle = document.createElement('button');
   overflowToggle.className = 'secondary-action hero-overflow-toggle-btn';
   overflowToggle.type = 'button';
-  overflowToggle.textContent = '⋮ More';
+  overflowToggle.innerHTML = '<span aria-hidden="true">⋮</span><span class="sr-only">More options</span>';
+  overflowToggle.setAttribute('data-tooltip', 'More options');
+  overflowToggle.setAttribute('aria-label', 'More options');
 
   const dropdown = document.createElement('div');
   dropdown.className = 'hero-overflow-dropdown';

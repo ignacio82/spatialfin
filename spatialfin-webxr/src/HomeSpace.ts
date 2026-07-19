@@ -27,6 +27,26 @@ const PANEL_HEIGHT_DP = 824;
 // Keep the Android-derived layout coordinates, but give the web panel enough
 // real-world size for comfortable headset reading.
 const PANEL_WORLD_SCALE = 1.7;
+const LS_KEY_HOME_PANEL_SCALE = 'spatialfin_xr_home_panel_scale';
+
+function loadSavedHomePanelScale(): number {
+  try {
+    const saved = localStorage.getItem(LS_KEY_HOME_PANEL_SCALE);
+    if (saved) {
+      const val = parseFloat(saved);
+      if (Number.isFinite(val) && val >= 0.5 && val <= 3.0) {
+        return val;
+      }
+    }
+  } catch {}
+  return PANEL_WORLD_SCALE;
+}
+
+function saveHomePanelScale(scale: number): void {
+  try {
+    localStorage.setItem(LS_KEY_HOME_PANEL_SCALE, scale.toString());
+  } catch {}
+}
 const HERO_COUNT = 3;
 const SHELF_COUNT = 5;
 
@@ -500,10 +520,13 @@ class HomeCanvasView extends CanvasView {
     ctx.restore();
 
     const btnY = y + height - 38;
-    const playText = progress !== null ? '▶ Resume' : '▶ Play';
-    this.drawSmallActionButton(`hero-play-${item.Id}`, playText, x + 20, btnY, 92, 28, true, () => this.actions.playItem(item));
-    this.drawSmallActionButton(`hero-watched-${item.Id}`, item.UserData?.Played ? '✓ Watched' : '○ Mark', x + 120, btnY, 94, 28, item.UserData?.Played ?? false, () => this.actions.togglePlayed(item));
-    this.drawSmallActionButton(`hero-fav-${item.Id}`, item.UserData?.IsFavorite ? '♥ Fav' : '♡ Fav', x + 222, btnY, 70, 28, item.UserData?.IsFavorite ?? false, () => this.actions.toggleFavorite(item));
+    const playTooltip = progress !== null ? 'Resume' : 'Play';
+    const watchedTooltip = item.UserData?.Played ? 'Watched' : 'Mark watched';
+    const favTooltip = item.UserData?.IsFavorite ? 'Favorite' : 'Add favorite';
+
+    this.drawSmallActionButton(`hero-play-${item.Id}`, '▶', x + 20, btnY, 32, 28, true, () => this.actions.playItem(item), playTooltip);
+    this.drawSmallActionButton(`hero-watched-${item.Id}`, item.UserData?.Played ? '✓' : '○', x + 60, btnY, 32, 28, item.UserData?.Played ?? false, () => this.actions.togglePlayed(item), watchedTooltip);
+    this.drawSmallActionButton(`hero-fav-${item.Id}`, item.UserData?.IsFavorite ? '♥' : '♡', x + 100, btnY, 32, 28, item.UserData?.IsFavorite ?? false, () => this.actions.toggleFavorite(item), favTooltip);
 
     const id = `hero-${item.Id}`;
     if (this.isHovered(id)) {
@@ -517,13 +540,14 @@ class HomeCanvasView extends CanvasView {
 
   private drawSmallActionButton(
     id: string,
-    label: string,
+    icon: string,
     x: number,
     y: number,
     width: number,
     height: number,
     active: boolean,
     action: () => void,
+    tooltipText?: string,
   ) {
     const ctx = this.context;
     const hovered = this.isHovered(id);
@@ -533,8 +557,28 @@ class HomeCanvasView extends CanvasView {
     fillRoundedRect(ctx, bg, x, y, width, height, height / 2);
     ctx.textAlign = 'center';
     ctx.fillStyle = active ? COLORS.onPrimary : COLORS.onSurface;
-    ctx.font = '600 12px system-ui, sans-serif';
-    ctx.fillText(label, x + width / 2, y + height / 2 + 4);
+    ctx.font = '600 13px system-ui, sans-serif';
+    ctx.fillText(icon, x + width / 2, y + height / 2 + 4);
+
+    if (hovered && tooltipText) {
+      ctx.save();
+      ctx.font = '600 12px system-ui, sans-serif';
+      const textWidth = ctx.measureText(tooltipText).width;
+      const tooltipW = textWidth + 16;
+      const tooltipH = 22;
+      const tooltipX = x + width / 2 - tooltipW / 2;
+      const tooltipY = y - 26;
+      fillRoundedRect(ctx, 'rgba(15, 23, 42, 0.95)', tooltipX, tooltipY, tooltipW, tooltipH, 6);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 1;
+      roundedRect(ctx, tooltipX, tooltipY, tooltipW, tooltipH, 6);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(tooltipText, x + width / 2, tooltipY + 15);
+      ctx.restore();
+    }
+
     this.addHitZone({id, x, y, width, height, action});
   }
 
@@ -1087,9 +1131,10 @@ export class HomeSpace extends xb.Script {
   }
 
   private createPanel() {
+    const worldScale = loadSavedHomePanelScale();
     const panel = new xb.SpatialPanel({
-      width: xb.View.dpToMeters(PANEL_WIDTH_DP) * PANEL_WORLD_SCALE,
-      height: xb.View.dpToMeters(PANEL_HEIGHT_DP) * PANEL_WORLD_SCALE,
+      width: xb.View.dpToMeters(PANEL_WIDTH_DP) * worldScale,
+      height: xb.View.dpToMeters(PANEL_HEIGHT_DP) * worldScale,
       backgroundColor: '#111318a8',
       borderWidth: 0.012,
       showHighlights: true,
@@ -1098,7 +1143,8 @@ export class HomeSpace extends xb.Script {
     panel.name = 'SpatialFin Android XR home panel';
     panel.position.set(0, Math.max(xb.user.height - 0.08, 1.3), -1.75);
     panel.userData.androidDpSize = {width: PANEL_WIDTH_DP, height: PANEL_HEIGHT_DP};
-    panel.userData.worldScale = PANEL_WORLD_SCALE;
+    panel.userData.worldScale = worldScale;
+    panel.userData.saveScale = (scale: number) => saveHomePanelScale(scale);
 
     const canvas = new HomeCanvasView({
       openItem: (item) => void this.openItem(item),

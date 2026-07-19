@@ -507,7 +507,7 @@ export class BrowserApp {
 
   private renderItemsPage(title: string, items: JellyfinItem[], back: () => void, parent?: JellyfinItem) {
     this.revokeImages();
-    this.content.innerHTML = `<section class="browser-page-heading"><button class="back-button" type="button">← Back</button><p class="eyebrow">${parent ? 'Episodes' : 'Library'}</p><h1>${this.escape(title)}</h1><p>${items.length} items</p></section><div class="media-grid"></div>`;
+    this.content.innerHTML = `<section class="browser-page-heading"><button class="back-button" type="button" data-tooltip="Back" aria-label="Back"><span aria-hidden="true">←</span><span class="sr-only">Back</span></button><p class="eyebrow">${parent ? 'Episodes' : 'Library'}</p><h1>${this.escape(title)}</h1><p>${items.length} items</p></section><div class="media-grid"></div>`;
     this.content.querySelector<HTMLButtonElement>('.back-button')?.addEventListener('click', back);
     const grid = this.content.querySelector<HTMLElement>('.media-grid')!;
     items.forEach((item) => grid.append(this.createCard(item)));
@@ -578,7 +578,7 @@ export class BrowserApp {
        `;
     }
 
-    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button">← Back</button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p>${versionSelectHtml}<div class="browser-hero-actions-slot"></div></div><div class="detail-extra-rows" style="position: relative; z-index: 1; padding: 0 clamp(32px, 6vw, 88px) 40px;">${nextUpHtml}${seasonsHtml}${castHtml}</div></section>`;
+    this.content.innerHTML = `<section class="detail-page"><button class="back-button" type="button" data-tooltip="Back" aria-label="Back"><span aria-hidden="true">←</span><span class="sr-only">Back</span></button><div class="detail-backdrop"></div><div class="detail-copy"><p class="eyebrow">${this.escape(item.Type ?? 'Video')}</p><h1>${this.escape(item.Name)}</h1><p class="detail-meta">${this.escape(metadata(item))}</p>${pillsHtml}<p style="margin-top: 1rem;">${this.escape(item.Overview ?? 'No synopsis is available.')}</p>${versionSelectHtml}<div class="browser-hero-actions-slot"></div></div><div class="detail-extra-rows" style="position: relative; z-index: 1; padding: 0 clamp(32px, 6vw, 88px) 40px;">${nextUpHtml}${seasonsHtml}${castHtml}</div></section>`;
     
     let playItem = item;
     

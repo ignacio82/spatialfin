@@ -280,6 +280,7 @@ fun SpatialPlayerScreen(
     val player by viewModel.playerFlow.collectAsState()
     val savedPlayerPose = remember(viewModel) { loadSavedPlayerRootPose(viewModel) }
     val savedPlayerScale = remember(viewModel) { loadSavedPlayerRootScale(viewModel) }
+    val savedPlayerDepth = remember(viewModel) { loadSavedPlayerRootDepth(viewModel) }
 
     val videoRootEntity = remember { mutableStateOf<Entity?>(null) }
     val uiRootEntity = remember { mutableStateOf<Entity?>(null) }
@@ -288,8 +289,8 @@ fun SpatialPlayerScreen(
     var pausedMascotAvailable by remember { mutableStateOf(false) }
     val movableComponent = remember { mutableStateOf<androidx.xr.scenecore.MovableComponent?>(null) }
     val lastReportedMovePose = remember { mutableStateOf<Pose?>(null) }
-    var videoDepth by remember(savedPlayerPose) {
-        mutableFloatStateOf(extractVideoDepth(savedPlayerPose, VIDEO_DEPTH_METERS))
+    var videoDepth by remember(savedPlayerPose, savedPlayerDepth) {
+        mutableFloatStateOf(savedPlayerDepth)
     }
     var videoPanelScale by remember(savedPlayerScale) { mutableFloatStateOf(savedPlayerScale) }
     var lastPointerPosition by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
@@ -687,6 +688,7 @@ fun SpatialPlayerScreen(
         }
         savePlayerRootPose(viewModel, defaultPose)
         savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
+        savePlayerRootDepth(viewModel, VIDEO_DEPTH_METERS)
         libass.bumpOverlayAttachment()
     }
 
@@ -773,11 +775,15 @@ fun SpatialPlayerScreen(
                     }
                 },
                 onAdjustDistance = { delta, reset ->
-                    if (reset) {
-                        videoDepth = VIDEO_DEPTH_METERS
+                    val updatedDepth = if (reset) {
+                        VIDEO_DEPTH_METERS
                     } else if (delta != null) {
-                        videoDepth = (videoDepth + delta).coerceIn(2.0f, 15.0f)
+                        (videoDepth + delta).coerceIn(2.0f, 15.0f)
+                    } else {
+                        videoDepth
                     }
+                    videoDepth = updatedDepth
+                    savePlayerRootDepth(viewModel, updatedDepth)
                 },
                 onResetScreenPlacement = ::resetScreenPlacementToDefault,
                 onCastToFCastReceiver = onCastToFCastReceiver@{ action ->
@@ -1535,6 +1541,7 @@ fun SpatialPlayerScreen(
                             videoDepth = effectiveDepth
                             moveInProgress = false
                         }
+                        savePlayerRootDepth(viewModel, effectiveDepth)
                         syncProjectedOverlayRoots(
                             savedPose,
                             videoPanelScale,

@@ -39,6 +39,47 @@ const ON_SURFACE = '#ffffff';
 const MUTED = 'rgba(255,255,255,0.68)';
 const GLASS = '#000000e6';
 
+const LS_KEY_PLAYER_SCALE = 'spatialfin_xr_player_scale';
+const LS_KEY_PLAYER_DEPTH = 'spatialfin_xr_player_depth';
+
+function loadSavedPlayerScale(): number {
+  try {
+    const saved = localStorage.getItem(LS_KEY_PLAYER_SCALE);
+    if (saved) {
+      const val = parseFloat(saved);
+      if (Number.isFinite(val) && val >= MIN_VIDEO_SCALE && val <= MAX_VIDEO_SCALE) {
+        return val;
+      }
+    }
+  } catch {}
+  return DEFAULT_VIDEO_SCALE;
+}
+
+function savePlayerScale(scale: number): void {
+  try {
+    localStorage.setItem(LS_KEY_PLAYER_SCALE, scale.toString());
+  } catch {}
+}
+
+function loadSavedPlayerDepth(): number {
+  try {
+    const saved = localStorage.getItem(LS_KEY_PLAYER_DEPTH);
+    if (saved) {
+      const val = parseFloat(saved);
+      if (Number.isFinite(val) && val >= 0.75 && val <= 15) {
+        return val;
+      }
+    }
+  } catch {}
+  return VIDEO_DEPTH_METERS;
+}
+
+function savePlayerDepth(depth: number): void {
+  try {
+    localStorage.setItem(LS_KEY_PLAYER_DEPTH, depth.toString());
+  } catch {}
+}
+
 type ProjectionMode = 'flat' | '180' | '360';
 
 interface TransportState {
@@ -435,8 +476,8 @@ export class PlayerSpace extends xb.Script {
   private forcedSubtitleTime: number | null = null;
   private readonly trackedTextTracks = new Set<TextTrack>();
   private theaterMode = false;
-  private screenDepth = VIDEO_DEPTH_METERS;
-  private screenScale = DEFAULT_VIDEO_SCALE;
+  private screenDepth = loadSavedPlayerDepth();
+  private screenScale = loadSavedPlayerScale();
   private playbackSpeed = 1;
   private status = 'Preparing playback…';
   private controlsHideAt = performance.now() + CONTROLS_AUTO_HIDE_MS;
@@ -1059,10 +1100,9 @@ export class PlayerSpace extends xb.Script {
 
   private applyProjectionPlacement() {
     if (this.mode === 'flat') {
-      this.screenGroup.position.set(0, xb.user.height, -VIDEO_DEPTH_METERS);
+      this.screenGroup.position.set(0, xb.user.height, -this.screenDepth);
       this.screenGroup.quaternion.identity();
       this.screenGroup.scale.setScalar(this.screenScale);
-      this.screenDepth = VIDEO_DEPTH_METERS;
     } else {
       this.screenGroup.position.set(0, xb.user.height, 0);
       this.screenGroup.quaternion.identity();
@@ -1276,6 +1316,8 @@ export class PlayerSpace extends xb.Script {
     if (this.mode !== 'flat') return;
     const normalized = direction.clone().normalize();
     const origin = new THREE.Vector3(0, xb.user.height, 0);
+    this.screenDepth = THREE.MathUtils.clamp(this.screenGroup.position.distanceTo(origin), 0.75, 15);
+    savePlayerDepth(this.screenDepth);
     this.screenGroup.position.copy(origin.addScaledVector(normalized, this.screenDepth));
     this.screenGroup.quaternion.identity();
     this.screenGroup.scale.setScalar(this.screenScale);
@@ -1298,6 +1340,8 @@ export class PlayerSpace extends xb.Script {
   private resetScreenPlacement() {
     this.screenScale = DEFAULT_VIDEO_SCALE;
     this.screenDepth = VIDEO_DEPTH_METERS;
+    savePlayerScale(this.screenScale);
+    savePlayerDepth(this.screenDepth);
     if (this.mode === 'flat') {
       this.screenGroup.position.set(0, xb.user.height, -VIDEO_DEPTH_METERS);
       this.screenGroup.quaternion.identity();
@@ -1310,6 +1354,7 @@ export class PlayerSpace extends xb.Script {
 
   private changeScreenScale(delta: number) {
     this.screenScale = THREE.MathUtils.clamp(this.screenScale + delta, MIN_VIDEO_SCALE, MAX_VIDEO_SCALE);
+    savePlayerScale(this.screenScale);
     if (this.mode === 'flat') this.screenGroup.scale.setScalar(this.screenScale);
     this.screenGroup.userData.scale = this.screenScale;
     this.revealControls('resize-screen');

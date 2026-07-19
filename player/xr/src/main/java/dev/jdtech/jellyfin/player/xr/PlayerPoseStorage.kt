@@ -24,16 +24,29 @@ internal const val MAX_RESTORABLE_VIDEO_PITCH_DEGREES = 14f
 internal fun loadSavedPlayerRootPose(viewModel: PlayerViewModel): Pose {
     val defaultPose = Pose(Vector3(0f, 0f, -VIDEO_DEPTH_METERS), Quaternion.Identity)
     // Persisted XR placement has repeatedly restored uncomfortable launch poses. Always
-    // spawn the player at the centered cinema baseline, while still allowing movement during
-    // the current session.
+    // spawn the player at the centered cinema baseline, while preserving user zoom scale and depth.
     savePlayerRootPose(viewModel, defaultPose)
-    savePlayerRootScale(viewModel, DEFAULT_VIDEO_PANEL_SCALE)
     return defaultPose
 }
 
 internal fun loadSavedPlayerRootScale(viewModel: PlayerViewModel): Float {
     val prefs = viewModel.appPreferences
     return prefs.getValue(prefs.xrPlayerPanelScale).coerceIn(0.2f, 5.0f)
+}
+
+internal fun savePlayerRootScale(viewModel: PlayerViewModel, scale: Float) {
+    val prefs = viewModel.appPreferences
+    prefs.setValue(prefs.xrPlayerPanelScale, scale.coerceIn(0.2f, 5.0f))
+}
+
+internal fun loadSavedPlayerRootDepth(viewModel: PlayerViewModel): Float {
+    val prefs = viewModel.appPreferences
+    return prefs.getValue(prefs.xrPlayerPanelDepth).coerceIn(2.0f, 15.0f)
+}
+
+internal fun savePlayerRootDepth(viewModel: PlayerViewModel, depth: Float) {
+    val prefs = viewModel.appPreferences
+    prefs.setValue(prefs.xrPlayerPanelDepth, depth.coerceIn(2.0f, 15.0f))
 }
 
 internal fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
@@ -48,11 +61,6 @@ internal fun savePlayerRootPose(viewModel: PlayerViewModel, pose: Pose) {
     prefs.setValue(prefs.xrPlayerPanelRotZ, rotation.z)
     prefs.setValue(prefs.xrPlayerPanelRotW, rotation.w)
     prefs.setValue(prefs.xrPlayerPanelPoseVersion, XR_PLAYER_POSE_VERSION_VIDEO_CENTER)
-}
-
-internal fun savePlayerRootScale(viewModel: PlayerViewModel, scale: Float) {
-    val prefs = viewModel.appPreferences
-    prefs.setValue(prefs.xrPlayerPanelScale, scale.coerceIn(0.2f, 5.0f))
 }
 
 internal fun posesApproximatelyEqual(a: Pose, b: Pose?): Boolean {

@@ -1245,7 +1245,7 @@ async function run() {
     await page.$eval('#ma-status-button', (element) => element.click());
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), true, 'MA settings dialog should open');
     await page.type('#ma-server-url', 'http://127.0.0.1:8095');
-    await page.click('#ma-settings-close');
+    await page.$eval('#ma-settings-close', (element) => element.click());
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#ma-settings-dialog')?.open)), false, 'MA settings dialog should close');
 
     await page.$eval('button[data-browser-route="music"]', (element) => element.click());
@@ -1255,7 +1255,7 @@ async function run() {
     await page.$eval('button[data-browser-route="home"]', (element) => element.click());
     await page.waitForSelector('.browser-hero-actions');
     const heroButtons = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.browser-hero-actions button')).map(b => b.textContent.trim())
+      Array.from(document.querySelectorAll('.browser-hero-actions button')).map(b => (b.textContent + ' ' + (b.getAttribute('data-tooltip') || '') + ' ' + (b.getAttribute('aria-label') || '')).trim())
     );
     assert.ok(heroButtons.some(t => t.includes('Play')), 'Hero bar should have Play button');
     assert.ok(heroButtons.some(t => t.includes('Watched')), 'Hero bar should have Watched button');

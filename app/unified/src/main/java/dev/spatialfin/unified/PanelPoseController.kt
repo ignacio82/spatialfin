@@ -56,13 +56,18 @@ class PanelPoseController(
         )
     }
 
-    /** Read the entity's current pose, swallowing transient runtime errors. */
-    fun readEntityPose(entity: GroupEntity): Pose? {
-        return runCatching { entity.getPose() }.getOrNull()
+    /** Persist the panel scale factor into preferences. */
+    fun saveScale(scale: Float) {
+        appPreferences.setValue(appPreferences.xrAppPanelScale, scale.coerceIn(0.5f, 3.0f))
+    }
+
+    /** Load the persisted panel scale factor. */
+    fun loadScale(): Float {
+        return appPreferences.getValue(appPreferences.xrAppPanelScale).coerceIn(0.5f, 3.0f)
     }
 
     /**
-     * Persist the pose after each user-initiated move finishes. Driven by
+     * Persist the pose and scale after each user-initiated move finishes. Driven by
      * MovableComponent's EntityMoveListener rather than a polling loop so we
      * don't wake the app 10×/s for nothing and don't race the final pose with a
      * stale mid-motion sample.
@@ -76,6 +81,9 @@ class PanelPoseController(
             updatedParent: Entity?,
         ) {
             savePose(finalPose)
+            if (finalScale > 0.0f && !finalScale.isNaN()) {
+                saveScale(finalScale)
+            }
         }
     }
 }
