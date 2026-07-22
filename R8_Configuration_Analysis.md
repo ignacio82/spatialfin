@@ -17,7 +17,7 @@ Analysis date: 2026-07-12
 
 ## Keep-rule actions
 
-### `app/unified/proguard-rules.pro:5`
+### `app/unified/proguard-rules.pro`
 
 `-keep class com.android.extensions.xr.** { *; }`
 
@@ -27,12 +27,10 @@ callback implementations that cross that boundary, so it does not protect those 
 from optimization. If a remaining XR path needs protection, derive a rule from that concrete
 device failure.
 
-### `app/unified/proguard-rules.pro:6`
+`-keep class androidx.xr.runtime.** { *; }`
+`-keep class androidx.lifecycle.** { *; }`
 
-`-keep interface com.android.extensions.xr.** { *; }`
-
-Action: remove. The preceding `class` pattern already matches interfaces, making this rule
-subsumed as well as package-wide.
+Action: added to prevent `StubProcessLifecycleOwner` from being prematurely garbage collected when minification strips out its strong references, throwing `LifecycleOwner of this LifecycleRegistry is already garbage collected`.
 
 ### `data/proguard-rules.pro:4-24`
 

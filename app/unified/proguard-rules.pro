@@ -3,4 +3,8 @@
 # Retain this platform type coverage for future minification retries, which
 # must pass on-device Galaxy XR startup before release optimization is enabled.
 -keep class com.android.extensions.xr.** { *; }
--keep interface com.android.extensions.xr.** { *; }
+
+# Prevent Jetpack XR LifecycleOwners (e.g., StubProcessLifecycleOwner) from being
+# prematurely garbage collected when R8 optimizes away fields that hold strong references.
+-keep class androidx.xr.runtime.** { *; }
+-keep class androidx.lifecycle.** { *; }

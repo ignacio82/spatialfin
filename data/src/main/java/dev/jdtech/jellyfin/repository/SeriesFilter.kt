@@ -14,8 +14,8 @@ import org.jellyfin.sdk.model.api.BaseItemKind
  * both fields are null and the filter is conservative (keeps the item).
  */
 object SeriesFilter {
-    fun dropEmptyShows(items: List<BaseItemDto>): List<BaseItemDto> =
-        items.filterNot { it.isEmptySeries() }
+    fun dropEmptyShows(items: List<BaseItemDto>?): List<BaseItemDto> =
+        items?.filterNotNull()?.filterNot { it.isEmptySeries() } ?: emptyList()
 
     private fun BaseItemDto.isEmptySeries(): Boolean {
         if (type != BaseItemKind.SERIES) return false

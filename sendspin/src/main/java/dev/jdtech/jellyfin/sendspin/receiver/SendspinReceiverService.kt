@@ -187,7 +187,12 @@ class SendspinReceiverService : Service() {
         lastSoftwareVersion = softwareVersion
 
         SendspinReceiverSession.update { it.copy(serviceRunning = true) }
-        startForegroundCompat()
+        if (!startForegroundCompat()) {
+            Timber.tag(TAG).w("SendspinReceiverService startForeground failed — stopping service")
+            SendspinReceiverSession.update { it.copy(serviceRunning = false) }
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // `client` covers the outbound-only mode, where the listening host never
         // bound (serverHost == null) but a dialing client is alive and a second
@@ -1718,15 +1723,21 @@ class SendspinReceiverService : Service() {
         }
     }
 
-    private fun startForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification())
+    private fun startForegroundCompat(): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+            true
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to start foreground notification for SendspinReceiverService")
+            false
         }
     }
 

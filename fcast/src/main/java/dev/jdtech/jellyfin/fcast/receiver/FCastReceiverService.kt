@@ -99,7 +99,11 @@ class FCastReceiverService : Service() {
         val appVersion = intent?.getStringExtra(EXTRA_APP_VERSION)
         val companionUrl = intent?.getStringExtra(EXTRA_COMPANION_URL)
 
-        startForegroundCompat(displayName)
+        if (!startForegroundCompat(displayName)) {
+            Timber.tag(TAG).w("FCastReceiverService startForeground failed — stopping service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Idempotent guard. After a crash, the OS replays its START_STICKY
         // restart intent at the same time as UnifiedApplication.installOnAppStart
         // fires its own startForegroundService — onStartCommand is called twice.
@@ -201,7 +205,7 @@ class FCastReceiverService : Service() {
             .invokeOnCompletion { scope.cancel() }
     }
 
-    private fun startForegroundCompat(displayName: String) {
+    private fun startForegroundCompat(displayName: String): Boolean {
         val notification: Notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("SpatialFin is ready to receive")
@@ -210,14 +214,20 @@ class FCastReceiverService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to start foreground notification for FCastReceiverService")
+            false
         }
     }
 

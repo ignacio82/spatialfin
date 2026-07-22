@@ -241,25 +241,27 @@ class JellyfinRepositoryImpl(
         recursive: Boolean,
     ): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
+            val userId = jellyfinApi.userId ?: return@withContext emptyList()
             jellyfinApi.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    userId,
                     personIds = personIds,
                     includeItemTypes = includeTypes,
                     recursive = recursive,
                     fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
-                .items
+                ?.items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
     override suspend fun getFavoriteItems(): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
+            val userId = jellyfinApi.userId ?: return@withContext emptyList()
             jellyfinApi.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    userId,
                     filters = listOf(ItemFilter.IS_FAVORITE),
                     includeItemTypes =
                         listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
@@ -267,16 +269,17 @@ class JellyfinRepositoryImpl(
                     fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
-                .items
+                ?.items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
     override suspend fun getSearchItems(query: String): List<SpatialFinItem> =
         withContext(Dispatchers.IO) {
+            val userId = jellyfinApi.userId ?: return@withContext emptyList()
             jellyfinApi.itemsApi
                 .getItems(
-                    jellyfinApi.userId!!,
+                    userId,
                     searchTerm = query,
                     includeItemTypes =
                         listOf(
@@ -289,7 +292,7 @@ class JellyfinRepositoryImpl(
                     fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
                 )
                 .content
-                .items
+                ?.items
                 .let(SeriesFilter::dropEmptyShows)
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
