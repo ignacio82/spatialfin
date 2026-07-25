@@ -179,7 +179,11 @@ internal class PlayerTrackSelector(
             seriesOverrideSubtitleSignature == null &&
             appPreferences.getValue(appPreferences.smartForcedSubtitles)
         ) {
-            selectedSubtitleGroup = autoPickForcedSubtitle(subtitleGroups, selectedAudioLanguage)
+            selectedSubtitleGroup = autoPickForcedSubtitle(
+                groups = subtitleGroups,
+                audioLanguageCode = selectedAudioLanguage,
+                spokenLanguageCodes = spokenLanguages,
+            )
         }
 
         val builder = player.trackSelectionParameters
@@ -418,23 +422,39 @@ internal class PlayerTrackSelector(
     }
 
     /**
-     * Picks the best forced / signs-only subtitle track in [audioLanguageCode] (the language
-     * the viewer already understands). Unlike [autoPickDialogueSubtitle], this *only* considers
-     * forced/signs tracks — a full dialogue track in the audio language would needlessly subtitle
-     * speech the viewer can already follow. Used to translate the foreign-language portions of an
-     * otherwise-understood show (e.g. a Spanish scene in an English series).
-     *
-     * Returns null if [audioLanguageCode] is null/blank or no forced track matches it, so the
-     * caller leaves subtitles off.
+     * Picks the best forced / signs-only subtitle track in [audioLanguageCode], any of [spokenLanguageCodes],
+     * or an untagged forced track (the language the viewer already understands).
+     * Unlike [autoPickDialogueSubtitle], this *only* considers forced/signs tracks — a full dialogue
+     * track in an understood language would needlessly subtitle speech the viewer can already follow.
+     * Used to translate foreign-language portions of an otherwise-understood show (e.g. a Spanish scene
+     * in an English series, or foreign dialogue).
      */
     private fun autoPickForcedSubtitle(
         groups: List<Tracks.Group>,
         audioLanguageCode: String?,
+        spokenLanguageCodes: List<String>,
     ): Tracks.Group? {
-        if (audioLanguageCode.isNullOrBlank()) return null
-        return groups
-            .filter { groupMatchesLanguage(it, audioLanguageCode) }
-            .filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+        val forcedGroups = groups.filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+        if (forcedGroups.isEmpty()) return null
+
+        val targetLanguages = (listOfNotNull(audioLanguageCode) + spokenLanguageCodes)
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        if (targetLanguages.isNotEmpty()) {
+            for (targetLang in targetLanguages) {
+                val matched = forcedGroups.filter { groupMatchesLanguage(it, targetLang) }
+                if (matched.isNotEmpty()) {
+                    return matched.maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
+                }
+            }
+        }
+
+        return forcedGroups
+            .filter { group ->
+                val lang = groupPrimaryLanguage(group)
+                lang.isNullOrBlank() || lang.equals("und", ignoreCase = true)
+            }
             .maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
     }
 

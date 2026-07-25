@@ -879,7 +879,7 @@ export class PlayerSpace extends xb.Script {
       if (initial.index >= 0) void this.selectExternalSubtitle(initial.index, false);
     }
 
-    this.attachPlaybackStream(playback, generation);
+    this.attachPlaybackStream(playback, generation, this.pendingPlaybackRestore);
   }
 
   private attachPlaybackStream(
@@ -934,7 +934,11 @@ export class PlayerSpace extends xb.Script {
           }
           this.syncNativeSubtitleTracks();
           this.refreshControls();
-          if (!restore) void this.tryPlay();
+          if (restore) {
+            this.restorePlaybackState();
+          } else {
+            void this.tryPlay();
+          }
         }
       });
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {

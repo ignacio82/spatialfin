@@ -302,7 +302,7 @@ function spokenLanguages(): string[] {
 }
 
 function roleIsForced(track: JellyfinSubtitleTrack): boolean {
-  return track.isForced || /\b(?:forced|signs?|songs?)\b/i.test(track.label);
+  return track.isForced || /\b(?:forced?|foreign|narrative|non[-_\s]?english|signs?|songs?|short|partly)\b|s[&+/]s/i.test(track.label);
 }
 
 function selectedAudioLanguage(
@@ -418,11 +418,18 @@ export function chooseInitialSubtitleTrack(
     tracks.some((track) => normalizedLanguage(track.language) === language));
 
   if (audioIsUnderstood) {
-    const forcedIndex = desiredLanguage
+    const targetLanguages = (audioLanguage ? [audioLanguage, ...spoken] : spoken)
+      .filter((lang, index, self) => Boolean(lang) && self.indexOf(lang) === index);
+    let forcedIndex = targetLanguages.length > 0
       ? tracks.findIndex((track) =>
-      roleIsForced(track) &&
-      normalizedLanguage(track.language) === desiredLanguage)
+          roleIsForced(track) &&
+          targetLanguages.some((lang) => subtitleLanguageMatches(track.language, lang)))
       : -1;
+    if (forcedIndex < 0) {
+      forcedIndex = tracks.findIndex((track) =>
+        roleIsForced(track) &&
+        (!track.language || normalizedLanguage(track.language) === 'und' || normalizedLanguage(track.language) === ''));
+    }
     return forcedIndex >= 0
       ? {index: forcedIndex, reason: 'forced'}
       : {index: -1, reason: 'off'};

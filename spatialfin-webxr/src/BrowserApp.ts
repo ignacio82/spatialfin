@@ -881,11 +881,21 @@ export class BrowserApp {
     }
 
     try {
+      const positionTicks = item.UserData?.PlaybackPositionTicks ?? 0;
+      const resume = positionTicks > 0
+        ? { position: positionTicks / 10_000_000, paused: false }
+        : undefined;
+
       if (item.MediaSources?.[0]?.DirectStreamUrl?.startsWith('blob:')) {
         this.playingItem = item;
         this.video.src = item.MediaSources[0].DirectStreamUrl;
         this.playerStatus.textContent = '';
         this.playerLoadingSpinner.hidden = true;
+        if (resume && resume.position > 0) {
+          this.video.addEventListener('loadedmetadata', () => {
+            this.video.currentTime = resume.position;
+          }, { once: true });
+        }
         this.video.play().catch((e) => console.error('Local play error', e));
         return;
       }
@@ -897,6 +907,11 @@ export class BrowserApp {
           this.video.src = offlineUrl;
           this.playerStatus.textContent = '';
           this.playerLoadingSpinner.hidden = true;
+          if (resume && resume.position > 0) {
+            this.video.addEventListener('loadedmetadata', () => {
+              this.video.currentTime = resume.position;
+            }, { once: true });
+          }
           this.video.play().catch((e) => console.error('Offline play error', e));
           return;
         }
@@ -904,6 +919,9 @@ export class BrowserApp {
 
       void fetchItem(item.Id, playbackController.signal).then((fullItem) => {
         if (generation !== this.playbackGeneration || playbackController.signal.aborted) return;
+        if (!item.UserData && fullItem.UserData) {
+          item.UserData = fullItem.UserData;
+        }
         this.currentChapters = fullItem.Chapters || [];
         this.renderChapterTicks();
         if (this.currentChapters.length > 0) {
@@ -972,7 +990,7 @@ export class BrowserApp {
       const sources = item.MediaSources || [];
       this.playerSourceBtn.hidden = sources.length <= 1;
 
-      this.attachPlaybackStream(playback, generation);
+      this.attachPlaybackStream(playback, generation, resume);
       this.playerStatus.textContent = '';
       const initialSubtitle = chooseInitialSubtitleTrack(
         item,
@@ -982,7 +1000,9 @@ export class BrowserApp {
       );
       this.selectedSubtitleIndex = initialSubtitle.index;
       if (initialSubtitle.index >= 0) void this.selectSubtitle(initialSubtitle.index, false);
-      await this.video.play().catch(() => undefined);
+      if (!resume) {
+        await this.video.play().catch(() => undefined);
+      }
     } catch (error) {
       if (playbackController.signal.aborted || generation !== this.playbackGeneration) return;
       this.playerStatus.textContent = error instanceof Error ? error.message : 'Unable to start playback.';
@@ -1395,10 +1415,16 @@ export class BrowserApp {
     this.hls?.destroy();
     this.hls = null;
 
+    let restored = false;
     const restorePlayback = () => {
-      if (generation !== this.playbackGeneration || !resume) return;
+      if (restored || generation !== this.playbackGeneration || !resume) return;
+      restored = true;
       if (Number.isFinite(resume.position) && resume.position > 0) {
-        this.video.currentTime = resume.position;
+        try {
+          this.video.currentTime = resume.position;
+        } catch (err) {
+          console.warn('Failed to restore playback position:', err);
+        }
       }
       if (!resume.paused) void this.video.play().catch(() => undefined);
     };
@@ -1456,6 +1482,9 @@ export class BrowserApp {
       applyNegotiatedAudio();
       restorePlayback();
     });
+    if (resume) {
+      this.video.addEventListener('loadedmetadata', restorePlayback, {once: true});
+    }
     hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, applyNegotiatedAudio);
   }
 

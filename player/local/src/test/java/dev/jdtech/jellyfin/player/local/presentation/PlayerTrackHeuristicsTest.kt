@@ -38,6 +38,14 @@ class PlayerTrackHeuristicsTest {
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("FORCED", 0))
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("forced", 0))
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("English (Forced)", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("English Force", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Foreign Dialogue", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Foreign Parts", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Foreign Spoken", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Foreign Language", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Non-English Dialogue", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Narrative Subtitles", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Partly Foreign", 0))
     }
 
     @Test
@@ -48,15 +56,9 @@ class PlayerTrackHeuristicsTest {
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Songs", 0))
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Signs & Songs", 0))
         assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("Signs/Songs", 0))
-    }
-
-    @Test
-    fun `S and S short label is NOT flagged because it lacks sign-song keywords`() {
-        // Short "S&S" labels are intentionally NOT matched — the predicate is
-        // keyword-based (whole-word `sign`, `song`, `forced`), not acronym-based. If a
-        // file ships that label, users can still switch to it manually. We prefer
-        // false negatives (allow) over false positives (block a real dialogue track).
-        assertFalse(PlayerTrackHeuristics.isForcedOrSignsOnly("S&S", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("S&S", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("S+S", 0))
+        assertTrue(PlayerTrackHeuristics.isForcedOrSignsOnly("S/S", 0))
     }
 
     @Test
@@ -160,9 +162,9 @@ class PlayerTrackHeuristicsTest {
     }
 
     @Test
-    fun `signs-only track with no flags scores zero`() {
+    fun `signs-only track with no flags scores 25`() {
         assertEquals(
-            0,
+            25,
             PlayerTrackHeuristics.forcedSubtitlePriority(label = "Signs", selectionFlags = 0),
         )
     }

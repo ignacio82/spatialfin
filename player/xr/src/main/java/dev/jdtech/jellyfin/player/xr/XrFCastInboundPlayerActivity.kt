@@ -439,11 +439,23 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
         }
 
         val forced =
-            if (appPreferences.getValue(appPreferences.smartForcedSubtitles) && audioLanguage != null) {
-                subtitleGroups
-                    .filter { groupMatchesLanguage(it, audioLanguage) }
-                    .filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
-                    .maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
+            if (appPreferences.getValue(appPreferences.smartForcedSubtitles)) {
+                val forcedGroups = subtitleGroups.filter { PlayerTrackHeuristics.isForcedOrSignsOnly(it) }
+                val targetLanguages = (listOfNotNull(audioLanguage) + spokenLanguages).filter { it.isNotBlank() }.distinct()
+                var match: Tracks.Group? = null
+                if (targetLanguages.isNotEmpty()) {
+                    for (targetLang in targetLanguages) {
+                        val matched = forcedGroups.filter { groupMatchesLanguage(it, targetLang) }
+                        if (matched.isNotEmpty()) {
+                            match = matched.maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
+                            break
+                        }
+                    }
+                }
+                match ?: forcedGroups.filter { group ->
+                    val lang = (0 until group.length).mapNotNull { group.getTrackFormat(it).language }.firstOrNull()
+                    lang.isNullOrBlank() || lang.equals("und", ignoreCase = true)
+                }.maxByOrNull { PlayerTrackHeuristics.forcedSubtitlePriority(it) }
             } else {
                 null
             }

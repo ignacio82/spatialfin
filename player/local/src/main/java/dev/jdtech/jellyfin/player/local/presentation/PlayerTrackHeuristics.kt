@@ -23,24 +23,37 @@ object PlayerTrackHeuristics {
      * "Designer's Cut" or "Assigned" don't accidentally look forced. Covers common muxes:
      * "Forced", "English (Forced)", "Signs", "Signs & Songs", "Songs".
      */
-    private val FORCED_LABEL_PATTERN = Regex("""\b(forced|signs?|songs?)\b""", RegexOption.IGNORE_CASE)
-    private val FULL_DIALOGUE_LABEL_PATTERN = Regex("""\b(full|dialogue?|subtitles?)\b""", RegexOption.IGNORE_CASE)
+    /**
+     * Matches labels of forced / signs-only sibling subtitle tracks as whole words, so
+     * "Designer's Cut" or "Assigned" don't accidentally look forced. Covers common muxes:
+     * "Forced", "English (Forced)", "Foreign Dialogue", "Foreign Parts", "Foreign Spoken",
+     * "Foreign Language", "Non-English", "Force", "Signs", "Signs & Songs", "Songs", "S&S",
+     * "S+S", "S/S", "Narrative", "Partly Foreign".
+     */
+    private val FORCED_LABEL_PATTERN = Regex(
+        """\b(forced?|foreign|narrative|non[-_\s]?english|signs?|songs?|short|partly)\b|s[&+/]s""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val FULL_DIALOGUE_LABEL_PATTERN = Regex(
+        """\b(full|dialogue?|subtitles?)\b""",
+        RegexOption.IGNORE_CASE,
+    )
 
     /**
-     * Returns true when a subtitle track is marked forced or is clearly a signs/songs-only
+     * Returns true when a subtitle track is marked forced or is clearly a signs/songs/foreign-dialogue
      * sibling track (based on its label).
      *
      * These tracks are useful to viewers who understand the audio and only need foreign
-     * on-screen text or title cards translated. They are NOT a substitute for full
-     * dialogue, so the smart selector must not auto-land on one when the viewer doesn't
-     * speak the audio language — doing so leaves most of the conversation un-subtitled.
+     * on-screen text, title cards, or foreign-language dialogue scenes translated. They are NOT
+     * a substitute for full dialogue, so the smart selector must not auto-land on one when the
+     * viewer doesn't speak the audio language — doing so leaves most of the conversation un-subtitled.
      *
      * Triggers:
      * - Media3's [C.SELECTION_FLAG_FORCED] bit is set, OR
-     * - the format `label` matches `\b(forced|signs?|songs?)\b` case-insensitively.
+     * - the format `label` matches forced / foreign / signs / songs keywords case-insensitively.
      *
      * The label heuristic is necessary because many MKV muxes ship sibling tracks as
-     * Full Dialogue / Forced / Signs without setting the selection flag correctly.
+     * Full Dialogue / Forced / Foreign Dialogue without setting the selection flag correctly.
      */
     fun isForcedOrSignsOnly(label: String?, selectionFlags: Int): Boolean {
         val normalized = label.orEmpty()
@@ -65,7 +78,7 @@ object PlayerTrackHeuristics {
      * Ranks forced / signs-only candidate tracks for the "viewer understands the audio but
      * wants the foreign-language parts translated" case. Higher is better.
      *
-     * A track tagged [C.SELECTION_FLAG_FORCED] or labelled "Forced" is the canonical
+     * A track tagged [C.SELECTION_FLAG_FORCED] or labelled "Forced" / "Foreign" is the canonical
      * foreign-dialogue overlay, so it outranks a "Signs & Songs" sibling (which mostly
      * translates on-screen text and karaoke). [C.SELECTION_FLAG_DEFAULT] breaks ties.
      *
@@ -76,7 +89,8 @@ object PlayerTrackHeuristics {
         val normalized = label.orEmpty()
         var score = 0
         if ((selectionFlags and C.SELECTION_FLAG_FORCED) != 0) score += 100
-        if (Regex("""\bforced\b""", RegexOption.IGNORE_CASE).containsMatchIn(normalized)) score += 50
+        if (Regex("""\b(forced?|foreign|narrative|non[-_\s]?english|partly)\b""", RegexOption.IGNORE_CASE).containsMatchIn(normalized)) score += 50
+        if (Regex("""\b(signs?|songs?)\b|s[&+/]s""", RegexOption.IGNORE_CASE).containsMatchIn(normalized)) score += 25
         if ((selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0) score += 10
         return score
     }

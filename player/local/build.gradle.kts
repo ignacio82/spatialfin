@@ -38,4 +38,6 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.timber)
     testImplementation(libs.junit4)
+    testImplementation(libs.mockk)
+    testImplementation(libs.robolectric)
 }

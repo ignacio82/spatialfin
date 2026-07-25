@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
+import dev.jdtech.jellyfin.models.toSpatialFinChapters
 import dev.jdtech.jellyfin.models.toSpatialFinMediaStream
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import javax.inject.Inject
@@ -96,10 +97,43 @@ class RemoteControlViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activeChapters: StateFlow<List<dev.jdtech.jellyfin.models.SpatialFinChapter>> = activeRemoteSession.mapLatest { session ->
+        val nowPlaying = session?.nowPlayingItem ?: return@mapLatest emptyList()
+        val sessionChapters = nowPlaying.toSpatialFinChapters(repository, nowPlaying.id)
+        if (sessionChapters.isNotEmpty()) return@mapLatest sessionChapters
+
+        val itemId = nowPlaying.id
+        try {
+            val fullItem = repository.getItem(itemId)
+            fullItem?.chapters.orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+
     fun sendCommand(sessionId: String, command: PlaystateCommand) {
         viewModelScope.launch {
             runCatching { repository.sendPlaystateCommand(sessionId, command) }
         }
+    }
+
+    fun seekTo(sessionId: String, positionTicks: Long) {
+        viewModelScope.launch {
+            runCatching {
+                repository.sendPlaystateCommand(
+                    sessionId = sessionId,
+                    command = PlaystateCommand.SEEK,
+                    seekPositionTicks = positionTicks
+                )
+            }
+        }
+    }
+
+    fun seekBy(sessionId: String, currentPositionTicks: Long, deltaSeconds: Long) {
+        val targetTicks = (currentPositionTicks + deltaSeconds * 10_000_000L).coerceAtLeast(0L)
+        seekTo(sessionId, targetTicks)
     }
 
     fun sendGeneralCommand(
@@ -110,6 +144,19 @@ class RemoteControlViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { repository.sendGeneralCommand(sessionId, command, args) }
         }
+    }
+
+    fun setVolume(sessionId: String, volumePercent: Int) {
+        val clamped = volumePercent.coerceIn(0, 100)
+        sendGeneralCommand(
+            sessionId,
+            GeneralCommandType.SET_VOLUME,
+            mapOf("Volume" to clamped.toString())
+        )
+    }
+
+    fun toggleMute(sessionId: String) {
+        sendGeneralCommand(sessionId, GeneralCommandType.TOGGLE_MUTE, null)
     }
 
     fun selectRemoteSession(sessionId: String) {
@@ -125,3 +172,4 @@ class RemoteControlViewModel @Inject constructor(
                 .thenBy { it.index ?: Int.MAX_VALUE }
         )
 }
+

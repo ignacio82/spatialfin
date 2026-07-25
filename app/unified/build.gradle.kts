@@ -42,22 +42,28 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile =
+            val customStore =
                 (project.findProperty("SPATIALFIN_KEYSTORE") as String?
                         ?: localProperties.getProperty("SPATIALFIN_KEYSTORE"))
                     ?.let { file(it) } ?: System.getenv("SPATIALFIN_KEYSTORE")?.let { file(it) }
+            val debugStore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            
+            storeFile = if (customStore?.exists() == true) customStore else debugStore
             storePassword =
                 project.findProperty("SPATIALFIN_KEYSTORE_PASSWORD") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEYSTORE_PASSWORD")
                     ?: System.getenv("SPATIALFIN_KEYSTORE_PASSWORD")
+                    ?: "android"
             keyAlias =
                 project.findProperty("SPATIALFIN_KEY_ALIAS") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEY_ALIAS")
                     ?: System.getenv("SPATIALFIN_KEY_ALIAS")
+                    ?: "androiddebugkey"
             keyPassword =
                 project.findProperty("SPATIALFIN_KEY_PASSWORD") as String?
                     ?: localProperties.getProperty("SPATIALFIN_KEY_PASSWORD")
                     ?: System.getenv("SPATIALFIN_KEY_PASSWORD")
+                    ?: "android"
         }
     }
 
@@ -79,12 +85,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig =
-                if (signingConfigs.getByName("release").storeFile?.exists() == true) {
-                    signingConfigs.getByName("release")
-                } else {
-                    null
-                }
+            signingConfig = signingConfigs.getByName("release")
             resValue("string", "search_authority", "dev.spatialfin.search")
         }
         create("staging") {

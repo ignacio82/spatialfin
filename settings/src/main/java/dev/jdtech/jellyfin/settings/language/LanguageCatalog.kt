@@ -14,21 +14,42 @@ data class LanguageOption(
 object LanguageCatalog {
     @Volatile private var cachedOptions: List<LanguageOption>? = null
 
+    private val FALLBACK_OPTIONS by lazy {
+        listOf(
+            Triple("eng", "English", setOf("eng", "en", "english")),
+            Triple("jpn", "Japanese", setOf("jpn", "ja", "japanese")),
+            Triple("spa", "Spanish", setOf("spa", "es", "spanish", "spain")),
+            Triple("fra", "French", setOf("fra", "fre", "fr", "french")),
+            Triple("deu", "German", setOf("deu", "ger", "de", "german")),
+            Triple("ita", "Italian", setOf("ita", "it", "italian")),
+            Triple("por", "Portuguese", setOf("por", "pt", "portuguese")),
+            Triple("rus", "Russian", setOf("rus", "ru", "russian")),
+            Triple("zho", "Chinese", setOf("zho", "chi", "zh", "chinese")),
+            Triple("kor", "Korean", setOf("kor", "ko", "korean")),
+        ).map { (code, name, aliases) ->
+            LanguageOption(code = code, displayName = name, aliases = aliases)
+        }
+    }
+
     fun all(context: Context): List<LanguageOption> {
         cachedOptions?.let { return it }
 
         return synchronized(this) {
             cachedOptions?.let { return@synchronized it }
 
-            val names = context.resources.getStringArray(R.array.languages)
-            val codes = context.resources.getStringArray(R.array.languages_values)
+            val names = runCatching { context.resources.getStringArray(R.array.languages) }.getOrNull() ?: emptyArray()
+            val codes = runCatching { context.resources.getStringArray(R.array.languages_values) }.getOrNull() ?: emptyArray()
             val options =
-                names.zip(codes).map { (name, code) ->
-                    LanguageOption(
-                        code = code.lowercase(Locale.US),
-                        displayName = name,
-                        aliases = buildAliases(code, name),
-                    )
+                if (names.isNotEmpty() && codes.isNotEmpty()) {
+                    names.zip(codes).map { (name, code) ->
+                        LanguageOption(
+                            code = code.lowercase(Locale.US),
+                            displayName = name,
+                            aliases = buildAliases(code, name),
+                        )
+                    }
+                } else {
+                    FALLBACK_OPTIONS
                 }
 
             cachedOptions = options
