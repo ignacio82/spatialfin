@@ -296,14 +296,15 @@ function resolveServerPath(path: string): string {
   return new URL(`${basePath}${relativePath}`, serverUrl.origin).toString();
 }
 
-const WEB_TEXT_SUBTITLE_CODECS = new Set([
+const WEB_TEXT_SUBTITLE_FORMATS = [
   'ass',
   'ssa',
   'srt',
   'subrip',
   'vtt',
   'webvtt',
-]);
+] as const;
+const WEB_TEXT_SUBTITLE_CODECS = new Set<string>(WEB_TEXT_SUBTITLE_FORMATS);
 
 function normalizedSubtitleCodec(codec: string | undefined): string {
   const normalized = codec?.trim().toLowerCase() ?? '';
@@ -317,14 +318,48 @@ function isJapaneseLanguage(language: string | undefined): boolean {
   return normalized === 'ja' || normalized === 'jpn';
 }
 
-function subtitleTracksForSource(source: JellyfinMediaSourceInfo): JellyfinSubtitleTrack[] {
+function subtitleUrlForStream(
+  itemId: string,
+  source: JellyfinMediaSourceInfo,
+  stream: JellyfinMediaStream,
+): string | null {
+  if (stream.DeliveryUrl?.trim()) {
+    return resolveServerPath(stream.DeliveryUrl.trim());
+  }
+
+  // PlaybackInfo should provide DeliveryUrl because every text format below is
+  // advertised as External-only. Older and mixed-version servers can still
+  // report Embed without a URL, though. Use Jellyfin's canonical full-file
+  // subtitle endpoint in that case so SRT/VTT timings remain absolute instead
+  // of depending on container-relative samples.
+  const mediaSourceId = source.Id?.trim();
+  if (
+    !mediaSourceId ||
+    !Number.isInteger(stream.Index) ||
+    stream.SupportsExternalStream === false
+  ) {
+    return null;
+  }
+  const format = normalizedSubtitleCodec(stream.Codec);
+  return buildUrl(
+    `/Videos/${encodeURIComponent(itemId)}/${encodeURIComponent(mediaSourceId)}` +
+      `/Subtitles/${stream.Index}/Stream.${encodeURIComponent(format)}`,
+  ).toString();
+}
+
+function subtitleTracksForSource(
+  itemId: string,
+  source: JellyfinMediaSourceInfo,
+): JellyfinSubtitleTrack[] {
   const tracks = (source.MediaStreams ?? [])
     .filter((stream) => {
-      if (stream.Type !== 'Subtitle' || !stream.DeliveryUrl?.trim()) return false;
+      if (stream.Type !== 'Subtitle') return false;
       if (stream.IsTextSubtitleStream === false) return false;
       return WEB_TEXT_SUBTITLE_CODECS.has(stream.Codec?.trim().toLowerCase() ?? '');
     })
-    .map((stream, ordinal): JellyfinSubtitleTrack => {
+    .map((stream, ordinal): JellyfinSubtitleTrack | null => {
+      const url = subtitleUrlForStream(itemId, source, stream);
+      if (!url) return null;
       const language = stream.Language?.trim() ?? '';
       const codec = normalizedSubtitleCodec(stream.Codec);
       return {
@@ -332,16 +367,16 @@ function subtitleTracksForSource(source: JellyfinMediaSourceInfo): JellyfinSubti
         codec,
         label: stream.DisplayTitle?.trim() || stream.Title?.trim() || language || `Subtitle ${ordinal + 1}`,
         language,
-        url: resolveServerPath(stream.DeliveryUrl!.trim()),
+        url,
         isDefault: stream.IsDefault === true,
         isForced: stream.IsForced === true,
         isHearingImpaired: stream.IsHearingImpaired === true,
       };
-    });
+    })
+    .filter((track): track is JellyfinSubtitleTrack => track !== null);
 
-  // Some servers repeat a sidecar entry when both Embed and External profiles
-  // match. The exact server-provided DeliveryUrl is authoritative; only remove
-  // byte-for-byte URL duplicates.
+  // A server-provided DeliveryUrl remains authoritative. Only remove exact URL
+  // duplicates if a server repeats the same sidecar in its stream inventory.
   return tracks.filter((track, index) =>
     tracks.findIndex((candidate) => candidate.url === track.url) === index);
 }
@@ -1030,14 +1065,13 @@ export async function fetchPlaybackInfo(
         },
       ],
       ContainerProfiles: [],
-      SubtitleProfiles: [
-        {Format: 'ass', Method: 'External'},
-        {Format: 'ssa', Method: 'External'},
-        {Format: 'srt', Method: 'External'},
-        {Format: 'subrip', Method: 'External'},
-        {Format: 'vtt', Method: 'External'},
-        {Format: 'webvtt', Method: 'External'},
-      ],
+      // libass renders one full sidecar in both the 2D and XR players. Do not
+      // advertise Embed for text formats: container samples can carry
+      // sample-relative timestamps that are not a complete subtitle document.
+      SubtitleProfiles: WEB_TEXT_SUBTITLE_FORMATS.map((Format) => ({
+        Format,
+        Method: 'External',
+      })),
     },
   };
   let response = await requestJson<JellyfinPlaybackInfoResponse>(
@@ -1127,7 +1161,7 @@ export async function fetchPlaybackInfo(
     mediaSourceId: source.Id?.trim() || undefined,
     playSessionId,
     requiredHeaders: Object.fromEntries(headers.entries()),
-    subtitleTracks: subtitleTracksForSource(metadataSource),
+    subtitleTracks: subtitleTracksForSource(itemId, metadataSource),
     fontUrls: fontUrlsForSource(itemId, metadataSource),
     audioStreams: (metadataSource.MediaStreams ?? []).filter((stream) => stream.Type === 'Audio'),
     defaultAudioStreamIndex: negotiatedAudioStreamIndex,

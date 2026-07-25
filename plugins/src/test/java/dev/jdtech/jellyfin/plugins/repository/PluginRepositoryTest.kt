@@ -32,7 +32,7 @@ class PluginRepositoryTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
-        repository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus())
+        repository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus(), mockk(relaxed = true), mockk(relaxed = true))
     }
 
     @Test
@@ -80,5 +80,33 @@ class PluginRepositoryTest {
         
         val script = repository.getPluginScript("test-plugin")
         assertEquals(scriptContent, script)
+    }
+
+    @Test
+    fun `test cold-start scope resolution falls back to database active user when jellyfinApi userId is null`() = runBlocking {
+        val mockApi = mockk<dev.jdtech.jellyfin.api.JellyfinApi>(relaxed = true)
+        var capturedUserId: java.util.UUID? = null
+        every { mockApi.userId } answers { capturedUserId }
+        every { mockApi.userId = any() } answers { capturedUserId = firstArg() }
+
+        val realAppPrefs = dev.jdtech.jellyfin.settings.domain.AppPreferences(context.getSharedPreferences("test_prefs", android.content.Context.MODE_PRIVATE))
+        val mockDb = mockk<dev.jdtech.jellyfin.database.ServerDatabaseDao>(relaxed = true)
+
+        val serverId = "server-uuid-123"
+        val expectedUserId = java.util.UUID.fromString("11111111-2222-3333-4444-555555555555")
+        val mockServer = mockk<dev.jdtech.jellyfin.models.Server>(relaxed = true)
+
+        realAppPrefs.setValue(realAppPrefs.currentServer, serverId)
+        every { mockServer.currentUserId } returns expectedUserId
+        every { mockDb.get(serverId) } returns mockServer
+
+        val repo = PluginRepository(context, okHttpClient, mockApi, ActiveSessionBus(), realAppPrefs, mockDb)
+        
+        // Save setting for plugin under resolved user scope
+        repo.updatePluginHomeRowEnabled("my-plugin", "suggestions", false)
+
+        // Verify setting is preserved and jellyfinApi.userId was populated
+        assertEquals(expectedUserId, capturedUserId)
+        assertEquals(false, repo.isPluginHomeRowEnabled("my-plugin", "suggestions", true))
     }
 }

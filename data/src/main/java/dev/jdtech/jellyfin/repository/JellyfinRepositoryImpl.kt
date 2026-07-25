@@ -100,8 +100,6 @@ import org.jellyfin.sdk.model.api.NewGroupRequestDto
 import org.jellyfin.sdk.model.api.NextItemRequestDto
 import org.jellyfin.sdk.model.api.PreviousItemRequestDto
 import org.jellyfin.sdk.model.api.request.GetUniversalAudioStreamRequest
-import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
-import org.jellyfin.sdk.model.api.SubtitleProfile
 import org.jellyfin.sdk.model.api.UserDataChangeInfo
 import org.jellyfin.sdk.model.api.UserDataChangedMessage
 import org.jellyfin.sdk.model.api.UserConfiguration
@@ -771,29 +769,7 @@ class JellyfinRepositoryImpl(
                                             enableAudioVbrEncoding = true,
                                         ),
                                     ),
-                                    subtitleProfiles =
-                                        listOf(
-                                            SubtitleProfile("srt", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("srt", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("subrip", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("subrip", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("ass", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("ass", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("ssa", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("ssa", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("vtt", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("vtt", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("sub", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("sub", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("smi", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("smi", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("pgssub", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("pgssub", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("pgs", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("pgs", SubtitleDeliveryMethod.EMBED),
-                                            SubtitleProfile("dvdsub", SubtitleDeliveryMethod.EXTERNAL),
-                                            SubtitleProfile("dvdsub", SubtitleDeliveryMethod.EMBED),
-                                        ),
+                                    subtitleProfiles = createPlaybackSubtitleProfiles(),
                                 ),
                             maxStreamingBitrate = bitrate.toInt(),
                         ),

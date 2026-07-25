@@ -37,7 +37,7 @@ class PluginContentRepositoryTest {
         val domParserBridge = RealDOMParserBridge()
         val utilitiesBridge = RealUtilitiesBridge()
         val engine = PluginEngine(httpBridge, domParserBridge, utilitiesBridge)
-        pluginRepository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus())
+        pluginRepository = PluginRepository(context, okHttpClient, mockk(relaxed = true), ActiveSessionBus(), mockk(relaxed = true), mockk(relaxed = true))
         val client = PluginClient(engine, pluginRepository)
         contentRepository = PluginContentRepository(client, pluginRepository)
     }

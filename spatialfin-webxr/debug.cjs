@@ -11,6 +11,10 @@ const animeSubtitleAss = fs.readFileSync(
   path.join(__dirname, 'test-fixtures', 'anime-styled.ass'),
   'utf8',
 );
+const absoluteTimingSrt = fs.readFileSync(
+  path.join(__dirname, 'test-fixtures', 'absolute-timing.srt'),
+  'utf8',
+);
 const animeSubtitleFont = fs.readFileSync(
   path.join(__dirname, 'public', 'libass', 'default.woff2'),
 );
@@ -399,6 +403,22 @@ async function run() {
                 DeliveryMethod: 'External',
                 DeliveryUrl: `${fontFixture.baseUrl}/Videos/episode-1/mock-media-source/Subtitles/3/Stream.ssa`,
               },
+              {
+                Type: 'Subtitle',
+                Codec: 'subrip',
+                Index: 4,
+                DisplayTitle: 'English - Embedded SRT fallback',
+                Language: 'eng',
+                IsDefault: false,
+                IsForced: false,
+                IsTextSubtitleStream: true,
+                SupportsExternalStream: true,
+                // Reproduce the bad response shape: Jellyfin selected Embed
+                // and therefore omitted DeliveryUrl despite an External-only
+                // client profile.
+                DeliveryMethod: 'Embed',
+                DeliveryUrl: null,
+              },
             ],
             MediaAttachments: [{
               Codec: 'ttf',
@@ -423,6 +443,14 @@ async function run() {
           contentType: apiPath.endsWith('.ssa') ? 'text/x-ssa' : 'text/x-ass',
           headers: {'Access-Control-Allow-Origin': '*'},
           body: animeSubtitleAss,
+        });
+      }
+      if (/^\/Videos\/(?:episode-1|movies-1)\/mock-media-source\/Subtitles\/4\/Stream\.srt$/.test(apiPath)) {
+        return void request.respond({
+          status: 200,
+          contentType: 'application/x-subrip',
+          headers: {'Access-Control-Allow-Origin': '*'},
+          body: absoluteTimingSrt,
         });
       }
       if (/^\/Videos\/[^/]+\/master\.m3u8$/.test(apiPath)) {
@@ -641,6 +669,39 @@ async function run() {
       const audioBtn = document.querySelector('#browser-player-audio-btn');
       return player && !player.hidden && audioBtn && !audioBtn.hidden;
     }, {timeout: 20_000});
+    await page.$eval('#browser-player-subtitles-btn', (element) => element.click());
+    await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
+    await page.evaluate(() => {
+      const item = Array.from(
+        document.querySelectorAll('#browser-player-dialog-backdrop .player-dialog-item'),
+      ).find((element) => element.textContent.includes('Embedded SRT fallback'));
+      if (!(item instanceof HTMLButtonElement)) {
+        throw new Error('The synthesized SRT subtitle was not offered by the browser player');
+      }
+      item.click();
+    });
+    const browserSrtRequest = await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath}) =>
+        method === 'GET' &&
+        requestPath.startsWith(
+          '/jellyfin-proxy/Videos/movies-1/mock-media-source/Subtitles/4/Stream.srt',
+        ),
+      'the browser synthesized SRT sidecar',
+    );
+    assert.ok(
+      browserSrtRequest.authorization?.includes('Token="mock-access-token"'),
+      'the synthesized browser SRT request should use the Jellyfin session',
+    );
+    await page.$eval('#browser-player-subtitles-btn', (element) => element.click());
+    await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
+    await page.evaluate(() => {
+      const off = Array.from(
+        document.querySelectorAll('#browser-player-dialog-backdrop .player-dialog-item'),
+      ).find((element) => element.textContent.trim().startsWith('Off'));
+      if (!(off instanceof HTMLButtonElement)) throw new Error('Subtitle Off option is unavailable');
+      off.click();
+    });
     await page.$eval('#browser-player-audio-btn', (element) => element.click());
     await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
     const isJapaneseSelected = await page.evaluate(() => {
@@ -861,11 +922,16 @@ async function run() {
       method === 'POST' && requestPath === '/jellyfin-proxy/Items/episode-1/PlaybackInfo');
     assert.ok(playbackInfoRequest?.body, 'XR playback should negotiate a Jellyfin device profile');
     const playbackInfoBody = JSON.parse(playbackInfoRequest.body);
-    const externalSubtitleProfiles = playbackInfoBody.DeviceProfile.SubtitleProfiles
-      .filter(({Method}) => Method === 'External')
-      .map(({Format}) => Format.toLowerCase());
-    assert.ok(externalSubtitleProfiles.includes('ass'), 'PlaybackInfo should advertise raw external ASS');
-    assert.ok(externalSubtitleProfiles.includes('ssa'), 'PlaybackInfo should advertise raw external SSA');
+    const subtitleProfiles = playbackInfoBody.DeviceProfile.SubtitleProfiles;
+    assert.ok(
+      subtitleProfiles.every(({Method}) => Method === 'External'),
+      'PlaybackInfo must never advertise embedded text subtitles',
+    );
+    assert.deepEqual(
+      subtitleProfiles.map(({Format}) => Format.toLowerCase()).sort(),
+      ['ass', 'ssa', 'srt', 'subrip', 'vtt', 'webvtt'].sort(),
+      'PlaybackInfo should advertise every supported raw text format as External-only',
+    );
 
     await page.waitForFunction(() => {
       let labels = [];
@@ -908,7 +974,7 @@ async function run() {
         if (object.name === 'Player: Mock Episode 1') player = object;
       });
       const state = player?.userData.subtitleRendererStateForAutomation?.();
-      return typeof player?.userData.selectSubtitleForAutomation === 'function' && state?.trackCount === 2;
+      return typeof player?.userData.selectSubtitleForAutomation === 'function' && state?.trackCount === 3;
     }, {timeout: 20_000});
     await page.evaluate(async () => {
       let player;
@@ -924,7 +990,11 @@ async function run() {
       });
       return player?.userData.subtitleRendererStateForAutomation?.().selectedIndex === -1;
     }, {timeout: 20_000});
-    await page.waitForNetworkIdle({idleTime: 250, timeout: 10_000});
+    // HLS and the PWA service worker may keep harmless background requests
+    // alive. Network-idle is only a best-effort handoff before switching from
+    // Puppeteer interception to CDP interception; subtitle state above is the
+    // actual prerequisite.
+    await page.waitForNetworkIdle({idleTime: 250, timeout: 10_000}).catch(() => undefined);
     pageInterceptionEnabled = false;
     await page.setRequestInterception(false);
     subtitleMockSession = await page.createCDPSession();
@@ -950,14 +1020,15 @@ async function run() {
             responseHeaders: corsHeaders,
           });
         } else {
+          const isSrt = url.pathname.endsWith('/Subtitles/4/Stream.srt');
           await subtitleMockSession.send('Fetch.fulfillRequest', {
             requestId,
             responseCode: 200,
             responseHeaders: [
               ...corsHeaders,
-              {name: 'Content-Type', value: 'text/x-ass'},
+              {name: 'Content-Type', value: isSrt ? 'application/x-subrip' : 'text/x-ass'},
             ],
-            body: Buffer.from(animeSubtitleAss).toString('base64'),
+            body: Buffer.from(isSrt ? absoluteTimingSrt : animeSubtitleAss).toString('base64'),
           });
         }
       } catch {
@@ -966,6 +1037,9 @@ async function run() {
     });
     await subtitleMockSession.send('Fetch.enable', {patterns: [{
       urlPattern: '*mock-jellyfin.test*/jellyfin-proxy/Videos/episode-1/mock-media-source/Subtitles/2/Stream.ass*',
+      requestStage: 'Request',
+    }, {
+      urlPattern: '*mock-jellyfin.test*/jellyfin-proxy/Videos/episode-1/mock-media-source/Subtitles/4/Stream.srt*',
       requestStage: 'Request',
     }]});
     await page.evaluate(() => {
@@ -1114,6 +1188,77 @@ async function run() {
       });
       return JSON.stringify(labels) !== JSON.stringify(previousLabels);
     }, {timeout: 20_000}, firstSubtitleLabels);
+
+    await activateCanvasZone(page, 'Track options orbiter', 'subtitles');
+    await page.waitForFunction(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      const state = player?.userData.subtitleRendererStateForAutomation?.();
+      if (state?.selectedIndex !== 2 || state.ready !== true) return false;
+      const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return false;
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let visible = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0 && ++visible >= 100) return true;
+      }
+      return false;
+    }, {timeout: 20_000, polling: 100});
+    const xrSrtRequest = await waitForRecordedRequest(
+      requests,
+      ({method, path: requestPath}) =>
+        method === 'GET' &&
+        requestPath.startsWith(
+          '/jellyfin-proxy/Videos/episode-1/mock-media-source/Subtitles/4/Stream.srt',
+        ),
+      'the XR synthesized SRT sidecar',
+    );
+    assert.ok(
+      xrSrtRequest.authorization?.includes('Token="mock-access-token"'),
+      'the synthesized XR SRT request should use the Jellyfin session',
+    );
+
+    await page.evaluate(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      player.userData.setSubtitleTimeForAutomation(0);
+    });
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return false;
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] !== 0) return false;
+      }
+      return true;
+    }, {timeout: 20_000, polling: 100});
+    await page.evaluate(() => {
+      let player;
+      window.xb.scene.traverse((object) => {
+        if (object.name === 'Player: Mock Episode 1') player = object;
+      });
+      player.userData.setSubtitleTimeForAutomation(3);
+    });
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('canvas[width="2048"][height="1152"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return false;
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let visible = 0;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] > 0 && ++visible >= 100) return true;
+      }
+      return false;
+    }, {timeout: 20_000, polling: 100});
 
     await activateCanvasZone(page, 'Track options orbiter', 'subtitles');
     await page.waitForFunction(() => {
@@ -1299,6 +1444,7 @@ async function run() {
       !message.includes('Failed to load resource') &&
       !message.includes('WebSocket connection to') &&
       !message.includes('libass: Failed to load fonctconfig fonts!') &&
+      !message.includes('width or height is 0. You should specify width & height for resize.') &&
       !message.includes('Automatic fallback to software WebGL'));
     assert.deepEqual(relevantErrors, [], `unexpected browser errors: ${relevantErrors.join('\n')}`);
 

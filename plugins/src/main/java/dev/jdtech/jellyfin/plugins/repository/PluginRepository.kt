@@ -2,27 +2,28 @@ package dev.jdtech.jellyfin.plugins.repository
 
 import android.content.Context
 import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.plugins.model.PluginConfig
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import dev.jdtech.jellyfin.session.ActiveSessionBus
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +33,8 @@ class PluginRepository @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val jellyfinApi: JellyfinApi,
     private val activeSessionBus: ActiveSessionBus,
+    private val appPreferences: AppPreferences,
+    private val database: ServerDatabaseDao,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -53,10 +56,29 @@ class PluginRepository @Inject constructor(
             .launchIn(scope)
     }
 
+    fun notifySettingsChanged() {
+        _settingsChanges.tryEmit(Unit)
+    }
+
     private fun rootDir(): File = File(context.filesDir, "universal_plugins")
 
-    /** Per-Jellyfin-user scope; falls back to "default" before any user logs in. */
-    private fun currentScope(): String = jellyfinApi.userId?.toString() ?: "default"
+    /** Per-Jellyfin-user scope; falls back to current server's active user or "default" before any user logs in. */
+    private fun currentScope(): String {
+        jellyfinApi.userId?.let { return it.toString() }
+        val serverId = runCatching { appPreferences.getValue(appPreferences.currentServer) as? String }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() } ?: return "default"
+        val userId = runCatching {
+            runBlocking(Dispatchers.IO) {
+                database.get(serverId)?.currentUserId
+            }
+        }.getOrNull()
+        if (userId != null) {
+            jellyfinApi.userId = userId
+            return userId.toString()
+        }
+        return "default"
+    }
 
     /**
      * The plugin directory for [scope] (defaults to the current Jellyfin user).
@@ -278,13 +300,12 @@ class PluginRepository @Inject constructor(
             val primaryValue = template.fields.firstOrNull()?.id?.let { options[it] }.orEmpty()
             listOfNotNull(template.namePrefix, primaryValue.ifBlank { template.name }).joinToString("").trim()
         }
+        val rowId = "custom_${templateId}_${System.currentTimeMillis()}"
         val row = PluginHomeRow(
-            id = "custom_${template.id}_${System.currentTimeMillis()}",
-            name = trimmedName,
-            description = template.description,
+            id = rowId,
+            name = trimmedName.ifBlank { template.name },
             type = template.type,
-            defaultEnabled = true,
-            options = JsonObject(options.mapValues { JsonPrimitive(it.value) })
+            defaultEnabled = true
         )
         val rows = getCustomPluginHomeRows(pluginId) + row
         updatePluginSetting(pluginId, CUSTOM_HOME_ROWS_KEY, json.encodeToString(rows))
@@ -298,16 +319,15 @@ class PluginRepository @Inject constructor(
 
     fun isCustomHomeRow(rowId: String): Boolean = rowId.startsWith("custom_")
 
-    companion object {
-        private const val CUSTOM_HOME_ROWS_KEY = "homeRows.custom"
-        private const val INSTALLED_MANIFESTS_FILE = "installed_manifests.json"
+    private fun downloadString(urlStr: String): String {
+        val request = Request.Builder().url(urlStr).build()
+        val response = okHttpClient.newCall(request).execute()
+        if (!response.isSuccessful) throw IOException("Unexpected code $response")
+        return response.body.string()
     }
 
-    private fun downloadString(url: String): String {
-        val request = Request.Builder().url(url).build()
-        okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Unexpected code $response")
-            return response.body.string()
-        }
+    companion object {
+        private const val INSTALLED_MANIFESTS_FILE = ".installed_manifests.json"
+        private const val CUSTOM_HOME_ROWS_KEY = "custom_home_rows"
     }
 }

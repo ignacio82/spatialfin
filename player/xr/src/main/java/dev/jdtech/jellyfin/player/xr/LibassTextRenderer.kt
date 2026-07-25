@@ -207,7 +207,7 @@ class LibassTextRenderer(
                     buffer.clear()
                     break
                 }
-                processFullSrtOrVttFile(bytes)
+                processFullSrtOrVttFile(bytes, sampleStartMs)
             } else {
                 // Per-event chunk. Samples are small (a few KB at most).
                 val bytes = ByteArray(size).also { data.get(it) }
@@ -445,60 +445,35 @@ class LibassTextRenderer(
     }
 
     private fun isFullSrtOrVttFile(bytes: ByteArray): Boolean {
-        if (bytes.size < 32) return false
-        val head = String(bytes, 0, minOf(bytes.size, 256), Charsets.UTF_8)
-        return head.startsWith("WEBVTT", ignoreCase = true) ||
-            Regex("""^\s*\d+\s*\r?\n\s*\d{2}:\d{2}""", RegexOption.MULTILINE).containsMatchIn(head)
+        return SrtOrVttSampleParser.looksLikeFile(bytes)
     }
 
     /**
      * Explode a full-file SRT or VTT sample into ASS Dialogue chunks. The synthetic ASS header
      * set in onStreamChanged() provides the styling context, so each cue is emitted as a
      * standard dialogue chunk that libass can render.
+     *
+     * Media3 rewrites embedded Matroska SubRip/WebVTT timestamps to be relative to each
+     * sample (normally starting at zero); [sampleStartMs] carries the real presentation
+     * timestamp. A side-loaded full file is delivered at sample time zero, so applying the
+     * same translation preserves its absolute timestamps.
      */
-    private fun processFullSrtOrVttFile(bytes: ByteArray) {
-        val text = String(bytes, Charsets.UTF_8)
-            .replace("\r\n", "\n")
-            .removePrefix("\uFEFF")
-        val timecodeRegex = Regex("""(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3})""")
+    private fun processFullSrtOrVttFile(bytes: ByteArray, sampleStartMs: Long) {
         var dispatched = 0
-        val blocks = text.split(Regex("\\n{2,}"))
-        for (block in blocks) {
-            val match = timecodeRegex.find(block) ?: continue
-            val startMs = parseSrtTime(match.groupValues[1]) ?: continue
-            val endMs = parseSrtTime(match.groupValues[2]) ?: continue
-            val lineEnd = block.indexOf('\n', match.range.last)
-            if (lineEnd < 0) continue
-            val body = block.substring(lineEnd + 1)
-                .trim()
-                .replace("\n", "\\N")
-                .replace(Regex("<[^>]+>"), "")
-            if (body.isEmpty()) continue
-
+        for (cue in SrtOrVttSampleParser.parse(bytes, sampleStartMs)) {
             val readOrder = srtReadOrder++
-            val chunk = "$readOrder,0,Default,,0,0,0,,$body"
-            onSubtitleText?.invoke(startMs, body.replace("\\N", " "))
+            val chunk = "$readOrder,0,Default,,0,0,0,,${cue.text}"
+            onSubtitleText?.invoke(cue.startMs, cue.text.replace("\\N", " "))
             if (displayEnabled) {
-                libassRenderer.processChunk(chunk.toByteArray(Charsets.UTF_8), startMs, (endMs - startMs).coerceAtLeast(0L))
+                libassRenderer.processChunk(
+                    chunk.toByteArray(Charsets.UTF_8),
+                    cue.startMs,
+                    (cue.endMs - cue.startMs).coerceAtLeast(0L),
+                )
             }
             dispatched++
         }
         Timber.i("subtitle: full-file SRT/VTT dispatched %d cues", dispatched)
-    }
-
-    private fun parseSrtTime(value: String): Long? {
-        val parts = value.replace(',', '.').split(':')
-        if (parts.size != 3) return null
-        return try {
-            val h = parts[0].toLong()
-            val m = parts[1].toLong()
-            val secParts = parts[2].split('.')
-            val s = secParts[0].toLong()
-            val ms = if (secParts.size > 1) secParts[1].padEnd(3, '0').take(3).toLong() else 0L
-            ((h * 3600 + m * 60 + s) * 1000) + ms
-        } catch (_: NumberFormatException) {
-            null
-        }
     }
 
     private companion object {
@@ -783,4 +758,106 @@ class LibassTextRenderer(
 
     override fun isReady(): Boolean = true
     override fun isEnded(): Boolean = false
+}
+
+/**
+ * Pure parser for both side-loaded subtitle files and Media3's sample-relative Matroska
+ * SubRip/WebVTT payloads. Kept independent from the renderer so timestamp behavior can be
+ * covered by local JVM tests.
+ */
+internal object SrtOrVttSampleParser {
+    internal data class Cue(
+        val startMs: Long,
+        val endMs: Long,
+        val text: String,
+    )
+
+    private const val TIMESTAMP_PATTERN =
+        """(?:\d+:\d{2}:\d{2}|\d{1,2}:\d{2})[.,]\d{1,3}"""
+    private val timingLineRegex = Regex(
+        """^\s*($TIMESTAMP_PATTERN)\s*-->\s*($TIMESTAMP_PATTERN)(?:\s+.*)?\s*$""",
+    )
+
+    fun looksLikeFile(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return false
+        val head = decode(bytes.copyOfRange(0, minOf(bytes.size, 256)))
+        return head.trimStart().startsWith("WEBVTT", ignoreCase = true) ||
+            head.lineSequence().any(timingLineRegex::matches)
+    }
+
+    fun parse(bytes: ByteArray, sampleStartMs: Long): List<Cue> {
+        val lines = decode(bytes).split('\n')
+        val cues = mutableListOf<Cue>()
+        var lineIndex = 0
+
+        while (lineIndex < lines.size) {
+            val match = timingLineRegex.matchEntire(lines[lineIndex])
+            if (match == null) {
+                lineIndex++
+                continue
+            }
+
+            val relativeStartMs = parseTimestamp(match.groupValues[1])
+            val relativeEndMs = parseTimestamp(match.groupValues[2])
+            var payloadEnd = lineIndex + 1
+            while (payloadEnd < lines.size && lines[payloadEnd].isNotBlank()) {
+                payloadEnd++
+            }
+
+            if (relativeStartMs != null && relativeEndMs != null) {
+                val body = lines.subList(lineIndex + 1, payloadEnd)
+                    .joinToString("\n")
+                    .trim()
+                    .replace("\n", "\\N")
+                    .replace(Regex("<[^>]+>"), "")
+                if (body.isNotEmpty()) {
+                    cues += Cue(
+                        startMs = sampleStartMs + relativeStartMs,
+                        endMs = sampleStartMs + relativeEndMs,
+                        text = body,
+                    )
+                }
+            }
+
+            lineIndex = payloadEnd + 1
+        }
+
+        return cues
+    }
+
+    private fun decode(bytes: ByteArray): String {
+        return String(bytes, Charsets.UTF_8)
+            .removePrefix("\uFEFF")
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+    }
+
+    private fun parseTimestamp(value: String): Long? {
+        val normalized = value.replace(',', '.')
+        val clockAndFraction = normalized.split('.', limit = 2)
+        if (clockAndFraction.size != 2) return null
+        val clock = clockAndFraction[0].split(':')
+        if (clock.size !in 2..3) return null
+
+        val hours: Long
+        val minutes: Long
+        val seconds: Long
+        if (clock.size == 3) {
+            hours = clock[0].toLongOrNull() ?: return null
+            minutes = clock[1].toLongOrNull() ?: return null
+            seconds = clock[2].toLongOrNull() ?: return null
+        } else {
+            hours = 0
+            minutes = clock[0].toLongOrNull() ?: return null
+            seconds = clock[1].toLongOrNull() ?: return null
+        }
+        if (minutes !in 0..59 || seconds !in 0..59) return null
+
+        val milliseconds = clockAndFraction[1]
+            .padEnd(3, '0')
+            .take(3)
+            .toLongOrNull()
+            ?: return null
+        return hours * 3_600_000 + minutes * 60_000 + seconds * 1_000 + milliseconds
+    }
 }

@@ -32,6 +32,7 @@ import dev.jdtech.jellyfin.plugins.model.PluginConfig
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRowTemplate
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,7 +64,8 @@ data class PluginHomeRowUi(
 @HiltViewModel
 class PluginSettingsViewModel @Inject constructor(
     private val repository: PluginRepository,
-    private val sharedPreferences: SharedPreferences
+    private val sharedPreferences: SharedPreferences,
+    private val appPreferences: AppPreferences
 ) : ViewModel() {
     private val _plugins = MutableStateFlow<List<PluginConfig>>(emptyList())
     val plugins = _plugins.asStateFlow()
@@ -92,25 +94,25 @@ class PluginSettingsViewModel @Inject constructor(
                 key = "continue",
                 name = "Continue Watching",
                 description = "Resume movies and episodes you already started.",
-                enabled = sharedPreferences.getBoolean(HOME_CONTINUE_WATCHING, true)
+                enabled = appPreferences.getValue(appPreferences.homeContinueWatching)
             ),
             JellyfinHomeRowUi(
                 key = "nextUp",
                 name = "Next Up",
                 description = "Continue watching shows from the next unwatched episode.",
-                enabled = sharedPreferences.getBoolean(HOME_NEXT_UP, true)
+                enabled = appPreferences.getValue(appPreferences.homeNextUp)
             ),
             JellyfinHomeRowUi(
                 key = "suggestions",
                 name = "Suggestions",
                 description = "Recommended Jellyfin titles at the top of Home.",
-                enabled = sharedPreferences.getBoolean(HOME_SUGGESTIONS, true)
+                enabled = appPreferences.getValue(appPreferences.homeSuggestions)
             ),
             JellyfinHomeRowUi(
                 key = "latest",
                 name = "Latest Media",
                 description = "Recently added items from your Jellyfin libraries.",
-                enabled = sharedPreferences.getBoolean(HOME_LATEST, true)
+                enabled = appPreferences.getValue(appPreferences.homeLatest)
             )
         )
         _musicAssistantRows.value = listOf(
@@ -176,14 +178,15 @@ class PluginSettingsViewModel @Inject constructor(
     }
 
     fun updateJellyfinHomeRow(key: String, enabled: Boolean) {
-        val preferenceKey = when (key) {
-            "continue" -> HOME_CONTINUE_WATCHING
-            "nextUp" -> HOME_NEXT_UP
-            "suggestions" -> HOME_SUGGESTIONS
-            "latest" -> HOME_LATEST
+        val pref = when (key) {
+            "continue" -> appPreferences.homeContinueWatching
+            "nextUp" -> appPreferences.homeNextUp
+            "suggestions" -> appPreferences.homeSuggestions
+            "latest" -> appPreferences.homeLatest
             else -> null
         } ?: return
-        sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
+        appPreferences.setValue(pref, enabled)
+        repository.notifySettingsChanged()
         refresh()
     }
 
@@ -199,6 +202,7 @@ class PluginSettingsViewModel @Inject constructor(
             else -> null
         } ?: return
         sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
+        repository.notifySettingsChanged()
         refresh()
     }
 

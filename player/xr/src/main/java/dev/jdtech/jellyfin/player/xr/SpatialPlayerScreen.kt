@@ -994,7 +994,7 @@ fun SpatialPlayerScreen(
         try {
             environment.preferredSpatialEnvironment =
                 if (passthroughEnabled) null
-                else SpatialEnvironment.SpatialEnvironmentPreference(exrImage = null, geometry = null)
+                else SpatialEnvironment.SpatialEnvironmentPreference(imageBasedLightingAsset = null, geometry = null)
         } catch (_: Exception) {}
     }
 

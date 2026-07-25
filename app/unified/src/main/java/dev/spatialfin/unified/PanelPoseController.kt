@@ -6,7 +6,6 @@ import androidx.xr.runtime.math.Ray
 import androidx.xr.runtime.math.Vector3
 import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.EntityMoveListener
-import androidx.xr.scenecore.GroupEntity
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import kotlin.math.abs
 

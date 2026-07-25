@@ -41,14 +41,14 @@ class PluginClientTest {
         val engine = PluginEngine(httpBridge, domParserBridge, utilitiesBridge)
         val jellyfinApi = mockk<JellyfinApi>(relaxed = true)
         every { jellyfinApi.userId } returns null
-        repository = PluginRepository(context, okHttpClient, jellyfinApi, ActiveSessionBus())
+        repository = PluginRepository(context, okHttpClient, jellyfinApi, ActiveSessionBus(), mockk(relaxed = true), mockk(relaxed = true))
         client = PluginClient(engine, repository)
     }
 
     @Test
     fun `test runPlugin`() = runBlocking {
         val pluginId = "test-plugin"
-        val scriptContent = "globalThis.executed = true;"
+        val scriptContent = "globalThis.executed = true; source.enable = function() {};"
         
         // Mock plugin installation manually. Plugins are scoped per Jellyfin user
         // under universal_plugins/<userId-or-default>/; the relaxed JellyfinApi
@@ -62,7 +62,7 @@ class PluginClientTest {
         
         assert(result.isSuccess)
         val runtime = result.getOrNull()!!
-        val executed = runtime.evaluate("globalThis.executed") as Boolean
+        val executed = runtime.evaluate("globalThis.executed")?.toString()?.toBoolean() ?: false
         assertEquals(true, executed)
         
         runtime.close()

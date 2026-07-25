@@ -87,13 +87,15 @@ constructor(
     private var hasLoadedData = false
 
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        when (key) {
-            appPreferences.homeSuggestions.backendName,
-            appPreferences.homeContinueWatching.backendName,
-            appPreferences.homeNextUp.backendName,
-            appPreferences.homeLatest.backendName,
-            appPreferences.displayRatings.backendName,
-            appPreferences.displayExtraInfo.backendName -> {
+        when {
+            key == appPreferences.homeSuggestions.backendName ||
+            key == appPreferences.homeContinueWatching.backendName ||
+            key == appPreferences.homeNextUp.backendName ||
+            key == appPreferences.homeLatest.backendName ||
+            key == appPreferences.displayRatings.backendName ||
+            key == appPreferences.displayExtraInfo.backendName ||
+            (key != null && key.startsWith("home_ma_")) -> {
+                cachedHome = null
                 loadData(forceRefresh = true)
             }
             else -> {
@@ -139,6 +141,7 @@ constructor(
     private fun observePluginSettingsChanges() {
         viewModelScope.launch {
             pluginRepository.settingsChanges.collect {
+                cachedHome = null
                 if (hasLoadedData && !_state.value.isLoading) {
                     loadData(forceRefresh = true)
                 }
