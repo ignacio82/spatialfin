@@ -41,7 +41,7 @@ When working in this repo, read files in this order unless the task is narrowly 
 3. `DESIGN.md` — visual identity, design tokens, and form-factor (XR/Beam/TV) design constraints. Follows the open-sourced [Google Labs `DESIGN.md` standard](https://github.com/google-labs-code/design.md) (YAML frontmatter with `colors` / `typography` / `rounded` / `spacing` / `components` tokens, then a canonical markdown body: Overview → Colors → Typography → Layout → Elevation & Depth → Shapes → Components → Do's and Don'ts). Treat the frontmatter as machine-readable and keep it in sync with any new component that picks up a distinct token surface.
 4. `buildSrc/src/main/kotlin/Versions.kt` — current version + SDK targets
 5. `settings.gradle.kts` — authoritative module list
-6. `app/unified/build.gradle.kts` — the only application build script (XR/Beam/TV staging happens here)
+6. `app/unified/build.gradle.kts` — the only application build script (XR/Beam/TV staging happens here). **Release signing fallback**: `buildTypes.release` checks if `SPATIALFIN_KEYSTORE` exists; if present, it uses the custom `release` signing config. Otherwise, it falls back to AGP's built-in `signingConfigs.getByName("debug")` so clean CI runners (where `~/.android/debug.keystore` has not been generated yet) complete release bundle builds (`bundleLibreRelease` / `bundleTvRelease`) without `validateSigning<Variant>` errors. <!-- updated 2026-07-27: release signing fallback for clean CI builds -->
 7. The relevant module under `app/`, `player/`, `core/`, `data/`, `modes/`, `settings/`, `setup/`
 
 Prefer source files and build files over generated artifacts or store assets.
