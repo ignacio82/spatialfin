@@ -149,13 +149,17 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
     dropdown.hidden = true;
   });
 
+  const setItemContent = (btn: HTMLButtonElement, icon: string, text: string) => {
+    btn.innerHTML = `<span class="overflow-icon" aria-hidden="true">${icon}</span><span class="overflow-label">${text}</span>`;
+  };
+
   // Overflow item: Trailer
   const trailerUrl = item.RemoteTrailers?.[0]?.Url;
   if (trailerUrl) {
     const trailerBtn = document.createElement('button');
     trailerBtn.className = 'overflow-item hero-trailer-btn';
     trailerBtn.type = 'button';
-    trailerBtn.textContent = '🎬 Watch Trailer';
+    setItemContent(trailerBtn, '🎬', 'Watch Trailer');
     trailerBtn.onclick = () => {
       dropdown.hidden = true;
       window.open(trailerUrl, '_blank', 'noopener');
@@ -167,7 +171,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const syncplayBtn = document.createElement('button');
   syncplayBtn.className = 'overflow-item hero-syncplay-btn';
   syncplayBtn.type = 'button';
-  syncplayBtn.textContent = '📺 SyncPlay Room';
+  setItemContent(syncplayBtn, '📺', 'SyncPlay Room');
   syncplayBtn.onclick = () => {
     dropdown.hidden = true;
     const playerSyncBtn = document.querySelector<HTMLButtonElement>('#browser-player-syncplay-btn');
@@ -184,7 +188,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
     const versionBtn = document.createElement('button');
     versionBtn.className = 'overflow-item hero-version-btn';
     versionBtn.type = 'button';
-    versionBtn.textContent = `🗄 Select Version (${versions.length})`;
+    setItemContent(versionBtn, '🗄', `Select Version (${versions.length})`);
     versionBtn.onclick = () => {
       dropdown.hidden = true;
       showVersionDialog(versions, currentItem, (selected) => {
@@ -199,7 +203,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const qualityBtn = document.createElement('button');
   qualityBtn.className = 'overflow-item hero-quality-btn';
   qualityBtn.type = 'button';
-  qualityBtn.textContent = '✨ Playback Quality';
+  setItemContent(qualityBtn, '✨', 'Playback Quality');
   qualityBtn.onclick = () => {
     dropdown.hidden = true;
     showQualityDialog();
@@ -214,9 +218,9 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const updateDownloadState = async () => {
     const isDownloaded = await offlineMediaRepository.isItemDownloaded(currentItem.Id);
     if (isDownloaded) {
-      downloadBtn.textContent = '🗑 Delete Offline Copy';
+      setItemContent(downloadBtn, '🗑', 'Delete Offline Copy');
     } else {
-      downloadBtn.textContent = '⬇ Download for Offline Playback';
+      setItemContent(downloadBtn, '⬇', 'Download for Offline Playback');
     }
   };
   void updateDownloadState();
@@ -232,14 +236,14 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
       }
     } else {
       downloadBtn.disabled = true;
-      downloadBtn.textContent = '⏳ Downloading (0%)…';
+      setItemContent(downloadBtn, '⏳', 'Downloading (0%)…');
       try {
         const downloadUrl = getDownloadUrl(currentItem.Id);
         const resp = await fetch(downloadUrl);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
         await offlineMediaRepository.saveMediaFileWithProgress(currentItem.Id, resp, (percent) => {
-          downloadBtn.textContent = `⏳ Downloading (${percent}%)…`;
+          setItemContent(downloadBtn, '⏳', `Downloading (${percent}%)…`);
         });
         await offlineMediaRepository.saveItemMetadata(currentItem);
         alert(`"${currentItem.Name}" downloaded successfully for offline playback!`);
@@ -257,7 +261,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const editIdsBtn = document.createElement('button');
   editIdsBtn.className = 'overflow-item hero-edit-ids-btn';
   editIdsBtn.type = 'button';
-  editIdsBtn.textContent = '✏ Edit external IDs';
+  setItemContent(editIdsBtn, '✏', 'Edit External IDs');
   editIdsBtn.onclick = () => {
     dropdown.hidden = true;
     showEditExternalIdsDialog(currentItem, () => {
@@ -270,7 +274,7 @@ export function createItemButtonsBar(options: ItemButtonsBarOptions): HTMLElemen
   const refreshBtn = document.createElement('button');
   refreshBtn.className = 'overflow-item hero-refresh-metadata-btn';
   refreshBtn.type = 'button';
-  refreshBtn.textContent = '🔄 Refresh Metadata';
+  setItemContent(refreshBtn, '🔄', 'Refresh Metadata');
   refreshBtn.onclick = async () => {
     dropdown.hidden = true;
     refreshBtn.disabled = true;

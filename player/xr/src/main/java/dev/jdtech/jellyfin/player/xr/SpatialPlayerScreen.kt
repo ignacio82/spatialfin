@@ -2279,7 +2279,7 @@ fun SpatialPlayerScreen(
                             .offset(x = logoPanelXDp.dp, y = logoPanelYDp.dp, z = 80.dp),
                     ) {
                         AnimatedVisibility(
-                            visible = isActuallyPaused && !isLocked,
+                            visible = isActuallyPaused,
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {
@@ -2305,7 +2305,7 @@ fun SpatialPlayerScreen(
                         .offset(x = clockPanelXDp.dp, y = clockPanelYDp.dp, z = 80.dp),
                 ) {
                     AnimatedVisibility(
-                        visible = isActuallyPaused && !isLocked,
+                        visible = isActuallyPaused,
                         enter = fadeIn(),
                         exit = fadeOut(),
                     ) {
@@ -2314,7 +2314,7 @@ fun SpatialPlayerScreen(
                             contentAlignment = Alignment.TopEnd,
                         ) {
                             dev.jdtech.jellyfin.core.presentation.components.PauseClockContent(
-                                visible = isActuallyPaused && !isLocked,
+                                visible = isActuallyPaused,
                                 positionMs = currentPosition,
                                 durationMs = duration,
                                 clockFontSize = 64.sp,

@@ -478,10 +478,21 @@ class PlaylistManager @Inject internal constructor(
                         mediaStream.language,
                         mediaStream.path!!.toUri(),
                         when (mediaStream.codec.lowercase()) {
-                            "subrip", "srt" -> MimeTypes.APPLICATION_SUBRIP
+                            "subrip", "srt", "mov_text", "tx3g", "mov-text", "subviewer", "microdvd" -> MimeTypes.APPLICATION_SUBRIP
                             "webvtt", "vtt" -> MimeTypes.TEXT_VTT
                             "ass", "ssa" -> MimeTypes.TEXT_SSA
-                            else -> MimeTypes.TEXT_UNKNOWN
+                            "ttml" -> MimeTypes.APPLICATION_TTML
+                            else -> {
+                                val pathExt = mediaStream.path?.substringBefore('?')
+                                    ?.substringAfterLast('.', "")?.lowercase().orEmpty()
+                                when (pathExt) {
+                                    "srt" -> MimeTypes.APPLICATION_SUBRIP
+                                    "vtt" -> MimeTypes.TEXT_VTT
+                                    "ass", "ssa" -> MimeTypes.TEXT_SSA
+                                    "ttml" -> MimeTypes.APPLICATION_TTML
+                                    else -> MimeTypes.TEXT_UNKNOWN
+                                }
+                            }
                         },
                     )
                 }

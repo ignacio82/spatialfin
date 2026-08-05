@@ -36,7 +36,14 @@ private val CLIENT_RENDERED_TEXT_SUBTITLE_FORMATS =
         "ssa",
         "vtt",
         "webvtt",
+        "mov_text",
+        "tx3g",
+        "mov-text",
+        "ttml",
+        "subviewer",
+        "microdvd",
     )
+
 
 // These formats are not currently assigned a decoder MIME type by the side-load path.
 private val LEGACY_SUBTITLE_FORMATS = listOf("sub", "smi")

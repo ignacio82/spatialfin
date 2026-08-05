@@ -9,7 +9,10 @@ import org.junit.Test
 class PlaybackSubtitleProfilesTest {
     @Test
     fun `client-rendered text formats never advertise embedded delivery`() {
-        val clientRenderedTextFormats = setOf("srt", "subrip", "ass", "ssa", "vtt", "webvtt")
+        val clientRenderedTextFormats = setOf(
+            "srt", "subrip", "ass", "ssa", "vtt", "webvtt",
+            "mov_text", "tx3g", "mov-text", "ttml", "subviewer", "microdvd"
+        )
 
         val embeddedClientRenderedTextProfiles =
             createPlaybackSubtitleProfiles().filter { profile ->
@@ -30,6 +33,12 @@ class PlaybackSubtitleProfilesTest {
                 external("ssa"),
                 external("vtt"),
                 external("webvtt"),
+                external("mov_text"),
+                external("tx3g"),
+                external("mov-text"),
+                external("ttml"),
+                external("subviewer"),
+                external("microdvd"),
                 external("sub"),
                 embedded("sub"),
                 external("smi"),

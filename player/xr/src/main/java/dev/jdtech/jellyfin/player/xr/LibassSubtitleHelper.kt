@@ -47,9 +47,11 @@ object LibassSubtitleHelper {
         val hasCompatibleTrack = selectedTextGroups.any { group ->
             (0 until group.length).any { i ->
                 val mime = group.getTrackFormat(i).sampleMimeType
-                // We now allow ASS/SSA and SRT/VTT fallback to libass for consistent styling
+                // We now allow ASS/SSA and SRT/VTT/TX3G fallback to libass for consistent styling
                 mime == MimeTypes.TEXT_SSA || mime == "text/x-ssa" || 
-                mime == MimeTypes.APPLICATION_SUBRIP || mime == MimeTypes.TEXT_VTT
+                mime == MimeTypes.APPLICATION_SUBRIP || mime == MimeTypes.TEXT_VTT ||
+                mime == MimeTypes.APPLICATION_TX3G || mime == "application/x-quicktime-tx3g" ||
+                mime == MimeTypes.APPLICATION_TTML
             }
         }
 

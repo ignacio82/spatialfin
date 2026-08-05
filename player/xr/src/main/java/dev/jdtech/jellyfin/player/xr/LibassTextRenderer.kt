@@ -68,7 +68,9 @@ class LibassTextRenderer(
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
         }
         return if (mimeType == MimeTypes.TEXT_SSA || mimeType == "text/x-ssa" ||
-            mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT) {
+            mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT ||
+            mimeType == MimeTypes.APPLICATION_TX3G || mimeType == "application/x-quicktime-tx3g" ||
+            mimeType == MimeTypes.APPLICATION_TTML) {
             RendererCapabilities.create(C.FORMAT_HANDLED)
         } else {
             if (mimeType == "application/x-media3-cues") {
@@ -91,7 +93,9 @@ class LibassTextRenderer(
         val format = formats[0]
         val mimeType = format.sampleMimeType
         val language = format.language ?: "und"
-        isSrtOrVtt = mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT
+        isSrtOrVtt = mimeType == MimeTypes.APPLICATION_SUBRIP || mimeType == MimeTypes.TEXT_VTT ||
+            mimeType == MimeTypes.APPLICATION_TX3G || mimeType == "application/x-quicktime-tx3g" ||
+            mimeType == MimeTypes.APPLICATION_TTML
         val initData = format.initializationData
         
         // Reset format state for the new stream

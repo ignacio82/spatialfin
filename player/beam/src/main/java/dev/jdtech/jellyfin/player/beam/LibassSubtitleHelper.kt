@@ -32,6 +32,9 @@ object LibassSubtitleHelper {
                         "text/x-ssa",
                         MimeTypes.APPLICATION_SUBRIP,
                         MimeTypes.TEXT_VTT,
+                        MimeTypes.APPLICATION_TX3G,
+                        "application/x-quicktime-tx3g",
+                        MimeTypes.APPLICATION_TTML,
                         -> true
                         else -> false
                     }

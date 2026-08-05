@@ -52,6 +52,7 @@ fun ProgressSection(
     currentPosition: Long,
     duration: Long,
     resetAutoHide: () -> Unit,
+    isLocked: Boolean = false,
 ) {
     val chapters = uiState.currentChapters
     var sliderValue by remember { mutableFloatStateOf(0f) }
@@ -158,15 +159,20 @@ fun ProgressSection(
                 val sliderInteractionSource = remember { MutableInteractionSource() }
                 Slider(
                     value = sliderValue,
+                    enabled = !isLocked,
                     onValueChange = {
-                        isDragging = true
-                        sliderValue = it
-                        resetAutoHide()
+                        if (!isLocked) {
+                            isDragging = true
+                            sliderValue = it
+                            resetAutoHide()
+                        }
                     },
                     onValueChangeFinished = {
-                        player.seekTo((sliderValue * duration).toLong())
-                        isDragging = false
-                        resetAutoHide()
+                        if (!isLocked) {
+                            player.seekTo((sliderValue * duration).toLong())
+                            isDragging = false
+                            resetAutoHide()
+                        }
                     },
                     interactionSource = sliderInteractionSource,
                     thumb = {

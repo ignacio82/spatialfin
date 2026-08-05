@@ -126,15 +126,14 @@ internal fun ControlPanelUI(
 
             Spacer(Modifier.weight(1f))
 
-            if (!isLocked) {
-                ProgressSection(
-                    uiState = uiState,
-                    player = player,
-                    currentPosition = currentPosition,
-                    duration = duration,
-                    resetAutoHide = resetAutoHide,
-                )
-            }
+            ProgressSection(
+                uiState = uiState,
+                player = player,
+                currentPosition = currentPosition,
+                duration = duration,
+                resetAutoHide = resetAutoHide,
+                isLocked = isLocked,
+            )
 
             Spacer(Modifier.height(48.dp))
 
