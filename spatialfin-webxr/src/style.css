@@ -764,7 +764,8 @@ canvas {
   margin-top: 24px;
 }
 
-.browser-hero-actions button {
+.browser-hero-actions > button,
+.browser-hero-actions > .hero-overflow-wrapper > button {
   min-width: 44px;
   width: 44px;
   height: 44px;
@@ -842,6 +843,9 @@ canvas {
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-width: unset;
+  height: auto;
+  min-height: 40px;
   padding: 10px 14px;
   background: transparent;
   color: #e1e8f0;
