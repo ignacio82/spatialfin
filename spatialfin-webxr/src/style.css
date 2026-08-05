@@ -713,7 +713,7 @@ canvas {
 .browser-hero {
   position: relative;
   min-height: min(48vw, 520px);
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #27313b;
   border-radius: 18px;
   background: #151a21;
@@ -723,6 +723,8 @@ canvas {
 .detail-backdrop {
   position: absolute;
   inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
   background: linear-gradient(100deg, #1d3448, #141a22);
   background-position: center;
   background-size: cover;
@@ -822,20 +824,41 @@ canvas {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 120;
+  z-index: 300;
   min-width: 260px;
   width: max-content;
   max-width: 360px;
-  background: linear-gradient(145deg, rgba(20, 26, 36, 0.96) 0%, rgba(14, 18, 26, 0.98) 100%);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  max-height: min(480px, calc(100vh - 120px));
+  overflow-y: auto;
+  background: linear-gradient(145deg, rgba(20, 26, 36, 0.98) 0%, rgba(14, 18, 26, 0.99) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 14px;
   padding: 8px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(164, 201, 254, 0.35) transparent;
+}
+
+.hero-overflow-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hero-overflow-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hero-overflow-dropdown::-webkit-scrollbar-thumb {
+  background: rgba(164, 201, 254, 0.35);
+  border-radius: 4px;
+}
+
+.hero-overflow-dropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(164, 201, 254, 0.65);
 }
 
 .overflow-item {
@@ -953,7 +976,7 @@ canvas {
 .library-tile > span:last-child { color: #a1afbd; font-size: .82rem; }
 .library-icon { color: #a4c9fe; font-size: 2rem; }
 
-.detail-page { position: relative; min-height: 560px; overflow: hidden; border-radius: 16px; background: #141a20; }
+.detail-page { position: relative; min-height: 560px; overflow: visible; border-radius: 16px; background: #141a20; }
 .detail-page .back-button { position: relative; z-index: 2; margin: 20px 0 0 24px; }
 .detail-copy { padding-top: 44px; }
 .detail-meta { color: #a4c9fe !important; font-weight: 650; }
