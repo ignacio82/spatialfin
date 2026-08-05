@@ -741,7 +741,7 @@ canvas {
 .browser-hero-copy,
 .detail-copy {
   position: relative;
-  z-index: 1;
+  z-index: 10;
   width: min(56%, 680px);
   padding: clamp(32px, 6vw, 88px);
 }
@@ -830,6 +830,7 @@ canvas {
   max-width: 360px;
   max-height: min(480px, calc(100vh - 120px));
   overflow-y: auto;
+  background: #141a24;
   background: linear-gradient(145deg, rgba(20, 26, 36, 0.98) 0%, rgba(14, 18, 26, 0.99) 100%);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
