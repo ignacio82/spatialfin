@@ -986,6 +986,12 @@ export class BrowserApp {
       }
       this.playback = playback;
       this.playingItem = item;
+      // Signal to automation (and any observer) that the negotiated playback —
+      // audio/subtitle tracks included — is now populated. Track dialogs render
+      // once from this.playback at open time, so openers must wait for this or
+      // they race the two PlaybackInfo round-trips above and render an empty
+      // (Off-only) subtitle/audio list.
+      this.player.dataset.playbackReady = 'true';
 
       const sources = item.MediaSources || [];
       this.playerSourceBtn.hidden = sources.length <= 1;
@@ -1043,6 +1049,7 @@ export class BrowserApp {
     this.video.removeAttribute('src');
     this.video.load();
     this.playback = null;
+    this.player.dataset.playbackReady = 'false';
     this.playingItem = null;
     this.currentChapters = [];
     this.nextEpisodeItem = null;

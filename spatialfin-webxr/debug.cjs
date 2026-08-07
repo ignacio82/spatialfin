@@ -664,10 +664,17 @@ async function run() {
       );
     });
     await page.$eval('.detail-page .primary-action', (element) => element.click());
+    // Wait for playbackReady, not just button visibility: the audio/subtitle
+    // buttons are shown the instant the player opens, but this.playback (and its
+    // subtitle tracks, including the synthesized SRT fallback) is only populated
+    // after two PlaybackInfo round-trips. Track dialogs render once from that
+    // snapshot, so opening before it lands renders an Off-only list and the SRT
+    // assertion below flakes (green locally, red on slower CI).
     await page.waitForFunction(() => {
       const player = document.querySelector('#browser-player');
       const audioBtn = document.querySelector('#browser-player-audio-btn');
-      return player && !player.hidden && audioBtn && !audioBtn.hidden;
+      return player && !player.hidden && player.dataset.playbackReady === 'true' &&
+        audioBtn && !audioBtn.hidden;
     }, {timeout: 20_000});
     await page.$eval('#browser-player-subtitles-btn', (element) => element.click());
     await page.waitForSelector('#browser-player-dialog-backdrop:not([hidden]) .player-dialog-item');
