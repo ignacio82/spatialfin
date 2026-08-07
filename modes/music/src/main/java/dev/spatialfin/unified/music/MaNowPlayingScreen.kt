@@ -919,7 +919,7 @@ private fun MaChaptersPanel(
                         modifier = Modifier.padding(bottom = 12.dp),
                     )
                 }
-                itemsIndexed(chapters, key = { _, c -> "ch|" + c.position }) { index, chapter ->
+                itemsIndexed(chapters, key = { index, c -> "ch|$index|" + c.position }) { index, chapter ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

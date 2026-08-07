@@ -1660,7 +1660,10 @@ private fun TvCastCard(person: dev.jdtech.jellyfin.models.SpatialFinItemPerson, 
 private fun TvChaptersRow(chapters: List<dev.jdtech.jellyfin.models.SpatialFinChapter>, onChapterClick: (dev.jdtech.jellyfin.models.SpatialFinChapter) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Chapters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(chapters, key = { it.startPosition }) { TvChapterCard(it) { onChapterClick(it) } } }
+        // Key by list index, not startPosition — Jellyfin often emits several chapters
+        // at the same position (e.g. a leading marker plus "Chapter 1" both at 0), and
+        // duplicate LazyRow keys crash ("Key 0 already used").
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { itemsIndexed(chapters, key = { index, chapter -> "$index-${chapter.startPosition}" }) { _, chapter -> TvChapterCard(chapter) { onChapterClick(chapter) } } }
     }
 }
 

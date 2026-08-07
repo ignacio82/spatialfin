@@ -3657,7 +3657,10 @@ private fun BeamChaptersRow(
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(chapters, key = { it.startPosition }) { chapter ->
+            // Key by list index, not startPosition — Jellyfin often emits several
+            // chapters at the same position (e.g. a leading marker plus "Chapter 1"
+            // both at 0), and duplicate LazyRow keys crash ("Key 0 already used").
+            itemsIndexed(chapters, key = { index, chapter -> "$index-${chapter.startPosition}" }) { _, chapter ->
                 BeamChapterCard(chapter = chapter, onClick = { onChapterClick(chapter) })
             }
         }

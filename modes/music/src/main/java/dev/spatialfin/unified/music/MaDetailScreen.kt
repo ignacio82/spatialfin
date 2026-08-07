@@ -179,7 +179,7 @@ private fun LoadedBody(
             }
             if (chapters.isNotEmpty()) {
                 item("chapters-label") { SectionLabel(text = "Chapters") }
-                items(chapters, key = { "ch|" + it.position }) { chapter ->
+                itemsIndexed(chapters, key = { index, c -> "ch|$index|" + c.position }) { _, chapter ->
                     ChapterRow(chapter = chapter, onClick = { onPlayChapter(chapter) })
                 }
             }
