@@ -112,6 +112,7 @@ import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
+import dev.jdtech.jellyfin.models.browsableItemKinds
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionChipLabel
@@ -161,7 +162,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import coil3.compose.AsyncImage
@@ -187,15 +187,7 @@ constructor(
     fun load(parentId: UUID, title: String, type: CollectionType) {
         viewModelScope.launch {
             _state.emit(_state.value.copy(isLoading = true, error = null, title = title))
-            val includeTypes =
-                when (type) {
-                    CollectionType.Movies -> listOf(BaseItemKind.FOLDER, BaseItemKind.MOVIE)
-                    CollectionType.TvShows -> listOf(BaseItemKind.FOLDER, BaseItemKind.SERIES)
-                    CollectionType.BoxSets -> listOf(BaseItemKind.FOLDER, BaseItemKind.BOX_SET)
-                    CollectionType.Mixed,
-                    CollectionType.Folders -> listOf(BaseItemKind.FOLDER, BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE, BaseItemKind.SEASON, BaseItemKind.BOX_SET)
-                    else -> null
-                }
+            val includeTypes = type.browsableItemKinds(foldersFirst = true)
             val recursive = false
 
             runCatching {
@@ -787,6 +779,24 @@ fun BeamHomeScreen(
                     }
                 }
 
+                // Libraries with no "Latest" row of their own — either because the
+                // library has nothing recent, or because the Latest preference is off
+                // entirely. Their per-library "See All" header is the only way into a
+                // library on Beam, so without this they'd be unreachable.
+                val unlistedLibraries =
+                    state.libraries.filter { library ->
+                        state.views.none { it.view.id == library.id }
+                    }
+                if (unlistedLibraries.isNotEmpty()) {
+                    item { BeamHomeSectionHeader(title = "Your libraries") }
+                    item {
+                        BeamLibraryChipRow(
+                            libraries = unlistedLibraries,
+                            onOpenLibrary = onOpenLibrary,
+                        )
+                    }
+                }
+
                 // Library sections with carousels
                 if (state.views.isNotEmpty()) {
                     state.views.forEach { homeView ->
@@ -923,6 +933,36 @@ fun BeamHomeScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeamLibraryChipRow(
+    libraries: List<dev.jdtech.jellyfin.models.SpatialFinCollection>,
+    onOpenLibrary: (UUID, String, CollectionType) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
+        items(libraries, key = { it.id }) { library ->
+            Card(
+                onClick = { onOpenLibrary(library.id, library.name, library.type) },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Text(
+                    text = library.name,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
             }
         }
     }
@@ -1585,6 +1625,21 @@ fun BeamItemDetailScreen(
                 parentId = null,
                 onBack = onBack,
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
+            )
+            return
+        }
+        // A still image has no metadata worth a detail page — go straight to the
+        // viewer. Routing through Detail (rather than a dedicated Beam route) means
+        // every surface that already calls onOpenItem for unrecognised kinds — home
+        // rows, library grids, folder browse, search — opens photos for free.
+        if (itemData is dev.jdtech.jellyfin.models.SpatialFinPhoto) {
+            dev.jdtech.jellyfin.presentation.film.PhotoViewerScreen(
+                photoId = itemData.id,
+                parentId = itemData.parentId,
+                onBack = onBack,
+                // Full-bleed at the top, but keep the page counter clear of the bottom nav.
+                modifier = Modifier.fillMaxSize()
+                    .padding(bottom = contentPadding.calculateBottomPadding()),
             )
             return
         }

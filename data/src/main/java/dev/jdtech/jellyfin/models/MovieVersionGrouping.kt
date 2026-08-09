@@ -47,11 +47,16 @@ fun SpatialFinMovie.versionChipLabel(): String {
 
 fun SpatialFinItem.movieVersionGroupKey(): String? {
     val title = canonicalMovieTitle() ?: return null
-    val year = inferredMovieYear()
+    // A year is required evidence that two same-titled files are alternate versions of
+    // one release. Home-video libraries have no scraped year at all, so grouping on
+    // "title|unknown" silently hid every clip that shared a name with another one
+    // (IMG_0001 in two folders, Birthday.mp4 next to Birthday.mov). Real movie rips
+    // carry a year from the scraper or the filename parser, so they still collapse.
+    val year = inferredMovieYear() ?: return null
     return buildString {
         append(title)
         append('|')
-        append(year ?: "unknown")
+        append(year)
     }
 }
 

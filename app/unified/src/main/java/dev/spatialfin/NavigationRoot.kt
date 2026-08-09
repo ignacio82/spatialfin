@@ -82,6 +82,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.SpatialFinPhoto
 import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.player.xr.voice.GeminiNanoService
@@ -96,6 +97,7 @@ import dev.jdtech.jellyfin.presentation.film.LibraryScreen
 import dev.jdtech.jellyfin.presentation.film.MediaScreen
 import dev.jdtech.jellyfin.presentation.film.MovieScreen
 import dev.jdtech.jellyfin.presentation.film.PersonScreen
+import dev.jdtech.jellyfin.presentation.film.PhotoViewerScreen
 import dev.jdtech.jellyfin.presentation.film.SeasonScreen
 import dev.jdtech.jellyfin.presentation.film.ShowScreen
 import dev.jdtech.jellyfin.presentation.local.LocalMediaScreen
@@ -188,6 +190,9 @@ data class AudioDetailRoute(
 @Serializable data class SeasonRoute(val seasonId: String)
 
 @Serializable data class PersonRoute(val personId: String)
+
+/** [parentId] lets the viewer page through the rest of the containing folder. */
+@Serializable data class PhotoRoute(val photoId: String, val parentId: String? = null)
 
 @Serializable data class SettingsRoute(val indexes: IntArray)
 
@@ -850,6 +855,14 @@ fun NavigationRoot(
                     )
                 }
             }
+            composable<PhotoRoute> { backStackEntry ->
+                val route: PhotoRoute = backStackEntry.toRoute()
+                PhotoViewerScreen(
+                    photoId = UUID.fromString(route.photoId),
+                    parentId = route.parentId?.let(UUID::fromString),
+                    onBack = { navController.safePopBackStack() },
+                )
+            }
             composable<AudioDetailRoute> { backStackEntry ->
                 val route: AudioDetailRoute = backStackEntry.toRoute()
                 JellyfinAudioDetailScreen(
@@ -1079,6 +1092,10 @@ private fun navigateToItem(navController: NavHostController, item: SpatialFinIte
         is SpatialFinBoxSet ->
             navController.safeNavigate(
                 CollectionRoute(collectionId = item.id.toString(), collectionName = item.name)
+            )
+        is SpatialFinPhoto ->
+            navController.safeNavigate(
+                PhotoRoute(photoId = item.id.toString(), parentId = item.parentId?.toString())
             )
         is SpatialFinMovie -> navController.safeNavigate(MovieRoute(movieId = item.id.toString()))
         is SpatialFinShow -> navController.safeNavigate(ShowRoute(showId = item.id.toString()))

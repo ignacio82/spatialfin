@@ -197,7 +197,13 @@ constructor(
                     loadResumeItems()
                     loadNextUpItems()
                     if (connectionMonitor.shouldUseOfflineRepository()) {
-                        _state.update { it.copy(suggestionsSection = null, views = persistentListOf()) }
+                        _state.update {
+                            it.copy(
+                                suggestionsSection = null,
+                                views = persistentListOf(),
+                                libraries = persistentListOf(),
+                            )
+                        }
                         loadOfflineLibrarySections()
                         _state.emit(_state.value.copy(isLoading = false))
                         loadNetworkShareSections()
@@ -236,6 +242,15 @@ constructor(
                             cacheCurrentHome(serverId)
                         } catch (e: Exception) {
                             Timber.w(e, "loadMusicAssistantItems failed after first paint")
+                        }
+                        // Before loadViews: the library inventory is a single call and
+                        // the TV/Beam library pickers are blocked on it, whereas
+                        // loadViews is N+1 and may be switched off entirely.
+                        try {
+                            loadLibraries()
+                            cacheCurrentHome(serverId)
+                        } catch (e: Exception) {
+                            Timber.w(e, "loadLibraries failed after first paint")
                         }
                         try {
                             loadViews()
@@ -366,6 +381,16 @@ constructor(
             }
 
         _state.emit(_state.value.copy(nextUpSection = section))
+    }
+
+    /**
+     * The server's library inventory, deliberately independent of `homeLatest` and of
+     * whether a library has anything recent in it. [loadViews] answers "what is new",
+     * this answers "what exists" — the TV and Beam library pickers need the latter.
+     */
+    private suspend fun loadLibraries() {
+        Timber.i("Loading libraries")
+        _state.update { it.copy(libraries = repository.getLibraries().toImmutableList()) }
     }
 
     private suspend fun loadViews() {

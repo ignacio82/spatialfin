@@ -189,7 +189,7 @@ class JellyfinRepositoryImpl(
                     sortOrder = listOf(ItemSortOrder.fromName(sortOrder.sortString)),
                     startIndex = startIndex,
                     limit = limit,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
                 .items
@@ -246,7 +246,7 @@ class JellyfinRepositoryImpl(
                     personIds = personIds,
                     includeItemTypes = includeTypes,
                     recursive = recursive,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
                 ?.items
@@ -262,9 +262,15 @@ class JellyfinRepositoryImpl(
                     userId,
                     filters = listOf(ItemFilter.IS_FAVORITE),
                     includeItemTypes =
-                        listOf(BaseItemKind.MOVIE, BaseItemKind.SERIES, BaseItemKind.EPISODE),
+                        listOf(
+                            BaseItemKind.MOVIE,
+                            BaseItemKind.SERIES,
+                            BaseItemKind.EPISODE,
+                            BaseItemKind.VIDEO,
+                            BaseItemKind.MUSIC_VIDEO,
+                        ),
                     recursive = true,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
                 ?.items
@@ -285,9 +291,13 @@ class JellyfinRepositoryImpl(
                             BaseItemKind.SERIES,
                             BaseItemKind.EPISODE,
                             BaseItemKind.BOX_SET,
+                            // Home-video / music-video libraries store playable files as
+                            // Video / MusicVideo; without these they are unsearchable.
+                            BaseItemKind.VIDEO,
+                            BaseItemKind.MUSIC_VIDEO,
                         ),
                     recursive = true,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
                 ?.items
@@ -414,7 +424,7 @@ class JellyfinRepositoryImpl(
                     sortBy = listOf(ItemSortBy.SORT_NAME),
                     sortOrder = listOf(ItemSortOrder.ASCENDING),
                     limit = limit,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT, ItemFields.OVERVIEW),
+                    fields = BROWSE_ITEM_FIELDS + ItemFields.OVERVIEW,
                 )
                 .content
                 .items
@@ -455,7 +465,7 @@ class JellyfinRepositoryImpl(
                         sortBy = listOf(ItemSortBy.SORT_NAME),
                         sortOrder = listOf(ItemSortOrder.ASCENDING),
                         limit = limit,
-                        fields = AUDIO_ITEM_FIELDS + listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                        fields = AUDIO_ITEM_FIELDS + BROWSE_ITEM_FIELDS,
                     )
                     .content
                     .items
@@ -575,7 +585,7 @@ class JellyfinRepositoryImpl(
                     sortBy = listOf(ItemSortBy.SORT_NAME),
                     sortOrder = listOf(ItemSortOrder.ASCENDING),
                     limit = limit,
-                    fields = AUDIO_ITEM_FIELDS + listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = AUDIO_ITEM_FIELDS + BROWSE_ITEM_FIELDS,
                 )
                 .content
                 .items
@@ -622,7 +632,13 @@ class JellyfinRepositoryImpl(
                 .getResumeItems(
                     jellyfinApi.userId!!,
                     limit = 12,
-                    includeItemTypes = listOf(BaseItemKind.MOVIE, BaseItemKind.EPISODE),
+                    includeItemTypes =
+                        listOf(
+                            BaseItemKind.MOVIE,
+                            BaseItemKind.EPISODE,
+                            BaseItemKind.VIDEO,
+                            BaseItemKind.MUSIC_VIDEO,
+                        ),
                 )
                 .content
                 .items
@@ -637,7 +653,7 @@ class JellyfinRepositoryImpl(
                     jellyfinApi.userId!!,
                     parentId = parentId,
                     limit = 16,
-                    fields = listOf(ItemFields.CHILD_COUNT, ItemFields.RECURSIVE_ITEM_COUNT),
+                    fields = BROWSE_ITEM_FIELDS,
                 )
                 .content
                 .let(SeriesFilter::dropEmptyShows)
@@ -1564,6 +1580,23 @@ class JellyfinRepositoryImpl(
 
     companion object {
         private val DASHLESS_UUID = Regex("^[0-9a-fA-F]{32}$")
+        /**
+         * Fields every browse/search query needs.
+         *
+         * `PARENT_ID` is **not** returned by default (verified against Jellyfin
+         * 10.11.11) — without it `SpatialFinPhoto.parentId` is always null and the
+         * photo viewer can only ever show the single tapped image instead of paging
+         * through its folder. `WIDTH`/`HEIGHT` are likewise field-gated. All three are
+         * a handful of bytes per item.
+         */
+        internal val BROWSE_ITEM_FIELDS =
+            listOf(
+                ItemFields.CHILD_COUNT,
+                ItemFields.RECURSIVE_ITEM_COUNT,
+                ItemFields.PARENT_ID,
+                ItemFields.WIDTH,
+                ItemFields.HEIGHT,
+            )
         private val AUDIO_ITEM_FIELDS =
             listOf(
                 ItemFields.MEDIA_SOURCES,

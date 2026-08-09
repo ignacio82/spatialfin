@@ -39,7 +39,7 @@ private fun dev.jdtech.jellyfin.presentation.local.LocalMediaScreenLayout(hasPer
     - needsLanguageSetup: STABLE (primitive type)
     - needsAiSetup: STABLE (primitive type)
     - serverPromptDismissed: STABLE (primitive type)
-    - state: UNSTABLE (has mutable properties or unstable members)
+    - state: RUNTIME (requires runtime check)
     - onGrantPermission: STABLE (function type)
     - onItemClick: STABLE (function type)
     - onManageServersClick: STABLE (function type)
@@ -103,7 +103,7 @@ public fun dev.spatialfin.NavigationRoot(navController: androidx.navigation.NavH
   skippable: false
   restartable: true
   params:
-    - navController: UNSTABLE (has mutable properties or unstable members)
+    - navController: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - hasServers: STABLE (primitive type)
     - hasCurrentServer: STABLE (primitive type)
     - hasCurrentUser: STABLE (primitive type)
@@ -155,9 +155,29 @@ public fun dev.spatialfin.presentation.settings.components.SubtitlePreviewCard(a
 
 @Composable
 public fun dev.spatialfin.rememberPlaybackLauncher(): kotlin.Function1<dev.jdtech.jellyfin.presentation.player.PlayRequest, kotlin.Unit>
+  skippable: false
+  restartable: false
+  params:
+
+@Composable
+private fun dev.spatialfin.unified.BadgeChip(text: kotlin.String): kotlin.Unit
   skippable: true
   restartable: true
   params:
+    - text: STABLE (String is immutable)
+
+@Composable
+private fun dev.spatialfin.unified.ChapterSelectionDialog(chapters: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinChapter>, activeChapter: dev.jdtech.jellyfin.models.SpatialFinChapter?, baseUrl: kotlin.String, itemId: java.util.UUID, accessToken: kotlin.String?, onSelectChapter: kotlin.Function1<dev.jdtech.jellyfin.models.SpatialFinChapter, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - chapters: RUNTIME (requires runtime check)
+    - activeChapter: UNSTABLE (has mutable properties or unstable members)
+    - baseUrl: STABLE (String is immutable)
+    - itemId: UNSTABLE (has mutable properties or unstable members)
+    - accessToken: STABLE (class with no mutable properties)
+    - onSelectChapter: STABLE (function type)
+    - onDismiss: STABLE (function type)
 
 @Composable
 private fun dev.spatialfin.unified.DisambiguationCard(index: kotlin.Int, item: dev.jdtech.jellyfin.models.SpatialFinItem, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -165,7 +185,7 @@ private fun dev.spatialfin.unified.DisambiguationCard(index: kotlin.Int, item: d
   restartable: true
   params:
     - index: STABLE (primitive type)
-    - item: RUNTIME (requires runtime check)
+    - item: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - onClick: STABLE (function type)
 
 @Composable
@@ -180,7 +200,7 @@ public fun dev.spatialfin.unified.DisambiguationCarousel(query: kotlin.String, i
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
-public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.sdk.model.api.SessionInfoDto?, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.sdk.model.api.SessionInfoDto?, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, chapters: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinChapter>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, onSeekTo: kotlin.Function1<kotlin.Long, kotlin.Unit>, onSeekBy: kotlin.Function1<kotlin.Long, kotlin.Unit>, onSetVolume: kotlin.Function1<kotlin.Int, kotlin.Unit>, onToggleMute: kotlin.Function0<kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -189,9 +209,14 @@ public fun dev.spatialfin.unified.RemoteControlMiniPlayer(session: org.jellyfin.
     - baseUrl: STABLE (String is immutable)
     - accessToken: STABLE (class with no mutable properties)
     - mediaStreams: RUNTIME (requires runtime check)
+    - chapters: RUNTIME (requires runtime check)
     - onSelectSession: STABLE (function type)
     - onPlayStateCommand: STABLE (function type)
     - onGeneralCommand: STABLE (function type)
+    - onSeekTo: STABLE (function type)
+    - onSeekBy: STABLE (function type)
+    - onSetVolume: STABLE (function type)
+    - onToggleMute: STABLE (function type)
     - onDismiss: STABLE (function type)
     - modifier: STABLE (marked @Stable or @Immutable)
 
@@ -203,7 +228,7 @@ public fun dev.spatialfin.unified.RemoteControlMiniPlayerHost(modifier: androidx
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
-public fun dev.spatialfin.unified.RemoteControlView(session: org.jellyfin.sdk.model.api.SessionInfoDto, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+public fun dev.spatialfin.unified.RemoteControlView(session: org.jellyfin.sdk.model.api.SessionInfoDto, availableSessions: kotlin.collections.List<org.jellyfin.sdk.model.api.SessionInfoDto>, baseUrl: kotlin.String, accessToken: kotlin.String?, mediaStreams: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinMediaStream>, chapters: kotlin.collections.List<dev.jdtech.jellyfin.models.SpatialFinChapter>, onSelectSession: kotlin.Function1<kotlin.String, kotlin.Unit>, onPlayStateCommand: kotlin.Function1<org.jellyfin.sdk.model.api.PlaystateCommand, kotlin.Unit>, onGeneralCommand: kotlin.Function2<org.jellyfin.sdk.model.api.GeneralCommandType, kotlin.collections.Map<kotlin.String, kotlin.String>?, kotlin.Unit>, onSeekTo: kotlin.Function1<kotlin.Long, kotlin.Unit>, onSeekBy: kotlin.Function1<kotlin.Long, kotlin.Unit>, onSetVolume: kotlin.Function1<kotlin.Int, kotlin.Unit>, onToggleMute: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
@@ -212,9 +237,14 @@ public fun dev.spatialfin.unified.RemoteControlView(session: org.jellyfin.sdk.mo
     - baseUrl: STABLE (String is immutable)
     - accessToken: STABLE (class with no mutable properties)
     - mediaStreams: RUNTIME (requires runtime check)
+    - chapters: RUNTIME (requires runtime check)
     - onSelectSession: STABLE (function type)
     - onPlayStateCommand: STABLE (function type)
     - onGeneralCommand: STABLE (function type)
+    - onSeekTo: STABLE (function type)
+    - onSeekBy: STABLE (function type)
+    - onSetVolume: STABLE (function type)
+    - onToggleMute: STABLE (function type)
     - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
@@ -232,7 +262,7 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.FullSpaceContent(session:
   restartable: true
   params:
     - session: UNSTABLE (has mutable properties or unstable members)
-    - navController: UNSTABLE (has mutable properties or unstable members)
+    - navController: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - state: UNSTABLE (has mutable properties or unstable members)
     - appPreferences: STABLE (class with no mutable properties)
     - onboardingCompleted: STABLE (primitive type)
@@ -256,7 +286,7 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.HomeSpaceContent(navContr
   skippable: false
   restartable: true
   params:
-    - navController: UNSTABLE (has mutable properties or unstable members)
+    - navController: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - state: UNSTABLE (has mutable properties or unstable members)
     - appPreferences: STABLE (class with no mutable properties)
     - onboardingCompleted: STABLE (primitive type)
@@ -281,13 +311,13 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.XrContent(session: androi
   restartable: true
   params:
     - session: UNSTABLE (has mutable properties or unstable members)
-    - navController: UNSTABLE (has mutable properties or unstable members)
-    - lifecycleOwner: RUNTIME (requires runtime check)
-    - coroutineScope: RUNTIME (requires runtime check)
-    - context: RUNTIME (requires runtime check)
+    - navController: UNKNOWN (interface or non-final class; concrete implementation unknown)
+    - lifecycleOwner: UNKNOWN (interface or non-final class; concrete implementation unknown)
+    - coroutineScope: UNKNOWN (interface or non-final class; concrete implementation unknown)
+    - context: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - state: UNSTABLE (has mutable properties or unstable members)
     - appPreferences: STABLE (class with no mutable properties)
-    - repository: RUNTIME (requires runtime check)
+    - repository: UNKNOWN (interface or non-final class; concrete implementation unknown)
     - initialSearchQueryExtra: STABLE (class with no mutable properties)
     - onboardingCompleted: STABLE (primitive type)
     - onFinishAffinity: STABLE (function type)
@@ -296,7 +326,7 @@ private fun dev.spatialfin.unified.UnifiedMainActivity.XrContent(session: androi
 @Composable
 private fun dev.spatialfin.unified.rememberBooleanPreferenceState(appPreferences: dev.jdtech.jellyfin.settings.domain.AppPreferences, preference: dev.jdtech.jellyfin.settings.domain.models.Preference<kotlin.Boolean>): androidx.compose.runtime.State<kotlin.Boolean>
   skippable: false
-  restartable: true
+  restartable: false
   params:
     - appPreferences: STABLE (class with no mutable properties)
     - preference: RUNTIME (requires runtime check)
@@ -304,7 +334,7 @@ private fun dev.spatialfin.unified.rememberBooleanPreferenceState(appPreferences
 @Composable
 private fun dev.spatialfin.unified.rememberPrefState(preference: dev.jdtech.jellyfin.settings.domain.models.Preference<*>, read: kotlin.Function0<T of dev.spatialfin.unified.rememberPrefState>): androidx.compose.runtime.State<T of dev.spatialfin.unified.rememberPrefState>
   skippable: false
-  restartable: true
+  restartable: false
   params:
     - preference: RUNTIME (requires runtime check)
     - read: STABLE (function type)

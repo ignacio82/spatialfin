@@ -156,7 +156,6 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinPlaylist
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
-import dev.jdtech.jellyfin.models.View
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.toAudioQueueItem
 import dev.jdtech.jellyfin.models.versionChipLabel
@@ -182,6 +181,8 @@ private enum class TvRoute {
     AudioDetail,
     /** Network share (SMB/NFS) content browser. */
     NetworkShare,
+    /** Full-screen still-image viewer for home-video / photo libraries. */
+    Photo,
 }
 
 private data class TvNavItem(val route: TvRoute, val label: String, val icon: ImageVector)
@@ -239,7 +240,10 @@ fun TvNavigationRoot(
 
     BackHandler(enabled = navStack.size > 1) { popBack() }
 
-    var selectedView by remember { mutableStateOf<View?>(null) }
+    // The library inventory (HomeState.libraries), not a "Latest" row — see the
+    // HomeState doc: deriving this from `views` left the Libraries tab empty whenever
+    // the user switched the Latest home preference off.
+    var selectedLibrary by remember { mutableStateOf<SpatialFinCollection?>(null) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedShowId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSeasonId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -251,6 +255,8 @@ fun TvNavigationRoot(
     var selectedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPluginRowId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedNetworkShareId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPhotoId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedPhotoParentId by rememberSaveable { mutableStateOf<String?>(null) }
     var focusedBackgroundUrl by remember { mutableStateOf<Any?>(null) }
 
     // Make the MA session track local SendSpin playback → one unified player.
@@ -333,6 +339,11 @@ fun TvNavigationRoot(
                     )
                 )
             }
+            is dev.jdtech.jellyfin.models.SpatialFinPhoto -> {
+                selectedPhotoId = item.id.toString()
+                selectedPhotoParentId = item.parentId?.toString()
+                navigate(TvRoute.Photo)
+            }
             is SpatialFinShow -> { selectedShowId = item.id.toString(); navigate(TvRoute.Show) }
             is SpatialFinSeason -> { selectedSeasonId = item.id.toString(); navigate(TvRoute.Season) }
             is SpatialFinCollection -> Unit
@@ -382,7 +393,7 @@ fun TvNavigationRoot(
                         navItems = visibleNavItems.map { it.route.name to (it.label to it.icon) },
                         onNavigate = { routeName ->
                             val itemRoute = TvRoute.valueOf(routeName)
-                            if (itemRoute == TvRoute.Library) selectedView = null
+                            if (itemRoute == TvRoute.Library) selectedLibrary = null
                             navigate(itemRoute)
                         },
                         user = state.currentUser,
@@ -399,32 +410,32 @@ fun TvNavigationRoot(
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
-                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedView = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) }, { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) })
+                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedLibrary = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) }, { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) })
                         TvRoute.Search -> TvSearchScreen(::openItem)
                         TvRoute.Library -> {
-                            val view = selectedView
-                            if (view != null && view.type in AUDIO_COLLECTION_TYPES) {
+                            val library = selectedLibrary
+                            if (library != null && library.type in AUDIO_COLLECTION_TYPES) {
                                 JellyfinAudioLibraryScreen(
-                                    libraryId = view.id,
-                                    libraryName = view.name,
-                                    libraryType = view.type,
+                                    libraryId = library.id,
+                                    libraryName = library.name,
+                                    libraryType = library.type,
                                     onBack = { popBack() },
                                     onDetailClick = { id, title, detailType ->
                                         openJellyfinAudioDetail(
                                             itemId = id,
                                             title = title,
                                             detailType = detailType,
-                                            parentId = view.id,
+                                            parentId = library.id,
                                         )
                                     },
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             } else {
                                 TvLibraryScreen(
-                                    selectedView,
-                                    homeState.views.map { it.view },
+                                    library,
+                                    homeState.libraries,
                                     { popBack() },
-                                    { selectedView = it },
+                                    { selectedLibrary = it },
                                     ::openItem,
                                 )
                             }
@@ -494,6 +505,14 @@ fun TvNavigationRoot(
                         TvRoute.NetworkShare ->
                             selectedNetworkShareId?.let { shareId ->
                                 TvNetworkShareScreen(shareId = shareId, onBack = { popBack() }, onOpenItem = ::openItem)
+                            } ?: popBack()
+                        TvRoute.Photo ->
+                            selectedPhotoId?.let { photoId ->
+                                dev.jdtech.jellyfin.presentation.film.PhotoViewerScreen(
+                                    photoId = UUID.fromString(photoId),
+                                    parentId = selectedPhotoParentId?.let(UUID::fromString),
+                                    onBack = { popBack() },
+                                )
                             } ?: popBack()
                     }
                 }
@@ -619,7 +638,7 @@ private fun TvHomeScreen(
     homeState: HomeState,
     state: MainState,
     appPreferences: AppPreferences,
-    onOpenLibrary: (View) -> Unit,
+    onOpenLibrary: (SpatialFinCollection) -> Unit,
     onOpenItem: (SpatialFinItem) -> Unit,
     onOpenPluginBrowse: (String, String?) -> Unit,
     onOpenCompanion: () -> Unit,
@@ -725,7 +744,9 @@ private fun TvHomeScreen(
                     onAction = { onOpenNetworkShare(section.shareId) },
                 )
             }
-            if (homeState.views.isNotEmpty()) item { TvLibraryShelf("Library Hub", homeState.views.map { it.view }, onOpenLibrary) }
+            // Sourced from the library inventory, not the Latest rows — the hub is how
+            // TV reaches a library at all, so it must survive "Latest" being switched off.
+            if (homeState.libraries.isNotEmpty()) item { TvLibraryShelf("Library Hub", homeState.libraries, onOpenLibrary) }
         }
     }
 }
@@ -981,8 +1002,12 @@ private fun TvContentShelf(
 }
 
 @Composable
-private fun TvLibraryShelf(title: String, views: List<View>, onOpenLibrary: (View) -> Unit) {
-    if (views.isEmpty()) return
+private fun TvLibraryShelf(
+    title: String,
+    libraries: List<SpatialFinCollection>,
+    onOpenLibrary: (SpatialFinCollection) -> Unit,
+) {
+    if (libraries.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         LazyRow(
@@ -990,18 +1015,29 @@ private fun TvLibraryShelf(title: String, views: List<View>, onOpenLibrary: (Vie
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             state = rememberTvShelfListState(),
         ) {
-            itemsIndexed(views, key = { _, it -> it.id }) { _, view ->
-                TvLibraryCard(view, onClick = { onOpenLibrary(view) })
+            itemsIndexed(libraries, key = { _, it -> it.id }) { _, library ->
+                TvLibraryCard(library, onClick = { onOpenLibrary(library) })
             }
         }
     }
 }
 
 @Composable
-private fun TvLibraryScreen(view: View?, availableViews: List<View>, onBackToHome: () -> Unit, onSelectView: (View) -> Unit, onOpenItem: (SpatialFinItem) -> Unit) {
-    if (view == null && availableViews.isEmpty()) { TvPlaceholderScreen("Library unavailable", "No libraries available."); return }
+private fun TvLibraryScreen(
+    library: SpatialFinCollection?,
+    availableLibraries: List<SpatialFinCollection>,
+    onBackToHome: () -> Unit,
+    onSelectLibrary: (SpatialFinCollection) -> Unit,
+    onOpenItem: (SpatialFinItem) -> Unit,
+    viewModel: TvLibraryViewModel = hiltViewModel(),
+) {
+    if (library == null && availableLibraries.isEmpty()) { TvPlaceholderScreen("Library unavailable", "No libraries available."); return }
+    val libraryState by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(library?.id) {
+        library?.let { viewModel.load(it.id, it.name, it.type) }
+    }
     var offlineOnly by remember { mutableStateOf(false) }
-    val filteredItems = remember(view?.items, offlineOnly) { val base = view?.items.orEmpty(); if (offlineOnly) base.filter { it.isDownloaded() } else base }
+    val filteredItems = remember(libraryState.items, offlineOnly) { if (offlineOnly) libraryState.items.filter { it.isDownloaded() } else libraryState.items }
     LazyVerticalGrid(
         columns = GridCells.Fixed(6),
         modifier = Modifier.fillMaxSize(),
@@ -1009,19 +1045,23 @@ private fun TvLibraryScreen(view: View?, availableViews: List<View>, onBackToHom
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
     ) {
-        if (view == null) { item(span = { GridItemSpan(6) }) { TvLibraryShelf("Available libraries", availableViews, onSelectView) }; return@LazyVerticalGrid }
+        if (library == null) { item(span = { GridItemSpan(6) }) { TvLibraryShelf("Available libraries", availableLibraries, onSelectLibrary) }; return@LazyVerticalGrid }
         item(span = { GridItemSpan(6) }) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Box(Modifier.width(4.dp).height(28.dp).clip(RoundedCornerShape(999.dp)).background(MaterialTheme.colorScheme.primary))
-                Text(view.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(library.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 TvHeroButton("Back home", Icons.Rounded.Home, false, onClick = onBackToHome)
-                if (availableViews.size > 1) TvHeroButton("Jump to first library", Icons.AutoMirrored.Rounded.ManageSearch, false, onClick = { onSelectView(availableViews.first()) })
+                if (availableLibraries.size > 1) TvHeroButton("Jump to first library", Icons.AutoMirrored.Rounded.ManageSearch, false, onClick = { onSelectLibrary(availableLibraries.first()) })
                 TvHeroButton(if (offlineOnly) "Available offline" else "All titles", if (offlineOnly) Icons.Rounded.CloudDone else Icons.Rounded.CloudDownload, false, offlineOnly, onClick = { offlineOnly = !offlineOnly })
             }
         }
-        if (filteredItems.isEmpty()) item(span = { GridItemSpan(6) }) { TvPlaceholderScreen("No titles", "This library is empty.") }
-        else gridItems(filteredItems, key = { it.id }) { TvMediaCard(it, false, Modifier.fillMaxWidth(), portrait = true) { onOpenItem(it) } }
+        when {
+            libraryState.isLoading -> item(span = { GridItemSpan(6) }) { TvPlaceholderScreen("Loading library", "Fetching ${library.name}…") }
+            libraryState.error != null -> item(span = { GridItemSpan(6) }) { TvPlaceholderScreen("Couldn't load library", libraryState.error?.localizedMessage ?: "Error") }
+            filteredItems.isEmpty() -> item(span = { GridItemSpan(6) }) { TvPlaceholderScreen("No titles", "This library is empty.") }
+            else -> gridItems(filteredItems, key = { it.id }) { TvMediaCard(it, false, Modifier.fillMaxWidth(), portrait = true) { onOpenItem(it) } }
+        }
     }
 }
 
@@ -1602,13 +1642,13 @@ private fun TvMediaCard(
 }
 
 @Composable
-private fun TvLibraryCard(view: View, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun TvLibraryCard(library: SpatialFinCollection, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val cardShape = RoundedCornerShape(TV_RADIUS_CARD)
     Card(modifier = modifier.width(320.dp).height(188.dp), onClick = onClick, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(cardShape), scale = tvCardScale(), border = tvCardBorder(cardShape), glow = tvCardGlow()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomStart) {
-            AsyncImage(model = tvViewArtwork(view), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.72f)
+            AsyncImage(model = tvLibraryArtwork(library), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.72f)
             Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD08121B)))))
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(view.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White); Text("${view.items.size} titles", style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD8E3EF)) }
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(library.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color.White); Text(tvLibraryTypeLabel(library.type), style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD8E3EF)) }
         }
     }
 }
@@ -2234,9 +2274,23 @@ private fun tvCardGlow() = CardDefaults.glow(
     focusedGlow = Glow(elevationColor = MaterialTheme.colorScheme.primary, elevation = TV_FOCUS_GLOW),
 )
 
-private fun tvViewArtwork(view: View): Any? = view.items.firstOrNull()?.let { it.images.backdrop ?: it.images.primary ?: it.images.showBackdrop ?: it.images.showPrimary }
+private fun tvLibraryArtwork(library: SpatialFinCollection): Any? = library.images.backdrop ?: library.images.primary
+private fun tvLibraryTypeLabel(type: CollectionType): String = when (type) {
+    CollectionType.Movies -> "Movies"
+    CollectionType.TvShows -> "TV shows"
+    CollectionType.BoxSets -> "Collections"
+    CollectionType.HomeVideos -> "Home videos & photos"
+    CollectionType.MusicVideos -> "Music videos"
+    CollectionType.Trailers -> "Trailers"
+    CollectionType.Photos -> "Photos"
+    CollectionType.Music -> "Music"
+    CollectionType.Playlists -> "Playlists"
+    CollectionType.Books -> "Books"
+    CollectionType.LiveTv -> "Live TV"
+    CollectionType.Mixed, CollectionType.Folders, CollectionType.Unknown -> "Library"
+}
 private fun buildPlaybackFraction(item: SpatialFinItem): Float? { val r = item.runtimeTicks; val p = item.playbackPositionTicks; return if (r > 0 && p > 0) (p.toFloat()/r).coerceIn(0f,1f) else null }
-private fun tvItemLabel(item: SpatialFinItem): String = when(item){is SpatialFinMovie->"Movie";is SpatialFinEpisode->"Episode";is SpatialFinSeason->"Season";is SpatialFinShow->"Series";is SpatialFinCollection->"Library";is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem->item.universalMediaItem.author?.takeIf { it.isNotBlank() }?:"";else->""}
+private fun tvItemLabel(item: SpatialFinItem): String = when(item){is SpatialFinMovie->"Movie";is SpatialFinEpisode->"Episode";is SpatialFinSeason->"Season";is SpatialFinShow->"Series";is SpatialFinCollection->"Library";is dev.jdtech.jellyfin.models.SpatialFinPhoto->"Photo";is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem->item.universalMediaItem.author?.takeIf { it.isNotBlank() }?:"";else->""}
 private fun tvPrimaryArtwork(item: SpatialFinItem): Any? = when(item){is SpatialFinEpisode->item.images.showPrimary?:item.images.primary?:item.images.showBackdrop?:item.images.backdrop;else->item.images.primary?:item.images.showPrimary?:item.images.backdrop?:item.images.showBackdrop}
 private fun tvBackdropArtwork(item: SpatialFinItem): Any? = when(item){is SpatialFinEpisode->item.images.showBackdrop?:item.images.backdrop?:item.images.showPrimary?:item.images.primary;else->item.images.backdrop?:item.images.showBackdrop?:item.images.primary?:item.images.showPrimary}
 private fun tvRuntimeLabel(ticks: Long): String? = ticks.takeIf { it > 0 }?.div(600000000)?.takeIf { it > 0 }?.let { "$it min" }

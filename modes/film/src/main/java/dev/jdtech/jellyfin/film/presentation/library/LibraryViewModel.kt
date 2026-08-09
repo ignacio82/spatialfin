@@ -6,6 +6,7 @@ import androidx.paging.cachedIn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.SortBy
+import dev.jdtech.jellyfin.models.browsableItemKinds
 import dev.jdtech.jellyfin.models.SortOrder
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -45,16 +46,9 @@ constructor(
 
     fun loadItems() {
         hasLoadedItems = true
-        val itemType =
-            when (libraryType) {
-                CollectionType.Movies -> listOf(BaseItemKind.MOVIE)
-                CollectionType.TvShows -> listOf(BaseItemKind.SERIES)
-                CollectionType.BoxSets -> listOf(BaseItemKind.BOX_SET)
-                CollectionType.Mixed,
-                CollectionType.Folders ->
-                    listOf(BaseItemKind.FOLDER, BaseItemKind.MOVIE, BaseItemKind.SERIES)
-                else -> null
-            }
+        // XR browses Movies/TV/BoxSets as one flat paged grid, hence foldersFirst =
+        // false; kinds that are inherently folder-structured opt back in themselves.
+        val itemType = libraryType.browsableItemKinds(foldersFirst = false)
 
         val recursive = itemType == null || !itemType.contains(BaseItemKind.FOLDER)
 

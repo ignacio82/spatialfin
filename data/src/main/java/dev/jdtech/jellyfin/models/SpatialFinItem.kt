@@ -29,11 +29,23 @@ suspend fun BaseItemDto.toSpatialFinItem(
     serverDatabase: ServerDatabaseDao? = null,
 ): SpatialFinItem? {
     return when (type) {
-        BaseItemKind.MOVIE -> toSpatialFinMovie(jellyfinRepository, serverDatabase)
+        // Home-video / music-video / trailer libraries hand back standalone playable
+        // videos rather than Movie items. They carry the same shape (media sources,
+        // runtime, images, user data), so reuse the movie mapping instead of dropping
+        // them — otherwise a server whose media is not filed under a Movies or TV
+        // library renders as an empty app.
+        BaseItemKind.MOVIE,
+        BaseItemKind.VIDEO,
+        BaseItemKind.MUSIC_VIDEO,
+        BaseItemKind.TRAILER -> toSpatialFinMovie(jellyfinRepository, serverDatabase)
         BaseItemKind.EPISODE -> toSpatialFinEpisode(jellyfinRepository)
         BaseItemKind.SEASON -> toSpatialFinSeason(jellyfinRepository)
         BaseItemKind.SERIES -> toSpatialFinShow(jellyfinRepository)
         BaseItemKind.BOX_SET -> toSpatialFinBoxSet(jellyfinRepository)
+        // A PhotoAlbum is just the folder a set of stills lives in — browse it like
+        // any other folder; the photo viewer pages through its contents.
+        BaseItemKind.PHOTO -> toSpatialFinPhoto(jellyfinRepository)
+        BaseItemKind.PHOTO_ALBUM,
         BaseItemKind.FOLDER -> toSpatialFinFolder(jellyfinRepository)
         BaseItemKind.AUDIO -> toSpatialFinAudioTrack(jellyfinRepository)
         BaseItemKind.MUSIC_ALBUM -> toSpatialFinMusicAlbum(jellyfinRepository)

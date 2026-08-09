@@ -1,6 +1,8 @@
 package dev.jdtech.jellyfin.models
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CollectionTypeTest {
@@ -11,6 +13,9 @@ class CollectionTypeTest {
                 CollectionType.Movies to "movies",
                 CollectionType.TvShows to "tvshows",
                 CollectionType.HomeVideos to "homevideos",
+                CollectionType.MusicVideos to "musicvideos",
+                CollectionType.Trailers to "trailers",
+                CollectionType.Photos to "photos",
                 CollectionType.Music to "music",
                 CollectionType.Playlists to "playlists",
                 CollectionType.Books to "books",
@@ -35,6 +40,9 @@ class CollectionTypeTest {
                 "Movies" to CollectionType.Movies,
                 "TvShows" to CollectionType.TvShows,
                 "HomeVideos" to CollectionType.HomeVideos,
+                "MusicVideos" to CollectionType.MusicVideos,
+                "Trailers" to CollectionType.Trailers,
+                "Photos" to CollectionType.Photos,
                 "Music" to CollectionType.Music,
                 "Playlists" to CollectionType.Playlists,
                 "Books" to CollectionType.Books,
@@ -55,5 +63,26 @@ class CollectionTypeTest {
     fun nullAndUnrecognizedValuesUseExistingFallbacks() {
         assertEquals(CollectionType.Mixed, CollectionType.fromString(null))
         assertEquals(CollectionType.Unknown, CollectionType.fromString("not-a-collection-type"))
+    }
+
+    /**
+     * Regression: a server whose media lived in a "Home videos and photos" library
+     * rendered as a completely empty app, because the library was filtered out of both
+     * the library list and the Home "Latest" rows.
+     */
+    @Test
+    fun nonFilmLibraryKindsAreBrowsable() {
+        listOf(
+            CollectionType.HomeVideos,
+            CollectionType.MusicVideos,
+            CollectionType.Trailers,
+            CollectionType.Photos,
+        ).forEach { assertTrue("$it must be browsable", it in CollectionType.supported) }
+    }
+
+    @Test
+    fun onlyLiveTvIsHidden() {
+        assertFalse(CollectionType.LiveTv in CollectionType.supported)
+        assertEquals(CollectionType.entries.size - 1, CollectionType.supported.size)
     }
 }

@@ -5,11 +5,13 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.browsableItemKinds
 import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
@@ -339,5 +341,50 @@ constructor(
                     )
                 }
         }
+    }
+}
+
+data class TvLibraryState(
+    val title: String = "",
+    val items: List<SpatialFinItem> = emptyList(),
+    val isLoading: Boolean = false,
+    val error: Throwable? = null,
+)
+
+/**
+ * Loads the contents of one Jellyfin library for the TV Libraries tab.
+ *
+ * The tab used to render `HomeState.views`, i.e. whatever `getLatestMedia` returned —
+ * at most 16 titles per library, and nothing at all once the "Latest" home preference
+ * was switched off. This fetches the library itself instead.
+ */
+@HiltViewModel
+class TvLibraryViewModel
+@Inject
+constructor(
+    private val repository: JellyfinRepository,
+) : ViewModel() {
+    private val _state = MutableStateFlow(TvLibraryState())
+    val state = _state.asStateFlow()
+
+    fun load(parentId: UUID, title: String, type: CollectionType) {
+        viewModelScope.launch {
+            _state.emit(TvLibraryState(title = title, isLoading = true))
+            runCatching {
+                    repository.getItems(
+                        parentId = parentId,
+                        includeTypes = type.browsableItemKinds(foldersFirst = true),
+                        recursive = false,
+                        limit = PAGE_LIMIT,
+                    )
+                }
+                .onSuccess { items -> _state.emit(TvLibraryState(title = title, items = items)) }
+                .onFailure { error -> _state.emit(TvLibraryState(title = title, error = error)) }
+        }
+    }
+
+    private companion object {
+        /** TV grids are browse-by-eye; a full pager would not earn its complexity here. */
+        const val PAGE_LIMIT = 200
     }
 }
