@@ -153,20 +153,28 @@ private fun detectMovieStereoMode(
         addAll(sourceNames)
     }.joinToString(" ").lowercase(Locale.US)
 
+    val has3dTag = GENERIC_3D_REGEX.containsMatchIn(haystacks)
+
     return when {
         MULTIVIEW_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.MULTIVIEW
-        TOP_BOTTOM_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.TOP_BOTTOM
-        SIDE_BY_SIDE_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.SIDE_BY_SIDE
-        GENERIC_3D_REGEX.containsMatchIn(haystacks) -> MovieStereoMode.SIDE_BY_SIDE
+        EXPLICIT_TOP_BOTTOM_REGEX.containsMatchIn(haystacks) ||
+            (has3dTag && CONTEXTUAL_TOP_BOTTOM_REGEX.containsMatchIn(haystacks)) -> MovieStereoMode.TOP_BOTTOM
+        EXPLICIT_SIDE_BY_SIDE_REGEX.containsMatchIn(haystacks) ||
+            (has3dTag && CONTEXTUAL_SIDE_BY_SIDE_REGEX.containsMatchIn(haystacks)) -> MovieStereoMode.SIDE_BY_SIDE
         else -> MovieStereoMode.MONO
     }
 }
 
 private val MULTIVIEW_REGEX =
     Regex("""\b(mv-hevc|mvhevc|spatial|spatial[\s.-]?video)\b""")
-private val SIDE_BY_SIDE_REGEX =
-    Regex("""\b(hsbs|half[\s.-]?sbs|fsbs|full[\s.-]?sbs|sbs|side[\s.-]?by[\s.-]?side|3d[\s.-]?h?sbs)\b""")
-private val TOP_BOTTOM_REGEX =
-    Regex("""\b(tab|tb|top[\s.-]?bottom|top[\s.-]?and[\s.-]?bottom|ou|over[\s.-]?under|3d[\s.-]?(tab|tb|ou))\b""")
+private val EXPLICIT_SIDE_BY_SIDE_REGEX =
+    Regex("""\b(hsbs|half[\s.-]?sbs|fsbs|full[\s.-]?sbs|side[\s.-]?by[\s.-]?side|side[\s.-]?and[\s.-]?side)\b""")
+private val EXPLICIT_TOP_BOTTOM_REGEX =
+    Regex("""\b(htab|half[\s.-]?tab|ftab|full[\s.-]?tab|hou|half[\s.-]?ou|fou|full[\s.-]?ou|top[\s.-]?bottom|top[\s.-]?and[\s.-]?bottom|over[\s.-]?under)\b""")
+private val CONTEXTUAL_SIDE_BY_SIDE_REGEX =
+    Regex("""\b(3d[\s.-]?h?sbs|sbs)\b""")
+private val CONTEXTUAL_TOP_BOTTOM_REGEX =
+    Regex("""\b(3d[\s.-]?(tab|tb|ou)|tab|tb|ou)\b""")
 private val GENERIC_3D_REGEX = Regex("""\b3d\b""")
 private val YEAR_REGEX = Regex("""\b(19|20)\d{2}\b""")
+
