@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +72,7 @@ fun CompanionScanner(
             }
         }
     )
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
     LaunchedEffect(Unit) {
         if (!hasCameraPermission) {
@@ -79,29 +81,49 @@ fun CompanionScanner(
         }
     }
 
+    DisposableEffect(lifecycleOwner) {
+        onDispose {
+            try {
+                if (cameraProviderFuture.isDone) {
+                    cameraProviderFuture.get().unbindAll()
+                }
+            } catch (_: Exception) {
+            }
+            analysisExecutor.shutdown()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (hasCameraPermission) {
             AndroidView(
                 factory = { context ->
                     Timber.d("COMPANION: Initializing CameraX PreviewView")
-                    val previewView = PreviewView(context)
+                    val previewView = PreviewView(context).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val executor = ContextCompat.getMainExecutor(context)
                     cameraProviderFuture.addListener({
                         try {
                             val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
 
-                            // Request higher resolution for better QR detail
                             val resolutionSelector = ResolutionSelector.Builder()
+                                .setAspectRatioStrategy(
+                                    androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
+                                )
                                 .setResolutionStrategy(
                                     ResolutionStrategy(
-                                        Size(1920, 1080),
-                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
-                                    )
+                                        Size(1280, 720),
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                                    ),
                                 )
                                 .build()
+
+                            val preview = Preview.Builder()
+                                .setResolutionSelector(resolutionSelector)
+                                .build()
+                                .also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
 
                             val imageAnalysis = ImageAnalysis.Builder()
                                 .setResolutionSelector(resolutionSelector)
@@ -113,7 +135,6 @@ fun CompanionScanner(
                                 .build()
                             val scanner = BarcodeScanning.getClient(options)
                             
-                            val analysisExecutor = Executors.newSingleThreadExecutor()
                             var frameCount = 0
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 if (frameCount++ % 100 == 0) {
@@ -138,7 +159,7 @@ fun CompanionScanner(
                                 preview,
                                 imageAnalysis
                             )
-                            Timber.d("COMPANION: CameraX bound successfully at high res")
+                            Timber.d("COMPANION: CameraX bound successfully")
                         } catch (e: Exception) {
                             Timber.e(e, "COMPANION: Camera binding failed")
                         }

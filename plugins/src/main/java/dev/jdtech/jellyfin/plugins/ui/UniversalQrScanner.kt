@@ -61,6 +61,7 @@ fun UniversalQrScanner(
             }
         }
     )
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
     LaunchedEffect(Unit) {
         if (!hasCameraPermission) {
@@ -68,27 +69,48 @@ fun UniversalQrScanner(
         }
     }
 
+    DisposableEffect(lifecycleOwner) {
+        onDispose {
+            try {
+                if (cameraProviderFuture.isDone) {
+                    cameraProviderFuture.get().unbindAll()
+                }
+            } catch (_: Exception) {
+            }
+            analysisExecutor.shutdown()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (hasCameraPermission) {
             AndroidView(
                 factory = { context ->
-                    val previewView = PreviewView(context)
+                    val previewView = PreviewView(context).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val executor = ContextCompat.getMainExecutor(context)
                     cameraProviderFuture.addListener({
                         try {
                             val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
 
                             val resolutionSelector = ResolutionSelector.Builder()
+                                .setAspectRatioStrategy(
+                                    androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
+                                )
                                 .setResolutionStrategy(
                                     ResolutionStrategy(
-                                        Size(1920, 1080),
-                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
-                                    )
+                                        Size(1280, 720),
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                                    ),
                                 )
                                 .build()
+
+                            val preview = Preview.Builder()
+                                .setResolutionSelector(resolutionSelector)
+                                .build()
+                                .also {
+                                    it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
 
                             val imageAnalysis = ImageAnalysis.Builder()
                                 .setResolutionSelector(resolutionSelector)
@@ -100,7 +122,6 @@ fun UniversalQrScanner(
                                 .build()
                             val scanner = BarcodeScanning.getClient(options)
                             
-                            val analysisExecutor = Executors.newSingleThreadExecutor()
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 processImageProxy(scanner, imageProxy, onUrlFound)
                             }

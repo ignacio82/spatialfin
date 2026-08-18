@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -536,6 +537,7 @@ private fun BeamCompanionScanner(
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val json = remember { Json { ignoreUnknownKeys = true } }
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -554,11 +556,25 @@ private fun BeamCompanionScanner(
         if (!hasCameraPermission) launcher.launch(Manifest.permission.CAMERA)
     }
 
+    DisposableEffect(lifecycleOwner) {
+        onDispose {
+            try {
+                if (cameraProviderFuture.isDone) {
+                    cameraProviderFuture.get().unbindAll()
+                }
+            } catch (_: Exception) {
+            }
+            analysisExecutor.shutdown()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (hasCameraPermission && cameraError == null) {
             AndroidView(
                 factory = { localContext ->
-                    val previewView = PreviewView(localContext)
+                    val previewView = PreviewView(localContext).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
                     val executor = ContextCompat.getMainExecutor(localContext)
                     cameraProviderFuture.addListener(
                         {
@@ -571,25 +587,32 @@ private fun BeamCompanionScanner(
                                         cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ->
                                             CameraSelector.DEFAULT_FRONT_CAMERA
                                         else -> {
+                                            android.util.Log.w("COMPANION", "No camera available for QR scanning")
                                             Timber.w("COMPANION: No camera available for QR scanning")
                                             cameraError = "No camera is available for QR scanning."
                                             return@addListener
                                         }
                                     }
 
-                                val preview =
-                                    Preview.Builder().build().also {
-                                        it.setSurfaceProvider(previewView.surfaceProvider)
-                                    }
-
                                 val resolutionSelector =
                                     ResolutionSelector.Builder()
+                                        .setAspectRatioStrategy(
+                                            androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY,
+                                        )
                                         .setResolutionStrategy(
                                             ResolutionStrategy(
-                                                Size(1920, 1080),
-                                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER,
+                                                Size(1280, 720),
+                                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                                             ),
                                         ).build()
+
+                                val preview =
+                                    Preview.Builder()
+                                        .setResolutionSelector(resolutionSelector)
+                                        .build()
+                                        .also {
+                                            it.setSurfaceProvider(previewView.surfaceProvider)
+                                        }
 
                                 val imageAnalysis =
                                     ImageAnalysis.Builder()
@@ -602,7 +625,6 @@ private fun BeamCompanionScanner(
                                         .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                                         .build()
                                 val scanner = BarcodeScanning.getClient(options)
-                                val analysisExecutor = Executors.newSingleThreadExecutor()
                                 imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                     processCompanionImageProxy(scanner, imageProxy, onPayloadFound, json)
                                 }
@@ -614,9 +636,11 @@ private fun BeamCompanionScanner(
                                     preview,
                                     imageAnalysis,
                                 )
+                                android.util.Log.i("COMPANION", "CameraX successfully bound to lifecycle")
                             } catch (error: Exception) {
+                                android.util.Log.e("COMPANION", "Camera binding failed", error)
                                 Timber.e(error, "COMPANION: Camera binding failed")
-                                cameraError = "Could not open a camera for QR scanning."
+                                cameraError = "${error::class.java.simpleName}: ${error.message ?: error.cause?.message ?: "Camera error"}"
                             }
                         },
                         executor,

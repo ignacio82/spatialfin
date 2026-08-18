@@ -368,14 +368,26 @@ private fun MultitaskControllerOverlay(
                     IconButton(onClick = onBackClick) {
                         Icon(painterResource(CoreR.drawable.ic_arrow_left), "Back", tint = Color.White)
                     }
-                    Text(
-                        text = uiState.currentItemTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        modifier = Modifier.padding(start = 8.dp).weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column(modifier = Modifier.padding(start = 8.dp).weight(1f)) {
+                        Text(
+                            text = uiState.currentItemTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        uiState.currentPlaybackInfoLabel?.let { label ->
+                            Spacer(Modifier.height(2.dp))
+                            dev.jdtech.jellyfin.core.presentation.components.MetadataPill {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
                     
                     IconButton(onClick = { activeDialog = "audio" }) {
                         Icon(painterResource(CoreR.drawable.ic_speaker), "Audio", tint = Color.White)

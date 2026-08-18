@@ -1202,6 +1202,7 @@ private fun TvPlayerScreen(
         TvPlayerDialog.Quality ->
             TvQualityDialog(
                 currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                transcodeReason = uiState.currentTranscodeReason,
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
@@ -1972,6 +1973,7 @@ private fun TvSourceDialog(
 @Composable
 private fun TvQualityDialog(
     currentMaxBitrate: Long,
+    transcodeReason: String? = null,
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1986,8 +1988,30 @@ private fun TvQualityDialog(
         TvDialogSurface(
             title = "Playback Quality",
             onDismiss = onDismiss,
-            width = 420.dp,
+            width = 460.dp,
         ) {
+            if (transcodeReason != null) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painter = painterResource(CoreR.drawable.ic_info),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = transcodeReason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.9f),
+                        )
+                    }
+                }
+            }
             QualityOption.entries.forEachIndexed { index, option ->
                 TvDialogOptionRow(
                     label = stringResource(option.labelRes),

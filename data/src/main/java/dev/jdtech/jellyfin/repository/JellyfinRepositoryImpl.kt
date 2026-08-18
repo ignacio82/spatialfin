@@ -739,54 +739,10 @@ class JellyfinRepositoryImpl(
                         itemId,
                         PlaybackInfoDto(
                             userId = jellyfinApi.userId!!,
-                            deviceProfile =
-                                DeviceProfile(
-                                    name = "Direct play all",
-                                    maxStaticBitrate = bitrate.toInt(),
-                                    maxStreamingBitrate = bitrate.toInt(),
-                                    codecProfiles = emptyList(),
-                                    containerProfiles = emptyList(),
-                                    // A single catch-all VIDEO profile tells Jellyfin this device
-                                    // can direct-play any container (MKV, MP4, TS, …) including
-                                    // HDR10, HDR10+, and Dolby Vision. Without at least one entry
-                                    // Jellyfin treats the device as supporting nothing and may
-                                    // return a transcoded (SDR) URL for HTTP-protocol sources.
-                                    directPlayProfiles = listOf(
-                                        // Empty container = all containers. Tells Jellyfin this
-                                        // device can direct-play MKV, MP4, TS, etc., including
-                                        // HDR10, HDR10+, and Dolby Vision streams.
-                                        DirectPlayProfile(
-                                            container = "",
-                                            type = DlnaProfileType.VIDEO,
-                                        ),
-                                    ),
-                                    // One HLS-over-TS transcoding profile. Used only when Jellyfin
-                                    // decides the source can't be direct-played within the current
-                                    // bitrate cap — it then returns an .m3u8 URL in
-                                    // MediaSourceInfo.transcodingUrl and the client picks that up.
-                                    transcodingProfiles = listOf(
-                                        TranscodingProfile(
-                                            container = "ts",
-                                            type = DlnaProfileType.VIDEO,
-                                            videoCodec = "h264,hevc",
-                                            audioCodec = "aac,mp3,ac3,eac3",
-                                            protocol = MediaStreamProtocol.HLS,
-                                            estimateContentLength = false,
-                                            enableMpegtsM2TsMode = false,
-                                            transcodeSeekInfo = TranscodeSeekInfo.AUTO,
-                                            copyTimestamps = false,
-                                            context = EncodingContext.STREAMING,
-                                            enableSubtitlesInManifest = false,
-                                            maxAudioChannels = null,
-                                            minSegments = 0,
-                                            segmentLength = 0,
-                                            breakOnNonKeyFrames = false,
-                                            conditions = emptyList(),
-                                            enableAudioVbrEncoding = true,
-                                        ),
-                                    ),
-                                    subtitleProfiles = createPlaybackSubtitleProfiles(),
-                                ),
+                            deviceProfile = createPlaybackDeviceProfile(
+                                bitrate = bitrate,
+                                forceDirectPlay = forceDirectPlay,
+                            ),
                             maxStreamingBitrate = bitrate.toInt(),
                         ),
                     )

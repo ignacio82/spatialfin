@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -25,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.painterResource
 import androidx.media3.common.Tracks
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -329,6 +332,7 @@ internal fun ProjectionDialogContent(
 @Composable
 internal fun QualityDialogContent(
     currentMaxBitrate: Long,
+    transcodeReason: String? = null,
     onQualitySelected: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -340,6 +344,29 @@ internal fun QualityDialogContent(
         width = 480.dp,
     ) {
         Spacer(Modifier.height(8.dp))
+        if (transcodeReason != null) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_info),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = transcodeReason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.9f),
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
         Column(
             modifier = Modifier
                 .heightIn(max = 440.dp)

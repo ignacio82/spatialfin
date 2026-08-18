@@ -25,10 +25,17 @@
     <string name="player_controls_skip_unknown">Skip</string>
     <string name="playback_method_direct_play">Direct Play</string>
     <string name="playback_method_transcoding">Transcoding</string>
+    <string name="playback_method_transcoding_unsupported_video">Transcode (unsupported %1$s video)</string>
+    <string name="playback_method_transcoding_unsupported_audio">Transcode (unsupported %1$s audio)</string>
+    <string name="playback_transcode_reason_video">Transcoding because this device does not support the %1$s video codec.</string>
+    <string name="playback_transcode_reason_audio">Transcoding because this device does not support the %1$s audio codec.</string>
+    <string name="playback_transcode_reason_bitrate">Transcoding to match the %1$s quality limit.</string>
+    <string name="playback_transcode_reason_generic">Transcoding stream from Jellyfin server.</string>
     <string name="quality_auto_downgraded">Network slow — dropped to %1$s</string>
     <string name="player_error_title">Can\'t play this video</string>
     <string name="player_error_decode_capabilities">This video is higher than this device can decode (for example an 8K stream on a 4K decoder). Try a lower quality setting, or play it on a more capable device.</string>
     <string name="player_error_decode_unsupported">This device can\'t decode this video\'s format or codec.</string>
     <string name="player_error_source">This video couldn\'t be loaded from the server.</string>
     <string name="player_error_generic">Playback failed (%1$s).</string>
+    <string name="player_error_transcoding_fallback">Unsupported format — switching to transcoding…</string>
 </resources>

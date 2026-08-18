@@ -251,6 +251,11 @@ constructor(
          */
         val currentPlaybackInfoLabel: String? = null,
         /**
+         * Human-readable explanation if active stream is transcoded (e.g. unsupported codec
+         * or bitrate limit), or null if direct-playing or not applicable.
+         */
+        val currentTranscodeReason: String? = null,
+        /**
          * Non-null when playback has failed in a way the user should see (e.g. a
          * format the hardware decoder can't handle — an 8K stream on a 4K-only
          * decoder, an unsupported codec, or a source the server couldn't deliver).
@@ -527,6 +532,8 @@ constructor(
 
     fun leaveSyncPlayGroup() = syncPlay.leaveGroup()
 
+    private var transcodeFallbackAttemptedItem: UUID? = null
+
     fun initializePlayer(
         itemId: UUID,
         itemKind: String,
@@ -537,6 +544,9 @@ constructor(
         startPositionMs: Long? = null,
     ) {
         currentItemKind = itemKind
+        if (maxBitrate == null && transcodeFallbackAttemptedItem != itemId) {
+            transcodeFallbackAttemptedItem = null
+        }
         if (startPositionMs != null && startPositionMs > 0L) {
             playbackPosition = startPositionMs
         }
@@ -1233,8 +1243,13 @@ constructor(
                                 .getMediaSources(item.itemId, includePath = true)
                                 .firstOrNull { source -> source.id == item.mediaSourceId }
                             currentMediaSourceStreams = activeSource?.mediaStreams.orEmpty()
-                            val playbackInfoLabel = buildPlaybackInfoLabel(activeSource)
-                            _uiState.update { it.copy(currentPlaybackInfoLabel = playbackInfoLabel) }
+                            val (playbackInfoLabel, transcodeReason) = buildPlaybackInfo(activeSource)
+                            _uiState.update {
+                                it.copy(
+                                    currentPlaybackInfoLabel = playbackInfoLabel,
+                                    currentTranscodeReason = transcodeReason,
+                                )
+                            }
                             syncPlay.ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
@@ -1249,7 +1264,12 @@ constructor(
                         } else {
                             currentMediaItemSegments = emptyList()
                             currentMediaSourceStreams = emptyList()
-                            _uiState.update { it.copy(currentPlaybackInfoLabel = null) }
+                            _uiState.update {
+                                it.copy(
+                                    currentPlaybackInfoLabel = null,
+                                    currentTranscodeReason = null,
+                                )
+                            }
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
@@ -1581,6 +1601,48 @@ constructor(
             player.currentMediaItem?.mediaId,
             player.currentPosition,
         )
+
+        val currentItem = currentPlayerItem()
+        val currentItemId = _uiState.value.currentItemId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val currentItemKind = _uiState.value.currentItemKind
+        val isDecodeOrFormatError = when (error.errorCode) {
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED -> true
+            else -> false
+        }
+        if (isDecodeOrFormatError &&
+            currentItemId != null &&
+            currentItem?.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN &&
+            transcodeFallbackAttemptedItem != currentItemId
+        ) {
+            transcodeFallbackAttemptedItem = currentItemId
+            val resumePos = player.currentPosition.coerceAtLeast(0L)
+            Timber.w(
+                "Player decode/format error code=%s (%s) on %s; triggering automatic transcode fallback at %d ms",
+                error.errorCode,
+                error.errorCodeName,
+                currentItemId,
+                resumePos,
+            )
+            Toast.makeText(
+                application,
+                R.string.player_error_transcoding_fallback,
+                Toast.LENGTH_SHORT,
+            ).show()
+            initializePlayer(
+                itemId = currentItemId,
+                itemKind = currentItemKind ?: "Movie",
+                startFromBeginning = false,
+                maxBitrate = QualityOption.FHD.bps,
+                startPositionMs = resumePos,
+            )
+            return
+        }
+
         // Surface the failure instead of swallowing it into the log: without this
         // an undecodable stream (8K on a 4K decoder, an unsupported codec, a dead
         // source) just leaves a silent black screen with the Play icon stuck on.
@@ -2090,13 +2152,52 @@ constructor(
         eventsChannel.trySend(PlayerEvents.IsPlayingChanged(isPlaying))
     }
 
-    private fun buildPlaybackInfoLabel(source: dev.jdtech.jellyfin.models.SpatialFinSource?): String? {
-        if (source == null) return null
-        val videoStream = source.mediaStreams.firstOrNull { it.type == MediaStreamType.VIDEO } ?: return null
-        val methodRes =
-            if (source.supportsDirectPlay) R.string.playback_method_direct_play
-            else R.string.playback_method_transcoding
-        val method = application.getString(methodRes)
+    private fun buildPlaybackInfo(source: dev.jdtech.jellyfin.models.SpatialFinSource?): Pair<String?, String?> {
+        if (source == null) return null to null
+        val videoStream = source.mediaStreams.firstOrNull { it.type == MediaStreamType.VIDEO } ?: return null to null
+        val audioStreams = source.mediaStreams.filter { it.type == MediaStreamType.AUDIO }
+
+        val methodLabel: String
+        val transcodeReason: String?
+
+        if (source.supportsDirectPlay) {
+            methodLabel = application.getString(R.string.playback_method_direct_play)
+            transcodeReason = null
+        } else {
+            val supportedVideoCodecs = dev.jdtech.jellyfin.repository.AndroidCodecDetector.getSupportedVideoCodecs()
+            val supportedAudioCodecs = dev.jdtech.jellyfin.repository.AndroidCodecDetector.getSupportedAudioCodecs()
+
+            val isVideoUnsupported = videoStream.codec.isNotBlank() &&
+                !supportedVideoCodecs.any { it.equals(videoStream.codec, ignoreCase = true) }
+            val isAudioUnsupported = audioStreams.isNotEmpty() &&
+                audioStreams.all { stream -> !supportedAudioCodecs.any { it.equals(stream.codec, ignoreCase = true) } }
+
+            val maxBitrate = appPreferences.getValue(appPreferences.playerMaxBitrate)
+            val isBitrateCapped = maxBitrate > 0L && (source.bitrate ?: 0) > maxBitrate
+
+            when {
+                isVideoUnsupported -> {
+                    val codecUpper = videoStream.codec.uppercase()
+                    methodLabel = application.getString(R.string.playback_method_transcoding_unsupported_video, codecUpper)
+                    transcodeReason = application.getString(R.string.playback_transcode_reason_video, codecUpper)
+                }
+                isAudioUnsupported -> {
+                    val audioCodecUpper = audioStreams.firstOrNull()?.codec?.uppercase() ?: "AUDIO"
+                    methodLabel = application.getString(R.string.playback_method_transcoding_unsupported_audio, audioCodecUpper)
+                    transcodeReason = application.getString(R.string.playback_transcode_reason_audio, audioCodecUpper)
+                }
+                isBitrateCapped -> {
+                    val optionLabel = application.getString(QualityOption.fromBps(maxBitrate).labelRes)
+                    methodLabel = application.getString(R.string.playback_method_transcoding)
+                    transcodeReason = application.getString(R.string.playback_transcode_reason_bitrate, optionLabel)
+                }
+                else -> {
+                    methodLabel = application.getString(R.string.playback_method_transcoding)
+                    transcodeReason = application.getString(R.string.playback_transcode_reason_generic)
+                }
+            }
+        }
+
         val resolutionLabel = when (val h = videoStream.height) {
             null -> null
             in 2000..Int.MAX_VALUE -> "4K"
@@ -2108,7 +2209,8 @@ constructor(
             else -> "${h}p"
         }
         val codec = videoStream.codec.takeIf { it.isNotBlank() }?.uppercase()
-        return listOfNotNull(method, resolutionLabel, codec).joinToString(" · ")
+        val infoLabel = listOfNotNull(methodLabel, resolutionLabel, codec).joinToString(" · ")
+        return infoLabel to transcodeReason
     }
 }
 

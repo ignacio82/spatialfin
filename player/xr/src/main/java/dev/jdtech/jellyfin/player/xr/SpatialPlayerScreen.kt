@@ -2593,6 +2593,7 @@ fun SpatialPlayerScreen(
                         SpatialDialog(onDismissRequest = { activeDialog = null }) {
                             QualityDialogContent(
                                 currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                                transcodeReason = uiState.currentTranscodeReason,
                                 onQualitySelected = { bitrate ->
                                     if (itemId != null) {
                                         viewModel.changeQuality(itemId, itemKind, bitrate)

@@ -1647,6 +1647,7 @@ private fun BeamPlayerScreen(
         BeamPlayerDialog.Quality ->
             BeamQualityDialog(
                 currentMaxBitrate = viewModel.appPreferences.getValue(viewModel.appPreferences.playerMaxBitrate),
+                transcodeReason = uiState.currentTranscodeReason,
                 onSelectQuality = {
                     onSelectQuality(it)
                     activeDialog = null
@@ -2401,6 +2402,7 @@ private fun BeamSourceDialog(
 @Composable
 private fun BeamQualityDialog(
     currentMaxBitrate: Long,
+    transcodeReason: String? = null,
     onSelectQuality: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2412,13 +2414,36 @@ private fun BeamQualityDialog(
                 Modifier
                     .widthIn(max = 360.dp)
                     .fillMaxWidth(0.95f)
-                    .heightIn(max = 420.dp),
+                    .heightIn(max = 480.dp),
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF1C1C1C),
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text("Playback Quality", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
+                if (transcodeReason != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    ) {
+                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                painter = painterResource(CoreR.drawable.ic_info),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = transcodeReason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.9f),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
                 QualityOption.entries.forEach { option ->
                     Row(
                         modifier =

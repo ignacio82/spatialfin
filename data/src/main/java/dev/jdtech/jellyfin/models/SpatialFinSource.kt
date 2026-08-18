@@ -46,28 +46,30 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
         }
 
     val path =
-        when (protocol) {
-            MediaProtocol.FILE -> {
-                try {
-                    if (includePath) {
-                        if (supportsDirectPlay || absoluteTranscodingUrl == null) {
-                            if (isAudioItem) {
-                                jellyfinRepository.getAudioStreamUrl(itemId, id.orEmpty())
-                            } else {
-                                jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
-                            }
-                        } else {
-                            absoluteTranscodingUrl
-                        }
-                    } else {
-                        File(this.path.orEmpty()).name
-                    }
-                } catch (e: Exception) {
-                    ""
-                }
+        if (!includePath) {
+            if (protocol == MediaProtocol.FILE) {
+                File(this.path.orEmpty()).name
+            } else {
+                this.path.orEmpty()
             }
-            MediaProtocol.HTTP -> this.path.orEmpty()
-            else -> ""
+        } else if (!supportsDirectPlay && absoluteTranscodingUrl != null) {
+            absoluteTranscodingUrl
+        } else {
+            when (protocol) {
+                MediaProtocol.FILE -> {
+                    try {
+                        if (isAudioItem) {
+                            jellyfinRepository.getAudioStreamUrl(itemId, id.orEmpty())
+                        } else {
+                            jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                        }
+                    } catch (e: Exception) {
+                        ""
+                    }
+                }
+                MediaProtocol.HTTP -> this.path.orEmpty()
+                else -> absoluteTranscodingUrl ?: ""
+            }
         }
     return SpatialFinSource(
         id = id.orEmpty(),
