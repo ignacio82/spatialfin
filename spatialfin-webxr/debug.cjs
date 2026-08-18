@@ -1416,6 +1416,7 @@ async function run() {
 
     // Test D-Pad Remote Control Navigation
     await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(() => Boolean(document.activeElement && document.activeElement.tagName !== 'BODY'), {timeout: 5_000});
     let focusedTag = await page.evaluate(() => document.activeElement?.tagName);
     assert.ok(focusedTag && focusedTag !== 'BODY', 'Remote D-pad should focus an interactive element');
 

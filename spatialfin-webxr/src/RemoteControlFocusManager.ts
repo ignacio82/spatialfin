@@ -56,31 +56,40 @@ export class RemoteControlFocusManager {
     }
 
     // Directional D-pad keys
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+    const dirMap: Record<string, 'up' | 'down' | 'left' | 'right'> = {
+      ArrowUp: 'up',
+      ArrowDown: 'down',
+      ArrowLeft: 'left',
+      ArrowRight: 'right',
+      Up: 'up',
+      Down: 'down',
+      Left: 'left',
+      Right: 'right',
+      NavUp: 'up',
+      NavDown: 'down',
+      NavLeft: 'left',
+      NavRight: 'right',
+    };
+
+    if (key in dirMap) {
       const activeEl = document.activeElement;
       const isInput = activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement;
 
       // Range slider handling (e.g. scrubber, volume)
       if (activeEl instanceof HTMLInputElement && activeEl.type === 'range') {
-        if (key === 'ArrowUp' || key === 'ArrowDown') {
+        if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'Up' || key === 'Down') {
           event.preventDefault();
-          this.moveFocus(key === 'ArrowUp' ? 'up' : 'down');
+          this.moveFocus(dirMap[key]);
           return;
         }
         return; // Allow native left/right slider adjustment
       }
 
-      if (isInput && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      if (isInput && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Left' || key === 'Right')) {
         return; // Allow native text cursor navigation
       }
 
       event.preventDefault();
-      const dirMap: Record<string, 'up' | 'down' | 'left' | 'right'> = {
-        ArrowUp: 'up',
-        ArrowDown: 'down',
-        ArrowLeft: 'left',
-        ArrowRight: 'right',
-      };
       this.moveFocus(dirMap[key]);
       return;
     }
@@ -164,7 +173,7 @@ export class RemoteControlFocusManager {
     if (elements.length === 0) return;
 
     let current = document.activeElement as HTMLElement | null;
-    if (!current || !container.contains(current) || current === document.body) {
+    if (!current || !container.contains(current) || current === document.body || !elements.includes(current)) {
       for (const el of elements) {
         el.focus();
         if (document.activeElement !== el) {
@@ -242,6 +251,25 @@ export class RemoteControlFocusManager {
         bestCandidate.focus();
       }
       bestCandidate.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    } else {
+      const currentIndex = elements.indexOf(current);
+      if (currentIndex !== -1) {
+        let nextIndex = currentIndex;
+        if (direction === 'down' || direction === 'right') {
+          nextIndex = (currentIndex + 1) % elements.length;
+        } else if (direction === 'up' || direction === 'left') {
+          nextIndex = (currentIndex - 1 + elements.length) % elements.length;
+        }
+        const fallback = elements[nextIndex];
+        if (fallback) {
+          fallback.focus();
+          if (document.activeElement !== fallback) {
+            fallback.setAttribute('tabindex', '0');
+            fallback.focus();
+          }
+          fallback.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+      }
     }
   }
 
