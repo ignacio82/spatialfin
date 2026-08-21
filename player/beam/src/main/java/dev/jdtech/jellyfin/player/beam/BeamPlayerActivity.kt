@@ -17,9 +17,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.setContent
-import org.jellyfin.sdk.model.api.RemoteSubtitleInfo
 import androidx.activity.viewModels
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import org.jellyfin.sdk.model.api.RemoteSubtitleInfo
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.core.view.WindowCompat

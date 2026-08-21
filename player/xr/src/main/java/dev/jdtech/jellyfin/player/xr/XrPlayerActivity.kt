@@ -7,6 +7,7 @@ import android.os.Looper
 import android.graphics.Color as AndroidColor
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
