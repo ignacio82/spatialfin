@@ -32,6 +32,7 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import dev.jdtech.jellyfin.core.util.QrCodeDecoder
 import timber.log.Timber
 import java.util.concurrent.Executors
 
@@ -120,7 +121,7 @@ fun UniversalQrScanner(
                             val options = BarcodeScannerOptions.Builder()
                                 .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                                 .build()
-                            val scanner = BarcodeScanning.getClient(options)
+                            val scanner = runCatching { BarcodeScanning.getClient(options) }.getOrNull()
                             
                             imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                 processImageProxy(scanner, imageProxy, onUrlFound)
@@ -166,27 +167,81 @@ fun UniversalQrScanner(
 
 @SuppressLint("UnsafeOptInUsageError")
 private fun processImageProxy(
-    scanner: com.google.mlkit.vision.barcode.BarcodeScanner,
+    scanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
     imageProxy: ImageProxy,
     onUrlFound: (String) -> Unit
 ) {
+    fun parseUrl(rawValue: String): Boolean {
+        if (rawValue.startsWith("http://") || rawValue.startsWith("https://")) {
+            onUrlFound(rawValue)
+            return true
+        }
+        return false
+    }
+
+    fun decodeWithZxingFallback() {
+        try {
+            val plane = imageProxy.planes.getOrNull(0) ?: return
+            val buffer = plane.buffer
+            val bytes = ByteArray(buffer.remaining())
+            val origPos = buffer.position()
+            buffer.get(bytes)
+            buffer.position(origPos)
+
+            val zxingResult = QrCodeDecoder.decodeYuv(
+                yData = bytes,
+                width = imageProxy.width,
+                height = imageProxy.height,
+                rowStride = plane.rowStride,
+                rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+            )
+            if (zxingResult != null) {
+                parseUrl(zxingResult)
+            }
+        } catch (e: Exception) {
+            Timber.v(e, "Plugin QR: ZXing decode fallback failed")
+        }
+    }
+
     val mediaImage = imageProxy.image
-    if (mediaImage != null) {
+    if (mediaImage == null || scanner == null) {
+        try {
+            decodeWithZxingFallback()
+        } finally {
+            imageProxy.close()
+        }
+        return
+    }
+
+    try {
         val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
         scanner.process(image)
             .addOnSuccessListener { barcodes ->
+                var found = false
                 for (barcode in barcodes) {
                     val rawValue = barcode.rawValue ?: continue
-                    if (rawValue.startsWith("http://") || rawValue.startsWith("https://")) {
-                        onUrlFound(rawValue)
+                    if (parseUrl(rawValue)) {
+                        found = true
                         break
                     }
                 }
+                if (!found) {
+                    decodeWithZxingFallback()
+                }
+            }
+            .addOnFailureListener { error ->
+                Timber.w(error, "Plugin QR: MLKit scanning failed, trying ZXing fallback")
+                decodeWithZxingFallback()
             }
             .addOnCompleteListener {
                 imageProxy.close()
             }
-    } else {
-        imageProxy.close()
+    } catch (error: Throwable) {
+        Timber.w(error, "Plugin QR: MLKit synchronous error, falling back to ZXing")
+        try {
+            decodeWithZxingFallback()
+        } finally {
+            imageProxy.close()
+        }
     }
 }

@@ -36,7 +36,6 @@ dependencies {
 
     // XR spatial dialog + spatial theme surfaces used by the shared dialogs/theme.
     implementation(libs.androidx.xr.compose)
-    implementation(libs.androidx.xr.compose.material3)
 
     // AsyncImage for the shared browse primitives (ItemCard, ItemPoster, …).
     implementation(libs.coil.compose)

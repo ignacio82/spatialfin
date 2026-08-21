@@ -52,7 +52,7 @@ dependencies {
 
     implementation(libs.coil.compose)
     // ZXing renders the TV companion-pairing QR (no MLKit on Leanback).
-    implementation("com.google.zxing:core:3.5.3")
+    implementation(libs.zxing.core)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

@@ -56,7 +56,6 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import androidx.xr.compose.material3.ExperimentalMaterial3XrApi
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.layout.SubspaceModifier
@@ -108,7 +107,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
-@OptIn(ExperimentalMaterial3XrApi::class)
 @AndroidEntryPoint
 class UnifiedMainActivity : AppCompatActivity() {
     companion object {

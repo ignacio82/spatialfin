@@ -230,7 +230,6 @@ dependencies {
     implementation(libs.androidx.xr.runtime)
     implementation(libs.androidx.xr.scenecore)
     implementation(libs.androidx.xr.compose)
-    implementation(libs.androidx.xr.compose.material3)
     // Required on R8's analysis classpath for Jetpack XR alpha05+; the device supplies it.
     compileOnly(libs.android.extensions.xr)
 
@@ -242,7 +241,7 @@ dependencies {
 
     // Barcode scanning (MLKit for XR/Phone, ZXing for TV)
     implementation(libs.mlkit.barcode.scanning)
-    implementation("com.google.zxing:core:3.5.3")
+    implementation(libs.zxing.core)
 
     // Navigation & paging
     implementation(libs.androidx.navigation.compose)

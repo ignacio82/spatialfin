@@ -122,7 +122,7 @@ import androidx.xr.scenecore.SurfaceEntity
 import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.Space
 import androidx.xr.compose.subspace.SceneCoreEntity
-import androidx.xr.compose.unit.Meter
+import androidx.xr.compose.subspace.ExperimentalSpatialGltfModelApi
 import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.scenecore.scene
 import androidx.core.content.ContextCompat
@@ -2155,16 +2155,18 @@ fun SpatialPlayerScreen(
 
     Subspace {
         if (pausedMascotVisible) {
+            @OptIn(ExperimentalSpatialGltfModelApi::class)
             val mascotState = rememberSpatialGltfModelState(
                 source = SpatialGltfModelSource.fromPath(Paths.get("models", "spatialfin.glb")),
             )
+            @OptIn(ExperimentalSpatialGltfModelApi::class)
             SpatialGltfModel(
                 state = mascotState,
                 modifier = SubspaceModifier
                     .offset(
-                        x = Meter(PausedMascotPose.translation.x).toDp(),
-                        y = Meter(PausedMascotPose.translation.y).toDp(),
-                        z = Meter(PausedMascotPose.translation.z).toDp(),
+                        x = (PausedMascotPose.translation.x * 1000f).dp,
+                        y = (PausedMascotPose.translation.y * 1000f).dp,
+                        z = (PausedMascotPose.translation.z * 1000f).dp,
                     )
                     .rotate(PausedMascotPose.rotation)
                     .scale(1.35f),

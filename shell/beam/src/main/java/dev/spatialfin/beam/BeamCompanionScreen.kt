@@ -58,6 +58,7 @@ import com.google.mlkit.vision.common.InputImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.jdtech.jellyfin.api.JellyfinApi
+import dev.jdtech.jellyfin.core.util.QrCodeDecoder
 import dev.jdtech.jellyfin.database.ServerDatabaseDao
 import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.models.NetworkShareDto
@@ -624,7 +625,7 @@ private fun BeamCompanionScanner(
                                     BarcodeScannerOptions.Builder()
                                         .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
                                         .build()
-                                val scanner = BarcodeScanning.getClient(options)
+                                val scanner = runCatching { BarcodeScanning.getClient(options) }.getOrNull()
                                 imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
                                     processCompanionImageProxy(scanner, imageProxy, onPayloadFound, json)
                                 }
@@ -675,42 +676,101 @@ private fun BeamCompanionScanner(
 
 @SuppressLint("UnsafeOptInUsageError")
 private fun processCompanionImageProxy(
-    scanner: com.google.mlkit.vision.barcode.BarcodeScanner,
+    scanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
     imageProxy: ImageProxy,
     onPayloadFound: (CompanionDiscoveryPayload) -> Unit,
     json: Json,
 ) {
+    fun parsePayload(rawValue: String): Boolean {
+        return runCatching {
+            val payload =
+                if (rawValue.startsWith("sfcp:")) {
+                    val data = rawValue.substring(5).split("|")
+                    if (data.size == 2) {
+                        CompanionDiscoveryPayload(
+                            version = 1,
+                            companion_url = data[0],
+                            setup_token = data[1],
+                        )
+                    } else {
+                        null
+                    }
+                } else {
+                    json.decodeFromString<CompanionDiscoveryPayload>(rawValue)
+                }
+            if (payload != null) {
+                onPayloadFound(payload)
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
+    }
+
+    fun decodeWithZxingFallback() {
+        try {
+            val plane = imageProxy.planes.getOrNull(0) ?: return
+            val buffer = plane.buffer
+            val bytes = ByteArray(buffer.remaining())
+            val origPos = buffer.position()
+            buffer.get(bytes)
+            buffer.position(origPos)
+
+            val zxingResult =
+                QrCodeDecoder.decodeYuv(
+                    yData = bytes,
+                    width = imageProxy.width,
+                    height = imageProxy.height,
+                    rowStride = plane.rowStride,
+                    rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                )
+            if (zxingResult != null) {
+                parsePayload(zxingResult)
+            }
+        } catch (e: Exception) {
+            Timber.v(e, "COMPANION: ZXing decode fallback failed")
+        }
+    }
+
     val mediaImage = imageProxy.image
-    if (mediaImage == null) {
-        imageProxy.close()
+    if (mediaImage == null || scanner == null) {
+        try {
+            decodeWithZxingFallback()
+        } finally {
+            imageProxy.close()
+        }
         return
     }
 
-    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-    scanner.process(image)
-        .addOnSuccessListener { barcodes ->
-            barcodes.forEach { barcode ->
-                val rawValue = barcode.rawValue ?: return@forEach
-                runCatching {
-                    if (rawValue.startsWith("sfcp:")) {
-                        val data = rawValue.substring(5).split("|")
-                        if (data.size == 2) {
-                            CompanionDiscoveryPayload(
-                                version = 1,
-                                companion_url = data[0],
-                                setup_token = data[1],
-                            )
-                        } else {
-                            null
-                        }
-                    } else {
-                        json.decodeFromString<CompanionDiscoveryPayload>(rawValue)
+    try {
+        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        scanner.process(image)
+            .addOnSuccessListener { barcodes ->
+                var found = false
+                for (barcode in barcodes) {
+                    val rawValue = barcode.rawValue ?: continue
+                    if (parsePayload(rawValue)) {
+                        found = true
+                        break
                     }
-                }.getOrNull()?.let(onPayloadFound)
+                }
+                if (!found) {
+                    decodeWithZxingFallback()
+                }
             }
-        }.addOnFailureListener {
-            Timber.e(it, "COMPANION: Barcode scanning failed")
-        }.addOnCompleteListener {
+            .addOnFailureListener { error ->
+                Timber.w(error, "COMPANION: MLKit scanning failed, trying ZXing fallback")
+                decodeWithZxingFallback()
+            }
+            .addOnCompleteListener {
+                imageProxy.close()
+            }
+    } catch (error: Throwable) {
+        Timber.w(error, "COMPANION: MLKit synchronous error, falling back to ZXing")
+        try {
+            decodeWithZxingFallback()
+        } finally {
             imageProxy.close()
         }
+    }
 }

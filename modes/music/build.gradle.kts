@@ -34,7 +34,7 @@ dependencies {
     implementation(libs.androidx.xr.compose)
     implementation(libs.androidx.media3.session)
     implementation(libs.coil.compose)
-    implementation("com.google.zxing:core:3.5.3")
+    implementation(libs.zxing.core)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.jellyfin.core)

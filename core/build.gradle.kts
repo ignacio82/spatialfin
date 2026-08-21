@@ -43,6 +43,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.okhttp)
     implementation(libs.timber)
+    implementation(libs.zxing.core)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
