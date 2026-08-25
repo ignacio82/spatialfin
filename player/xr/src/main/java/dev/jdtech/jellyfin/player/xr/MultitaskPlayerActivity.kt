@@ -70,13 +70,16 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import androidx.xr.compose.platform.LocalSession
 import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
@@ -165,7 +168,37 @@ class MultitaskPlayerActivity : ComponentActivity() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this)
+        // Default renderers except for the audio sink, which honours the passthrough
+        // preference like every other player. AUTO (the default) returns null and leaves
+        // Media3's own sink in place, so this is behaviour-neutral unless the user opts in.
+        //
+        // EXTENSION_RENDERER_MODE_ON matches the other four players. This Activity previously
+        // passed no factory at all, so it silently ran with the default MODE_OFF and was the
+        // one player that could not use the bundled FFmpeg audio decoders — which the device
+        // profile now advertises to the server. Extension renderers are appended after the
+        // platform ones, so MediaCodec still wins wherever it can.
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink =
+                AudioPassthroughSinks.buildOverride(
+                    context = context,
+                    appPreferences = viewModel.appPreferences,
+                    enableFloatOutput = enableFloatOutput,
+                    enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                ) ?: checkNotNull(
+                    super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams,
+                    ),
+                )
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setEnableDecoderFallback(true)
+
+        val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setSeekBackIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekBackInc))
             .setSeekForwardIncrementMs(viewModel.appPreferences.getValue(viewModel.appPreferences.playerSeekForwardInc)))

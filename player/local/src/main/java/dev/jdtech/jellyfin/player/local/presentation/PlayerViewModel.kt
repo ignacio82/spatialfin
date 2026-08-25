@@ -37,6 +37,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.Trickplay
 import dev.jdtech.jellyfin.player.local.R
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.player.local.subtitles.SubtitleCacheManager
+import dev.jdtech.jellyfin.repository.AudioPassthroughDetector
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.repository.LocalMediaRepository
 import dev.jdtech.jellyfin.repository.NetworkMediaRepository
@@ -1605,7 +1606,21 @@ constructor(
         val currentItem = currentPlayerItem()
         val currentItemId = _uiState.value.currentItemId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         val currentItemKind = _uiState.value.currentItemKind
-        val isDecodeOrFormatError = when (error.errorCode) {
+        // An AudioTrack that won't open or won't accept writes is the signature failure of a
+        // bad passthrough chain: the route claimed it could take AC-3/DTS, the AVR or the HDMI
+        // link in between disagreed, and the result is a dead player rather than a wrong-codec
+        // error. Latch passthrough off for the rest of the process so the retry below asks the
+        // server for something the local decoder can handle, and so every later player in this
+        // process builds a PCM-only sink.
+        val isAudioTrackError = when (error.errorCode) {
+            PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+            PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED -> true
+            else -> false
+        }
+        if (isAudioTrackError && !AudioPassthroughDetector.isDisabledForSession()) {
+            AudioPassthroughDetector.disableForSession()
+        }
+        val isDecodeOrFormatError = isAudioTrackError || when (error.errorCode) {
             PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
             PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
             PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
@@ -1630,14 +1645,22 @@ constructor(
             )
             Toast.makeText(
                 application,
-                R.string.player_error_transcoding_fallback,
+                if (isAudioTrackError) {
+                    R.string.player_error_passthrough_fallback
+                } else {
+                    R.string.player_error_transcoding_fallback
+                },
                 Toast.LENGTH_SHORT,
             ).show()
             initializePlayer(
                 itemId = currentItemId,
                 itemKind = currentItemKind ?: "Movie",
                 startFromBeginning = false,
-                maxBitrate = QualityOption.FHD.bps,
+                // An audio-track failure says nothing about the video: passthrough is now
+                // latched off, so re-requesting at the *same* quality is enough to get a
+                // stream this device can render. Only genuine decode/format errors — where
+                // the resolution itself may be the problem — drop to 1080p.
+                maxBitrate = if (isAudioTrackError) null else QualityOption.FHD.bps,
                 startPositionMs = resumePos,
             )
             return

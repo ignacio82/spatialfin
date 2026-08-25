@@ -275,6 +275,9 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
     TvPrefSectionTitle("Playback")
     var playerMaxBitrate by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerMaxBitrate)) }
     var forceDirectPlay by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerForceDirectPlay)) }
+    var audioPassthrough by rememberSaveable {
+        mutableStateOf(appPreferences.getValue(appPreferences.playerAudioPassthrough) ?: "auto")
+    }
     var chapterMarkers by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerChapterMarkers)) }
     var trickplay by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerTrickplay)) }
     var skipButton by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)) }
@@ -307,6 +310,20 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
         title = "Always attempt direct play",
         checked = forceDirectPlay,
         onCheckedChange = { forceDirectPlay = it; appPreferences.setValue(appPreferences.playerForceDirectPlay, it) },
+    )
+    // TV is the form factor where this actually matters — a Chromecast/Android TV box in
+    // front of an AV receiver is the only common SpatialFin setup with a real HDMI/eARC
+    // bitstream path. Kept on the other shells for parity.
+    val passthroughLabels = mapOf("auto" to "Auto", "off" to "Off", "force" to "Force on")
+    TvPrefChoiceRow(
+        title = "Audio passthrough",
+        value = passthroughLabels[audioPassthrough] ?: "Auto",
+        actions = passthroughLabels.values.toList(),
+        onAction = { choice ->
+            val picked = passthroughLabels.entries.firstOrNull { it.value == choice }?.key ?: "auto"
+            audioPassthrough = picked
+            appPreferences.setValue(appPreferences.playerAudioPassthrough, picked)
+        },
     )
     TvPrefSwitchRow(
         title = "Show chapter markers",

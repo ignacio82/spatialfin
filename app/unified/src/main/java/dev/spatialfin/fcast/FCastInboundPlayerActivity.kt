@@ -23,6 +23,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import java.util.UUID
 import javax.inject.Inject
@@ -98,6 +100,9 @@ class FCastInboundPlayerActivity : ComponentActivity() {
      * sender, raw HTTP stream, etc.) — the deferred just completes with an empty list.
      */
     @Inject lateinit var repository: JellyfinRepository
+
+    /** Drives the audio-passthrough decision for the sink built in [buildPlayer]. */
+    @Inject lateinit var appPreferences: AppPreferences
 
     private var player: ExoPlayer? = null
     private var playbackTickerJob: Job? = null
@@ -484,7 +489,12 @@ class FCastInboundPlayerActivity : ComponentActivity() {
         // Stash the passthrough-capable codec tokens so every beacon advertises them to the
         // sender. This is the authoritative input to the sender's split-A/V direct-stream vs
         // transcode decision — see [ReceiverAudioCodecs] / SplitAvController.
-        receiverAudioCodecs = ReceiverAudioCodecs.fromCapabilities(caps)
+        // Filtered by the audio-passthrough preference: a receiver told not to bitstream must
+        // not advertise formats it would then have to decode locally (and often can't).
+        receiverAudioCodecs = AudioPassthroughSinks.advertisedCodecs(
+            appPreferences,
+            ReceiverAudioCodecs.fromCapabilities(caps),
+        )
         receiverAudioRouteInfo = buildAudioRouteInfo(caps, receiverAudioCodecs)
         val encodings = listOf(
             android.media.AudioFormat.ENCODING_PCM_16BIT to "PCM_16BIT",
@@ -619,7 +629,16 @@ class FCastInboundPlayerActivity : ComponentActivity() {
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink {
-                val sink = checkNotNull(
+                // The passthrough preference applies here too — an inbound cast is played
+                // by this device's audio chain — but the TimingAudioSink wrapper stays
+                // outermost either way, because split-A/V's latency calibration measures
+                // whatever chain ends up underneath it.
+                val sink = AudioPassthroughSinks.buildOverride(
+                    context = context,
+                    appPreferences = appPreferences,
+                    enableFloatOutput = enableFloatOutput,
+                    enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                ) ?: checkNotNull(
                     super.buildAudioSink(
                         context,
                         enableFloatOutput,

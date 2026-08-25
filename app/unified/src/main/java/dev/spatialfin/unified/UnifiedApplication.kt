@@ -23,6 +23,7 @@ import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import dev.jdtech.jellyfin.core.llm.LlmModelManager
 import dev.jdtech.jellyfin.core.diagnostics.PlayerLaunchBreadcrumbs
+import dev.jdtech.jellyfin.player.core.audio.FfmpegAudioDecoders
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import dev.jdtech.jellyfin.work.DownloadIntegrityWorker
@@ -92,6 +93,12 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
 
         appPreferences.sharedPreferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         applyNightMode()
+
+        // Lets the Jellyfin device profile advertise the codecs the bundled FFmpeg extension can
+        // decode (AC-3, E-AC-3, TrueHD, DTS) even where MediaCodecList reports no decoder.
+        // Registration only stores a lambda — the native library is loaded lazily on the first
+        // probe, off the cold-start path. Must run in every process, hence Application.onCreate.
+        FfmpegAudioDecoders.install()
 
         // FCast: install the receiver router + start the foreground service if the user enabled
         // it. The router is registered even when the service is off so that flipping the pref on

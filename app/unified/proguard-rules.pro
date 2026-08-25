@@ -35,3 +35,16 @@
 -keep class com.google.zxing.** { *; }
 -dontwarn com.google.zxing.**
 
+
+# Media3 FFmpeg audio extension.
+# DefaultRenderersFactory instantiates the extension renderers via
+# Class.forName("androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer") and swallows the
+# ClassNotFoundException, so a renamed class fails *silently*: no crash, no log, just no
+# AC-3 / E-AC-3 / TrueHD / DTS software decoding in release builds. Media3's own consumer
+# rule is -keepclassmembers, which preserves the constructor but still lets R8 rename the
+# class (verified: it became androidx.media3.decoder.ffmpeg.b), so the name has to be
+# pinned here. Narrow on purpose — the class and its one reflective constructor, nothing
+# else; the decoder implementation behind it stays fully optimizable.
+-keep class androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer {
+    <init>(android.os.Handler, androidx.media3.exoplayer.audio.AudioRendererEventListener, androidx.media3.exoplayer.audio.AudioSink);
+}

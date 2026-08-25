@@ -279,6 +279,24 @@
     <string name="player_force_direct_play">Always attempt direct play</string>
     <string name="player_force_direct_play_summary">Ignore the bitrate cap and tell the server the device can play anything. Fast for LAN, but playback may fail silently on files whose codec or container the device can\'t decode.</string>
 
+    <string name="player_audio_passthrough">Audio passthrough</string>
+    <string name="player_audio_passthrough_summary">Send Dolby Digital, DTS and Atmos to a receiver or soundbar as a bitstream instead of decoding to stereo/PCM on this device. Only takes effect on a connection that can carry it, such as HDMI or eARC.</string>
+    <string name="player_audio_passthrough_auto">Auto</string>
+    <string name="player_audio_passthrough_off">Off</string>
+    <string name="player_audio_passthrough_force">Force on</string>
+
+    <string-array name="player_audio_passthrough_options">
+        <item>@string/player_audio_passthrough_auto</item>
+        <item>@string/player_audio_passthrough_off</item>
+        <item>@string/player_audio_passthrough_force</item>
+    </string-array>
+
+    <string-array name="player_audio_passthrough_values">
+        <item>auto</item>
+        <item>off</item>
+        <item>force</item>
+    </string-array>
+
     <string name="quality_auto">Auto</string>
     <string name="quality_direct_play">Direct Play</string>
     <string name="quality_2160p">4K · 40 Mbps</string>

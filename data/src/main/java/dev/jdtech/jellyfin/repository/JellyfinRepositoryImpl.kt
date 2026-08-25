@@ -742,6 +742,9 @@ class JellyfinRepositoryImpl(
                             deviceProfile = createPlaybackDeviceProfile(
                                 bitrate = bitrate,
                                 forceDirectPlay = forceDirectPlay,
+                                passthroughMode = AudioPassthroughMode.fromPreference(
+                                    appPreferences.getValue(appPreferences.playerAudioPassthrough),
+                                ),
                             ),
                             maxStreamingBitrate = bitrate.toInt(),
                         ),

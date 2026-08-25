@@ -228,6 +228,13 @@ class SettingsViewModel @Inject constructor(
                                                     descriptionStringRes = R.string.player_force_direct_play_summary,
                                                     backendPreference = appPreferences.playerForceDirectPlay,
                                                 ),
+                                                PreferenceSelect(
+                                                    nameStringResource = R.string.player_audio_passthrough,
+                                                    descriptionStringRes = R.string.player_audio_passthrough_summary,
+                                                    backendPreference = appPreferences.playerAudioPassthrough,
+                                                    options = R.array.player_audio_passthrough_options,
+                                                    optionValues = R.array.player_audio_passthrough_values,
+                                                ),
                                                 PreferenceLongInput(
                                                     nameStringResource =
                                                         R.string.seek_back_increment,

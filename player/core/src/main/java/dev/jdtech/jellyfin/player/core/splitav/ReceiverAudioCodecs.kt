@@ -42,6 +42,13 @@ object ReceiverAudioCodecs {
      * can render them. PCM is the floor (always present) and implies the universal-software
      * set is renderable; it is reported so the sender can tell a real beacon from "unknown".
      */
+    /**
+     * Every passthrough-gated token this object can report — i.e. [ENCODING_TO_TOKEN] minus
+     * the PCM floor. Used by `AudioPassthroughSinks.advertisedCodecs` when the user forces
+     * passthrough on for a chain that under-reports itself.
+     */
+    val ALL_PASSTHROUGH_TOKENS = setOf("ac3", "eac3", "eac3-joc", "truehd", "dts", "dts-hd")
+
     private val ENCODING_TO_TOKEN: List<Pair<Int, String>> = listOf(
         AudioFormat.ENCODING_AC3 to "ac3",
         AudioFormat.ENCODING_E_AC3 to "eac3",

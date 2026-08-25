@@ -18,6 +18,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.session.MediaSession
@@ -37,6 +38,7 @@ import dev.jdtech.jellyfin.fcast.receiver.ExternalStreamSource
 import dev.jdtech.jellyfin.fcast.receiver.FCastInboundBridgeIpcClient
 import android.net.Uri
 import androidx.media3.common.MediaItem
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
 import dev.jdtech.jellyfin.player.local.presentation.PlayerTrackHeuristics
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
@@ -514,6 +516,26 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             .getOrNull()
         libassRenderer = renderer
         val renderersFactory = object : DefaultRenderersFactory(this) {
+            // Same passthrough preference as the first-party players — an inbound cast is
+            // still played by this device's audio chain. AUTO keeps Media3's default sink.
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink =
+                AudioPassthroughSinks.buildOverride(
+                    context = context,
+                    appPreferences = appPreferences,
+                    enableFloatOutput = enableFloatOutput,
+                    enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                ) ?: checkNotNull(
+                    super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams,
+                    ),
+                )
+
             override fun buildTextRenderers(
                 context: Context,
                 output: TextOutput,

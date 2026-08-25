@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.player.beam
 
 import android.Manifest
 import android.os.Build
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
 import android.app.PictureInPictureParams
 import android.content.Context
@@ -100,6 +101,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.session.MediaSession
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.text.TextOutput
@@ -626,6 +628,27 @@ class BeamPlayerActivity : AppCompatActivity() {
 
         val renderersFactory =
             object : DefaultRenderersFactory(this) {
+                // Honour the audio-passthrough preference for every source, not just
+                // Jellyfin streams: local, SMB/NFS and downloaded files run through the
+                // same sink. AUTO returns null and keeps Media3's own route-derived sink.
+                override fun buildAudioSink(
+                    context: Context,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean,
+                ): AudioSink =
+                    AudioPassthroughSinks.buildOverride(
+                        context = context,
+                        appPreferences = viewModel.appPreferences,
+                        enableFloatOutput = enableFloatOutput,
+                        enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                    ) ?: checkNotNull(
+                        super.buildAudioSink(
+                            context,
+                            enableFloatOutput,
+                            enableAudioTrackPlaybackParams,
+                        ),
+                    )
+
                 override fun buildTextRenderers(
                     context: Context,
                     output: TextOutput,
@@ -762,7 +785,13 @@ class BeamPlayerActivity : AppCompatActivity() {
                         else -> sourceMime?.substringAfter('/')?.lowercase()
                     }
                     val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@BeamPlayerActivity)
-                    val localPassthrough = ReceiverAudioCodecs.fromCapabilities(localCaps)
+                    // Filtered by the audio-passthrough preference — with passthrough off the
+                    // sink decodes to PCM, so a bitstream-only codec is *not* locally
+                    // renderable and the audio track must stay disabled.
+                    val localPassthrough = AudioPassthroughSinks.advertisedCodecs(
+                        viewModel.appPreferences,
+                        ReceiverAudioCodecs.fromCapabilities(localCaps),
+                    )
                     val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
                     if (canDecode) {
                         if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {

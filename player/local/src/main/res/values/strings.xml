@@ -38,4 +38,5 @@
     <string name="player_error_source">This video couldn\'t be loaded from the server.</string>
     <string name="player_error_generic">Playback failed (%1$s).</string>
     <string name="player_error_transcoding_fallback">Unsupported format — switching to transcoding…</string>
+    <string name="player_error_passthrough_fallback">Audio passthrough failed — decoding on this device instead…</string>
 </resources>

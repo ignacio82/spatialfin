@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.text.TextOutput
@@ -38,6 +39,7 @@ import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
@@ -291,6 +293,27 @@ class XrPlayerActivity : AppCompatActivity() {
 
         // Replace PlayerViewModel's ExoPlayer with one that uses LibassTextRenderer
         val renderersFactory = object : DefaultRenderersFactory(this) {
+            // Honour the audio-passthrough preference for every source, not just Jellyfin
+            // streams: local, SMB/NFS and downloaded files run through the same sink.
+            // AUTO returns null and keeps Media3's own route-derived sink.
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink =
+                AudioPassthroughSinks.buildOverride(
+                    context = context,
+                    appPreferences = viewModel.appPreferences,
+                    enableFloatOutput = enableFloatOutput,
+                    enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                ) ?: checkNotNull(
+                    super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams,
+                    ),
+                )
+
             override fun buildTextRenderers(
                 context: android.content.Context,
                 output: TextOutput,
@@ -423,7 +446,13 @@ class XrPlayerActivity : AppCompatActivity() {
                         else -> sourceMime?.substringAfter('/')?.lowercase()
                     }
                     val localCaps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(this@XrPlayerActivity)
-                    val localPassthrough = ReceiverAudioCodecs.fromCapabilities(localCaps)
+                    // Filtered by the audio-passthrough preference — with passthrough off the
+                    // sink decodes to PCM, so a bitstream-only codec is *not* locally
+                    // renderable and the audio track must stay disabled.
+                    val localPassthrough = AudioPassthroughSinks.advertisedCodecs(
+                        viewModel.appPreferences,
+                        ReceiverAudioCodecs.fromCapabilities(localCaps),
+                    )
                     val canDecode = ReceiverAudioCodecs.canRenderDirect(sourceCodec, localPassthrough)
                     if (canDecode) {
                         if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO)) {

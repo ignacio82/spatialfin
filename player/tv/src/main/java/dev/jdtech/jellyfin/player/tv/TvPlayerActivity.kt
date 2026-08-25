@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
@@ -102,6 +103,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -454,6 +456,27 @@ class TvPlayerActivity : AppCompatActivity() {
 
         val renderersFactory =
             object : DefaultRenderersFactory(this) {
+                // Honour the audio-passthrough preference for every source, not just
+                // Jellyfin streams: local, SMB/NFS and downloaded files run through the
+                // same sink. AUTO returns null and keeps Media3's own route-derived sink.
+                override fun buildAudioSink(
+                    context: Context,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean,
+                ): AudioSink =
+                    AudioPassthroughSinks.buildOverride(
+                        context = context,
+                        appPreferences = viewModel.appPreferences,
+                        enableFloatOutput = enableFloatOutput,
+                        enableAudioTrackPlaybackParams = enableAudioTrackPlaybackParams,
+                    ) ?: checkNotNull(
+                        super.buildAudioSink(
+                            context,
+                            enableFloatOutput,
+                            enableAudioTrackPlaybackParams,
+                        ),
+                    )
+
                 override fun buildTextRenderers(
                     context: Context,
                     output: TextOutput,

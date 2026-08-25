@@ -1,11 +1,16 @@
 package dev.jdtech.jellyfin.repository
 
 import android.media.MediaCodecList
+import org.jellyfin.sdk.model.api.CodecProfile
+import org.jellyfin.sdk.model.api.CodecType
 import org.jellyfin.sdk.model.api.DeviceProfile
 import org.jellyfin.sdk.model.api.DirectPlayProfile
 import org.jellyfin.sdk.model.api.DlnaProfileType
 import org.jellyfin.sdk.model.api.EncodingContext
 import org.jellyfin.sdk.model.api.MediaStreamProtocol
+import org.jellyfin.sdk.model.api.ProfileCondition
+import org.jellyfin.sdk.model.api.ProfileConditionType
+import org.jellyfin.sdk.model.api.ProfileConditionValue
 import org.jellyfin.sdk.model.api.TranscodeSeekInfo
 import org.jellyfin.sdk.model.api.TranscodingProfile
 import timber.log.Timber
@@ -78,9 +83,14 @@ object AndroidCodecDetector {
                         "audio/vorbis" -> detected.add("vorbis")
                         "audio/raw" -> detected.addAll(listOf("pcm", "wav", "pcm_s16le", "pcm_s24le", "pcm_s32le"))
                         "audio/ac3" -> detected.add("ac3")
+                        // E-AC3 (and Atmos-carrying E-AC3 JOC) were missing here, so a
+                        // device with a real E-AC3 decoder still told the server it
+                        // couldn't play the format and got a needless transcode.
+                        "audio/eac3", "audio/eac3-joc" -> detected.add("eac3")
+                        "audio/ac4" -> detected.add("ac4")
                         "audio/vnd.dts" -> detected.addAll(listOf("dts", "dca"))
                         "audio/vnd.dts.hd" -> detected.addAll(listOf("dts-hd", "dtshd"))
-                        "audio/true-hd" -> detected.add("truehd")
+                        "audio/true-hd" -> detected.addAll(listOf("truehd", "mlp"))
                         "audio/alac" -> detected.add("alac")
                     }
                 }
@@ -97,11 +107,19 @@ object AndroidCodecDetector {
  *
  * Advertises the specific video and audio codecs supported by the device's hardware/software
  * decoders so that Jellyfin can direct-play compatible media while automatically transcoding
- * unsupported codecs (e.g. VC-1, WMV, ProRes, EAC3-JOC Atmos, or audio formats without decoders).
+ * unsupported codecs (e.g. VC-1, WMV, ProRes, or audio formats with neither a decoder nor a
+ * passthrough path).
+ *
+ * "Can play" is deliberately wider than "can decode": [passthroughMode] folds in the encoded
+ * formats the *current audio route* accepts as a bitstream. A TV box with no DTS or TrueHD
+ * decoder but an AV receiver on the other end of HDMI can play those streams perfectly — it
+ * just never touches them — and advertising only decoder support threw that surround mix away
+ * to a server-side AAC transcode.
  */
 internal fun createPlaybackDeviceProfile(
     bitrate: Long,
     forceDirectPlay: Boolean = false,
+    passthroughMode: AudioPassthroughMode = AudioPassthroughMode.AUTO,
 ): DeviceProfile {
     val maxBitrateInt = bitrate.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
@@ -118,7 +136,21 @@ internal fun createPlaybackDeviceProfile(
         )
     } else {
         val videoCodecs = AndroidCodecDetector.getSupportedVideoCodecs().joinToString(",")
-        val audioCodecs = AndroidCodecDetector.getSupportedAudioCodecs().joinToString(",")
+        val passthroughCodecs = AudioPassthroughDetector.supportedCodecs(passthroughMode)
+        // Bundled FFmpeg-extension decoders, which MediaCodecList cannot see. Present on every
+        // form factor — the extension is packaged into the single unified APK.
+        val softwareCodecs = SoftwareAudioDecoders.supportedCodecs()
+        val audioCodecSet =
+            AndroidCodecDetector.getSupportedAudioCodecs() + softwareCodecs + passthroughCodecs
+        val audioCodecs = audioCodecSet.joinToString(",")
+        if (passthroughCodecs.isNotEmpty() || softwareCodecs.isNotEmpty()) {
+            Timber.i(
+                "DeviceProfile: audio widened by passthrough(mode=%s)=[%s] software=[%s]",
+                passthroughMode,
+                passthroughCodecs.sorted().joinToString(","),
+                softwareCodecs.sorted().joinToString(","),
+            )
+        }
 
         listOf(
             DirectPlayProfile(
@@ -210,11 +242,38 @@ internal fun createPlaybackDeviceProfile(
         ),
     )
 
+    // DTS Express (DTS-HD LBR) is the only DTS variant with no backward-compatible core, so
+    // Media3's DTS-HD → DTS-core rewrite turns it into noise on a core-only receiver. Excluded
+    // by profile string rather than by dropping the whole `dts` token, which would also throw
+    // away DTS-HD MA and DTS:X — both of which bitstream correctly as their core.
+    // isRequired = false so a stream whose profile the server could not determine still plays:
+    // Jellyfin treats an unknown value as satisfying a non-required condition.
+    val codecProfiles = if (!forceDirectPlay && AudioPassthroughDetector.needsDtsExpressGuard(passthroughMode)) {
+        Timber.i("DeviceProfile: excluding DTS Express from direct play (core-only route, no local DTS decoder)")
+        listOf(
+            CodecProfile(
+                type = CodecType.VIDEO_AUDIO,
+                codec = "dts",
+                conditions = listOf(
+                    ProfileCondition(
+                        condition = ProfileConditionType.NOT_EQUALS,
+                        property = ProfileConditionValue.AUDIO_PROFILE,
+                        value = AudioPassthroughDetector.DTS_EXPRESS_PROFILE,
+                        isRequired = false,
+                    ),
+                ),
+                applyConditions = emptyList(),
+            ),
+        )
+    } else {
+        emptyList()
+    }
+
     return DeviceProfile(
         name = "SpatialFin Android",
         maxStaticBitrate = maxBitrateInt,
         maxStreamingBitrate = maxBitrateInt,
-        codecProfiles = emptyList(),
+        codecProfiles = codecProfiles,
         containerProfiles = emptyList(),
         directPlayProfiles = directPlayProfiles,
         transcodingProfiles = transcodingProfiles,

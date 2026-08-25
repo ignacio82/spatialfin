@@ -90,6 +90,13 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val playerMaxBitrate = Preference("pref_player_max_bitrate", 0L)
     val playerForceDirectPlay = Preference("pref_player_force_direct_play", false)
 
+    // Player - Audio passthrough (bitstream Dolby / DTS to an AV receiver instead of
+    // decoding to PCM locally). "auto" | "off" | "force" — see AudioPassthroughMode.
+    // Read on both sides of the decision: the Jellyfin device profile (:data) and the
+    // ExoPlayer audio sink (:player:core), so Jellyfin streams and local/SMB/NFS files
+    // behave identically.
+    val playerAudioPassthrough = Preference<String?>("pref_player_audio_passthrough", "auto")
+
     // SyncPlay — set to true if PlayerViewModel.onCleared failed to leave a
     // group (network down at activity destroy, server briefly unreachable,
     // etc.). PlayerViewModel.init drains it on the next launch by firing
