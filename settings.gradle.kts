@@ -28,12 +28,15 @@ include(":sendspin")
 pluginManagement {
     // Keep the compiler and keep-annotation API on the same version. The app uses one precise
     // NEVER_INLINE edge for a Java-WebSocket monitor-region verifier bug on Android XR.
+    // NOTE: this version is duplicated as `r8` in gradle/libs.versions.toml and Gradle cannot
+    // resolve a catalog reference this early in settings evaluation. `versionCatalogUpdate`
+    // only bumps the catalog, so update BOTH or the shrinker and the keep-annotation API drift.
     buildscript {
         repositories {
             maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
         }
         dependencies {
-            classpath("com.android.tools:r8:9.3.19")
+            classpath("com.android.tools:r8:9.4.14")
         }
     }
 

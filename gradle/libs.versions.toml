@@ -1,11 +1,12 @@
 [versions]
-# HELD at 14.2.1: 15.0.0 is built for Kotlin 2.4.0 and transitively forces
-# kotlin-stdlib:2.4.0 + compose-stability-runtime:0.10.0 (both mv 2.4.0), which
-# breaks Hilt's metadata reader (max 2.3.0). Bump only alongside kotlin 2.4.0.
-aboutlibraries = "15.0.4"
+# Was held at 14.2.1 while kotlin was 2.3.x: the 15.x line is built for Kotlin 2.4.0
+# and transitively forces kotlin-stdlib 2.4.0 + compose-stability-runtime (both mv 2.4.0),
+# which broke Hilt's metadata reader (max 2.3.0). That constraint lifted when kotlin moved
+# to 2.4.x, so the hold no longer applies — but keep it moving with the kotlin version.
+aboutlibraries = "15.1.1"
 android-desugar-jdk-libs = "2.1.5"
 android-extensions-xr = "1.3.0"
-android-plugin = "9.3.1"
+android-plugin = "9.3.2"
 androidx-activity = "1.13.0"
 androidx-appcompat = "1.8.0"
 # 1.5 is required for the Baseline Profile Gradle plugin on AGP 9.x.
@@ -39,10 +40,11 @@ bcprov-jdk18on = "1.85.2"
 # HELD at 3.4.0: 3.5.0 is built for Kotlin 2.4.0 and forces kotlin-stdlib:2.4.0,
 # whose mv 2.4.0 breaks Hilt's metadata reader (max 2.3.0). Bump with kotlin 2.4.0.
 coil = "3.5.0"
-# HELD at 0.7.5: this is a Kotlin FIR compiler plugin; 0.10.0 targets Kotlin 2.4.0 and
-# crashes the 2.3.21 compiler (FirExtensionRegistrarConfigurationUtilKt ClassNotFound).
-# Bump in lockstep with the kotlin version, not independently.
-compose-stability-analyzer = "0.12.0"
+# Kotlin FIR compiler plugin. Was held at 0.7.5 while kotlin was 2.3.21, because 0.10.0+
+# targets Kotlin 2.4.0 and crashed that compiler (FirExtensionRegistrarConfigurationUtilKt
+# ClassNotFound). Safe on kotlin 2.4.10. Still bump in lockstep with the kotlin version,
+# not independently — a FIR plugin built for a newer compiler fails at build time, loudly.
+compose-stability-analyzer = "0.13.0"
 hilt = "2.60.1"
 java-websocket = "1.6.0"
 jcifs-ng = "2.1.10"
@@ -67,7 +69,8 @@ nfs4j = "0.28.5"
 okhttp = "5.5.0"
 org-json = "20260814"
 quickjs-kt = "1.0.14"
-r8 = "9.3.19"
+# Duplicated in settings.gradle.kts pluginManagement (see the note there) — update both.
+r8 = "9.4.14"
 robolectric = "4.16.1"
 # JitPack tag is "v0.2.3" (with the v); the bare "0.2.3" does not resolve. Do not drop the v.
 sendspin-jvm = "0.2.3"
