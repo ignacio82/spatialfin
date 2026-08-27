@@ -2,6 +2,13 @@
  * Universal Remote Control & D-Pad Focus Manager for SpatialFin Web App.
  * Enables 100% remote control operation (ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, Space, Escape, Backspace).
  */
+/**
+ * Frames a directional press will wait for a focusable element to appear before
+ * giving up. Roughly a third of a second at 60fps — long enough to cover a route
+ * transition, short enough that a truly empty screen does not spin.
+ */
+const MAX_MOVE_RETRIES = 20;
+
 export class RemoteControlFocusManager {
   private static instance: RemoteControlFocusManager | null = null;
   private enabled = true;
@@ -146,7 +153,19 @@ export class RemoteControlFocusManager {
     return false;
   }
 
-  public moveFocus(direction: 'up' | 'down' | 'left' | 'right') {
+  /**
+   * Retries a directional press that arrived before the container had anything
+   * focusable in it, e.g. the frame right after a route change while cards are
+   * still being laid out. Without this the press is silently swallowed and the
+   * D-pad looks dead until the user presses again.
+   */
+  private pendingMove: number | null = null;
+
+  public moveFocus(direction: 'up' | 'down' | 'left' | 'right', attempt = 0) {
+    if (this.pendingMove !== null) {
+      cancelAnimationFrame(this.pendingMove);
+      this.pendingMove = null;
+    }
     const container = this.getActiveContainer();
 
     const selector = [
@@ -170,7 +189,17 @@ export class RemoteControlFocusManager {
       return rect.width > 0 && rect.height > 0;
     });
 
-    if (elements.length === 0) return;
+    if (elements.length === 0) {
+      // Nothing measurable yet — wait a frame and try again rather than
+      // dropping the input. Bounded so a genuinely empty screen settles.
+      if (attempt < MAX_MOVE_RETRIES) {
+        this.pendingMove = requestAnimationFrame(() => {
+          this.pendingMove = null;
+          this.moveFocus(direction, attempt + 1);
+        });
+      }
+      return;
+    }
 
     let current = document.activeElement as HTMLElement | null;
     if (!current || !container.contains(current) || current === document.body || !elements.includes(current)) {
