@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -26,6 +27,9 @@ import androidx.compose.ui.unit.dp
 import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.models.HomeSection
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeSlot
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeState
+import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -37,16 +41,23 @@ fun HomeSection(
     modifier: Modifier = Modifier,
     onSeeAll: (() -> Unit)? = null,
     onItemLongClick: ((dev.jdtech.jellyfin.models.SpatialFinItem) -> Unit)? = null,
+    arrangeState: HomeRowArrangeState? = null,
 ) {
     val sectionItems = section.items.deduplicateMovieVersions()
     Column(modifier = modifier) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(42.dp).padding(itemsPadding),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp).padding(itemsPadding),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Shelf title — design's accent tick + title + muted count.
             Row(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .clip(RoundedCornerShape(8.dp))
+                    .homeRowArrangeHandle(enabled = arrangeState != null) {
+                        arrangeState?.onStartArranging?.invoke()
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
@@ -68,7 +79,9 @@ fun HomeSection(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
             }
-            if (onSeeAll != null) {
+            if (arrangeState?.isArranging == true) {
+                HomeRowArrangeSlot(arrangeState)
+            } else if (onSeeAll != null) {
                 androidx.compose.material3.TextButton(onClick = onSeeAll) {
                     Text("See All")
                 }

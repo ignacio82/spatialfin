@@ -84,6 +84,12 @@ import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
+import dev.jdtech.jellyfin.film.presentation.home.rowId
+import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeControls
+import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.restorableHiddenRows
 import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
 import dev.jdtech.jellyfin.film.presentation.downloads.DownloadSortOrder
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
@@ -638,6 +644,178 @@ fun BeamHomeScreen(
         }
     }
 
+    // Long-press a row's title to arrange it; the saved order and hidden set live
+    // in HomeRowPreferences, so the result survives process death and matches the
+    // XR and TV homes.
+    val rowLayout by viewModel.rowLayout.collectAsStateWithLifecycle()
+    var arrangingRowId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Libraries with no "Latest" row of their own — either because the library has
+    // nothing recent, or because the Latest preference is off entirely. Their
+    // per-library "See All" header is the only way into a library on Beam, so
+    // without this they'd be unreachable.
+    val unlistedLibraries =
+        state.libraries.filter { library -> state.views.none { it.view.id == library.id } }
+
+    val openItem: (dev.jdtech.jellyfin.models.SpatialFinItem) -> Unit = { item ->
+        openServerItem(
+            context,
+            item,
+            onOpenLibrary,
+            onOpenShow,
+            onOpenSeason,
+            onOpenItem,
+            maPlayDispatcher,
+            audioDispatcher = jellyfinAudioDispatcher,
+            onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+        )
+    }
+
+    // Natural (shipped) row order. HomeRowLayout.arrange() then applies whatever
+    // the user rearranged on top of it.
+    val naturalRows = buildList {
+        state.suggestionsSection?.let { suggestions ->
+            val items = suggestions.items.filter { it.id != featuredItem?.id }.deduplicateMovieVersions()
+            if (items.isNotEmpty()) {
+                add(BeamHomeRow(HomeRowIds.SUGGESTIONS, "Suggestions") {
+                    BeamPosterCarousel(items = items, onItemClick = openItem)
+                })
+            }
+        }
+        state.resumeSection?.let { section ->
+            val items = section.homeSection.items.deduplicateMovieVersions()
+            if (items.isNotEmpty()) {
+                add(BeamHomeRow(HomeRowIds.CONTINUE_WATCHING, section.homeSection.name.asString()) {
+                    BeamPosterCarousel(items = items, onItemClick = openItem, showProgress = true)
+                })
+            }
+        }
+        state.nextUpSection?.let { section ->
+            val items = section.homeSection.items.deduplicateMovieVersions()
+            if (items.isNotEmpty()) {
+                add(BeamHomeRow(HomeRowIds.NEXT_UP, section.homeSection.name.asString()) {
+                    BeamPosterCarousel(items = items, onItemClick = openItem)
+                })
+            }
+        }
+        if (unlistedLibraries.isNotEmpty()) {
+            add(BeamHomeRow(HomeRowIds.LIBRARIES, "Your libraries") {
+                BeamLibraryChipRow(libraries = unlistedLibraries, onOpenLibrary = onOpenLibrary)
+            })
+        }
+        state.views.forEach { homeView ->
+            val viewItems = homeView.view.items.deduplicateMovieVersions()
+            add(
+                BeamHomeRow(
+                    id = HomeRowIds.latest(homeView.view.id),
+                    title = homeView.view.name,
+                    actionLabel = "See All",
+                    onAction = {
+                        onOpenLibrary(homeView.view.id, homeView.view.name, homeView.view.type)
+                    },
+                ) {
+                    if (viewItems.isNotEmpty()) {
+                        BeamPosterCarousel(items = viewItems, onItemClick = openItem)
+                    }
+                }
+            )
+        }
+        // Universal plugin rows belong after Jellyfin rows.
+        state.universalPluginSections.forEach { section ->
+            val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+            val pluginId = firstItem?.universalMediaItem?.pluginId
+            val pluginRowId = firstItem?.universalMediaItem?.homeRowId
+            add(
+                BeamHomeRow(
+                    id = section.rowId,
+                    title = section.homeSection.name.asString() + " (" + section.homeSection.items.size + ")",
+                    actionLabel = if (pluginId != null) "See All" else null,
+                    onAction = if (pluginId != null) { { onOpenPluginBrowse(pluginId, pluginRowId) } } else null,
+                ) {
+                    BeamPosterCarousel(
+                        items = section.homeSection.items,
+                        onItemClick = { item ->
+                            if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
+                                context.startActivity(
+                                    dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForUniversalMedia(
+                                        context,
+                                        item.universalMediaItem.pluginId,
+                                        item.universalMediaItem.id,
+                                        item.universalMediaItem.videoUrl,
+                                        item.name
+                                    )
+                                )
+                            } else {
+                                openItem(item)
+                            }
+                        }
+                    )
+                }
+            )
+        }
+        state.musicAssistantSections.forEach { section ->
+            add(
+                BeamHomeRow(
+                    id = section.rowId,
+                    title = section.homeSection.name.asString(),
+                ) {
+                    BeamPosterCarousel(
+                        items = section.homeSection.items,
+                        onItemClick = { item ->
+                            openServerItem(
+                                context,
+                                item,
+                                onOpenLibrary,
+                                onOpenShow,
+                                onOpenSeason,
+                                onOpenItem,
+                                maPlayDispatcher,
+                                onOpenMaBrowse,
+                                audioDispatcher = jellyfinAudioDispatcher,
+                                onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
+                            )
+                        },
+                    )
+                }
+            )
+        }
+        // Network share (SMB/NFS) rows — one per configured share that has scanned
+        // content. "See All" opens the full share browser; tapping a card plays it
+        // straight through the network proxy.
+        state.networkShareSections.forEach { section ->
+            add(
+                BeamHomeRow(
+                    id = section.rowId,
+                    title = section.homeSection.name.asString(),
+                    actionLabel = "See All",
+                    onAction = { onOpenNetworkShare(section.shareId) },
+                ) {
+                    BeamPosterCarousel(
+                        items = section.homeSection.items,
+                        onItemClick = { item ->
+                            (item as? dev.jdtech.jellyfin.models.NetworkVideoItem)?.let { video ->
+                                context.startActivity(
+                                    dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForNetworkMedia(
+                                        context = context,
+                                        networkVideoId = video.networkVideoId,
+                                    )
+                                )
+                            }
+                        },
+                    )
+                }
+            )
+        }
+    }
+
+    val orderedRows = rowLayout.arrange(naturalRows) { it.id }
+    val hiddenRows =
+        remember(rowLayout, state.libraries) {
+            rowLayout.restorableHiddenRows(
+                state.libraries.associate { HomeRowIds.latest(it.id) to it.name }
+            )
+        }
+
     BeamScaffoldBody(contentPadding = contentPadding) {
         when {
             state.isLoading -> item { LoadingCard("Loading your media...") }
@@ -694,242 +872,44 @@ fun BeamHomeScreen(
                     }
                 }
 
-                // Suggestions carousel
-                state.suggestionsSection?.let { suggestions ->
-                    val filtered = suggestions.items.filter { it.id != featuredItem?.id }.deduplicateMovieVersions()
-                    if (filtered.isNotEmpty()) {
-                        item {
-                            BeamHomeSectionHeader("Suggestions")
-                        }
-                        item {
-                            BeamPosterCarousel(
-                                items = filtered,
-                                onItemClick = {
-                                    openServerItem(
-                                        context,
-                                        it,
-                                        onOpenLibrary,
-                                        onOpenShow,
-                                        onOpenSeason,
-                                        onOpenItem,
-                                        maPlayDispatcher,
-                                        audioDispatcher = jellyfinAudioDispatcher,
-                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-
-                // Resume carousel
-                state.resumeSection?.let { section ->
-                    val items = section.homeSection.items.deduplicateMovieVersions()
-                    if (items.isNotEmpty()) {
-                        item {
-                            BeamHomeSectionHeader(section.homeSection.name.asString())
-                        }
-                        item {
-                            BeamPosterCarousel(
-                                items = items,
-                                onItemClick = {
-                                    openServerItem(
-                                        context,
-                                        it,
-                                        onOpenLibrary,
-                                        onOpenShow,
-                                        onOpenSeason,
-                                        onOpenItem,
-                                        maPlayDispatcher,
-                                        audioDispatcher = jellyfinAudioDispatcher,
-                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                    )
-                                },
-                                showProgress = true,
-                            )
-                        }
-                    }
-                }
-
-                // Next Up carousel
-                state.nextUpSection?.let { section ->
-                    val items = section.homeSection.items.deduplicateMovieVersions()
-                    if (items.isNotEmpty()) {
-                        item {
-                            BeamHomeSectionHeader(section.homeSection.name.asString())
-                        }
-                        item {
-                            BeamPosterCarousel(
-                                items = items,
-                                onItemClick = {
-                                    openServerItem(
-                                        context,
-                                        it,
-                                        onOpenLibrary,
-                                        onOpenShow,
-                                        onOpenSeason,
-                                        onOpenItem,
-                                        maPlayDispatcher,
-                                        audioDispatcher = jellyfinAudioDispatcher,
-                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-
-                // Libraries with no "Latest" row of their own — either because the
-                // library has nothing recent, or because the Latest preference is off
-                // entirely. Their per-library "See All" header is the only way into a
-                // library on Beam, so without this they'd be unreachable.
-                val unlistedLibraries =
-                    state.libraries.filter { library ->
-                        state.views.none { it.view.id == library.id }
-                    }
-                if (unlistedLibraries.isNotEmpty()) {
-                    item { BeamHomeSectionHeader(title = "Your libraries") }
-                    item {
-                        BeamLibraryChipRow(
-                            libraries = unlistedLibraries,
-                            onOpenLibrary = onOpenLibrary,
-                        )
-                    }
-                }
-
-                // Library sections with carousels
-                if (state.views.isNotEmpty()) {
-                    state.views.forEach { homeView ->
-                        item {
+                orderedRows.forEachIndexed { index, row ->
+                    item(key = row.id) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
                             BeamHomeSectionHeader(
-                                title = homeView.view.name,
-                                actionLabel = "See All",
-                                onAction = {
-                                    onOpenLibrary(
-                                        homeView.view.id,
-                                        homeView.view.name,
-                                        homeView.view.type,
-                                    )
+                                title = row.title,
+                                actionLabel = row.actionLabel,
+                                onAction = row.onAction,
+                                arranging = arrangingRowId == row.id,
+                                canMoveUp = index > 0,
+                                canMoveDown = index < orderedRows.lastIndex,
+                                onStartArranging = { arrangingRowId = row.id },
+                                onMoveUp = {
+                                    viewModel.moveRow(row.id, orderedRows.map { it.id }, up = true)
                                 },
+                                onMoveDown = {
+                                    viewModel.moveRow(row.id, orderedRows.map { it.id }, up = false)
+                                },
+                                onHide = {
+                                    viewModel.setRowVisible(row.id, false)
+                                    arrangingRowId = null
+                                },
+                                onDoneArranging = { arrangingRowId = null },
                             )
-                        }
-                        val viewItems = homeView.view.items.deduplicateMovieVersions()
-                        if (viewItems.isNotEmpty()) {
-                            item {
-                                BeamPosterCarousel(
-                                    items = viewItems,
-                                    onItemClick = {
-                                        openServerItem(
-                                            context,
-                                            it,
-                                            onOpenLibrary,
-                                            onOpenShow,
-                                            onOpenSeason,
-                                            onOpenItem,
-                                            maPlayDispatcher,
-                                            audioDispatcher = jellyfinAudioDispatcher,
-                                            onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                        )
-                                    },
-                                )
-                            }
+                            row.content()
                         }
                     }
                 }
 
-                // Universal plugin rows belong after Jellyfin rows.
-                items(state.universalPluginSections) { section ->
-                    val pluginName = section.homeSection.name.asString()
-                    val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
-                    val pluginId = firstItem?.universalMediaItem?.pluginId
-                    val rowId = firstItem?.universalMediaItem?.homeRowId
-
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        BeamHomeSectionHeader(
-                            title = pluginName + " (" + section.homeSection.items.size + ")",
-                            actionLabel = "See All",
-                            onAction = if (pluginId != null) { { onOpenPluginBrowse(pluginId, rowId) } } else null
-                        )
-                        BeamPosterCarousel(
-                            items = section.homeSection.items,
-                            onItemClick = { item ->
-                                if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
-                                    context.startActivity(
-                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForUniversalMedia(
-                                            context,
-                                            item.universalMediaItem.pluginId,
-                                            item.universalMediaItem.id,
-                                            item.universalMediaItem.videoUrl,
-                                            item.name
-                                        )
-                                    )
-                                } else {
-                                    openServerItem(
-                                        context,
-                                        item,
-                                        onOpenLibrary,
-                                        onOpenShow,
-                                        onOpenSeason,
-                                        onOpenItem,
-                                        maPlayDispatcher,
-                                        audioDispatcher = jellyfinAudioDispatcher,
-                                        onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
-
-                items(state.musicAssistantSections) { section ->
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        BeamHomeSectionHeader(
-                            title = section.homeSection.name.asString(),
-                            actionLabel = null,
-                            onAction = null
-                        )
-                        BeamPosterCarousel(
-                            items = section.homeSection.items,
-                            onItemClick = { item ->
-                                openServerItem(
-                                    context,
-                                    item,
-                                    onOpenLibrary,
-                                    onOpenShow,
-                                    onOpenSeason,
-                                    onOpenItem,
-                                    maPlayDispatcher,
-                                    onOpenMaBrowse,
-                                    audioDispatcher = jellyfinAudioDispatcher,
-                                    onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                                )
-                            },
-                        )
-                    }
-                }
-
-                // Network share (SMB/NFS) rows — one per configured share that
-                // has scanned content. "See All" opens the full share browser;
-                // tapping a card plays it straight through the network proxy.
-                items(state.networkShareSections) { section ->
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        BeamHomeSectionHeader(
-                            title = section.homeSection.name.asString(),
-                            actionLabel = "See All",
-                            onAction = { onOpenNetworkShare(section.shareId) },
-                        )
-                        BeamPosterCarousel(
-                            items = section.homeSection.items,
-                            onItemClick = { item ->
-                                (item as? dev.jdtech.jellyfin.models.NetworkVideoItem)?.let { video ->
-                                    context.startActivity(
-                                        dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForNetworkMedia(
-                                            context = context,
-                                            networkVideoId = video.networkVideoId,
-                                        )
-                                    )
-                                }
-                            },
+                // Only while arranging: the rows the user switched off, so hiding
+                // one from home never becomes a one-way trip.
+                if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+                    item(key = "hidden_home_rows") {
+                        HiddenHomeRowsCard(
+                            rows = hiddenRows,
+                            onShow = { rowId -> viewModel.setRowVisible(rowId, true) },
                         )
                     }
                 }
@@ -968,11 +948,31 @@ private fun BeamLibraryChipRow(
     }
 }
 
+/**
+ * One arrangeable home row: a stable [id] for the saved layout, the title the
+ * user long-presses, its optional trailing action, and the row body itself.
+ */
+private data class BeamHomeRow(
+    val id: String,
+    val title: String,
+    val actionLabel: String? = null,
+    val onAction: (() -> Unit)? = null,
+    val content: @Composable () -> Unit,
+)
+
 @Composable
 private fun BeamHomeSectionHeader(
     title: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    arranging: Boolean = false,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onStartArranging: (() -> Unit)? = null,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
+    onHide: () -> Unit = {},
+    onDoneArranging: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -980,6 +980,13 @@ private fun BeamHomeSectionHeader(
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Row(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .clip(RoundedCornerShape(8.dp))
+                .homeRowArrangeHandle(enabled = onStartArranging != null) {
+                    onStartArranging?.invoke()
+                }
+                .padding(vertical = 4.dp, horizontal = 2.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -996,9 +1003,21 @@ private fun BeamHomeSectionHeader(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        if (actionLabel != null && onAction != null) {
+        if (arranging) {
+            HomeRowArrangeControls(
+                canMoveUp = canMoveUp,
+                canMoveDown = canMoveDown,
+                isHidden = false,
+                onMoveUp = onMoveUp,
+                onMoveDown = onMoveDown,
+                onToggleVisibility = onHide,
+                onDone = onDoneArranging,
+            )
+        } else if (actionLabel != null && onAction != null) {
             TextButton(onClick = onAction) {
                 Text(actionLabel)
             }

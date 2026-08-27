@@ -27,6 +27,10 @@ dependencies {
     implementation(libs.jellyfin.core)
     implementation(libs.okhttp)
 
+    // Real org.json on the unit-test classpath — the android.jar stub throws
+    // "Method ... not mocked", and HomeRowPreferences serialises its layout blob
+    // with JSONObject.
+    testImplementation(libs.org.json)
     testImplementation(libs.junit4)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)

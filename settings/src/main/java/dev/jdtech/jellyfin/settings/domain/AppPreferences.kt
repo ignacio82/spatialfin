@@ -36,6 +36,13 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val homeContinueWatching = Preference<Boolean>("home_continue_watching", true)
     val homeNextUp = Preference<Boolean>("home_next_up", true)
     val homeLatest = Preference<Boolean>("home_latest", true)
+
+    /**
+     * User-arranged home screen: a JSON blob of `{"order": [...], "hidden": [...]}`
+     * over the row ids in `HomeRowIds`. Read and written exclusively through
+     * `HomeRowPreferences` — do not poke at it directly.
+     */
+    val homeRowLayout = Preference<String?>("pref_home_row_layout", null)
     val displayExtraInfo = Preference("pref_display_extra_info", false)
     val displayRatings = Preference("pref_display_ratings", true)
 

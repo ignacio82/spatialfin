@@ -4,9 +4,12 @@ import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.Server
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.offline.OfflineSyncStatus
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.HomeRowLayout
 import androidx.compose.runtime.Immutable
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 
 @Immutable
 data class HomeState(
@@ -42,3 +45,37 @@ data class HomeState(
 
 @Immutable
 data class HomeLoadError(val message: String)
+
+/** The layout row id for a section, falling back to its section-declared id. */
+val HomeItem.Section.rowId: String
+    get() = homeSection.rowId ?: homeSection.id.toString()
+
+/** The layout row id for a "Latest in <library>" row. */
+val HomeItem.ViewItem.rowId: String
+    get() = HomeRowIds.latest(view.id)
+
+/** The layout row id for a network share row. */
+val HomeItem.NetworkShareSection.rowId: String
+    get() = HomeRowIds.networkShare(shareId)
+
+/**
+ * Applies the user's saved row layout to a freshly loaded — or cached — home
+ * state: hidden rows are dropped and the remaining rows within each family are
+ * put into the saved order. Cross-family ordering is applied by each shell when
+ * it flattens these fields into one list, since only the shell knows which rows
+ * it actually renders.
+ */
+fun HomeState.arrangedBy(layout: HomeRowLayout): HomeState =
+    copy(
+        suggestionsSection = suggestionsSection?.takeIf { layout.isVisible(HomeRowIds.SUGGESTIONS) },
+        resumeSection = resumeSection?.takeIf { layout.isVisible(HomeRowIds.CONTINUE_WATCHING) },
+        nextUpSection = nextUpSection?.takeIf { layout.isVisible(HomeRowIds.NEXT_UP) },
+        universalPluginSections =
+            layout.arrange(universalPluginSections) { it.rowId }.toImmutableList(),
+        musicAssistantSections =
+            layout.arrange(musicAssistantSections) { it.rowId }.toImmutableList(),
+        offlineLibrarySections =
+            layout.arrange(offlineLibrarySections) { it.rowId }.toImmutableList(),
+        networkShareSections = layout.arrange(networkShareSections) { it.rowId }.toImmutableList(),
+        views = layout.arrange(views) { it.rowId }.toImmutableList(),
+    )

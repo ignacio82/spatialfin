@@ -20,6 +20,9 @@ import dev.jdtech.jellyfin.offline.ServerConnectionMonitor
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.session.ActiveSessionBus
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.HomeRowLayout
+import dev.jdtech.jellyfin.settings.domain.HomeRowPreferences
 import dev.jdtech.jellyfin.utils.toView
 import dev.jdtech.jellyfin.watchnext.WatchNextScheduler
 import java.util.UUID
@@ -29,7 +32,10 @@ import kotlinx.collections.immutable.toImmutableList
 import dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -50,6 +56,7 @@ constructor(
     val repository: JellyfinRepository,
     val jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi,
     val appPreferences: AppPreferences,
+    val homeRowPreferences: HomeRowPreferences,
     val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
@@ -62,7 +69,27 @@ constructor(
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
-    val state = _state.asStateFlow()
+
+    /**
+     * The home content, filtered and ordered by the user's saved row layout.
+     *
+     * The filter is applied *here*, on every emission, rather than only when a
+     * row is fetched. [cachedHome] is process-wide and outlives any single
+     * ViewModel, so a section captured while its row was still enabled used to
+     * come straight back out of the cache — that is how a disabled Suggestions
+     * row kept reappearing on home. Resolving visibility at read time makes a
+     * hidden row unrenderable no matter which path produced the state.
+     */
+    val state =
+        combine(_state, homeRowPreferences.layout) { state, layout -> state.arrangedBy(layout) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.Eagerly,
+                initialValue = HomeState(),
+            )
+
+    /** The saved order/visibility, for shells that render the arrange controls. */
+    val rowLayout = homeRowPreferences.layout
 
     private val uuidSuggestions = UUID.fromString("31e47044-9b79-4bb0-99d0-0e477ed65420")
     private val uuidContinueWatching =
@@ -357,7 +384,12 @@ constructor(
                 null
             } else {
                 HomeItem.Section(
-                    HomeSection(uuidContinueWatching, uiTextContinueWatching, resumeItems)
+                    HomeSection(
+                        id = uuidContinueWatching,
+                        name = uiTextContinueWatching,
+                        items = resumeItems,
+                        rowId = HomeRowIds.CONTINUE_WATCHING,
+                    )
                 )
             }
 
@@ -377,7 +409,14 @@ constructor(
             if (nextUpItems.isEmpty()) {
                 null
             } else {
-                HomeItem.Section(HomeSection(uuidNextUp, uiTextNextUp, nextUpItems))
+                HomeItem.Section(
+                    HomeSection(
+                        id = uuidNextUp,
+                        name = uiTextNextUp,
+                        items = nextUpItems,
+                        rowId = HomeRowIds.NEXT_UP,
+                    )
+                )
             }
 
         _state.emit(_state.value.copy(nextUpSection = section))
@@ -425,7 +464,12 @@ constructor(
             if (favoriteItems.isNotEmpty()) {
                 add(
                     HomeItem.Section(
-                        HomeSection(uuidOfflineFavorites, uiTextOfflineFavorites, favoriteItems)
+                        HomeSection(
+                            id = uuidOfflineFavorites,
+                            name = uiTextOfflineFavorites,
+                            items = favoriteItems,
+                            rowId = HomeRowIds.offline("favorites"),
+                        )
                     )
                 )
             }
@@ -434,13 +478,31 @@ constructor(
                 .filter { it.isDownloaded() }
                 .takeIf { it.isNotEmpty() }
                 ?.let {
-                    add(HomeItem.Section(HomeSection(uuidOfflineMovies, uiTextOfflineMovies, it)))
+                    add(
+                        HomeItem.Section(
+                            HomeSection(
+                                id = uuidOfflineMovies,
+                                name = uiTextOfflineMovies,
+                                items = it,
+                                rowId = HomeRowIds.offline("movies"),
+                            )
+                        )
+                    )
                 }
             downloadedItems
                 .filterIsInstance<SpatialFinShow>()
                 .takeIf { it.isNotEmpty() }
                 ?.let {
-                    add(HomeItem.Section(HomeSection(uuidOfflineShows, uiTextOfflineShows, it)))
+                    add(
+                        HomeItem.Section(
+                            HomeSection(
+                                id = uuidOfflineShows,
+                                name = uiTextOfflineShows,
+                                items = it,
+                                rowId = HomeRowIds.offline("shows"),
+                            )
+                        )
+                    )
                 }
         }
         _state.update { it.copy(offlineLibrarySections = sections.toImmutableList()) }
@@ -504,6 +566,19 @@ constructor(
         }
     }
 
+    /** Moves a home row one slot up or down and persists the new order. */
+    fun moveRow(rowId: String, currentOrder: List<String>, up: Boolean) {
+        homeRowPreferences.move(rowId, currentOrder, up)
+    }
+
+    /** Shows or hides a home row, persisting through to the preference that owns it. */
+    fun setRowVisible(rowId: String, visible: Boolean) {
+        homeRowPreferences.setVisible(rowId, visible)
+        // Re-enabling a row whose fetch is gated on its preference (suggestions,
+        // continue watching, next up, latest) needs the data pulled back in; the
+        // shared-preference listener above takes care of that.
+    }
+
     fun onAction(action: HomeAction) {
         when (action) {
             is HomeAction.OnRetryClick, is HomeAction.OnReconnectClick -> {
@@ -530,7 +605,8 @@ constructor(
                             dev.jdtech.jellyfin.models.HomeSection(
                                 id = UUID.nameUUIDFromBytes("universal:$pluginId:${content.rowId ?: "home"}".toByteArray()),
                                 name = UiText.DynamicString(content.rowName ?: content.plugin.name ?: "Unknown"),
-                                items = items
+                                items = items,
+                                rowId = HomeRowIds.plugin(pluginId, content.rowId)
                             )
                         )
                     } else null
@@ -556,7 +632,8 @@ constructor(
                                 dev.jdtech.jellyfin.models.HomeSection(
                                     id = UUID.nameUUIDFromBytes("ma:recently_played".toByteArray()),
                                     name = UiText.DynamicString("Recently Played (Music Assistant)"),
-                                    items = recentlyPlayed
+                                    items = recentlyPlayed,
+                                    rowId = HomeRowIds.musicAssistant("recently_played"),
                                 )
                             )
                         )
@@ -571,6 +648,7 @@ constructor(
                                     id = UUID.nameUUIDFromBytes("ma:favorites".toByteArray()),
                                     name = UiText.DynamicString("Favorites (Music Assistant)"),
                                     items = favorites,
+                                    rowId = HomeRowIds.musicAssistant("favorites"),
                                 )
                             )
                         )
@@ -584,7 +662,8 @@ constructor(
                                 dev.jdtech.jellyfin.models.HomeSection(
                                     id = UUID.nameUUIDFromBytes("ma:playlists".toByteArray()),
                                     name = UiText.DynamicString("Playlists (Music Assistant)"),
-                                    items = playlists
+                                    items = playlists,
+                                    rowId = HomeRowIds.musicAssistant("playlists"),
                                 )
                             )
                         )
@@ -602,6 +681,7 @@ constructor(
                                     id = UUID.nameUUIDFromBytes("ma:recommendations".toByteArray()),
                                     name = UiText.DynamicString("Recommended for you (Music Assistant)"),
                                     items = recommendations,
+                                    rowId = HomeRowIds.musicAssistant("recommendations"),
                                 )
                             )
                         )
@@ -620,6 +700,7 @@ constructor(
                                     id = UUID.nameUUIDFromBytes("ma:audiobooks".toByteArray()),
                                     name = UiText.DynamicString("Audiobooks (Music Assistant)"),
                                     items = audiobooks,
+                                    rowId = HomeRowIds.musicAssistant("audiobooks"),
                                 )
                             )
                         )
@@ -634,6 +715,7 @@ constructor(
                                     id = UUID.nameUUIDFromBytes("ma:radio".toByteArray()),
                                     name = UiText.DynamicString("Radio (Music Assistant)"),
                                     items = radios,
+                                    rowId = HomeRowIds.musicAssistant("radio"),
                                 )
                             )
                         )
@@ -648,6 +730,7 @@ constructor(
                                     id = UUID.nameUUIDFromBytes("ma:podcasts".toByteArray()),
                                     name = UiText.DynamicString("Podcasts (Music Assistant)"),
                                     items = podcasts,
+                                    rowId = HomeRowIds.musicAssistant("podcasts"),
                                 )
                             )
                         )

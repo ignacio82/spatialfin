@@ -1,5 +1,12 @@
 package dev.spatialfin.tv
 
+import dev.jdtech.jellyfin.film.presentation.home.rowId
+import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeSlot
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeState
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.HomeRowLayout
+import dev.jdtech.jellyfin.settings.domain.restorableHiddenRows
 import dev.spatialfin.tv.R
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -217,6 +224,7 @@ fun TvNavigationRoot(
 ) {
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+    val homeRowLayout by homeViewModel.rowLayout.collectAsStateWithLifecycle()
     // Activity-scoped: the same VM that TvSearchScreen resolves via hiltViewModel().
     // Pre-populating it before the user navigates lets ACTION_SEARCH / global
     // search suggestions land on the Search route with the query already run.
@@ -410,7 +418,21 @@ fun TvNavigationRoot(
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
-                        TvRoute.Home -> TvHomeScreen(homeState, state, appPreferences, { selectedLibrary = it; navigate(TvRoute.Library) }, ::openItem, ::openPluginBrowse, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) }, { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) })
+                        TvRoute.Home -> TvHomeScreen(
+                            homeState,
+                            state,
+                            appPreferences,
+                            { selectedLibrary = it; navigate(TvRoute.Library) },
+                            ::openItem,
+                            ::openPluginBrowse,
+                            { navigate(TvRoute.Companion) },
+                            { navigate(TvRoute.Search) },
+                            { homeViewModel.onAction(dev.jdtech.jellyfin.film.presentation.home.HomeAction.OnRetryClick) },
+                            { shareId -> selectedNetworkShareId = shareId; navigate(TvRoute.NetworkShare) },
+                            rowLayout = homeRowLayout,
+                            onMoveRow = homeViewModel::moveRow,
+                            onSetRowVisible = homeViewModel::setRowVisible,
+                        )
                         TvRoute.Search -> TvSearchScreen(::openItem)
                         TvRoute.Library -> {
                             val library = selectedLibrary
@@ -645,6 +667,9 @@ private fun TvHomeScreen(
     onOpenSearch: () -> Unit,
     onRefresh: () -> Unit,
     onOpenNetworkShare: (String) -> Unit = {},
+    rowLayout: HomeRowLayout = HomeRowLayout(),
+    onMoveRow: (rowId: String, currentOrder: List<String>, up: Boolean) -> Unit = { _, _, _ -> },
+    onSetRowVisible: (rowId: String, visible: Boolean) -> Unit = { _, _ -> },
 ) {
     var heroFocusParked by rememberSaveable { mutableStateOf(false) }
     if (!state.hasCurrentUser || !state.hasServers) {
@@ -662,22 +687,164 @@ private fun TvHomeScreen(
     val featuredItems = suggestions.take(5).ifEmpty { nextUp.take(5) }
     val featuredEyebrow = if (suggestions.isNotEmpty()) "Featured" else "Next up for you"
     val status = homeState.tvStatusModel()
-    // portrait = poster browse rows (design); landscape = Continue / Next Up.
-    data class ShelfSpec(val title: String, val items: List<SpatialFinItem>, val showProgress: Boolean = false, val portrait: Boolean = false)
-    val shelves = buildList {
-        homeState.resumeSection?.let { add(ShelfSpec(it.homeSection.name.asString(), it.homeSection.items, showProgress = true)) }
-        homeState.nextUpSection?.let { add(ShelfSpec(it.homeSection.name.asString(), it.homeSection.items)) }
-        homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.Movies }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added movies", it.items, portrait = true)) }
-        homeState.views.map { it.view }.firstOrNull { it.type == CollectionType.TvShows }?.takeIf { it.items.isNotEmpty() }?.let { add(ShelfSpec("Recently added TV", it.items, portrait = true)) }
+    // Long-press any card in a row to arrange it — the remote's center button
+    // held down, which is the TV-native equivalent of Beam's long-press on the
+    // row title. Order and visibility persist through HomeRowPreferences and are
+    // shared with the phone and XR homes.
+    var arrangingRowId by rememberSaveable { mutableStateOf<String?>(null) }
+    val naturalRows = buildList {
+        homeState.resumeSection?.let { section ->
+            add(
+                TvHomeRow(HomeRowIds.CONTINUE_WATCHING) { arrangeState ->
+                    TvContentShelf(
+                        section.homeSection.name.asString(),
+                        section.homeSection.items,
+                        showProgress = true,
+                        onOpenItem = onOpenItem,
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        homeState.nextUpSection?.let { section ->
+            add(
+                TvHomeRow(HomeRowIds.NEXT_UP) { arrangeState ->
+                    TvContentShelf(
+                        section.homeSection.name.asString(),
+                        section.homeSection.items,
+                        onOpenItem = onOpenItem,
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        // portrait = poster browse rows (design); landscape = Continue / Next Up.
+        homeState.views
+            .map { it.view }
+            .firstOrNull { it.type == CollectionType.Movies }
+            ?.takeIf { it.items.isNotEmpty() }
+            ?.let { view ->
+                add(
+                    TvHomeRow(HomeRowIds.latest(view.id)) { arrangeState ->
+                        TvContentShelf(
+                            "Recently added movies",
+                            view.items,
+                            onOpenItem = onOpenItem,
+                            portrait = true,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+        homeState.views
+            .map { it.view }
+            .firstOrNull { it.type == CollectionType.TvShows }
+            ?.takeIf { it.items.isNotEmpty() }
+            ?.let { view ->
+                add(
+                    TvHomeRow(HomeRowIds.latest(view.id)) { arrangeState ->
+                        TvContentShelf(
+                            "Recently added TV",
+                            view.items,
+                            onOpenItem = onOpenItem,
+                            portrait = true,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
         // Music Assistant rows (recently played / playlists / recommendations /
         // audiobooks / podcasts) — same data the phone & XR homes show, so MA
         // is a first-class source on TV too. Tapping a card plays it (openItem
         // routes MA uris to the dispatcher).
         homeState.musicAssistantSections.forEach { section ->
-            section.homeSection.items.takeIf { it.isNotEmpty() }
-                ?.let { add(ShelfSpec(section.homeSection.name.asString(), it)) }
+            if (section.homeSection.items.isEmpty()) return@forEach
+            add(
+                TvHomeRow(section.rowId) { arrangeState ->
+                    TvContentShelf(
+                        section.homeSection.name.asString(),
+                        section.homeSection.items,
+                        onOpenItem = onOpenItem,
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        homeState.offlineLibrarySections.forEach { section ->
+            add(
+                TvHomeRow(section.rowId) { arrangeState ->
+                    TvContentShelf(
+                        title = section.homeSection.name.asString(),
+                        items = section.homeSection.items,
+                        showProgress = true,
+                        onOpenItem = onOpenItem,
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        homeState.universalPluginSections.forEach { section ->
+            val firstItem = section.homeSection.items.firstOrNull() as? UniversalSpatialFinItem
+            val pluginId = firstItem?.universalMediaItem?.pluginId
+            val pluginRowId = firstItem?.universalMediaItem?.homeRowId
+            add(
+                TvHomeRow(section.rowId) { arrangeState ->
+                    TvContentShelf(
+                        title = section.homeSection.name.asString(),
+                        items = section.homeSection.items,
+                        showProgress = false,
+                        onOpenItem = onOpenItem,
+                        actionLabel = if (pluginId != null) "See all" else null,
+                        onAction = if (pluginId != null) {
+                            { onOpenPluginBrowse(pluginId, pluginRowId) }
+                        } else {
+                            null
+                        },
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        // Network share (SMB/NFS) rows — one per configured share with
+        // scanned content. "See all" opens the full share browser; tapping a
+        // card plays it (openItem routes NetworkVideoItem to TvPlayerActivity).
+        homeState.networkShareSections.forEach { section ->
+            add(
+                TvHomeRow(section.rowId) { arrangeState ->
+                    TvContentShelf(
+                        title = section.homeSection.name.asString(),
+                        items = section.homeSection.items,
+                        showProgress = false,
+                        onOpenItem = onOpenItem,
+                        actionLabel = "See all",
+                        onAction = { onOpenNetworkShare(section.shareId) },
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
+        }
+        // Sourced from the library inventory, not the Latest rows — the hub is how
+        // TV reaches a library at all, so it must survive "Latest" being switched off.
+        if (homeState.libraries.isNotEmpty()) {
+            add(
+                TvHomeRow(HomeRowIds.LIBRARIES) { arrangeState ->
+                    TvLibraryShelf(
+                        "Library Hub",
+                        homeState.libraries,
+                        onOpenLibrary,
+                        arrangeState = arrangeState,
+                    )
+                }
+            )
         }
     }
+    val orderedRows = rowLayout.arrange(naturalRows) { it.id }
+    val hiddenRows =
+        remember(rowLayout, homeState.libraries) {
+            rowLayout.restorableHiddenRows(
+                homeState.libraries.associate { HomeRowIds.latest(it.id) to it.name }
+            )
+        }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -705,51 +872,45 @@ private fun TvHomeScreen(
                 }
             }
         } else {
-            items(shelves, key = { it.title }) { shelf -> TvContentShelf(shelf.title, shelf.items, shelf.showProgress, onOpenItem, portrait = shelf.portrait) }
-            items(homeState.offlineLibrarySections, key = { it.id }) { section ->
-                TvContentShelf(
-                    title = section.homeSection.name.asString(),
-                    items = section.homeSection.items,
-                    showProgress = true,
-                    onOpenItem = onOpenItem,
+            itemsIndexed(orderedRows, key = { _, row -> row.id }) { index, row ->
+                row.content(
+                    HomeRowArrangeState(
+                        isArranging = arrangingRowId == row.id,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < orderedRows.lastIndex,
+                        onStartArranging = { arrangingRowId = row.id },
+                        onMoveUp = { onMoveRow(row.id, orderedRows.map { it.id }, true) },
+                        onMoveDown = { onMoveRow(row.id, orderedRows.map { it.id }, false) },
+                        onHide = {
+                            onSetRowVisible(row.id, false)
+                            arrangingRowId = null
+                        },
+                        onDone = { arrangingRowId = null },
+                    )
                 )
             }
-            items(homeState.universalPluginSections, key = { it.id }) { section ->
-                val firstItem = section.homeSection.items.firstOrNull() as? UniversalSpatialFinItem
-                val pluginId = firstItem?.universalMediaItem?.pluginId
-                val rowId = firstItem?.universalMediaItem?.homeRowId
-                TvContentShelf(
-                    title = section.homeSection.name.asString(),
-                    items = section.homeSection.items,
-                    showProgress = false,
-                    onOpenItem = onOpenItem,
-                    actionLabel = if (pluginId != null) "See all" else null,
-                    onAction = if (pluginId != null) {
-                        { onOpenPluginBrowse(pluginId, rowId) }
-                    } else {
-                        null
-                    },
-                )
+            // Only while arranging: the rows the user switched off, so hiding one
+            // from home never becomes a one-way trip.
+            if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+                item(key = "hidden_home_rows") {
+                    HiddenHomeRowsCard(
+                        rows = hiddenRows,
+                        onShow = { rowId -> onSetRowVisible(rowId, true) },
+                    )
+                }
             }
-            // Network share (SMB/NFS) rows — one per configured share with
-            // scanned content. "See all" opens the full share browser; tapping a
-            // card plays it (openItem routes NetworkVideoItem to TvPlayerActivity).
-            items(homeState.networkShareSections, key = { it.id }) { section ->
-                TvContentShelf(
-                    title = section.homeSection.name.asString(),
-                    items = section.homeSection.items,
-                    showProgress = false,
-                    onOpenItem = onOpenItem,
-                    actionLabel = "See all",
-                    onAction = { onOpenNetworkShare(section.shareId) },
-                )
-            }
-            // Sourced from the library inventory, not the Latest rows — the hub is how
-            // TV reaches a library at all, so it must survive "Latest" being switched off.
-            if (homeState.libraries.isNotEmpty()) item { TvLibraryShelf("Library Hub", homeState.libraries, onOpenLibrary) }
         }
     }
 }
+
+/**
+ * One arrangeable row on the TV home: its stable layout [id] plus the shelf,
+ * which receives the arrange state for its header and card long-press.
+ */
+private data class TvHomeRow(
+    val id: String,
+    val content: @Composable (HomeRowArrangeState) -> Unit,
+)
 
 @Composable
 private fun TvSettingsScreen(state: MainState, appPreferences: AppPreferences, serverName: String?, onOpenCompanion: () -> Unit, onOpenSearch: () -> Unit, onOpenUsers: () -> Unit) {
@@ -954,6 +1115,7 @@ private fun TvContentShelf(
     // Design uses portrait posters for browse rows (Movies / TV Shows / Sources)
     // and landscape stills for Continue Watching / Next Up.
     portrait: Boolean = false,
+    arrangeState: HomeRowArrangeState? = null,
 ) {
     if (items.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -975,7 +1137,9 @@ private fun TvContentShelf(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-            if (actionLabel != null && onAction != null) {
+            if (arrangeState?.isArranging == true) {
+                HomeRowArrangeSlot(arrangeState)
+            } else if (actionLabel != null && onAction != null) {
                 TvHeroButton(
                     label = actionLabel,
                     icon = Icons.Rounded.ChevronRight,
@@ -995,6 +1159,7 @@ private fun TvContentShelf(
                     showProgress,
                     Modifier.width(if (portrait) 158.dp else 300.dp),
                     portrait = portrait,
+                    onLongClick = arrangeState?.onStartArranging,
                 ) { onOpenItem(item) }
             }
         }
@@ -1006,17 +1171,34 @@ private fun TvLibraryShelf(
     title: String,
     libraries: List<SpatialFinCollection>,
     onOpenLibrary: (SpatialFinCollection) -> Unit,
+    arrangeState: HomeRowArrangeState? = null,
 ) {
     if (libraries.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            HomeRowArrangeSlot(arrangeState)
+        }
         LazyRow(
             modifier = Modifier.focusRestorer(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             state = rememberTvShelfListState(),
         ) {
             itemsIndexed(libraries, key = { _, it -> it.id }) { _, library ->
-                TvLibraryCard(library, onClick = { onOpenLibrary(library) })
+                TvLibraryCard(
+                    library,
+                    onClick = { onOpenLibrary(library) },
+                    onLongClick = arrangeState?.onStartArranging,
+                )
             }
         }
     }
@@ -1563,6 +1745,9 @@ private fun TvMediaCard(
     showProgress: Boolean = false,
     modifier: Modifier = Modifier,
     portrait: Boolean = false,
+    // Holding the remote's centre button is how a TV row is put into arrange
+    // mode; the title itself can't take focus without disturbing D-pad travel.
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -1570,6 +1755,7 @@ private fun TvMediaCard(
     Card(
         modifier = modifier.onFocusChanged { isFocused = it.isFocused },
         onClick = onClick,
+        onLongClick = onLongClick,
         colors = CardDefaults.colors(containerColor = Color(0x77131A24)),
         shape = CardDefaults.shape(cardShape),
         scale = tvCardScale(),
@@ -1642,9 +1828,14 @@ private fun TvMediaCard(
 }
 
 @Composable
-private fun TvLibraryCard(library: SpatialFinCollection, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun TvLibraryCard(
+    library: SpatialFinCollection,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val cardShape = RoundedCornerShape(TV_RADIUS_CARD)
-    Card(modifier = modifier.width(320.dp).height(188.dp), onClick = onClick, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(cardShape), scale = tvCardScale(), border = tvCardBorder(cardShape), glow = tvCardGlow()) {
+    Card(modifier = modifier.width(320.dp).height(188.dp), onClick = onClick, onLongClick = onLongClick, colors = CardDefaults.colors(containerColor = Color(0x77131A24)), shape = CardDefaults.shape(cardShape), scale = tvCardScale(), border = tvCardBorder(cardShape), glow = tvCardGlow()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomStart) {
             AsyncImage(model = tvLibraryArtwork(library), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.72f)
             Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color(0xDD08121B)))))

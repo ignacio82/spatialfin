@@ -52,6 +52,8 @@ import dev.jdtech.jellyfin.core.presentation.dummy.dummyServer
 import dev.jdtech.jellyfin.film.presentation.home.HomeAction
 import dev.jdtech.jellyfin.film.presentation.home.HomeState
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
+import dev.jdtech.jellyfin.film.presentation.home.rowId
+import dev.jdtech.jellyfin.film.R as FilmR
 import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -61,6 +63,8 @@ import dev.jdtech.jellyfin.models.deduplicateMovieVersions
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.presentation.components.ErrorDialog
 import dev.jdtech.jellyfin.presentation.components.FinishSetupCard
+import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeState
 import dev.jdtech.jellyfin.presentation.film.components.HomeCarousel
 import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
 import dev.jdtech.jellyfin.presentation.film.components.HomeSection
@@ -68,6 +72,9 @@ import dev.jdtech.jellyfin.presentation.film.components.HomeView
 import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.presentation.film.components.ServerSelectionBottomSheet
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.HomeRowLayout
+import dev.jdtech.jellyfin.settings.domain.restorableHiddenRows
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
@@ -93,6 +100,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val rowLayout by viewModel.rowLayout.collectAsStateWithLifecycle()
     val context = LocalContext.current
     // One-shot language prompt: once dismissed it never reappears. Language
     // setup stays reachable from Settings. Persisted so dismissal survives
@@ -133,6 +141,9 @@ fun HomeScreen(
         onPluginBrowse = onPluginBrowse,
         onNetworkShareSeeAll = onNetworkShareSeeAll,
         onPlay = onPlay,
+        rowLayout = rowLayout,
+        onMoveRow = viewModel::moveRow,
+        onSetRowVisible = viewModel::setRowVisible,
     )
 }
 
@@ -148,6 +159,9 @@ private fun HomeScreenLayout(
     onPluginBrowse: (pluginId: String, rowId: String?) -> Unit,
     onNetworkShareSeeAll: (shareId: String) -> Unit,
     onPlay: (PlayRequest) -> Unit,
+    rowLayout: HomeRowLayout = HomeRowLayout(),
+    onMoveRow: (rowId: String, currentOrder: List<String>, up: Boolean) -> Unit = { _, _, _ -> },
+    onSetRowVisible: (rowId: String, visible: Boolean) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -195,6 +209,160 @@ private fun HomeScreenLayout(
         maCardActionsRenderer?.invoke(menuItem) { maMenuItem = null }
     }
 
+    // Long-press a row's title to arrange it. Order and visibility live in
+    // HomeRowPreferences, so the layout matches the Beam and TV homes and
+    // survives process death.
+    var arrangingRowId by rememberSaveable { mutableStateOf<String?>(null) }
+    val suggestionsTitle = stringResource(FilmR.string.suggestions)
+    val naturalRows =
+        buildList<FilmHomeRow> {
+            visibleHomeSections.suggestionsSection?.let { section ->
+                add(
+                    FilmHomeRow(HomeRowIds.SUGGESTIONS) { arrangeState ->
+                        HomeCarousel(
+                            items = section.items,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            title = suggestionsTitle,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.resumeSection?.let { section ->
+                add(
+                    FilmHomeRow(HomeRowIds.CONTINUE_WATCHING) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.nextUpSection?.let { section ->
+                add(
+                    FilmHomeRow(HomeRowIds.NEXT_UP) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.musicAssistantSections.forEach { section ->
+                add(
+                    FilmHomeRow(section.rowId) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            // Long-press an MA card → actions (add to playlist/queue,
+                            // play next) instead of only play-on-tap.
+                            onItemLongClick = { maMenuItem = it },
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.offlineLibrarySections.forEach { section ->
+                add(
+                    FilmHomeRow(section.rowId) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.views.forEach { view ->
+                add(
+                    FilmHomeRow(view.rowId) { arrangeState ->
+                        HomeView(
+                            view = view,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            state.networkShareSections.forEach { section ->
+                add(
+                    FilmHomeRow(section.rowId) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = onAction,
+                            onSeeAll = { onNetworkShareSeeAll(section.shareId) },
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+            visibleHomeSections.universalPluginSections.forEach { section ->
+                val firstItem =
+                    section.homeSection.items.firstOrNull()
+                        as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                val pluginId = firstItem?.universalMediaItem?.pluginId
+                val rowId = firstItem?.universalMediaItem?.homeRowId
+                add(
+                    FilmHomeRow(section.rowId) { arrangeState ->
+                        HomeSection(
+                            section = section.homeSection,
+                            displayRatings = displayRatings,
+                            itemsPadding = itemsPadding,
+                            onAction = { action ->
+                                if (
+                                    action is HomeAction.OnItemClick &&
+                                        action.item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+                                ) {
+                                    val uItem = action.item
+                                    onPlay(
+                                        PlayRequest.UniversalMedia(
+                                            pluginId = uItem.universalMediaItem.pluginId,
+                                            id = uItem.universalMediaItem.id,
+                                            videoUrl = uItem.universalMediaItem.videoUrl,
+                                            name = uItem.name,
+                                            stereoMode = uItem.universalMediaItem.stereoMode,
+                                            projection = uItem.universalMediaItem.projection,
+                                        )
+                                    )
+                                } else {
+                                    onAction(action)
+                                }
+                            },
+                            onSeeAll =
+                                if (pluginId != null) {
+                                    { onPluginBrowse(pluginId, rowId) }
+                                } else {
+                                    null
+                                },
+                            arrangeState = arrangeState,
+                        )
+                    }
+                )
+            }
+        }
+    val orderedRows = rowLayout.arrange(naturalRows) { it.id }
+    val hiddenRows =
+        remember(rowLayout, state.libraries) {
+            rowLayout.restorableHiddenRows(
+                state.libraries.associate { HomeRowIds.latest(it.id) to it.name }
+            )
+        }
+
     Box(modifier = Modifier.fillMaxSize().semantics { isTraversalGroup = true }) {
         PullToRefreshBox(isRefreshing = false, onRefresh = { onAction(HomeAction.OnRetryClick) }) {
             LazyColumn(
@@ -232,106 +400,36 @@ private fun HomeScreenLayout(
                         )
                     }
                 }
-                visibleHomeSections.suggestionsSection?.let { section ->
-                    item(key = section.id) {
-                        HomeCarousel(
-                            items = section.items,
-                            displayRatings = displayRatings,
-                            itemsPadding = itemsPadding,
-                            onAction = onAction,
+                orderedRows.forEachIndexed { index, row ->
+                    item(key = row.id) {
+                        row.content(
+                            HomeRowArrangeState(
+                                isArranging = arrangingRowId == row.id,
+                                canMoveUp = index > 0,
+                                canMoveDown = index < orderedRows.lastIndex,
+                                onStartArranging = { arrangingRowId = row.id },
+                                onMoveUp = { onMoveRow(row.id, orderedRows.map { it.id }, true) },
+                                onMoveDown = { onMoveRow(row.id, orderedRows.map { it.id }, false) },
+                                onHide = {
+                                    onSetRowVisible(row.id, false)
+                                    arrangingRowId = null
+                                },
+                                onDone = { arrangingRowId = null },
+                            )
                         )
                     }
                 }
-                visibleHomeSections.resumeSection?.let { section ->
-                    item(key = section.id) {
-                        HomeSection(
-                            section = section.homeSection,
-                            displayRatings = displayRatings,
-                            itemsPadding = itemsPadding,
-                            onAction = onAction,
-                            modifier = Modifier.animateItem(),
-                        )
-                    }
-                }
-                visibleHomeSections.nextUpSection?.let { section ->
-                    item(key = section.id) {
-                        HomeSection(
-                            section = section.homeSection,
-                            displayRatings = displayRatings,
-                            itemsPadding = itemsPadding,
-                            onAction = onAction,
-                            modifier = Modifier.animateItem(),
-                        )
-                    }
-                }
-                items(visibleHomeSections.musicAssistantSections, key = { it.id }) { section ->
-                    HomeSection(
-                        section = section.homeSection,
-                        itemsPadding = itemsPadding,
-                        onAction = onAction,
-                        modifier = Modifier.animateItem(),
-                        // Long-press an MA card → actions (add to playlist/queue,
-                        // play next) instead of only play-on-tap.
-                        onItemLongClick = { maMenuItem = it },
-                    )
-                }
-                items(visibleHomeSections.offlineLibrarySections, key = { it.id }) { section ->
-                    HomeSection(
-                        section = section.homeSection,
-                        displayRatings = displayRatings,
-                        itemsPadding = itemsPadding,
-                        onAction = onAction,
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-                items(visibleHomeSections.views, key = { it.id }) { view ->
-                    HomeView(
-                        view = view,
-                        displayRatings = displayRatings,
-                        itemsPadding = itemsPadding,
-                        onAction = onAction,
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-                items(state.networkShareSections, key = { it.id }) { section ->
-                    HomeSection(
-                        section = section.homeSection,
-                        displayRatings = displayRatings,
-                        itemsPadding = itemsPadding,
-                        onAction = onAction,
-                        modifier = Modifier.animateItem(),
-                        onSeeAll = { onNetworkShareSeeAll(section.shareId) },
-                    )
-                }
-                items(visibleHomeSections.universalPluginSections, key = { it.id }) { section ->
-                    val firstItem = section.homeSection.items.firstOrNull() as? dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
-                    val pluginId = firstItem?.universalMediaItem?.pluginId
-                    val rowId = firstItem?.universalMediaItem?.homeRowId
 
-                    HomeSection(
-                        section = section.homeSection,
-                        displayRatings = displayRatings,
-                        itemsPadding = itemsPadding,
-                        onAction = { action ->
-                            if (action is HomeAction.OnItemClick && action.item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
-                                val uItem = action.item
-                                onPlay(
-                                    PlayRequest.UniversalMedia(
-                                        pluginId = uItem.universalMediaItem.pluginId,
-                                        id = uItem.universalMediaItem.id,
-                                        videoUrl = uItem.universalMediaItem.videoUrl,
-                                        name = uItem.name,
-                                        stereoMode = uItem.universalMediaItem.stereoMode,
-                                        projection = uItem.universalMediaItem.projection,
-                                    )
-                                )
-                            } else {
-                                onAction(action)
-                            }
-                        },
-                        modifier = Modifier.animateItem(),
-                        onSeeAll = if (pluginId != null) { { onPluginBrowse(pluginId, rowId) } } else null
-                    )
+                // Only while arranging: the rows the user switched off, so hiding
+                // one from home never becomes a one-way trip.
+                if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+                    item(key = "hidden_home_rows") {
+                        HiddenHomeRowsCard(
+                            rows = hiddenRows,
+                            onShow = { rowId -> onSetRowVisible(rowId, true) },
+                            modifier = Modifier.padding(start = paddingStart, end = paddingEnd),
+                        )
+                    }
                 }
             }
         }
@@ -404,6 +502,15 @@ private fun HomeScreenLayoutPreview() {
         )
     }
 }
+
+/**
+ * One arrangeable row on the XR home: its stable layout [id] plus the body,
+ * which receives the arrange state to wire into its own shelf header.
+ */
+private data class FilmHomeRow(
+    val id: String,
+    val content: @Composable (HomeRowArrangeState) -> Unit,
+)
 
 private data class FinishSetupItem(
     val titleRes: Int,

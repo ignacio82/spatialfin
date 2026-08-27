@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -33,6 +34,9 @@ import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinImages
 import dev.jdtech.jellyfin.models.HomeItem
 import dev.jdtech.jellyfin.models.deduplicateMovieVersions
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeSlot
+import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeState
+import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
 import dev.spatialfin.presentation.theme.spacings
 
 @Composable
@@ -42,13 +46,19 @@ fun HomeView(
     itemsPadding: PaddingValues,
     onAction: (HomeAction) -> Unit,
     modifier: Modifier = Modifier,
+    arrangeState: HomeRowArrangeState? = null,
 ) {
     val visibleItems = view.view.items.deduplicateMovieVersions()
     Column(modifier = modifier) {
-        Box(modifier = Modifier.fillMaxWidth().height(42.dp).padding(itemsPadding)) {
+        Box(modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp).padding(itemsPadding)) {
             // Shelf title — design's accent tick + title.
             Row(
-                modifier = Modifier.align(Alignment.CenterStart),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .clip(RoundedCornerShape(8.dp))
+                    .homeRowArrangeHandle(enabled = arrangeState != null) {
+                        arrangeState?.onStartArranging?.invoke()
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
@@ -65,25 +75,29 @@ fun HomeView(
                     fontWeight = FontWeight.Bold,
                 )
             }
-            IconButton(
-                onClick = {
-                    onAction(
-                        HomeAction.OnLibraryClick(
-                            SpatialFinCollection(
-                                id = view.view.id,
-                                name = view.view.name,
-                                images = SpatialFinImages(),
-                                type = view.view.type,
+            if (arrangeState?.isArranging == true) {
+                HomeRowArrangeSlot(arrangeState, modifier = Modifier.align(Alignment.CenterEnd))
+            } else {
+                IconButton(
+                    onClick = {
+                        onAction(
+                            HomeAction.OnLibraryClick(
+                                SpatialFinCollection(
+                                    id = view.view.id,
+                                    name = view.view.name,
+                                    images = SpatialFinImages(),
+                                    type = view.view.type,
+                                )
                             )
                         )
+                    },
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                ) {
+                    Icon(
+                        painter = painterResource(CoreR.drawable.ic_arrow_right),
+                        contentDescription = null,
                     )
-                },
-                modifier = Modifier.align(Alignment.CenterEnd),
-            ) {
-                Icon(
-                    painter = painterResource(CoreR.drawable.ic_arrow_right),
-                    contentDescription = null,
-                )
+                }
             }
         }
         Spacer(modifier = Modifier.height(MaterialTheme.spacings.extraSmall))

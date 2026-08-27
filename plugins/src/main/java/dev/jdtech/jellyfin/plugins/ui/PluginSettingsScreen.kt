@@ -3,7 +3,6 @@ package dev.jdtech.jellyfin.plugins.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.content.SharedPreferences
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,6 +32,8 @@ import dev.jdtech.jellyfin.plugins.model.PluginHomeRow
 import dev.jdtech.jellyfin.plugins.model.PluginHomeRowTemplate
 import dev.jdtech.jellyfin.plugins.repository.PluginRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
+import dev.jdtech.jellyfin.settings.domain.HomeRowIds
+import dev.jdtech.jellyfin.settings.domain.HomeRowPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -64,8 +65,8 @@ data class PluginHomeRowUi(
 @HiltViewModel
 class PluginSettingsViewModel @Inject constructor(
     private val repository: PluginRepository,
-    private val sharedPreferences: SharedPreferences,
-    private val appPreferences: AppPreferences
+    private val appPreferences: AppPreferences,
+    private val homeRowPreferences: HomeRowPreferences,
 ) : ViewModel() {
     private val _plugins = MutableStateFlow<List<PluginConfig>>(emptyList())
     val plugins = _plugins.asStateFlow()
@@ -83,7 +84,10 @@ class PluginSettingsViewModel @Inject constructor(
     val isInstalling = _isInstalling.asStateFlow()
 
     init {
-        refresh()
+        // The same rows can be hidden straight from the home screen's long-press
+        // arrange controls, so follow the shared layout rather than only reading
+        // it once.
+        viewModelScope.launch { homeRowPreferences.layout.collect { refresh() } }
     }
 
     fun refresh() {
@@ -94,25 +98,25 @@ class PluginSettingsViewModel @Inject constructor(
                 key = "continue",
                 name = "Continue Watching",
                 description = "Resume movies and episodes you already started.",
-                enabled = appPreferences.getValue(appPreferences.homeContinueWatching)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.CONTINUE_WATCHING)
             ),
             JellyfinHomeRowUi(
                 key = "nextUp",
                 name = "Next Up",
                 description = "Continue watching shows from the next unwatched episode.",
-                enabled = appPreferences.getValue(appPreferences.homeNextUp)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.NEXT_UP)
             ),
             JellyfinHomeRowUi(
                 key = "suggestions",
                 name = "Suggestions",
                 description = "Recommended Jellyfin titles at the top of Home.",
-                enabled = appPreferences.getValue(appPreferences.homeSuggestions)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.SUGGESTIONS)
             ),
             JellyfinHomeRowUi(
                 key = "latest",
                 name = "Latest Media",
                 description = "Recently added items from your Jellyfin libraries.",
-                enabled = appPreferences.getValue(appPreferences.homeLatest)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.ALL_LATEST)
             )
         )
         _musicAssistantRows.value = listOf(
@@ -120,43 +124,43 @@ class PluginSettingsViewModel @Inject constructor(
                 key = "recentlyPlayed",
                 name = "Recently Played",
                 description = "Resume your recent Music Assistant items.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_RECENTLY_PLAYED, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("recently_played"))
             ),
             MusicAssistantHomeRowUi(
                 key = "favorites",
                 name = "Favorites",
                 description = "Your favorited Music Assistant tracks.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_FAVORITES, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("favorites"))
             ),
             MusicAssistantHomeRowUi(
                 key = "recommendations",
                 name = "Recommendations",
                 description = "Recommended tracks and albums from Music Assistant.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_RECOMMENDATIONS, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("recommendations"))
             ),
             MusicAssistantHomeRowUi(
                 key = "playlists",
                 name = "Playlists",
                 description = "Your favorite Music Assistant playlists.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_PLAYLISTS, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("playlists"))
             ),
             MusicAssistantHomeRowUi(
                 key = "audiobooks",
                 name = "Audiobooks",
                 description = "Audiobooks from your Music Assistant library.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_AUDIOBOOKS, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("audiobooks"))
             ),
             MusicAssistantHomeRowUi(
                 key = "podcasts",
                 name = "Podcasts",
                 description = "Podcasts from your Music Assistant library.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_PODCASTS, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("podcasts"))
             ),
             MusicAssistantHomeRowUi(
                 key = "radio",
                 name = "Radio",
                 description = "Radio stations from your Music Assistant library.",
-                enabled = sharedPreferences.getBoolean(HOME_MA_RADIO, true)
+                enabled = homeRowPreferences.isVisible(HomeRowIds.musicAssistant("radio"))
             )
         )
         _pluginRows.value = installedPlugins.associate { plugin ->
@@ -168,7 +172,8 @@ class PluginSettingsViewModel @Inject constructor(
                     enabled = if (pluginId.isBlank()) {
                         row.defaultEnabled
                     } else {
-                        repository.isPluginHomeRowEnabled(pluginId, row.id, row.defaultEnabled)
+                        repository.isPluginHomeRowEnabled(pluginId, row.id, row.defaultEnabled) &&
+                            homeRowPreferences.isVisible(HomeRowIds.plugin(pluginId, row.id))
                     },
                     canDelete = repository.isCustomHomeRow(row.id)
                 )
@@ -178,30 +183,30 @@ class PluginSettingsViewModel @Inject constructor(
     }
 
     fun updateJellyfinHomeRow(key: String, enabled: Boolean) {
-        val pref = when (key) {
-            "continue" -> appPreferences.homeContinueWatching
-            "nextUp" -> appPreferences.homeNextUp
-            "suggestions" -> appPreferences.homeSuggestions
-            "latest" -> appPreferences.homeLatest
+        val rowId = when (key) {
+            "continue" -> HomeRowIds.CONTINUE_WATCHING
+            "nextUp" -> HomeRowIds.NEXT_UP
+            "suggestions" -> HomeRowIds.SUGGESTIONS
+            "latest" -> HomeRowIds.ALL_LATEST
             else -> null
         } ?: return
-        appPreferences.setValue(pref, enabled)
+        homeRowPreferences.setVisible(rowId, enabled)
         repository.notifySettingsChanged()
         refresh()
     }
 
     fun updateMusicAssistantHomeRow(key: String, enabled: Boolean) {
-        val preferenceKey = when (key) {
-            "recentlyPlayed" -> HOME_MA_RECENTLY_PLAYED
-            "favorites" -> HOME_MA_FAVORITES
-            "recommendations" -> HOME_MA_RECOMMENDATIONS
-            "playlists" -> HOME_MA_PLAYLISTS
-            "audiobooks" -> HOME_MA_AUDIOBOOKS
-            "podcasts" -> HOME_MA_PODCASTS
-            "radio" -> HOME_MA_RADIO
+        val maKey = when (key) {
+            "recentlyPlayed" -> "recently_played"
+            "favorites" -> "favorites"
+            "recommendations" -> "recommendations"
+            "playlists" -> "playlists"
+            "audiobooks" -> "audiobooks"
+            "podcasts" -> "podcasts"
+            "radio" -> "radio"
             else -> null
         } ?: return
-        sharedPreferences.edit().putBoolean(preferenceKey, enabled).apply()
+        homeRowPreferences.setVisible(HomeRowIds.musicAssistant(maKey), enabled)
         repository.notifySettingsChanged()
         refresh()
     }
@@ -209,6 +214,9 @@ class PluginSettingsViewModel @Inject constructor(
     fun updatePluginHomeRow(pluginId: String, rowId: String, enabled: Boolean) {
         if (pluginId.isBlank()) return
         repository.updatePluginHomeRowEnabled(pluginId, rowId, enabled)
+        // Mirror into the shared home layout so a row hidden from the home
+        // screen's arrange controls and one switched off here agree.
+        homeRowPreferences.setVisible(HomeRowIds.plugin(pluginId, rowId), enabled)
         refresh()
     }
 
@@ -266,19 +274,6 @@ class PluginSettingsViewModel @Inject constructor(
         }
     }
 
-    companion object {
-        private const val HOME_SUGGESTIONS = "home_suggestions"
-        private const val HOME_CONTINUE_WATCHING = "home_continue_watching"
-        private const val HOME_NEXT_UP = "home_next_up"
-        private const val HOME_LATEST = "home_latest"
-        private const val HOME_MA_RECENTLY_PLAYED = "home_ma_recently_played"
-        private const val HOME_MA_FAVORITES = "home_ma_favorites"
-        private const val HOME_MA_RECOMMENDATIONS = "home_ma_recommendations"
-        private const val HOME_MA_PLAYLISTS = "home_ma_playlists"
-        private const val HOME_MA_AUDIOBOOKS = "home_ma_audiobooks"
-        private const val HOME_MA_PODCASTS = "home_ma_podcasts"
-        private const val HOME_MA_RADIO = "home_ma_radio"
-    }
 }
 
 @Composable
