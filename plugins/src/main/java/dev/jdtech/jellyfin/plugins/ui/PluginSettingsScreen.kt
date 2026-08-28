@@ -217,6 +217,7 @@ class PluginSettingsViewModel @Inject constructor(
         // Mirror into the shared home layout so a row hidden from the home
         // screen's arrange controls and one switched off here agree.
         homeRowPreferences.setVisible(HomeRowIds.plugin(pluginId, rowId), enabled)
+        repository.notifySettingsChanged()
         refresh()
     }
 

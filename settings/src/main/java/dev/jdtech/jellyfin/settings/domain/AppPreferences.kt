@@ -447,6 +447,6 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     }
 
     companion object {
-        private const val NETWORK_SHARE_HOME_VISIBLE_PREFIX = "pref_network_share_home_visible_"
+        const val NETWORK_SHARE_HOME_VISIBLE_PREFIX = "pref_network_share_home_visible_"
     }
 }

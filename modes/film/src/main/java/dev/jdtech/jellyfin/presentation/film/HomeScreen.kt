@@ -357,10 +357,12 @@ private fun HomeScreenLayout(
         }
     val orderedRows = rowLayout.arrange(naturalRows) { it.id }
     val hiddenRows =
-        remember(rowLayout, state.libraries) {
-            rowLayout.restorableHiddenRows(
-                state.libraries.associate { HomeRowIds.latest(it.id) to it.name }
-            )
+        remember(rowLayout, state.libraries, state.networkShareSections, context) {
+            val customTitles = buildMap {
+                state.libraries.forEach { put(HomeRowIds.latest(it.id), it.name) }
+                state.networkShareSections.forEach { put(it.rowId, it.homeSection.name.asString(context.resources)) }
+            }
+            rowLayout.restorableHiddenRows(customTitles)
         }
 
     Box(modifier = Modifier.fillMaxSize().semantics { isTraversalGroup = true }) {
@@ -412,7 +414,6 @@ private fun HomeScreenLayout(
                                 onMoveDown = { onMoveRow(row.id, orderedRows.map { it.id }, false) },
                                 onHide = {
                                     onSetRowVisible(row.id, false)
-                                    arrangingRowId = null
                                 },
                                 onDone = { arrangingRowId = null },
                             )
@@ -420,13 +421,14 @@ private fun HomeScreenLayout(
                     }
                 }
 
-                // Only while arranging: the rows the user switched off, so hiding
-                // one from home never becomes a one-way trip.
-                if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+                // Only while arranging or when all rows have been hidden: the rows
+                // the user switched off, so hiding one from home never becomes a one-way trip.
+                if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                     item(key = "hidden_home_rows") {
                         HiddenHomeRowsCard(
                             rows = hiddenRows,
                             onShow = { rowId -> onSetRowVisible(rowId, true) },
+                            onDone = { arrangingRowId = null },
                             modifier = Modifier.padding(start = paddingStart, end = paddingEnd),
                         )
                     }

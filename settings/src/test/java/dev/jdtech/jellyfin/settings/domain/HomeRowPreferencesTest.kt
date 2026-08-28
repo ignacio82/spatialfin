@@ -73,6 +73,62 @@ class HomeRowPreferencesTest {
 
         assertEquals(3, seen.distinct().size)
     }
+
+    @Test
+    fun `toggling ALL_LATEST on unhides individually hidden latest rows`() {
+        homeRows.setVisible(music, false)
+        assertFalse(homeRows.isVisible(music))
+
+        homeRows.setVisible(HomeRowIds.ALL_LATEST, true)
+        assertTrue(homeRows.isVisible(HomeRowIds.ALL_LATEST))
+        assertTrue(homeRows.isVisible(music))
+        assertTrue(homeRows.isVisible(movies))
+    }
+
+    @Test
+    fun `toggling ALL_LATEST off hides all latest rows`() {
+        homeRows.setVisible(HomeRowIds.ALL_LATEST, false)
+        assertFalse(homeRows.isVisible(HomeRowIds.ALL_LATEST))
+        assertFalse(homeRows.isVisible(music))
+        assertFalse(homeRows.isVisible(movies))
+    }
+
+    @Test
+    fun `network share visibility syncs with AppPreferences and layout`() {
+        val shareRow = HomeRowIds.networkShare("smb1")
+        assertTrue(homeRows.isVisible(shareRow))
+
+        homeRows.setVisible(shareRow, false)
+        assertFalse(homeRows.isVisible(shareRow))
+        assertFalse(AppPreferences(prefs).isNetworkShareHomeVisible("smb1"))
+
+        homeRows.setVisible(shareRow, true)
+        assertTrue(homeRows.isVisible(shareRow))
+        assertTrue(AppPreferences(prefs).isNetworkShareHomeVisible("smb1"))
+    }
+
+    @Test
+    fun `offline and plugin rows hide and unhide cleanly`() {
+        val offlineRow = HomeRowIds.offline("movies")
+        val pluginRow = HomeRowIds.plugin("my_plugin", "home")
+
+        homeRows.setVisible(offlineRow, false)
+        assertFalse(homeRows.isVisible(offlineRow))
+
+        homeRows.setVisible(pluginRow, false)
+        assertFalse(homeRows.isVisible(pluginRow))
+
+        val restorable = homeRows.layout.value.restorableHiddenRows()
+        val restorableIds = restorable.map { it.first }.toSet()
+        assertTrue(restorableIds.contains(offlineRow))
+        assertTrue(restorableIds.contains(pluginRow))
+
+        homeRows.setVisible(offlineRow, true)
+        assertTrue(homeRows.isVisible(offlineRow))
+
+        homeRows.setVisible(pluginRow, true)
+        assertTrue(homeRows.isVisible(pluginRow))
+    }
 }
 
 private class FakeSharedPreferences : SharedPreferences {

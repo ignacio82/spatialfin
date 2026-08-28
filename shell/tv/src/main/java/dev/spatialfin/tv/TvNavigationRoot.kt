@@ -692,6 +692,7 @@ private fun TvHomeScreen(
     // row title. Order and visibility persist through HomeRowPreferences and are
     // shared with the phone and XR homes.
     var arrangingRowId by rememberSaveable { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val naturalRows = buildList {
         homeState.resumeSection?.let { section ->
             add(
@@ -719,15 +720,18 @@ private fun TvHomeScreen(
             )
         }
         // portrait = poster browse rows (design); landscape = Continue / Next Up.
-        homeState.views
-            .map { it.view }
-            .firstOrNull { it.type == CollectionType.Movies }
-            ?.takeIf { it.items.isNotEmpty() }
-            ?.let { view ->
+        homeState.views.forEach { homeView ->
+            val view = homeView.view
+            if (view.items.isNotEmpty()) {
+                val title = when (view.type) {
+                    CollectionType.Movies -> "Recently added ${view.name.lowercase()}"
+                    CollectionType.TvShows -> "Recently added ${view.name.lowercase()}"
+                    else -> "Recently added ${view.name.lowercase()}"
+                }.replaceFirstChar { it.uppercase() }
                 add(
                     TvHomeRow(HomeRowIds.latest(view.id)) { arrangeState ->
                         TvContentShelf(
-                            "Recently added movies",
+                            title,
                             view.items,
                             onOpenItem = onOpenItem,
                             portrait = true,
@@ -736,23 +740,7 @@ private fun TvHomeScreen(
                     }
                 )
             }
-        homeState.views
-            .map { it.view }
-            .firstOrNull { it.type == CollectionType.TvShows }
-            ?.takeIf { it.items.isNotEmpty() }
-            ?.let { view ->
-                add(
-                    TvHomeRow(HomeRowIds.latest(view.id)) { arrangeState ->
-                        TvContentShelf(
-                            "Recently added TV",
-                            view.items,
-                            onOpenItem = onOpenItem,
-                            portrait = true,
-                            arrangeState = arrangeState,
-                        )
-                    }
-                )
-            }
+        }
         // Music Assistant rows (recently played / playlists / recommendations /
         // audiobooks / podcasts) — same data the phone & XR homes show, so MA
         // is a first-class source on TV too. Tapping a card plays it (openItem
@@ -840,10 +828,12 @@ private fun TvHomeScreen(
     }
     val orderedRows = rowLayout.arrange(naturalRows) { it.id }
     val hiddenRows =
-        remember(rowLayout, homeState.libraries) {
-            rowLayout.restorableHiddenRows(
-                homeState.libraries.associate { HomeRowIds.latest(it.id) to it.name }
-            )
+        remember(rowLayout, homeState.libraries, homeState.networkShareSections, context) {
+            val customTitles = buildMap {
+                homeState.libraries.forEach { put(HomeRowIds.latest(it.id), it.name) }
+                homeState.networkShareSections.forEach { put(it.rowId, it.homeSection.name.asString(context.resources)) }
+            }
+            rowLayout.restorableHiddenRows(customTitles)
         }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -883,19 +873,19 @@ private fun TvHomeScreen(
                         onMoveDown = { onMoveRow(row.id, orderedRows.map { it.id }, false) },
                         onHide = {
                             onSetRowVisible(row.id, false)
-                            arrangingRowId = null
                         },
                         onDone = { arrangingRowId = null },
                     )
                 )
             }
-            // Only while arranging: the rows the user switched off, so hiding one
+            // Only while arranging or when all rows have been hidden: the rows the user switched off, so hiding one
             // from home never becomes a one-way trip.
-            if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+            if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                 item(key = "hidden_home_rows") {
                     HiddenHomeRowsCard(
                         rows = hiddenRows,
                         onShow = { rowId -> onSetRowVisible(rowId, true) },
+                        onDone = { arrangingRowId = null },
                     )
                 }
             }

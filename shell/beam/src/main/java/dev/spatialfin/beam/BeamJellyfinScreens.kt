@@ -36,6 +36,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.ClosedCaption
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -83,6 +91,9 @@ import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel
+import dev.jdtech.jellyfin.film.domain.DetailHeroMetadata
+import dev.jdtech.jellyfin.film.domain.HeroFactKind
+import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
 import dev.jdtech.jellyfin.film.presentation.home.rowId
 import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
@@ -810,10 +821,12 @@ fun BeamHomeScreen(
 
     val orderedRows = rowLayout.arrange(naturalRows) { it.id }
     val hiddenRows =
-        remember(rowLayout, state.libraries) {
-            rowLayout.restorableHiddenRows(
-                state.libraries.associate { HomeRowIds.latest(it.id) to it.name }
-            )
+        remember(rowLayout, state.libraries, state.networkShareSections, context) {
+            val customTitles = buildMap {
+                state.libraries.forEach { put(HomeRowIds.latest(it.id), it.name) }
+                state.networkShareSections.forEach { put(it.rowId, it.homeSection.name.asString(context.resources)) }
+            }
+            rowLayout.restorableHiddenRows(customTitles)
         }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
@@ -894,7 +907,6 @@ fun BeamHomeScreen(
                                 },
                                 onHide = {
                                     viewModel.setRowVisible(row.id, false)
-                                    arrangingRowId = null
                                 },
                                 onDoneArranging = { arrangingRowId = null },
                             )
@@ -903,13 +915,14 @@ fun BeamHomeScreen(
                     }
                 }
 
-                // Only while arranging: the rows the user switched off, so hiding
-                // one from home never becomes a one-way trip.
-                if (arrangingRowId != null && hiddenRows.isNotEmpty()) {
+                // Only while arranging or when all rows have been hidden: the rows
+                // the user switched off, so hiding one from home never becomes a one-way trip.
+                if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                     item(key = "hidden_home_rows") {
                         HiddenHomeRowsCard(
                             rows = hiddenRows,
                             onShow = { rowId -> viewModel.setRowVisible(rowId, true) },
+                            onDone = { arrangingRowId = null },
                         )
                     }
                 }
@@ -1280,21 +1293,12 @@ fun BeamShowScreen(
                 val supportingLine =
                     show.originalTitle?.takeIf { !it.isNullOrBlank() && it != show.name }
                         ?: show.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
-                val metadata =
-                    buildList {
-                        getShowDateString(show).takeIf { it.isNotBlank() }?.let(::add)
-                        if (state.seasons.isNotEmpty()) {
-                            add("${state.seasons.size} seasons")
-                        }
-                        show.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-                        show.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
-                    }
                 item {
                     BeamDetailHeroCard(
                         item = show,
                         eyebrow = "Series",
                         supportingLine = supportingLine,
-                        metadata = metadata,
+                        hero = show.detailHeroMetadata(),
                         onBack = onBack,
                     ) {
                         // Single-row by design: extras go in the overflow menu rather than
@@ -1507,10 +1511,7 @@ fun BeamSeasonScreen(
                         item = season,
                         eyebrow = "Season",
                         supportingLine = season.seriesName,
-                        metadata = buildList {
-                            if (season.indexNumber > 0) add("Season ${season.indexNumber}")
-                            season.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
-                        },
+                        hero = season.detailHeroMetadata(),
                         onBack = onBack,
                     ) {
                         // Single-row by design: extras go in the overflow menu rather than
@@ -1698,33 +1699,12 @@ fun BeamItemDetailScreen(
                         is SpatialFinSeason -> itemData.seriesName
                         else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
                     }
-                val metadata =
-                    buildList {
-                        when (itemData) {
-                            is SpatialFinMovie -> {
-                                itemData.productionYear?.let { add(it.toString()) }
-                                beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
-                                itemData.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-                                addAll(itemData.genres.take(2))
-                            }
-                            is SpatialFinEpisode -> {
-                                add(buildEpisodeLabel(itemData))
-                                itemData.premiereDate?.year?.let { add(it.toString()) }
-                                beamRuntimeLabel(itemData.runtimeTicks)?.let(::add)
-                            }
-                            is SpatialFinSeason -> {
-                                add(beamSeasonLabel(itemData))
-                                itemData.unplayedItemCount?.takeIf { it > 0 }?.let { add("$it unwatched") }
-                            }
-                            else -> Unit
-                        }
-                    }
                 item {
                     BeamDetailHeroCard(
                         item = itemData,
                         eyebrow = buildPrimaryBadge(itemData),
                         supportingLine = supportingLine,
-                        metadata = metadata,
+                        hero = itemData.detailHeroMetadata(),
                         onBack = onBack,
                         actions = {} // Actions moved below
                     )
@@ -2093,13 +2073,6 @@ private fun beamBackdropArtwork(item: SpatialFinItem): Any? =
         else ->
             item.images.backdrop ?: item.images.showBackdrop ?: item.images.primary ?: item.images.showPrimary
     }
-
-private fun beamRuntimeLabel(runtimeTicks: Long): String? =
-    runtimeTicks
-        .takeIf { it > 0L }
-        ?.div(600000000)
-        ?.takeIf { it > 0L }
-        ?.let { "$it min" }
 
 private fun beamSeasonLabel(season: SpatialFinSeason): String =
     if (season.indexNumber > 0) {
@@ -3108,29 +3081,153 @@ private fun BeamDetailHeroCard(
     item: SpatialFinItem,
     eyebrow: String,
     supportingLine: String?,
-    metadata: List<String>,
+    hero: DetailHeroMetadata,
     onBack: (() -> Unit)? = null,
     actions: @Composable ColumnScope.() -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
+    // Deliberately NOT a fixed height. This used to be `.height(280.dp)`, which on a
+    // phone left the info column ~20dp after the poster and its padding — the title,
+    // the fact chips and the genres were all computed, laid out, and then clipped
+    // away, so the hero looked empty next to Fladder's. The backdrop is painted
+    // behind via matchParentSize() and the content decides how tall the hero is.
+    Box(modifier = Modifier.fillMaxWidth()) {
         AsyncImage(
             model = beamBackdropArtwork(item),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.matchParentSize(),
             contentScale = ContentScale.Crop,
         )
-        // Scrim gradient
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color(0xFF111318)),
-                        startY = 0f,
-                        endY = Float.POSITIVE_INFINITY, // Or better let compose determine height automatically
+                        colors = listOf(
+                            Color(0xCC0B0D11),
+                            Color(0xE6101319),
+                            Color(0xFF111318),
+                        ),
                     )
                 )
         )
+
+        val stacked = LocalBeamWidth.current.isCompact
+        val info: @Composable ColumnScope.() -> Unit = {
+            BeamBadge(text = eyebrow)
+            // Prefer the artwork logo the way Fladder does — it is the title as the
+            // studio set it. Falls back to text whenever the server has no logo.
+            val logo = item.images.logo ?: item.images.showLogo
+            if (logo != null) {
+                AsyncImage(
+                    model = logo,
+                    contentDescription = item.name,
+                    modifier = Modifier
+                        .heightIn(max = if (stacked) 72.dp else 88.dp)
+                        .widthIn(max = 340.dp),
+                    contentScale = ContentScale.Fit,
+                    alignment = if (stacked) Alignment.Center else Alignment.CenterStart,
+                )
+            } else {
+                Text(
+                    text = item.name,
+                    style = if (stacked) MaterialTheme.typography.headlineSmall
+                            else MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            supportingLine?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFFE6EBF2),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (hero.facts.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    hero.facts.forEach { fact ->
+                        BeamDetailPill(text = fact.label, icon = beamHeroFactIcon(fact.kind))
+                    }
+                }
+            }
+            if (hero.genres.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    hero.genres.forEach { genre -> BeamDetailPill(text = genre) }
+                }
+            }
+            // What will actually play: resolution + HDR, the default audio track,
+            // and the default subtitle track.
+            val streamChips = listOfNotNull(
+                hero.video?.let { it to Icons.Rounded.Movie },
+                hero.audio?.let { it to Icons.Rounded.VolumeUp },
+                hero.subtitle?.let { it to Icons.Rounded.ClosedCaption },
+            )
+            if (streamChips.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    streamChips.forEach { (label, icon) ->
+                        BeamDetailPill(
+                            text = label,
+                            icon = icon,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+            actions()
+        }
+
+        if (stacked) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .padding(top = 56.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                BeamPosterArtwork(
+                    item = item,
+                    modifier = Modifier.width(150.dp).aspectRatio(0.67f),
+                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) { info() }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 26.dp)
+                    .padding(top = 56.dp, bottom = 26.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                BeamPosterArtwork(
+                    item = item,
+                    modifier = Modifier.width(180.dp).aspectRatio(0.67f),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) { info() }
+            }
+        }
+
         if (onBack != null) {
             androidx.compose.material3.IconButton(
                 onClick = onBack,
@@ -3145,72 +3242,18 @@ private fun BeamDetailHeroCard(
                 )
             }
         }
-            val stacked = LocalBeamWidth.current.isCompact
-            val info: @Composable ColumnScope.() -> Unit = {
-                BeamBadge(text = eyebrow)
-                Text(
-                    text = item.name,
-                    style = if (stacked) MaterialTheme.typography.headlineSmall
-                            else MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                supportingLine?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color(0xFFE6EBF2),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (metadata.isNotEmpty()) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        metadata.forEach { token ->
-                            BeamDetailPill(text = token)
-                        }
-                    }
-                }
-                actions()
-            }
-            if (stacked) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    BeamPosterArtwork(
-                        item = item,
-                        modifier = Modifier.width(150.dp).aspectRatio(0.67f),
-                    )
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) { info() }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 26.dp),
-                    horizontalArrangement = Arrangement.spacedBy(22.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    BeamPosterArtwork(
-                        item = item,
-                        modifier = Modifier.width(180.dp).aspectRatio(0.67f),
-                    )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) { info() }
-                }
-            }
-        }
+    }
 }
+
+private fun beamHeroFactIcon(kind: HeroFactKind): androidx.compose.ui.graphics.vector.ImageVector? =
+    when (kind) {
+        HeroFactKind.CERTIFICATION -> null
+        HeroFactKind.YEAR -> Icons.Rounded.CalendarMonth
+        HeroFactKind.RUNTIME -> Icons.Rounded.Schedule
+        HeroFactKind.RATING -> Icons.Rounded.Star
+        HeroFactKind.EPISODE -> null
+        HeroFactKind.UNPLAYED -> Icons.Rounded.Visibility
+    }
 
 @Composable
 private fun BeamCastAndCrew(
@@ -3272,17 +3315,34 @@ private fun BeamCastAndCrew(
 }
 
 @Composable
-private fun BeamDetailPill(text: String) {
+private fun BeamDetailPill(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    tint: Color = Color.White,
+) {
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = Color.Black.copy(alpha = 0.25f),
     ) {
-        Text(
-            text = text,
+        Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = Color.White,
-        )
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                androidx.compose.material3.Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = tint,
+                )
+            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (icon != null) tint else Color.White,
+            )
+        }
     }
 }
 

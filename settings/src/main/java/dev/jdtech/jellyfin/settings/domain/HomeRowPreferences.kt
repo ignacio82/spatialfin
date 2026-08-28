@@ -136,19 +136,42 @@ constructor(private val appPreferences: AppPreferences) {
      * every surface that renders a toggle for the same row stays in sync.
      */
     fun setVisible(rowId: String, visible: Boolean) {
+        if (rowId == HomeRowIds.ALL_LATEST) {
+            appPreferences.setValue(appPreferences.homeLatest, visible)
+            if (visible) {
+                // When re-enabling latest media from Sources, clear individual
+                // library rows from hidden as well so unhiding isn't blocked by
+                // individual hidden library rows.
+                clearLatestFromHidden()
+            } else {
+                writeHidden(HomeRowIds.ALL_LATEST, hidden = true)
+            }
+            _layout.value = read()
+            Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
+            return
+        }
         legacyPreference(rowId)?.let { preference ->
             appPreferences.setValue(preference, visible)
             // A legacy row can also carry a stale entry in the JSON hidden set
             // (e.g. hidden before it gained a boolean); clear it either way.
             writeHidden(rowId, hidden = false)
+            _layout.value = read()
+            Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
             return
         }
         musicAssistantKeyOf(rowId)?.let { maKey ->
             sharedPreferences.edit().putBoolean(maPreferenceKey(maKey), visible).apply()
             writeHidden(rowId, hidden = false)
+            _layout.value = read()
+            Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
             return
         }
+        if (rowId.startsWith(HomeRowIds.NETWORK_SHARE_PREFIX)) {
+            val shareId = rowId.removePrefix(HomeRowIds.NETWORK_SHARE_PREFIX)
+            appPreferences.setNetworkShareHomeVisible(shareId, visible)
+        }
         writeHidden(rowId, hidden = !visible)
+        _layout.value = read()
         Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
     }
 
@@ -171,7 +194,16 @@ constructor(private val appPreferences: AppPreferences) {
         // factor) at the end rather than dropping their saved position.
         val merged = reordered + _layout.value.order.filterNot { it in reordered }
         write(order = merged, hidden = storedHidden())
+        _layout.value = read()
         Timber.d("Home row %s moved %s -> order %s", rowId, if (up) "up" else "down", merged)
+    }
+
+    private fun clearLatestFromHidden() {
+        val stored = storedHidden().toMutableSet()
+        val changed = stored.removeAll { it.startsWith(HomeRowIds.LATEST_PREFIX) }
+        if (changed) {
+            write(order = _layout.value.order, hidden = stored)
+        }
     }
 
     private fun writeHidden(rowId: String, hidden: Boolean) {
@@ -210,6 +242,12 @@ constructor(private val appPreferences: AppPreferences) {
                 hidden += HomeRowIds.musicAssistant(key)
             }
         }
+        sharedPreferences.all.forEach { (key, value) ->
+            if (appPreferences.isNetworkShareHomeVisiblePreferenceKey(key) && value == false) {
+                val shareId = key.removePrefix(AppPreferences.NETWORK_SHARE_HOME_VISIBLE_PREFIX)
+                hidden += HomeRowIds.networkShare(shareId)
+            }
+        }
         return HomeRowLayout(order = order, hidden = hidden)
     }
 
@@ -236,6 +274,7 @@ constructor(private val appPreferences: AppPreferences) {
             key == appPreferences.homeContinueWatching.backendName ||
             key == appPreferences.homeNextUp.backendName ||
             key == appPreferences.homeLatest.backendName ||
+            appPreferences.isNetworkShareHomeVisiblePreferenceKey(key) ||
             key.startsWith(MA_PREFERENCE_PREFIX)
 
     private fun legacyPreference(rowId: String) =
@@ -279,11 +318,23 @@ fun homeRowFallbackTitle(rowId: String): String =
                 .joinToString(" ") { part -> part.replaceFirstChar { it.uppercase() } }
                 .plus(" (Music Assistant)")
         rowId.startsWith(HomeRowIds.LATEST_PREFIX) -> "Latest media"
-        rowId.startsWith(HomeRowIds.PLUGIN_PREFIX) ->
-            rowId.removePrefix(HomeRowIds.PLUGIN_PREFIX).substringBefore(':')
-        rowId.startsWith(HomeRowIds.NETWORK_SHARE_PREFIX) -> "Network share"
+        rowId.startsWith(HomeRowIds.PLUGIN_PREFIX) -> {
+            val parts = rowId.removePrefix(HomeRowIds.PLUGIN_PREFIX).split(':')
+            val pluginId = parts.firstOrNull().orEmpty()
+            val rowName = parts.getOrNull(1)?.takeIf { it != "home" }
+            if (rowName != null) {
+                rowName.replace('_', ' ').replaceFirstChar { it.uppercase() } + " (Plugin)"
+            } else {
+                (pluginId.substringAfterLast('.').ifBlank { pluginId })
+                    .replaceFirstChar { it.uppercase() } + " (Plugin)"
+            }
+        }
+        rowId.startsWith(HomeRowIds.NETWORK_SHARE_PREFIX) -> {
+            val shareId = rowId.removePrefix(HomeRowIds.NETWORK_SHARE_PREFIX)
+            "Network share ($shareId)"
+        }
         rowId.startsWith(HomeRowIds.OFFLINE_PREFIX) ->
-            rowId.removePrefix(HomeRowIds.OFFLINE_PREFIX).replaceFirstChar { it.uppercase() }
+            "Offline " + rowId.removePrefix(HomeRowIds.OFFLINE_PREFIX).replaceFirstChar { it.uppercase() }
         else -> rowId
     }
 
@@ -294,8 +345,8 @@ fun homeRowFallbackTitle(rowId: String): String =
  * global "Latest media" switch, the Music Assistant rows) are always listed —
  * the shell no longer holds their sections, but their names are fixed. Dynamic
  * rows are only listed when the caller can still name them, which is what
- * [libraryTitles] (`latest:<id>` to library name) supplies; plugin, network
- * share and offline rows stay owned by the Sources screen.
+ * [libraryTitles] (`latest:<id>` to library name) supplies; fallback titles
+ * ensure offline, plugin, and network share rows remain restorable.
  */
 fun HomeRowLayout.restorableHiddenRows(
     libraryTitles: Map<String, String> = emptyMap()
@@ -312,7 +363,11 @@ fun HomeRowLayout.restorableHiddenRows(
         .filter { rowId ->
             rowId in fixed ||
                 rowId.startsWith(HomeRowIds.MUSIC_ASSISTANT_PREFIX) ||
-                rowId in libraryTitles
+                rowId.startsWith(HomeRowIds.OFFLINE_PREFIX) ||
+                rowId.startsWith(HomeRowIds.NETWORK_SHARE_PREFIX) ||
+                rowId.startsWith(HomeRowIds.PLUGIN_PREFIX) ||
+                rowId in libraryTitles ||
+                rowId.startsWith(HomeRowIds.LATEST_PREFIX)
         }
         .sortedBy { rowId -> fixed.indexOf(rowId).takeIf { it >= 0 } ?: Int.MAX_VALUE }
         .map { rowId -> rowId to (libraryTitles[rowId] ?: homeRowFallbackTitle(rowId)) }

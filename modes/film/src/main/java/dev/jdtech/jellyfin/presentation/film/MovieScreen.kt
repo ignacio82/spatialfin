@@ -47,6 +47,7 @@ import dev.jdtech.jellyfin.film.presentation.movie.MovieState
 import dev.jdtech.jellyfin.film.presentation.movie.MovieViewModel
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.presentation.film.components.ActorsRow
+import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
 import dev.jdtech.jellyfin.presentation.film.components.DetailMetadataRow
 import dev.jdtech.jellyfin.presentation.film.components.Direction
 import dev.jdtech.jellyfin.presentation.film.components.ExtraInfoText
@@ -409,14 +410,16 @@ private fun MovieScreenLayout(
     }
 }
 
+/**
+ * Delegates to the shared [detailHeroMetadata] so the XR hero shows the same
+ * facts, in the same format, as the Beam and TV heroes — this used to be a
+ * second hand-rolled list that formatted runtime as "107 min" and dropped the
+ * community rating entirely. Stream chips are not included: XR renders those
+ * separately through [VideoMetadataBar].
+ */
 private fun buildMovieHeroMetadata(movie: SpatialFinMovie): List<String> =
-    buildList {
-        movie.premiereDate?.year?.let { add(it.toString()) }
-        if (movie.runtimeTicks > 0L) {
-            add("${movie.runtimeTicks.div(600000000)} min")
-        }
-        movie.officialRating?.takeIf { it.isNotBlank() }?.let(::add)
-        addAll(movie.genres.take(2))
+    movie.detailHeroMetadata(maxGenres = 2).let { hero ->
+        hero.facts.map { it.label } + hero.genres
     }
 
 @PreviewScreenSizes

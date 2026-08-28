@@ -81,6 +81,7 @@ class HomeRowLayoutTest {
                 HomeRowIds.SUGGESTIONS,
                 HomeRowIds.musicAssistant("favorites"),
                 HomeRowIds.latest("movies"),
+                HomeRowIds.plugin("com.example", "featured"),
             ),
             restorable.map { it.first }.toSet(),
         )

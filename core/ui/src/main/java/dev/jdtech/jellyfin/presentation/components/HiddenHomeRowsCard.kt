@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 fun HiddenHomeRowsCard(
     rows: List<Pair<String, String>>,
     onShow: (rowId: String) -> Unit,
+    onDone: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (rows.isEmpty()) return
@@ -37,11 +38,20 @@ fun HiddenHomeRowsCard(
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = "Hidden rows",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Hidden rows",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (onDone != null) {
+                    TextButton(onClick = onDone) { Text("Done") }
+                }
+            }
             rows.forEach { (rowId, title) ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
