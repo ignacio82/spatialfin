@@ -8,6 +8,14 @@ plugins {
 
 android {
     namespace = "dev.jdtech.jellyfin.film"
+
+    // Compose UI tests run on the JVM under Robolectric so they gate in CI
+    // without a device; that needs android resources on the test classpath.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -49,4 +57,6 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.robolectric)
     testImplementation(libs.turbine)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

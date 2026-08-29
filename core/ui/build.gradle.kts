@@ -6,6 +6,14 @@ plugins {
 
 android {
     namespace = "dev.spatialfin.core.ui"
+
+    // Compose UI tests run on the JVM under Robolectric, so they gate in CI
+    // without a device; that needs the android resources on the test classpath.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -44,4 +52,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     implementation(libs.timber)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
