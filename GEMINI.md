@@ -351,7 +351,7 @@ Always increment **both** `APP_CODE` and `APP_NAME` before producing a Play Stor
 - **Adaptive layouts:** `ListDetailPaneScaffold` / `SupportingPaneScaffold` map panes 1:1 to spatial panels.
 - **Cinema scale:** Use large `SpatialPanel` dimensions (≥1400dp) for cinematic feel. The unified main browsing panel is `1400dp × 824dp` (`UnifiedMainActivity` constants), matching the current Compose XR examples and staying inside the Galaxy XR Home Space window. <!-- updated 2026-05-22: reduced from 1792×1008 during DP4/Galaxy XR immersive debug -->
 - **Depth & focus:** `SpatialDialog` / `SpatialPopup` push the parent panel back **125dp**.
-- **User agency:** For Compose XR panels, prefer `SubspaceModifier.movable()` / `resizable()` before dropping to SceneCore components. `transformingMovable()` is deprecated as of compose-xr `1.0.0-alpha17` — use `movable()` with `MovePolicy.default()`; see [Jetpack XR deprecations](#jetpack-xr-deprecations). Reserve `MovableComponent` / `ResizableComponent` for direct SceneCore entity trees such as the player video surface hierarchy. <!-- updated 2026-05-22: direct Compose movement fixed Galaxy XR immersive app panel rendering -->
+- **User agency:** For Compose XR panels, prefer `SubspaceModifier.movable()` / `resizable()` before dropping to SceneCore components. `transformingMovable()` is deprecated as of compose-xr `1.0.0-alpha17` — plain `movable()` is the exact equivalent (both resolve to `MovePolicy.system(scaleWithDistance = true)`); see [XR_DEPRECATIONS.md](XR_DEPRECATIONS.md). Reserve `MovableComponent` / `ResizableComponent` for direct SceneCore entity trees such as the player video surface hierarchy. <!-- updated 2026-08-29: transformingMovable deprecated; movable() is the equivalent -->
 
 ### Spatial Panel Placement (Android XR Design Guide)
 - **Spawn distance:** Place panel centers ~**1.75 m** from the user.
@@ -691,21 +691,4 @@ If you're asking the model for new features or fixes, use these as shorthand —
 
 ## Jetpack XR deprecations
 
-On the newest published Jetpack XR libs — `scenecore`/`arcore`/`runtime` `1.0.0-beta02`, `compose` `1.0.0-alpha17` (Google Maven, 2026-08-29). The beta renamed APIs but kept the old names as deprecated aliases, so **the build stays green while sitting on APIs that vanish at 1.0.0 stable**. Ground truth is `./gradlew :player:xr:compileDebugKotlin :app:unified:compileLibreDebugKotlin --rerun-tasks` grepped for `^w:`, listed **unfiltered** — release notes describe renames as if breaking, the constant pool proves nothing (old *and* new classes carry a `kotlin/Deprecated` string), and a keyword-filtered grep silently undercounts (it hid `requestFullSpaceMode` and the `Session.create` overload). **The two Orbiter deprecation notices point at each other — do not follow either blindly.** `Orbiter(anchorPoint = …)` says use the SpatialAlignment/OrbiterEdgeOffsetType function; the `Orbiter(position = ContentEdge.…)` overload says use anchorPoint or a poseProvider. `ContentEdge` is *backwards*. The one live API is `Orbiter(alignment = OrbiterAlignment.…)`, whose nested types (`TopCenter`, `CenterStart`, `CenterEnd`, `TopEnd`, `BottomCenter`, …) each take `edgeOffsetType` + `DpVolumeOffset`, so the old offset carries across verbatim.
-
-Migrated 2026-08-29 — every androidx.xr deprecation in `:player:xr` and `:app:unified` is clear except the one below:
-
-| Was | Now |
-|---|---|
-| `Scene.requestHomeSpaceMode()` / `requestFullSpaceMode()` | `requestHomeSpace()` / `requestFullSpace()` |
-| `SpatialPanel(resizePolicy = ResizePolicy())` | `SubspaceModifier.resizable()` |
-| `AnchorEntity` (14 sites) | `AnchorSpace` — now extends `SpaceEntity`; reparenting is unchanged |
-| `AnchorEntity.create(…, PlaneOrientation, PlaneSemanticType, …)` | `AnchorSpace.create(…, setOf(…), setOf(…), …)` |
-| `Orbiter(anchorPoint = …, offset = DpVolumeOffset(…))` (9 sites) | `Orbiter(alignment = OrbiterAlignment.X(offset = DpVolumeOffset(…)))` |
-| `SubspaceModifier.transformingMovable()` | `SubspaceModifier.movable()` |
-
-Two equivalences were *proved* by diffing the `$default` synthetics rather than assumed: `ResizePolicy()` ≡ `resizable()`, and `transformingMovable()` ≡ `movable()` (both resolve to `MovePolicy.system(scaleWithDistance = true)`, no-op `onMove`). Do **not** "fix" the latter to `MovePolicy.custom()` — *custom* means the app applies the move itself, not the system.
-
-**Deliberately NOT migrated: `Session.create(activity)` → the suspend overload** (3 sites: `UnifiedMainActivity`, `XrPlayerActivity`, `XrFCastInboundPlayerActivity`). All three create the session synchronously in `onCreate()` on purpose — per the comment at `UnifiedMainActivity.onCreate`, creating it from a coroutine lets a config change destroy the prior Activity first, the lifecycle observer misses `ON_DESTROY`, and the leaked session locks the next XR launch into a degraded state. The suspend overload reintroduces that race. Revisit only with a Galaxy XR in hand.
-<!-- updated 2026-08-29: full beta02 deprecation sweep; only the Session.create lifecycle change deferred -->
-
+Moved to [`XR_DEPRECATIONS.md`](XR_DEPRECATIONS.md) — which Jetpack XR APIs the beta02 rename deprecated, what was migrated, the two Orbiter notices that point at each other, and why `Session.create(activity)` is deliberately left alone. Read it before touching `:player:xr` or the XR paths in `:app:unified`.
