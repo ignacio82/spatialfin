@@ -175,7 +175,15 @@ private fun HomeScreenLayout(
     val itemsPadding = PaddingValues(start = paddingStart, end = paddingEnd)
     val visibleHomeSections = remember(state) { 
         val filtered = state.filteredForUniqueHomeItems()
-        android.util.Log.e("HomeScreen", "Visible sections: SUG=${filtered.suggestionsSection != null} RES=${filtered.resumeSection != null} NEXT=${filtered.nextUpSection != null} UNV=${filtered.universalPluginSections.size} OFF=${filtered.offlineLibrarySections.size} VIEW=${filtered.views.size}")
+        Timber.d(
+            "Visible sections: SUG=%s RES=%s NEXT=%s UNV=%d OFF=%d VIEW=%d",
+            filtered.suggestionsSection != null,
+            filtered.resumeSection != null,
+            filtered.nextUpSection != null,
+            filtered.universalPluginSections.size,
+            filtered.offlineLibrarySections.size,
+            filtered.views.size,
+        )
         filtered
     }
     val statusCardModel = remember(state) { state.toStatusCardModel() }

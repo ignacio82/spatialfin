@@ -15,10 +15,10 @@ jobs:
         working-directory: spatialfin-webxr
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Node.js 22
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: '22'
         cache: npm
@@ -34,10 +34,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up JDK 21
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '21'
         distribution: 'temurin'
@@ -93,6 +93,11 @@ jobs:
 
     - name: Android Lint (gated on new issues via committed baseline)
       run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:lintLibreDebug
+
+    # Deprecated APIs otherwise pile up invisibly behind a green build — 39 Jetpack
+    # XR ones did exactly that. Fails only on a *new* kind of deprecation.
+    - name: Deprecation baseline (fails on newly introduced deprecated APIs)
+      run: bash .github/scripts/check-deprecations.sh
 
     # Advisory only (non-blocking). The compose-stability-analyzer gate fails on
     # ANY baseline diff — new composables and added parameters included, not just

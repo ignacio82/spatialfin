@@ -1,0 +1,19 @@
+'constructor(p0: IntArray?, p1: Int): AudioCapabilities' is deprecated. Deprecated in Java.
+'constructor(p0: MappingTrackSelector?): EventLogger' is deprecated. Deprecated in Java.
+'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+'fun <reified VM : ViewModel> hiltViewModel(viewModelStoreOwner: ViewModelStoreOwner = ..., key: String? = ...): VM' is deprecated. Moved to package: androidx.hilt.lifecycle.viewmodel.compose.
+'fun create(activity: Activity, coroutineContext: CoroutineContext = ..., unscaledGravityAlignedActivitySpace: Boolean = ...): SessionCreateResult' is deprecated. Use Session.create(context, coroutineContext, lifecycleOwner) instead.
+'fun experimentalParseSubtitlesDuringExtraction(p0: Boolean): DefaultMediaSourceFactory' is deprecated. Deprecated in Java.
+'fun experimentalSetLegacyDecodingEnabled(p0: Boolean): Unit' is deprecated. Deprecated in Java.
+'fun Modifier.focusRestorer(onRestoreFailed: (() -> FocusRequester)?): Modifier' is deprecated. Use focusRestorer(FocusRequester) instead.
+'fun setAudioCapabilities(p0: AudioCapabilities): DefaultAudioSink.Builder' is deprecated. Deprecated in Java.
+'fun setEnableAudioTrackPlaybackParams(p0: Boolean): DefaultAudioSink.Builder' is deprecated. Deprecated in Java.
+'fun TabRow(selectedTabIndex: Int, modifier: Modifier = ..., containerColor: Color = ..., contentColor: Color = ..., indicator: ComposableFunction1<List<TabPosition>, Unit> = ..., divider: ComposableFunction0<Unit> = ..., tabs: ComposableFunction0<Unit>): Unit' is deprecated. Replaced with PrimaryTabRow and SecondaryTabRow.
+'static field INFO_OUTPUT_BUFFERS_CHANGED: Int' is deprecated. Deprecated in Java.
+'static field WIFI_MODE_FULL_HIGH_PERF: Int' is deprecated. Deprecated in Java.
+'static fun getCapabilities(p0: Context): AudioCapabilities' is deprecated. Deprecated in Java.
+'static fun isDirectPlaybackSupported(p0: AudioFormat, p1: AudioAttributes): Boolean' is deprecated. Deprecated in Java.
+'val Icons.Rounded.VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Rounded.VolumeUp.
+'val repeat: JsonOptional<String>' is deprecated. Sent by old servers only; use ControllerState.repeat instead.
+'val shuffle: JsonOptional<Boolean>' is deprecated. Sent by old servers only; use ControllerState.shuffle instead.
+'val supportedHdrTypes: IntArray!' is deprecated. Deprecated in Java.
