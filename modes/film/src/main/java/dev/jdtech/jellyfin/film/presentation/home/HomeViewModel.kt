@@ -57,6 +57,7 @@ constructor(
     val jellyfinApi: dev.jdtech.jellyfin.api.JellyfinApi,
     val appPreferences: AppPreferences,
     val homeRowPreferences: HomeRowPreferences,
+    private val homeStateCache: HomeStateCache,
     val database: ServerDatabaseDao,
     private val connectionMonitor: ServerConnectionMonitor,
     private val offlineSyncStatusMonitor: OfflineSyncStatusMonitor,
@@ -74,11 +75,11 @@ constructor(
      * The home content, filtered and ordered by the user's saved row layout.
      *
      * The filter is applied *here*, on every emission, rather than only when a
-     * row is fetched. [cachedHome] is process-wide and outlives any single
-     * ViewModel, so a section captured while its row was still enabled used to
-     * come straight back out of the cache — that is how a disabled Suggestions
-     * row kept reappearing on home. Resolving visibility at read time makes a
-     * hidden row unrenderable no matter which path produced the state.
+     * row is fetched. [HomeStateCache] outlives any single ViewModel, so a
+     * section captured while its row was still enabled used to come straight
+     * back out of the cache — that is how a disabled Suggestions row kept
+     * reappearing on home. Resolving visibility at read time makes a hidden row
+     * unrenderable no matter which path produced the state.
      */
     val state =
         combine(_state, homeRowPreferences.layout) { state, layout -> state.arrangedBy(layout) }
@@ -122,7 +123,7 @@ constructor(
             key == appPreferences.displayRatings.backendName ||
             key == appPreferences.displayExtraInfo.backendName ||
             (key != null && key.startsWith("home_ma_")) -> {
-                cachedHome = null
+                homeStateCache.invalidate()
                 loadData(forceRefresh = true)
             }
             else -> {
@@ -168,7 +169,7 @@ constructor(
     private fun observePluginSettingsChanges() {
         viewModelScope.launch {
             pluginRepository.settingsChanges.collect {
-                cachedHome = null
+                homeStateCache.invalidate()
                 if (hasLoadedData && !_state.value.isLoading) {
                     loadData(forceRefresh = true)
                 }
@@ -187,11 +188,10 @@ constructor(
         viewModelScope.launch(Dispatchers.Default) {
             val serverId = appPreferences.getValue(appPreferences.currentServer)
             val currentUserId = jellyfinApi.userId
-            val cached = cachedHome
-            val canUseCache = cached != null && cached.serverId == serverId && cached.userId == currentUserId
-            if (canUseCache) {
-                _state.emit(cached.state.copy(isLoading = false, error = null))
-                if (!forceRefresh && cached.isFresh()) {
+            val cached = homeStateCache.get(serverId, currentUserId)
+            if (cached != null) {
+                _state.emit(cached.copy(isLoading = false, error = null))
+                if (!forceRefresh && homeStateCache.isFresh(serverId, currentUserId)) {
                     Timber.i("Serving fresh cached home")
                     // Still fetch plugins and MA items dynamically in background
                     try {
@@ -314,7 +314,7 @@ constructor(
                         .onFailure { Timber.w(it, "offline fallback also failed") }
                     runCatching { loadNetworkShareSections() }
                         .onFailure { Timber.w(it, "network share fallback also failed") }
-                    val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
+                    val fallback = homeStateCache.get(serverId, currentUserId)
                     val fallbackState = fallback?.copy(networkShareSections = _state.value.networkShareSections)
                     _state.emit(
                         (fallbackState ?: _state.value).copy(
@@ -332,7 +332,7 @@ constructor(
                     .onFailure { Timber.w(it, "offline fallback after watchdog failed") }
                 runCatching { loadNetworkShareSections() }
                     .onFailure { Timber.w(it, "network share fallback after watchdog failed") }
-                val fallback = cachedHome?.takeIf { it.serverId == serverId && it.userId == currentUserId }?.state
+                val fallback = homeStateCache.get(serverId, currentUserId)
                 val fallbackState = fallback?.copy(networkShareSections = _state.value.networkShareSections)
                 _state.emit(
                     (fallbackState ?: _state.value).copy(
@@ -776,11 +776,10 @@ constructor(
     }
 
     private fun cacheCurrentHome(serverId: String?) {
-        cachedHome = CachedHome(
+        homeStateCache.put(
             serverId = serverId,
             userId = jellyfinApi.userId,
             state = _state.value.copy(isLoading = false, error = null),
-            timestampMs = System.currentTimeMillis(),
         )
     }
 
@@ -790,17 +789,5 @@ constructor(
         // legitimate slow LAN load yet small enough that a wedged HTTP/2
         // pool is unstuck in under two minutes without user intervention.
         const val LOAD_TIMEOUT_MS = 90_000L
-        @Volatile
-        var cachedHome: CachedHome? = null
     }
-}
-
-private data class CachedHome(
-    val serverId: String?,
-    val userId: java.util.UUID? = null,
-    val state: HomeState,
-    val timestampMs: Long,
-) {
-    fun isFresh(): Boolean =
-        System.currentTimeMillis() - timestampMs < 2 * 60 * 1000L
 }
