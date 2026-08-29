@@ -540,7 +540,7 @@ class XrPlayerActivity : AppCompatActivity() {
 
                 // Request full space mode for 3D support and immersive playback
                 try {
-                    xrSession?.scene?.requestFullSpaceMode()
+                    xrSession?.scene?.requestFullSpace()
                     Timber.d("XrPlayer: step 5 — full space mode requested")
                 } catch (e: Exception) {
                     Timber.w(e, "XrPlayer: step 5 FAILED — full space mode request failed")
@@ -666,7 +666,7 @@ class XrPlayerActivity : AppCompatActivity() {
             // finishing player should return home by preference. Let ordinary background
             // stops follow the XR runtime's own lifecycle to avoid teardown races.
             if (finishRequested || (isFinishing && returnOnFinish)) {
-                requestHomeSpaceMode("onStop")
+                requestHomeSpace("onStop")
             } else {
                 Timber.d(
                     "XrPlayerActivity skipping home space request onStop isFinishing=%b finishRequested=%b returnOnFinish=%b",
@@ -762,14 +762,14 @@ class XrPlayerActivity : AppCompatActivity() {
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
-    private fun requestHomeSpaceMode(stage: String) {
+    private fun requestHomeSpace(stage: String) {
         if (homeSpaceRequestIssued) {
             Timber.d("XrPlayerActivity home space already requested; skipping stage=%s", stage)
             return
         }
         homeSpaceRequestIssued = true
         runCatching {
-            xrSession?.scene?.requestHomeSpaceMode()
+            xrSession?.scene?.requestHomeSpace()
         }.onSuccess {
             recordLaunchPhase("exit:home-space-requested:$stage")
             Timber.d("XrPlayerActivity requested home space mode stage=%s", stage)

@@ -233,7 +233,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 val session = LocalSession.current
                 LaunchedEffect(session) {
                     try {
-                        session?.scene?.requestHomeSpaceMode()
+                        session?.scene?.requestHomeSpace()
                     } catch (e: Exception) {
                         // Ignore
                     }

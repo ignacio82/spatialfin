@@ -524,8 +524,9 @@ fun NavigationRoot(
     Box(modifier = panelModifier) {
         if (xrSpaceMode == XrSpaceMode.FULL && showBottomBar) {
             androidx.xr.compose.spatial.Orbiter(
-                anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.End,
-                offset = androidx.xr.compose.unit.DpVolumeOffset(x = 24.dp)
+                alignment = androidx.xr.compose.spatial.OrbiterAlignment.CenterEnd(
+                    offset = androidx.xr.compose.unit.DpVolumeOffset(x = 24.dp),
+                )
             ) {
                 androidx.compose.material3.Surface(
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(32.dp),

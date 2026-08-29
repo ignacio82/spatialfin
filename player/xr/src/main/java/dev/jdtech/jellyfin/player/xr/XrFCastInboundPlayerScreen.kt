@@ -65,7 +65,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.media3.common.Tracks
 import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAnchorPoint
+import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.compose.subspace.SpatialPanel
@@ -73,7 +74,7 @@ import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.height
 import androidx.xr.compose.subspace.layout.offset
 import androidx.xr.compose.subspace.layout.width
-import androidx.xr.compose.unit.DpVolumeOffset
+import androidx.xr.compose.subspace.layout.resizable
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.FloatSize3d
@@ -586,14 +587,15 @@ internal fun XrFCastInboundPlayerScreen(
                         modifier = SubspaceModifier
                             .width(1800.dp)
                             .height(800.dp)
-                            .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-                        resizePolicy = androidx.xr.compose.subspace.ResizePolicy(),
+                            .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp)
+                            .resizable(),
                     ) {
                         if (controlsVisible || !playing) {
                             // Stage orbiter (top) — screen size for the incoming theater video.
                             Orbiter(
-                                anchorPoint = OrbiterAnchorPoint.Top,
-                                offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
+                                alignment = OrbiterAlignment.TopCenter(
+                                    offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
+                                ),
                             ) {
                                 StageControlsOrbiter(
                                     isLocked = false,
@@ -607,8 +609,9 @@ internal fun XrFCastInboundPlayerScreen(
                             }
                             // Track-options orbiter (left) — audio / subtitles / quality.
                             Orbiter(
-                                anchorPoint = OrbiterAnchorPoint.Start,
-                                offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                alignment = OrbiterAlignment.CenterStart(
+                                    offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                ),
                             ) {
                                 TrackOptionsOrbiter(
                                     onSubtitleClick = { trackPickerType = C.TRACK_TYPE_TEXT },

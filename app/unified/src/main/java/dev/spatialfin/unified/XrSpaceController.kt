@@ -31,7 +31,7 @@ data class XrSpaceUiState(
 /**
  * Owns XR space-mode transitions for [UnifiedMainActivity].
  *
- * Wraps [Session] so callers never call requestFullSpaceMode / requestHomeSpaceMode directly.
+ * Wraps [Session] so callers never call requestFullSpace / requestHomeSpace directly.
  * All transitions are guarded by a capability check so the app never crashes when spatial
  * features are unavailable.
  */
@@ -84,8 +84,8 @@ class XrSpaceController(
         // old tree while the Subspace is already tearing down raced the XR
         // SpatialPanel node teardown on device. Only the incoming HomeSpaceContent
         // animates alpha from 0 → 1.
-        runCatching { session.scene.requestHomeSpaceMode() }
-            .onFailure { Timber.w(it, "XrSpaceController: requestHomeSpaceMode failed") }
+        runCatching { session.scene.requestHomeSpace() }
+            .onFailure { Timber.w(it, "XrSpaceController: requestHomeSpace failed") }
         _uiState.value = _uiState.value.copy(mode = XrSpaceMode.HOME, transitioning = true)
         appPreferences.setValue(appPreferences.xrLastUsedMode, "home")
         scheduleEndTransition()
@@ -95,8 +95,8 @@ class XrSpaceController(
         // Don't gate on SPATIAL_3D_CONTENT here — that capability only becomes true *after*
         // the app is already in Full Space, so checking it before requesting the transition
         // would always block the user-initiated switch.  Let the system decide; if the device
-        // cannot honor it, requestFullSpaceMode() will throw and we log + stay in HOME.
-        runCatching { session.scene.requestFullSpaceMode() }
+        // cannot honor it, requestFullSpace() will throw and we log + stay in HOME.
+        runCatching { session.scene.requestFullSpace() }
             .onSuccess {
                 _uiState.value = _uiState.value.copy(
                     mode = XrSpaceMode.FULL,
@@ -107,7 +107,7 @@ class XrSpaceController(
                 scheduleEndTransition()
             }
             .onFailure {
-                Timber.w(it, "XrSpaceController: requestFullSpaceMode failed — staying in Home Space")
+                Timber.w(it, "XrSpaceController: requestFullSpace failed — staying in Home Space")
             }
     }
 

@@ -136,7 +136,7 @@ androidx-work = { module = "androidx.work:work-runtime", version.ref = "androidx
 androidx-xr-arcore = { module = "androidx.xr.arcore:arcore", version.ref = "androidx-xr" }
 androidx-xr-compose = "androidx.xr.compose:compose:1.0.0-alpha17"
 androidx-xr-runtime = { module = "androidx.xr.runtime:runtime", version.ref = "androidx-xr" }
-androidx-xr-scenecore = "androidx.xr.scenecore:scenecore:1.0.0-beta02"
+androidx-xr-scenecore = { module = "androidx.xr.scenecore:scenecore", version.ref = "androidx-xr" }
 bcprov-jdk18on = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov-jdk18on" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-cache-control = { module = "io.coil-kt.coil3:coil-network-cache-control", version.ref = "coil" }

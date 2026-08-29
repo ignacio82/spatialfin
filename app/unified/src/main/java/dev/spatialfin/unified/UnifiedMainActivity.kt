@@ -60,7 +60,7 @@ import androidx.xr.compose.spatial.Subspace
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.layout.SubspaceModifier
 import androidx.xr.compose.subspace.layout.height
-import androidx.xr.compose.subspace.layout.transformingMovable
+import androidx.xr.compose.subspace.layout.movable
 import androidx.xr.compose.subspace.layout.width
 import androidx.xr.runtime.HandTrackingMode
 import androidx.xr.runtime.Session
@@ -1165,7 +1165,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                 modifier = SubspaceModifier
                     .width((XR_APP_PANEL_WIDTH_DP * savedAppPanelScale).dp)
                     .height((XR_APP_PANEL_HEIGHT_DP * savedAppPanelScale).dp)
-                    .transformingMovable()
+                    // Exactly equivalent to the deprecated transformingMovable(): both
+                    // default enabled = true and resolve to MovePolicy.system(
+                    // scaleWithDistance = true) with a no-op onMove. Do NOT reach for
+                    // MovePolicy.custom() here — "custom" means the app applies the move
+                    // itself, whereas this panel wants the system to move it.
+                    .movable()
             ) {
                 // SpatialPanel scope: shared by NavigationRoot (inside the
                 // pointer Box) and the now-playing / picker overlays below.
@@ -1250,11 +1255,12 @@ class UnifiedMainActivity : AppCompatActivity() {
                     dev.spatialfin.unified.LocalMaPlayDispatcher provides spatialDispatcher
                 ) {
                     androidx.xr.compose.spatial.Orbiter(
-                        anchorPoint = androidx.xr.compose.spatial.OrbiterAnchorPoint.Bottom,
-                        offset = androidx.xr.compose.unit.DpVolumeOffset(
-                            x = 0.dp,
-                            y = 32.dp,
-                            z = androidx.xr.compose.spatial.OrbiterDefaults.Elevation,
+                        alignment = androidx.xr.compose.spatial.OrbiterAlignment.BottomCenter(
+                            offset = androidx.xr.compose.unit.DpVolumeOffset(
+                                x = 0.dp,
+                                y = 32.dp,
+                                z = androidx.xr.compose.spatial.OrbiterDefaults.Elevation,
+                            ),
                         ),
                     ) {
                         androidx.compose.foundation.layout.Column {

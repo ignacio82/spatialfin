@@ -28,9 +28,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAnchorPoint
-import androidx.xr.compose.spatial.OrbiterDefaults
+import androidx.xr.compose.spatial.OrbiterAlignment
 import androidx.xr.compose.unit.DpVolumeOffset
+import androidx.xr.compose.spatial.OrbiterDefaults
 
 private val ScanColor = Color(0xFF26C6DA)
 
@@ -62,8 +62,9 @@ fun CharacterScanOverlay(
     )
 
     Orbiter(
-        anchorPoint = OrbiterAnchorPoint.EndTop,
-        offset = DpVolumeOffset(x = 20.dp, z = OrbiterDefaults.Elevation),
+        alignment = OrbiterAlignment.TopEnd(
+            offset = DpVolumeOffset(x = 20.dp, z = OrbiterDefaults.Elevation),
+        ),
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

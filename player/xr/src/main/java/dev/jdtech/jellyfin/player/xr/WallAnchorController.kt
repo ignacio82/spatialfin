@@ -14,7 +14,7 @@ import androidx.xr.runtime.math.FloatSize2d
 import androidx.xr.runtime.math.Pose
 import androidx.xr.runtime.math.Quaternion
 import androidx.xr.runtime.math.Vector3
-import androidx.xr.scenecore.AnchorEntity
+import androidx.xr.scenecore.AnchorSpace
 import androidx.xr.scenecore.PlaneOrientation
 import androidx.xr.scenecore.PlaneSemanticType
 import androidx.xr.scenecore.scene
@@ -29,7 +29,7 @@ import java.util.UUID
  * Today the flat player lives as a [androidx.xr.scenecore.SurfaceEntity] parented to
  * `activitySpace`, dragged laterally at a locked depth by a `MovableComponent` and
  * "recentered" only to the head. This helper layers on an *optional* world-locked
- * placement: the movie is parented to an ARCore [AnchorEntity] sitting on a real
+ * placement: the movie is parented to an ARCore [AnchorSpace] sitting on a real
  * **wall**, so it stays put across head movement and across sessions (the anchor
  * UUID is persisted). Because children inherit the anchor's pose, the panel becomes
  * coplanar with the wall and inherits the wall's orientation automatically — a side
@@ -133,7 +133,7 @@ internal object WallAnchor {
     }
 
     /** Log the anchor's activity-space pose so the wall-normal convention can be verified on-device. */
-    fun logAnchorPose(entity: AnchorEntity) {
+    fun logAnchorPose(entity: AnchorSpace) {
         runCatching {
             val pose = entity.getPose(androidx.xr.scenecore.Space.ACTIVITY)
             val euler = pose.rotation.eulerAngles
@@ -178,13 +178,13 @@ internal object WallAnchor {
      * Reattach a previously-persisted wall anchor by UUID, or null if there is none /
      * it can't be loaded yet. Lets a re-launch drop the movie back onto the same wall.
      */
-    fun loadPersisted(session: Session, uuid: String?): AnchorEntity? {
+    fun loadPersisted(session: Session, uuid: String?): AnchorSpace? {
         val parsed = uuid?.takeIf { it.isNotBlank() }
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
             ?: return null
         return runCatching {
             when (val result = Anchor.load(session, parsed)) {
-                is AnchorCreateSuccess -> AnchorEntity.create(session, result.anchor)
+                is AnchorCreateSuccess -> AnchorSpace.create(session, result.anchor)
                 else -> {
                     Timber.i("WALL_ANCHOR: persisted anchor not loadable yet (%s)", result.javaClass.simpleName)
                     null
@@ -198,18 +198,18 @@ internal object WallAnchor {
 
     /**
      * Kick off an asynchronous search for a vertical wall plane and return the
-     * (initially UNANCHORED) [AnchorEntity]. Poll [awaitAnchored] to learn the outcome.
+     * (initially UNANCHORED) [AnchorSpace]. Poll [awaitAnchored] to learn the outcome.
      *
      * NOTE: this lets the runtime choose *any* matching wall (it picked one behind the
      * viewer on Galaxy XR). Prefer [findWallInFront], which selects the wall the user is
      * actually looking at; this remains only as a fallback.
      */
-    fun findWall(session: Session): AnchorEntity? = runCatching {
-        AnchorEntity.create(
+    fun findWall(session: Session): AnchorSpace? = runCatching {
+        AnchorSpace.create(
             session,
             FloatSize2d(MIN_WALL_SIZE_METERS, MIN_WALL_SIZE_METERS),
-            PlaneOrientation.VERTICAL,
-            PlaneSemanticType.WALL,
+            setOf(PlaneOrientation.VERTICAL),
+            setOf(PlaneSemanticType.WALL),
             SEARCH_TIMEOUT,
         )
     }.getOrElse {
@@ -228,7 +228,7 @@ internal object WallAnchor {
      * found or [timeoutMs] elapses (planes take a moment to populate after plane
      * tracking is enabled). Returns null if no wall is in front.
      */
-    suspend fun findWallInFront(session: Session, timeoutMs: Long): AnchorEntity? {
+    suspend fun findWallInFront(session: Session, timeoutMs: Long): AnchorSpace? {
         val planesFlow = runCatching { Plane.subscribe(session) }.getOrNull() ?: return null
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
@@ -263,7 +263,7 @@ internal object WallAnchor {
                     val anchored = runCatching {
                         val state = best.state.value
                         when (val result = best.createAnchor(state.centerPose)) {
-                            is AnchorCreateSuccess -> AnchorEntity.create(session, result.anchor)
+                            is AnchorCreateSuccess -> AnchorSpace.create(session, result.anchor)
                             else -> {
                                 Timber.i("WALL_ANCHOR: createAnchor on front wall failed (%s)", result.javaClass.simpleName)
                                 null
@@ -283,21 +283,21 @@ internal object WallAnchor {
     }
 
     /**
-     * Suspend until [entity] leaves [AnchorEntity.State.UNANCHORED] or [timeoutMs]
+     * Suspend until [entity] leaves [AnchorSpace.State.UNANCHORED] or [timeoutMs]
      * elapses, returning the final state (TIMED_OUT on a timeout we can't read).
      */
-    suspend fun awaitAnchored(entity: AnchorEntity, timeoutMs: Long): AnchorEntity.State {
+    suspend fun awaitAnchored(entity: AnchorSpace, timeoutMs: Long): AnchorSpace.State {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val state = runCatching { entity.state }.getOrNull()
-            if (state != null && state != AnchorEntity.State.UNANCHORED) return state
+            if (state != null && state != AnchorSpace.State.UNANCHORED) return state
             delay(120L)
         }
-        return runCatching { entity.state }.getOrNull() ?: AnchorEntity.State.TIMED_OUT
+        return runCatching { entity.state }.getOrNull() ?: AnchorSpace.State.TIMED_OUT
     }
 
     /** Persist [entity]'s anchor and return its UUID string, or null on failure. */
-    suspend fun persist(entity: AnchorEntity): String? = runCatching {
+    suspend fun persist(entity: AnchorSpace): String? = runCatching {
         entity.anchor?.persist()?.toString()
     }.getOrElse {
         Timber.w(it, "WALL_ANCHOR: persist failed")

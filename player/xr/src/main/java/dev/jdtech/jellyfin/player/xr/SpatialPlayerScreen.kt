@@ -94,11 +94,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.xr.compose.spatial.Orbiter
-import androidx.xr.compose.spatial.OrbiterAnchorPoint
+import androidx.xr.compose.spatial.OrbiterAlignment
+import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.compose.spatial.OrbiterDefaults
 import androidx.xr.compose.spatial.SpatialDialog
 import androidx.xr.compose.spatial.Subspace
-import androidx.xr.compose.subspace.ResizePolicy
+import androidx.xr.compose.subspace.layout.resizable
 import androidx.xr.compose.subspace.SpatialPanel
 import androidx.xr.compose.subspace.SpatialGltfModel
 import androidx.xr.compose.subspace.SpatialGltfModelSource
@@ -123,7 +124,6 @@ import androidx.xr.scenecore.Entity
 import androidx.xr.scenecore.Space
 import androidx.xr.compose.subspace.SceneCoreEntity
 import androidx.xr.compose.subspace.ExperimentalSpatialGltfModelApi
-import androidx.xr.compose.unit.DpVolumeOffset
 import androidx.xr.scenecore.scene
 import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
@@ -298,7 +298,7 @@ fun SpatialPlayerScreen(
     var moveInProgress by remember { mutableStateOf(false) }
 
     // --- Wall anchoring (pin the flat panel to a real wall) ---
-    val wallAnchorEntity = remember { mutableStateOf<androidx.xr.scenecore.AnchorEntity?>(null) }
+    val wallAnchorSpace = remember { mutableStateOf<androidx.xr.scenecore.AnchorSpace?>(null) }
     // wallPinRequested is the user's intent for THIS session; wallPinActive is the
     // achieved state once an anchor is found and the panel is reparented onto it.
     // Deliberately starts false every launch (never auto-engages a saved pin): a stale
@@ -1278,7 +1278,7 @@ fun SpatialPlayerScreen(
         // Immersive 180/360 is head-centred with a fixed forward overlay — the
         // flat depth/scale projection math doesn't apply.
         if (immersiveProjection) return@LaunchedEffect
-        // Wall-pinned: the panel pose is owned by the wall AnchorEntity, not the
+        // Wall-pinned: the panel pose is owned by the wall AnchorSpace, not the
         // origin-relative depth projection. Leave it alone.
         if (wallPinActive) return@LaunchedEffect
         val videoRoot = videoRootEntity.value ?: return@LaunchedEffect
@@ -1639,8 +1639,8 @@ fun SpatialPlayerScreen(
             uiRootEntity.value = null
             runCatching { subtitleRootEntity.value?.parent = null }
             subtitleRootEntity.value = null
-            runCatching { wallAnchorEntity.value?.parent = null }
-            wallAnchorEntity.value = null
+            runCatching { wallAnchorSpace.value?.parent = null }
+            wallAnchorSpace.value = null
             movableComponent.value = null
             try { session.scene.spatialEnvironment.preferredSpatialEnvironment = null } catch (_: Exception) {}
             Timber.i("XR_VIDEO: spatial player surface disposal complete")
@@ -1689,7 +1689,7 @@ fun SpatialPlayerScreen(
         val uiRoot = uiRootEntity.value ?: return@LaunchedEffect
         val subtitleRoot = subtitleRootEntity.value ?: return@LaunchedEffect
         while (true) {
-            // While pinned, the wall AnchorEntity drives the surface/overlay poses.
+            // While pinned, the wall AnchorSpace drives the surface/overlay poses.
             if (wallPinActive) { delay(200L); continue }
             val poseToMirror = lastReportedMovePose.value ?: safeGetEntityPose(videoRoot)
             poseToMirror?.let { pose ->
@@ -1938,7 +1938,7 @@ fun SpatialPlayerScreen(
     }
 
     // Pin-to-wall driver: world-locks the flat panel onto a real wall via an ARCore
-    // AnchorEntity, or tears the pin down. Flat projection only (immersive surfaces are
+    // AnchorSpace, or tears the pin down. Flat projection only (immersive surfaces are
     // head-centred). Reparenting the surface/overlay roots under the wall anchor makes
     // them coplanar with the wall and inherit its orientation, so a side wall ends up
     // facing perpendicular into the room with no manual rotation. The conflicting
@@ -1955,7 +1955,7 @@ fun SpatialPlayerScreen(
         // stays reachable even if the wall is off to the side. Orientation is computed
         // to face the viewer and stay upright; the anchor is used only for position, so
         // its arbitrary/tilted frame can't roll or skew the picture.
-        fun reparentToWall(anchor: androidx.xr.scenecore.AnchorEntity) {
+        fun reparentToWall(anchor: androidx.xr.scenecore.AnchorSpace) {
             val scale = WallAnchor.panelScale(DEFAULT_VIDEO_WIDTH_METERS)
             val anchorWorld = runCatching {
                 anchor.getPose(androidx.xr.scenecore.Space.ACTIVITY)
@@ -2003,8 +2003,8 @@ fun SpatialPlayerScreen(
                 videoRoot?.parent = activitySpace
                 subtitleRoot?.parent = activitySpace
             }.onFailure { Timber.w(it, "WALL_ANCHOR: detach from wall failed") }
-            runCatching { wallAnchorEntity.value?.parent = null }
-            wallAnchorEntity.value = null
+            runCatching { wallAnchorSpace.value?.parent = null }
+            wallAnchorSpace.value = null
             wallPinActive = false
             // Hand the panel back to the free-move cinema layout. The movement-gate
             // effect re-attaches the MovableComponent now that wallPinActive is false.
@@ -2014,7 +2014,7 @@ fun SpatialPlayerScreen(
 
         // Not pinned / not eligible → ensure any prior pin is undone.
         if (!wallPinRequested || immersiveProjection || surface == null) {
-            if (wallPinActive || wallAnchorEntity.value != null) detachFromWall()
+            if (wallPinActive || wallAnchorSpace.value != null) detachFromWall()
             return@LaunchedEffect
         }
         if (wallPinActive) return@LaunchedEffect
@@ -2039,10 +2039,10 @@ fun SpatialPlayerScreen(
             wallPinRequested = false
             return@LaunchedEffect
         }
-        wallAnchorEntity.value = anchor
+        wallAnchorSpace.value = anchor
 
         when (WallAnchor.awaitAnchored(anchor, 5_000L)) {
-            androidx.xr.scenecore.AnchorEntity.State.ANCHORED -> {
+            androidx.xr.scenecore.AnchorSpace.State.ANCHORED -> {
                 startupPoseGuardActive = false
                 WallAnchor.logAnchorPose(anchor)
                 // Detach the move affordance so a grab can't fight the wall pose.
@@ -2055,7 +2055,7 @@ fun SpatialPlayerScreen(
                 wallPinStatus = "Couldn't lock the wall — try again"
                 wallPinRequested = false
                 runCatching { anchor.parent = null }
-                wallAnchorEntity.value = null
+                wallAnchorSpace.value = null
             }
         }
     }
@@ -2337,8 +2337,8 @@ fun SpatialPlayerScreen(
                     modifier = SubspaceModifier
                         .width(1800.dp)
                         .height(800.dp)
-                        .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp),
-                    resizePolicy = ResizePolicy(),
+                        .offset(x = 0.dp, y = controlsPanelY.dp, z = controlsZDp.dp)
+                        .resizable(),
                 ) {
                     if (controlsVisible || isActuallyPaused) {
                         // Pointing at an orbiter keeps the chrome from auto-hiding —
@@ -2361,8 +2361,9 @@ fun SpatialPlayerScreen(
                         // Size −/reset/+, passthrough (theater) toggle, and lock. The lock
                         // stays reachable even while locked; the rest collapse away.
                         Orbiter(
-                            anchorPoint = OrbiterAnchorPoint.Top,
-                            offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
+                            alignment = OrbiterAlignment.TopCenter(
+                                offset = DpVolumeOffset(y = 40.dp, z = OrbiterDefaults.Elevation),
+                            ),
                         ) {
                             StageControlsOrbiter(
                                 isLocked = isLocked,
@@ -2395,8 +2396,9 @@ fun SpatialPlayerScreen(
                         if (!isLocked) {
                             // ── Track-options orbiter (left) — subtitles / audio / quality / speed.
                             Orbiter(
-                                anchorPoint = OrbiterAnchorPoint.Start,
-                                offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                alignment = OrbiterAlignment.CenterStart(
+                                    offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                ),
                             ) {
                                 TrackOptionsOrbiter(
                                     onSubtitleClick = { activeDialog = "subtitle"; resetAutoHide() },
@@ -2409,8 +2411,9 @@ fun SpatialPlayerScreen(
                             }
                             // ── Session orbiter (right) — cast / SyncPlay / cast & crew / voice.
                             Orbiter(
-                                anchorPoint = OrbiterAnchorPoint.End,
-                                offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                alignment = OrbiterAlignment.CenterEnd(
+                                    offset = DpVolumeOffset(x = 40.dp, z = OrbiterDefaults.Elevation),
+                                ),
                             ) {
                                 SessionOrbiter(
                                     onCastClick = { activeDialog = "fcast"; resetAutoHide() },

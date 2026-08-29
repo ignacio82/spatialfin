@@ -221,7 +221,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             return
         }
         xrSession = result.session
-        runCatching { result.session.scene.requestFullSpaceMode() }
+        runCatching { result.session.scene.requestFullSpace() }
 
         bridge = FCastInboundBridgeIpcClient(this, control).also { it.connect() }
         mediaSession = MediaSession.Builder(this, exo).build()
