@@ -1,542 +1,103 @@
 package dev.spatialfin.beam
 
-import android.content.Context
-import androidx.compose.ui.res.stringResource
-import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
-import dev.jdtech.jellyfin.player.beam.isCompact
-import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
-import android.app.DownloadManager
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ClosedCaption
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.rounded.Movie
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.res.painterResource
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.jdtech.jellyfin.api.SeerrApi
-import dev.jdtech.jellyfin.api.SeerrMediaInfo
-import dev.jdtech.jellyfin.api.SeerrSearchResult
+import coil3.compose.AsyncImage
 import dev.jdtech.jellyfin.core.presentation.components.FloatingProgressBar
-import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
-import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
-import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
-import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel
 import dev.jdtech.jellyfin.film.domain.DetailHeroMetadata
 import dev.jdtech.jellyfin.film.domain.HeroFactKind
 import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
 import dev.jdtech.jellyfin.film.presentation.home.HomeViewModel
 import dev.jdtech.jellyfin.film.presentation.home.rowId
+import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.SpatialFinCollection
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
+import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinSeason
+import dev.jdtech.jellyfin.models.deduplicateMovieVersions
+import dev.jdtech.jellyfin.models.isDownloaded
+import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+import dev.jdtech.jellyfin.player.beam.LocalBeamWidth
+import dev.jdtech.jellyfin.player.beam.isCompact
 import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
 import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeControls
 import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
 import dev.jdtech.jellyfin.settings.domain.HomeRowIds
 import dev.jdtech.jellyfin.settings.domain.restorableHiddenRows
-import dev.jdtech.jellyfin.film.presentation.downloads.DownloadsViewModel
-import dev.jdtech.jellyfin.film.presentation.downloads.DownloadSortOrder
-import dev.jdtech.jellyfin.models.BulkDownloadSettings
-import dev.jdtech.jellyfin.models.CollectionType
-import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
-import dev.jdtech.jellyfin.models.CollectionSection
-import dev.jdtech.jellyfin.models.DownloadMode
-import dev.jdtech.jellyfin.models.DownloadRequest
-import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
-import dev.jdtech.jellyfin.utils.BulkDownloadResult
-import dev.jdtech.jellyfin.utils.Downloader
-import dev.jdtech.jellyfin.models.HomeItem
-import dev.jdtech.jellyfin.models.SpatialFinAudioBook
-import dev.jdtech.jellyfin.models.SpatialFinAudioTrack
-import dev.jdtech.jellyfin.models.SpatialFinBoxSet
-import dev.jdtech.jellyfin.models.SpatialFinCollection
-import dev.jdtech.jellyfin.models.SpatialFinEpisode
-import dev.jdtech.jellyfin.models.SpatialFinFolder
-import dev.jdtech.jellyfin.models.SpatialFinItem
-import dev.jdtech.jellyfin.models.SpatialFinMediaStream
-import dev.jdtech.jellyfin.models.SpatialFinMovie
-import dev.jdtech.jellyfin.models.SpatialFinMusicAlbum
-import dev.jdtech.jellyfin.models.SpatialFinMusicArtist
-import dev.jdtech.jellyfin.models.SpatialFinPlaylist
-import dev.jdtech.jellyfin.models.SpatialFinSeason
-import dev.jdtech.jellyfin.models.SpatialFinShow
-import dev.jdtech.jellyfin.models.SpatialFinSource
-import dev.jdtech.jellyfin.models.SpatialFinSourceType
-import dev.jdtech.jellyfin.models.browsableItemKinds
-import dev.jdtech.jellyfin.models.deduplicateMovieVersions
-import dev.jdtech.jellyfin.models.movieVersionGroupKey
-import dev.jdtech.jellyfin.models.versionChipLabel
-import dev.jdtech.jellyfin.models.versionOptionsFrom
-import dev.jdtech.jellyfin.models.isDownloaded
-import dev.jdtech.jellyfin.models.isDownloading
-import dev.jdtech.jellyfin.models.toAudioQueueItem
-import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-import dev.jdtech.jellyfin.repository.JellyfinRepository
-import dev.jdtech.jellyfin.utils.getShowDateString
-import dev.spatialfin.unified.audio.AudioPlaybackDispatcher
-import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
 import dev.spatialfin.unified.audio.JellyfinAudioDetailType
 import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
 import java.util.UUID
-import javax.inject.Inject
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.PlayArrow
-
-import androidx.compose.material.icons.rounded.Favorite
-
-import androidx.compose.material.icons.rounded.FavoriteBorder
-
-import androidx.compose.material.icons.rounded.CheckCircle
-
-import androidx.compose.material.icons.rounded.Check
-
-import androidx.compose.material.icons.rounded.Replay
-
-import androidx.compose.material.icons.rounded.DownloadDone
-
-import androidx.compose.material.icons.rounded.Download
-
-import androidx.compose.material.icons.rounded.Close
-
-import androidx.compose.material.icons.rounded.Pause
-
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Share
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.jellyfin.sdk.model.api.MediaStreamType
-import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
-import coil3.compose.AsyncImage
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Person
-
-data class BeamLibraryState(
-    val title: String = "",
-    val items: List<SpatialFinItem> = emptyList(),
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-)
-
-@HiltViewModel
-class BeamLibraryViewModel
-@Inject
-constructor(
-    private val repository: JellyfinRepository,
-) : ViewModel() {
-    private val _state = MutableStateFlow(BeamLibraryState())
-    val state = _state.asStateFlow()
-
-    fun load(parentId: UUID, title: String, type: CollectionType) {
-        viewModelScope.launch {
-            _state.emit(_state.value.copy(isLoading = true, error = null, title = title))
-            val includeTypes = type.browsableItemKinds(foldersFirst = true)
-            val recursive = false
-
-            runCatching {
-                repository.getItems(
-                    parentId = parentId,
-                    includeTypes = includeTypes,
-                    recursive = recursive,
-                    limit = 100,
-                )
-            }.onSuccess { items ->
-                _state.emit(BeamLibraryState(title = title, items = items, isLoading = false))
-            }.onFailure { error ->
-                _state.emit(BeamLibraryState(title = title, isLoading = false, error = error))
-            }
-        }
-    }
-}
-
-data class BeamItemDetailState(
-    val item: SpatialFinItem? = null,
-    val availableVersions: List<SpatialFinMovie> = emptyList(),
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-)
-
-@HiltViewModel
-class BeamItemDetailViewModel
-@Inject
-constructor(
-    private val repository: JellyfinRepository,
-) : ViewModel() {
-    /** Exposed for UI callers that need to build share URLs etc. */
-    fun serverBaseUrl(): String = repository.getBaseUrl()
-
-    private val _state = MutableStateFlow(BeamItemDetailState())
-    val state = _state.asStateFlow()
-
-    fun load(itemId: UUID) {
-        viewModelScope.launch {
-            _state.emit(BeamItemDetailState(isLoading = true))
-            runCatching { repository.getItem(itemId) }
-                .onSuccess { item ->
-                    val versions = if (item is SpatialFinMovie) loadAvailableVersions(item) else emptyList()
-                    _state.emit(BeamItemDetailState(item = item, availableVersions = versions, isLoading = false))
-                }
-                .onFailure { error ->
-                    _state.emit(BeamItemDetailState(isLoading = false, error = error))
-                }
-        }
-    }
-
-    fun toggleFavorite() {
-        val current = _state.value.item ?: return
-        viewModelScope.launch {
-            runCatching {
-                if (current.favorite) repository.unmarkAsFavorite(current.id)
-                else repository.markAsFavorite(current.id)
-            }
-            load(current.id)
-        }
-    }
-
-    fun togglePlayed() {
-        val current = _state.value.item ?: return
-        viewModelScope.launch {
-            runCatching {
-                if (current.played) repository.markAsUnplayed(current.id)
-                else repository.markAsPlayed(current.id)
-            }
-            load(current.id)
-        }
-    }
-
-    fun refreshMetadata() {
-        val current = _state.value.item ?: return
-        viewModelScope.launch {
-            runCatching { repository.refreshItemMetadata(current.id) }
-            // Metadata refresh is async on the server side — give it a few seconds then
-            // reload the detail page to pick up the refreshed fields.
-            kotlinx.coroutines.delay(3_000L)
-            load(current.id)
-        }
-    }
-
-    /** Emits true via [_deletedChannel] on success so the screen can pop back. */
-    private val _deletedChannel = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.BUFFERED)
-    val deletedEvents = _deletedChannel.receiveAsFlow()
-    fun deleteItem() {
-        val current = _state.value.item ?: return
-        viewModelScope.launch {
-            val deleted = runCatching { repository.deleteItem(current.id) }.getOrElse { false }
-            _deletedChannel.send(deleted)
-        }
-    }
-
-    private suspend fun loadAvailableVersions(movie: SpatialFinMovie): List<SpatialFinMovie> {
-        val targetGroupKey = movie.movieVersionGroupKey() ?: return listOf(movie)
-        return runCatching {
-            val candidates = repository
-                .getSearchItems(movie.name)
-                .filterIsInstance<SpatialFinMovie>()
-                .filter { it.movieVersionGroupKey() == targetGroupKey }
-                .mapNotNull { candidate ->
-                    runCatching { repository.getMovie(candidate.id) }.getOrElse { candidate }
-                }
-            movie.versionOptionsFrom(candidates)
-        }.getOrDefault(listOf(movie))
-    }
-}
-
-data class BeamShowState(
-    val show: SpatialFinShow? = null,
-    val seasons: List<SpatialFinSeason> = emptyList(),
-    val nextUp: SpatialFinEpisode? = null,
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-    val bulkDownload: BulkDownloadState = BulkDownloadState(),
-)
-
-@HiltViewModel
-class BeamShowViewModel
-@Inject
-constructor(
-    private val repository: JellyfinRepository,
-    private val downloader: Downloader,
-) : ViewModel() {
-    private val _state = MutableStateFlow(BeamShowState())
-    val state = _state.asStateFlow()
-
-    fun load(showId: UUID) {
-        viewModelScope.launch {
-            _state.emit(BeamShowState(isLoading = true))
-            runCatching {
-                Triple(
-                    repository.getShow(showId),
-                    repository.getSeasons(showId),
-                    repository.getNextUp(showId).firstOrNull(),
-                )
-            }.onSuccess { (show, seasons, nextUp) ->
-                _state.emit(
-                    BeamShowState(
-                        show = show,
-                        seasons = seasons,
-                        nextUp = nextUp,
-                        isLoading = false,
-                    )
-                )
-            }.onFailure { error ->
-                _state.emit(BeamShowState(isLoading = false, error = error))
-            }
-        }
-    }
-
-    fun toggleFavorite() {
-        val current = _state.value.show ?: return
-        viewModelScope.launch {
-            runCatching {
-                if (current.favorite) repository.unmarkAsFavorite(current.id)
-                else repository.markAsFavorite(current.id)
-            }
-            load(current.id)
-        }
-    }
-
-    fun togglePlayed() {
-        val current = _state.value.show ?: return
-        viewModelScope.launch {
-            runCatching {
-                if (current.played) repository.markAsUnplayed(current.id)
-                else repository.markAsPlayed(current.id)
-            }
-            load(current.id)
-        }
-    }
-
-    fun downloadShow(showId: UUID, settings: BulkDownloadSettings) {
-        viewModelScope.launch {
-            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
-            runCatching {
-                val seasons = repository.getSeasons(showId)
-                val episodes = seasons.flatMap { season ->
-                    repository.getEpisodes(seriesId = season.seriesId, seasonId = season.id, limit = 200)
-                }
-                downloader.downloadItems(episodes, settings)
-            }.onSuccess { result ->
-                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
-            }.onFailure {
-                _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = BulkDownloadResult(0, 0, 1))) }
-            }
-        }
-    }
-}
-
-data class BeamSeasonState(
-    val season: SpatialFinSeason? = null,
-    val episodes: List<SpatialFinEpisode> = emptyList(),
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-    val bulkDownload: BulkDownloadState = BulkDownloadState(),
-)
-
-@HiltViewModel
-class BeamSeasonViewModel
-@Inject
-constructor(
-    private val repository: JellyfinRepository,
-    private val downloader: Downloader,
-) : ViewModel() {
-    private val _state = MutableStateFlow(BeamSeasonState())
-    val state = _state.asStateFlow()
-
-    fun load(seasonId: UUID) {
-        viewModelScope.launch {
-            _state.emit(BeamSeasonState(isLoading = true))
-            runCatching {
-                val season = repository.getSeason(seasonId)
-                season to repository.getEpisodes(seriesId = season.seriesId, seasonId = seasonId, limit = 200)
-            }.onSuccess { (season, episodes) ->
-                _state.emit(BeamSeasonState(season = season, episodes = episodes, isLoading = false))
-            }.onFailure { error ->
-                _state.emit(BeamSeasonState(isLoading = false, error = error))
-            }
-        }
-    }
-
-    fun downloadEpisodes(episodes: List<SpatialFinEpisode>, settings: BulkDownloadSettings) {
-        viewModelScope.launch {
-            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = true)) }
-            val result = downloader.downloadItems(episodes, settings)
-            _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
-        }
-    }
-}
-
-data class BeamSearchState(
-    val query: String = "",
-    val items: List<SpatialFinItem> = emptyList(),
-    val seerrItems: List<SeerrSearchResult> = emptyList(),
-    val seerrError: String? = null,
-    val isLoading: Boolean = false,
-    val error: Throwable? = null,
-    val hasSearched: Boolean = false,
-)
-
-@HiltViewModel
-class BeamSearchViewModel
-@Inject
-constructor(
-    private val repository: JellyfinRepository,
-    private val seerrApi: SeerrApi,
-) : ViewModel() {
-    private val _state = MutableStateFlow(BeamSearchState())
-    val state = _state.asStateFlow()
-
-    fun setQuery(query: String) {
-        _state.value = _state.value.copy(query = query)
-    }
-
-    fun search() {
-        val query = state.value.query.trim()
-        viewModelScope.launch {
-            if (query.isBlank()) {
-                _state.emit(BeamSearchState())
-                return@launch
-            }
-            _state.emit(
-                _state.value.copy(
-                    isLoading = true,
-                    error = null,
-                    seerrError = null,
-                    hasSearched = true,
-                )
-            )
-            try {
-                val jellyfinSearch = async { repository.getSearchItems(query) }
-                val seerrSearch = async { seerrApi.searchDetailed(query) }
-                val items = jellyfinSearch.await()
-                val seerrOutcome = seerrSearch.await()
-                val seerrItems =
-                    seerrOutcome.response?.results?.filter {
-                        it.mediaId != null && it.mediaType != "person" && it.mediaType != "collection"
-                    } ?: emptyList()
-                _state.emit(
-                    _state.value.copy(
-                        items = items,
-                        seerrItems = seerrItems,
-                        seerrError = seerrOutcome.errorMessage,
-                        isLoading = false,
-                        error = null,
-                        hasSearched = true,
-                    )
-                )
-            } catch (_: CancellationException) {
-            } catch (error: Exception) {
-                _state.emit(
-                    _state.value.copy(
-                        items = emptyList(),
-                        seerrItems = emptyList(),
-                        seerrError = null,
-                        isLoading = false,
-                        error = error,
-                        hasSearched = true,
-                    )
-                )
-            }
-        }
-    }
-
-    fun requestSeerrItem(item: SeerrSearchResult, is4k: Boolean) {
-        val mediaId = item.mediaId ?: return
-        viewModelScope.launch {
-            val success = seerrApi.createRequest(item.mediaType, mediaId, is4k, item.tvdbId)
-            if (success) {
-                _state.emit(
-                    _state.value.copy(
-                        seerrItems =
-                            _state.value.seerrItems.map { existing ->
-                                if (existing.mediaId == mediaId && existing.mediaType == item.mediaType) {
-                                    existing.copy(
-                                        mediaInfo = existing.mediaInfo?.copy(status = 2)
-                                            ?: SeerrMediaInfo(status = 2)
-                                    )
-                                } else {
-                                    existing
-                                }
-                            }
-                    )
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun BeamHomeTopAppBar(
@@ -932,7 +493,7 @@ fun BeamHomeScreen(
 }
 
 @Composable
-private fun BeamLibraryChipRow(
+internal fun BeamLibraryChipRow(
     libraries: List<dev.jdtech.jellyfin.models.SpatialFinCollection>,
     onOpenLibrary: (UUID, String, CollectionType) -> Unit,
 ) {
@@ -965,7 +526,7 @@ private fun BeamLibraryChipRow(
  * One arrangeable home row: a stable [id] for the saved layout, the title the
  * user long-presses, its optional trailing action, and the row body itself.
  */
-private data class BeamHomeRow(
+internal data class BeamHomeRow(
     val id: String,
     val title: String,
     val actionLabel: String? = null,
@@ -974,7 +535,7 @@ private data class BeamHomeRow(
 )
 
 @Composable
-private fun BeamHomeSectionHeader(
+internal fun BeamHomeSectionHeader(
     title: String,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
@@ -1039,7 +600,7 @@ private fun BeamHomeSectionHeader(
 }
 
 @Composable
-private fun BeamPosterCarousel(
+internal fun BeamPosterCarousel(
     items: List<SpatialFinItem>,
     onItemClick: (SpatialFinItem) -> Unit,
     showProgress: Boolean = false,
@@ -1059,7 +620,7 @@ private fun BeamPosterCarousel(
 }
 
 @Composable
-private fun BeamPosterCard(
+internal fun BeamPosterCard(
     item: SpatialFinItem,
     onClick: () -> Unit,
     showProgress: Boolean = false,
@@ -1200,7 +761,7 @@ fun BeamLibraryScreen(
 }
 
 @Composable
-private fun BeamPosterGrid(
+internal fun BeamPosterGrid(
     items: List<SpatialFinItem>,
     onItemClick: (SpatialFinItem) -> Unit,
 ) {
@@ -1581,484 +1142,7 @@ fun BeamSeasonScreen(
     }
 }
 
-@Composable
-fun BeamItemDetailScreen(
-    contentPadding: PaddingValues,
-    itemId: UUID,
-    onBack: () -> Unit,
-    onOpenLibrary: (UUID, String, CollectionType) -> Unit,
-    onOpenShow: (UUID) -> Unit,
-    onOpenSeason: (UUID) -> Unit,
-    onOpenPerson: (UUID) -> Unit,
-    viewModel: BeamItemDetailViewModel = hiltViewModel(),
-    downloaderViewModel: DownloaderViewModel = hiltViewModel(),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
-    val scope = rememberCoroutineScope()
-    val setBackground = LocalBeamBackground.current
-    var showDownloadDialog by rememberSaveable(itemId) { mutableStateOf(false) }
-    var showPlaybackOptions by rememberSaveable(itemId) { mutableStateOf(false) }
-    var showOverflow by rememberSaveable(itemId) { mutableStateOf(false) }
-    var showEditExternalIds by rememberSaveable(itemId) { mutableStateOf(false) }
-    var showDeleteConfirm by rememberSaveable(itemId) { mutableStateOf(false) }
-
-    LaunchedEffect(itemId) {
-        viewModel.deletedEvents.collect { ok ->
-            val msg = if (ok) "Deleted" else "Delete failed"
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-            if (ok) onBack()
-        }
-    }
-
-    LaunchedEffect(itemId) {
-        viewModel.load(itemId)
-    }
-
-    LaunchedEffect(state.item?.id) {
-        state.item?.let {
-            downloaderViewModel.update(it)
-            setBackground(beamBackdropArtwork(it))
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        downloaderViewModel.events.collect { event ->
-            val message =
-                when (event) {
-                    DownloaderEvent.Successful -> "Download completed"
-                    DownloaderEvent.Deleted -> "Download deleted"
-                }
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    state.item?.let { itemData ->
-        itemData.jellyfinAudioDetailType()?.let { detailType ->
-            JellyfinAudioDetailScreen(
-                itemId = itemData.id,
-                title = itemData.name,
-                detailType = detailType,
-                parentId = null,
-                onBack = onBack,
-                modifier = Modifier.fillMaxSize().padding(contentPadding),
-            )
-            return
-        }
-        // A still image has no metadata worth a detail page — go straight to the
-        // viewer. Routing through Detail (rather than a dedicated Beam route) means
-        // every surface that already calls onOpenItem for unrecognised kinds — home
-        // rows, library grids, folder browse, search — opens photos for free.
-        if (itemData is dev.jdtech.jellyfin.models.SpatialFinPhoto) {
-            dev.jdtech.jellyfin.presentation.film.PhotoViewerScreen(
-                photoId = itemData.id,
-                parentId = itemData.parentId,
-                onBack = onBack,
-                // Full-bleed at the top, but keep the page counter clear of the bottom nav.
-                modifier = Modifier.fillMaxSize()
-                    .padding(bottom = contentPadding.calculateBottomPadding()),
-            )
-            return
-        }
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            top = 0.dp,
-            bottom = contentPadding.calculateBottomPadding() + 24.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        when {
-            state.isLoading -> item { LoadingCard("Loading...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Couldn't load this item",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = { viewModel.load(itemId) },
-                )
-            }
-            state.item == null -> item { BeamEmptyCard("This item is no longer available.") }
-            else -> {
-                val itemData = state.item ?: return@LazyColumn
-                val supportingLine =
-                    when (itemData) {
-                        is SpatialFinMovie ->
-                            itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
-                                ?: itemData.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
-                        is SpatialFinEpisode ->
-                            listOf(itemData.seriesName, itemData.seasonName, buildEpisodeLabel(itemData))
-                                .filterNotNull()
-                                .filter { it.isNotBlank() }
-                                .joinToString(" • ")
-                                .ifBlank { null }
-                        is SpatialFinSeason -> itemData.seriesName
-                        else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
-                    }
-                item {
-                    BeamDetailHeroCard(
-                        item = itemData,
-                        eyebrow = buildPrimaryBadge(itemData),
-                        supportingLine = supportingLine,
-                        hero = itemData.detailHeroMetadata(),
-                        onBack = onBack,
-                        actions = {} // Actions moved below
-                    )
-                }
-                item {
-                    val isResume = itemData.playbackPositionTicks > 0L
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (itemData.canPlay) {
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                        if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
-                                            launchServerItem(context, fcastSession, scope, itemData)
-                                        }
-                                    }
-                                ) {
-                                    androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                        contentDescription = if (isResume) "Resume" else "Play"
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(if (isResume) "Resume" else "Play")
-                                }
-                                if (isResume) {
-                                    androidx.compose.material3.FilledTonalIconButton(
-                                        onClick = {
-                                            if (
-                                                !playNativeAudioItem(
-                                                    itemData,
-                                                    jellyfinAudioDispatcher,
-                                                    fromStart = true,
-                                                )
-                                            ) {
-                                                launchServerItem(
-                                                    context = context,
-                                                    fcastSession = fcastSession,
-                                                    scope = scope,
-                                                    item = itemData,
-                                                    startFromBeginning = true,
-                                                )
-                                            }
-                                        }
-                                    ) {
-                                        androidx.compose.material3.Icon(
-                                            imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
-                                            contentDescription = "From Start"
-                                        )
-                                    }
-                                }
-                        }
-                        androidx.compose.material3.IconButton(
-                            onClick = { viewModel.toggleFavorite() }
-                        ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = if (itemData.favorite) androidx.compose.material.icons.Icons.Rounded.Favorite else androidx.compose.material.icons.Icons.Rounded.FavoriteBorder,
-                                contentDescription = if (itemData.favorite) "Favorited" else "Favorite",
-                                tint = if (itemData.favorite) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
-                            )
-                        }
-                        androidx.compose.material3.IconButton(
-                            onClick = { viewModel.togglePlayed() }
-                        ) {
-                            androidx.compose.material3.Icon(
-                                imageVector = if (itemData.played) androidx.compose.material.icons.Icons.Rounded.CheckCircle else androidx.compose.material.icons.Icons.Rounded.Check,
-                                contentDescription = if (itemData.played) "Watched" else "Mark watched",
-                                tint = if (itemData.played) MaterialTheme.colorScheme.primary else androidx.compose.material3.LocalContentColor.current
-                            )
-                        }
-
-                        if (itemData.canPlay) {
-                                BeamDownloadActions(
-                                    item = itemData,
-                                    downloaderState = downloaderState,
-                                    onOpenOptions = { showDownloadDialog = true },
-                                    onCancelDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.CancelDownload(itemData))
-                                    },
-                                    onPauseDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.PauseDownload(itemData))
-                                    },
-                                    onResumeDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.ResumeDownload(itemData))
-                                    },
-                                    onDeleteDownload = {
-                                        downloaderViewModel.onAction(DownloaderAction.DeleteDownload(itemData))
-                                    },
-                                )
-                            }
-
-                            BeamOverflowMenu(
-                                expanded = showOverflow,
-                                onExpandedChange = { showOverflow = it },
-                                extraItems = {
-                                    if (itemData.canPlay) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("SyncPlay") },
-                                            onClick = {
-                                                showOverflow = false
-                                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                                    .createIntentForSpatialItem(
-                                                        context = context,
-                                                        item = itemData,
-                                                        openSyncPlayDialogOnStart = true,
-                                                    )
-                                                    ?.let(context::startActivity)
-                                            }
-                                        )
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Playback Options") },
-                                            onClick = {
-                                                showOverflow = false
-                                                showPlaybackOptions = true
-                                            }
-                                        )
-                                    }
-                                    if (itemData is SpatialFinCollection || itemData is SpatialFinFolder) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Open Collection") },
-                                            onClick = {
-                                                showOverflow = false
-                                                openServerItem(context, itemData, onOpenLibrary, onOpenShow, onOpenSeason, {})
-                                            }
-                                        )
-                                    }
-                                    if (itemData is SpatialFinEpisode) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Go to series") },
-                                            onClick = {
-                                                showOverflow = false
-                                                onOpenShow(itemData.seriesId)
-                                            }
-                                        )
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Go to season") },
-                                            onClick = {
-                                                showOverflow = false
-                                                onOpenSeason(itemData.seasonId)
-                                            }
-                                        )
-                                    }
-                                    // Edit external IDs works for anything that
-                                    // Jellyfin writes providerIds onto. Movies
-                                    // and shows are the primary target; episodes
-                                    // are supported because an individual
-                                    // episode's IMDb ID is a valid override
-                                    // when the series mapping is right but the
-                                    // specific episode got misattributed.
-                                    // Collections/folders aren't writable.
-                                    if (itemData is SpatialFinMovie ||
-                                        itemData is SpatialFinShow ||
-                                        itemData is SpatialFinEpisode
-                                    ) {
-                                        androidx.compose.material3.DropdownMenuItem(
-                                            text = { Text("Edit external IDs") },
-                                            onClick = {
-                                                showOverflow = false
-                                                showEditExternalIds = true
-                                            }
-                                        )
-                                    }
-                                },
-                                onRefresh = {
-                                    viewModel.refreshMetadata()
-                                    Toast.makeText(context, "Refreshing metadata…", Toast.LENGTH_SHORT).show()
-                                },
-                                onDelete = { showDeleteConfirm = true },
-                                onShare = {
-                                    val base = viewModel.serverBaseUrl().trimEnd('/')
-                                    val url = "$base/web/#!/details?id=${itemData.id}"
-                                    context.startActivity(
-                                        android.content.Intent.createChooser(
-                                            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(android.content.Intent.EXTRA_SUBJECT, itemData.name)
-                                                putExtra(android.content.Intent.EXTRA_TEXT, "${itemData.name}\n$url")
-                                            },
-                                            "Share ${itemData.name}",
-                                        )
-                                    )
-                                },
-                            )
-                        }
-                        if (state.availableVersions.size > 1) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                "Version",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFD7DDE6),
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                state.availableVersions.forEach { version ->
-                                    FilterChip(
-                                        selected = version.id == itemData.id,
-                                        onClick = { if (version.id != itemData.id) viewModel.load(version.id) },
-                                        label = { Text(version.versionChipLabel()) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                item {
-                    val isResume = itemData.playbackPositionTicks > 0L
-                    if (isResume && itemData.runtimeTicks > 0L) {
-                        val progress = itemData.playbackPositionTicks.toFloat() / itemData.runtimeTicks.toFloat()
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    }
-                }
-                item { Spacer(Modifier.height(8.dp)) }
-                item {
-                    Text(
-                        text = itemData.overview.ifBlank { "No overview available." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-                val actors = beamPeopleOf(itemData).filter { person ->
-                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
-                }
-                if (actors.isNotEmpty()) {
-                    item {
-                        BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
-                    }
-                }
-                if (itemData.chapters.isNotEmpty()) {
-                    item {
-                        BeamChaptersRow(
-                            chapters = itemData.chapters,
-                            onChapterClick = { chapter ->
-                                dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
-                                    .createIntentForSpatialItem(
-                                        context = context,
-                                        item = itemData,
-                                        // chapter.startPosition is already in ms (stored as ticks/10000 by toSpatialFinChapters).
-                                        startPositionMs = chapter.startPosition,
-                                    )
-                                    ?.let(context::startActivity)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDeleteConfirm = false
-                        viewModel.deleteItem()
-                    },
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.onError)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showDeleteConfirm = false }) {
-                    Text("Cancel")
-                }
-            },
-            title = { Text("Delete from library?") },
-            text = { Text("This removes the item from your Jellyfin server. This can't be undone.") },
-        )
-    }
-
-    if (showDownloadDialog) {
-        val item = state.item
-        if (item != null) {
-            BeamDownloadOptionsDialog(
-                item = item,
-                onConfirm = { request ->
-                    downloaderViewModel.onAction(DownloaderAction.Download(item, request))
-                    showDownloadDialog = false
-                },
-                onDismiss = { showDownloadDialog = false },
-            )
-        }
-    }
-    if (showPlaybackOptions) {
-        val item = state.item
-        if (item != null) {
-            BeamPlaybackOptionsDialog(
-                item = item,
-                onDismiss = { showPlaybackOptions = false },
-                onPlay = { sourceIndex, bitrate, fromBeginning ->
-                    launchServerItem(
-                        context = context,
-                        fcastSession = fcastSession,
-                        scope = scope,
-                        item = item,
-                        startFromBeginning = fromBeginning,
-                        mediaSourceIndex = sourceIndex,
-                        maxBitrate = bitrate,
-                    )
-                    showPlaybackOptions = false
-                },
-            )
-        }
-    }
-    if (showEditExternalIds) {
-        val item = state.item
-        if (item != null) {
-            val year = when (item) {
-                is SpatialFinMovie -> item.productionYear
-                is SpatialFinShow -> item.productionYear
-                else -> null
-            }
-            val initialTitle = when (item) {
-                is SpatialFinEpisode ->
-                    buildString {
-                        if (item.seriesName.isNotBlank()) append(item.seriesName).append(" ")
-                        append("S").append(item.parentIndexNumber)
-                        append("E").append(item.indexNumber)
-                        if (item.name.isNotBlank()) append(" ").append(item.name)
-                    }
-                else -> item.name
-            }
-            val scope = rememberCoroutineScope()
-            dev.jdtech.jellyfin.presentation.film.components.EditExternalIdsDialog(
-                itemId = item.id,
-                initialTitle = initialTitle,
-                initialYear = year,
-                onDismiss = { showEditExternalIds = false },
-                onSaved = {
-                    // Wait for Jellyfin to finish its async refresh before
-                    // reloading. See BeamShowDetailScreen's onSaved handler.
-                    scope.launch {
-                        kotlinx.coroutines.delay(5_000)
-                        viewModel.load(itemId)
-                    }
-                },
-            )
-        }
-    }
-}
-
-private fun beamPrimaryArtwork(item: SpatialFinItem): Any? =
+internal fun beamPrimaryArtwork(item: SpatialFinItem): Any? =
     when (item) {
         is SpatialFinEpisode ->
             item.images.showPrimary ?: item.images.primary ?: item.images.showBackdrop ?: item.images.backdrop
@@ -2066,7 +1150,7 @@ private fun beamPrimaryArtwork(item: SpatialFinItem): Any? =
             item.images.primary ?: item.images.showPrimary ?: item.images.backdrop ?: item.images.showBackdrop
     }
 
-private fun beamBackdropArtwork(item: SpatialFinItem): Any? =
+internal fun beamBackdropArtwork(item: SpatialFinItem): Any? =
     when (item) {
         is SpatialFinEpisode ->
             item.images.showBackdrop ?: item.images.backdrop ?: item.images.showPrimary ?: item.images.primary
@@ -2074,7 +1158,7 @@ private fun beamBackdropArtwork(item: SpatialFinItem): Any? =
             item.images.backdrop ?: item.images.showBackdrop ?: item.images.primary ?: item.images.showPrimary
     }
 
-private fun beamSeasonLabel(season: SpatialFinSeason): String =
+internal fun beamSeasonLabel(season: SpatialFinSeason): String =
     if (season.indexNumber > 0) {
         "Season ${season.indexNumber}"
     } else {
@@ -2082,944 +1166,7 @@ private fun beamSeasonLabel(season: SpatialFinSeason): String =
     }
 
 @Composable
-private fun BeamPlaybackOptionsDialog(
-    item: SpatialFinItem,
-    onDismiss: () -> Unit,
-    onPlay: (sourceIndex: Int?, bitrate: Long?, fromBeginning: Boolean) -> Unit,
-) {
-    val sources = remember(item) { item.sources.filter { it.type == SpatialFinSourceType.REMOTE } }
-    var selectedSourceIndex by remember { mutableStateOf(0) }
-    var selectedBitrate by remember { mutableStateOf(0L) }
-    var startFromBeginning by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Playback Options") },
-        text = {
-            BeamScrollableDialogBody {
-                Text(
-                    "Choose the version and streaming quality before playback starts.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (sources.size > 1) {
-                    BeamChoiceSection(title = "Version") {
-                        sources.forEachIndexed { index, source ->
-                            BeamChoiceRow(
-                                selected = selectedSourceIndex == index,
-                                title = source.name.ifBlank { "Source ${index + 1}" },
-                                subtitle = source.size.takeIf { it > 0 }?.let(::formatDownloadFileSize),
-                                onClick = { selectedSourceIndex = index },
-                            )
-                        }
-                    }
-                }
-                BeamChoiceSection(title = "Streaming Quality") {
-                    QualityOption.entries.forEach { option ->
-                        BeamChoiceRow(
-                            selected = selectedBitrate == option.bps,
-                            title = stringResource(option.labelRes),
-                            subtitle = if (option == QualityOption.AUTO) {
-                                "Let Jellyfin choose the best direct play or transcode path."
-                            } else null,
-                            onClick = { selectedBitrate = option.bps },
-                        )
-                    }
-                }
-                BeamChoiceSection(title = "Start Position") {
-                    BeamChoiceRow(
-                        selected = !startFromBeginning,
-                        title = "Resume",
-                        onClick = { startFromBeginning = false },
-                    )
-                    BeamChoiceRow(
-                        selected = startFromBeginning,
-                        title = "Play From Start",
-                        onClick = { startFromBeginning = true },
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val sourceIndex = if (sources.size > 1) selectedSourceIndex else null
-                    onPlay(sourceIndex, selectedBitrate.takeIf { it > 0L }, startFromBeginning)
-                },
-            ) {
-                Text("Play")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
-}
-
-@Composable
-private fun BeamDownloadActions(
-    item: SpatialFinItem,
-    downloaderState: dev.jdtech.jellyfin.core.presentation.downloader.DownloaderState,
-    onOpenOptions: () -> Unit,
-    onCancelDownload: () -> Unit,
-    onPauseDownload: () -> Unit,
-    onResumeDownload: () -> Unit,
-    onDeleteDownload: () -> Unit,
-) {
-    if (!item.canDownload) return
-
-    val isDownloaded = item.isDownloaded()
-    val isDownloading = item.isDownloading() || downloaderState.isDownloading
-    val isPaused = downloaderState.status == DownloadManager.STATUS_PAUSED
-    val isFailed = downloaderState.status == DownloadManager.STATUS_FAILED
-
-    when {
-        isDownloaded -> {
-            androidx.compose.material3.FilledTonalIconButton(onClick = onDeleteDownload) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.DownloadDone,
-                    contentDescription = "Delete Download"
-                )
-            }
-        }
-        isPaused || isFailed -> {
-            androidx.compose.material3.FilledTonalIconButton(onClick = onResumeDownload) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Download,
-                    contentDescription = "Resume Download"
-                )
-            }
-            androidx.compose.material3.FilledTonalIconButton(onClick = onCancelDownload) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Close,
-                    contentDescription = "Cancel Download"
-                )
-            }
-        }
-        isDownloading -> {
-            androidx.compose.material3.FilledTonalIconButton(onClick = onPauseDownload) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Pause,
-                    contentDescription = "Pause Download"
-                )
-            }
-            androidx.compose.material3.FilledTonalIconButton(onClick = onCancelDownload) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Close,
-                    contentDescription = "Cancel Download"
-                )
-            }
-        }
-        else -> {
-            androidx.compose.material3.FilledTonalIconButton(onClick = onOpenOptions) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Rounded.Download,
-                    contentDescription = "Download"
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamDownloadOptionsDialog(
-    item: SpatialFinItem,
-    onConfirm: (DownloadRequest) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sources = remember(item) { item.sources.filter { it.type == SpatialFinSourceType.REMOTE } }
-    if (sources.isEmpty()) return
-
-    var selectedSourceIndex by remember { mutableStateOf(0) }
-    var selectedMode by remember { mutableStateOf(DownloadMode.ORIGINAL) }
-    var selectedBitrate by remember { mutableStateOf(DEFAULT_DOWNLOAD_BITRATES.first().first) }
-    var selectedAudioStreamIndex by remember { mutableStateOf<Int?>(null) }
-    var selectedSubtitleStreamIndex by remember { mutableStateOf<Int?>(null) }
-
-    val selectedSource = sources.getOrNull(selectedSourceIndex) ?: return
-    val audioStreams = selectedSource.mediaStreams.filter { it.type == MediaStreamType.AUDIO && it.index != null }
-    val subtitleStreams = selectedSource.mediaStreams.filter { it.type == MediaStreamType.SUBTITLE && it.index != null }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(
-                        DownloadRequest(
-                            sourceId = selectedSource.id,
-                            mode = selectedMode,
-                            videoBitrate = if (selectedMode == DownloadMode.TRANSCODED) selectedBitrate else null,
-                            audioStreamIndex = if (selectedMode == DownloadMode.TRANSCODED) selectedAudioStreamIndex else null,
-                            subtitleStreamIndex = if (selectedMode == DownloadMode.TRANSCODED) selectedSubtitleStreamIndex else null,
-                            subtitleDeliveryMethod =
-                                if (selectedMode == DownloadMode.TRANSCODED && selectedSubtitleStreamIndex != null) {
-                                    SubtitleDeliveryMethod.EMBED
-                                } else {
-                                    SubtitleDeliveryMethod.DROP
-                                },
-                        )
-                    )
-                },
-            ) {
-                Text("Start Download")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-        title = { Text("Download Options") },
-        text = {
-            BeamScrollableDialogBody {
-                Text(
-                    "Choose the source, bitrate, and tracks for this download.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (sources.size > 1) {
-                    BeamChoiceSection(title = "Video Version") {
-                        sources.forEachIndexed { index, source ->
-                            BeamChoiceRow(
-                                selected = selectedSourceIndex == index,
-                                title = source.name.ifBlank { "Source ${index + 1}" },
-                                subtitle = source.size.takeIf { it > 0 }?.let(::formatDownloadFileSize),
-                                onClick = { selectedSourceIndex = index },
-                            )
-                        }
-                    }
-                }
-                BeamChoiceSection(title = "Download Mode") {
-                    BeamChoiceRow(
-                        selected = selectedMode == DownloadMode.ORIGINAL,
-                        title = "Original",
-                        subtitle = "Download the original file for best quality and fastest setup.",
-                        onClick = { selectedMode = DownloadMode.ORIGINAL },
-                    )
-                    BeamChoiceRow(
-                        selected = selectedMode == DownloadMode.TRANSCODED,
-                        title = "Transcoded",
-                        subtitle = "Smaller file with explicit audio and subtitle embedding.",
-                        onClick = { selectedMode = DownloadMode.TRANSCODED },
-                    )
-                }
-                if (selectedMode == DownloadMode.TRANSCODED) {
-                    BeamChoiceSection(title = "Video Quality") {
-                        DEFAULT_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
-                            BeamChoiceRow(
-                                selected = selectedBitrate == bitrate,
-                                title = label,
-                                onClick = { selectedBitrate = bitrate },
-                            )
-                        }
-                    }
-                    if (audioStreams.isNotEmpty()) {
-                        BeamChoiceSection(title = "Audio Track") {
-                            audioStreams.forEach { stream ->
-                                BeamChoiceRow(
-                                    selected = selectedAudioStreamIndex == stream.index,
-                                    title = streamLabel(stream),
-                                    onClick = { selectedAudioStreamIndex = stream.index },
-                                )
-                            }
-                        }
-                    }
-                    BeamChoiceSection(title = "Subtitle Track") {
-                        BeamChoiceRow(
-                            selected = selectedSubtitleStreamIndex == null,
-                            title = "None",
-                            onClick = { selectedSubtitleStreamIndex = null },
-                        )
-                        subtitleStreams.forEach { stream ->
-                            BeamChoiceRow(
-                                selected = selectedSubtitleStreamIndex == stream.index,
-                                title = streamLabel(stream),
-                                onClick = { selectedSubtitleStreamIndex = stream.index },
-                            )
-                        }
-                    }
-                }
-            }
-        },
-    )
-}
-
-@Composable
-private fun BeamScrollableDialogBody(
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val maxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(220.dp)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = maxHeight)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        content = content,
-    )
-}
-
-@Composable
-private fun BeamChoiceSection(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp), content = {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        content()
-    })
-}
-
-@Composable
-private fun BeamChoiceRow(
-    selected: Boolean,
-    title: String,
-    subtitle: String? = null,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(if (selected) "●" else "○", style = MaterialTheme.typography.bodyLarge)
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            subtitle?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-private val DEFAULT_DOWNLOAD_BITRATES =
-    listOf(
-        8_000_000 to "8 Mbps",
-        5_000_000 to "5 Mbps",
-        3_000_000 to "3 Mbps",
-        2_000_000 to "2 Mbps",
-        1_000_000 to "1 Mbps",
-    )
-
-@Composable
-private fun BeamBulkDownloadDialog(
-    title: String,
-    description: String,
-    confirmLabel: String,
-    onConfirm: (BulkDownloadSettings) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var selectedMode by remember { mutableStateOf(DownloadMode.ORIGINAL) }
-    var selectedBitrate by remember { mutableStateOf(DEFAULT_DOWNLOAD_BITRATES.first().first) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(
-                        BulkDownloadSettings(
-                            mode = selectedMode,
-                            videoBitrate = if (selectedMode == DownloadMode.TRANSCODED) selectedBitrate else null,
-                        )
-                    )
-                },
-            ) {
-                Text(confirmLabel)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-        title = { Text(title) },
-        text = {
-            BeamScrollableDialogBody {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                BeamChoiceSection(title = "Download Mode") {
-                    BeamChoiceRow(
-                        selected = selectedMode == DownloadMode.ORIGINAL,
-                        title = "Original",
-                        subtitle = "Download the original files for best quality.",
-                        onClick = { selectedMode = DownloadMode.ORIGINAL },
-                    )
-                    BeamChoiceRow(
-                        selected = selectedMode == DownloadMode.TRANSCODED,
-                        title = "Transcoded",
-                        subtitle = "Smaller files with embedded audio and subtitles.",
-                        onClick = { selectedMode = DownloadMode.TRANSCODED },
-                    )
-                }
-                if (selectedMode == DownloadMode.TRANSCODED) {
-                    BeamChoiceSection(title = "Video Quality") {
-                        DEFAULT_DOWNLOAD_BITRATES.forEach { (bitrate, label) ->
-                            BeamChoiceRow(
-                                selected = selectedBitrate == bitrate,
-                                title = label,
-                                onClick = { selectedBitrate = bitrate },
-                            )
-                        }
-                    }
-                }
-            }
-        },
-    )
-}
-
-private fun streamLabel(stream: SpatialFinMediaStream): String {
-    val language = stream.language.ifBlank { "Unknown" }
-    val details =
-        listOfNotNull(
-            stream.displayTitle?.takeIf { it.isNotBlank() },
-            stream.codec.takeIf { it.isNotBlank() }?.uppercase(),
-        )
-    return listOf(language, *details.toTypedArray()).joinToString(" • ")
-}
-
-private fun formatDownloadFileSize(size: Long): String {
-    if (size <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
-    return "%.1f %s".format(size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
-}
-
-@Composable
-fun BeamSearchScreen(
-    contentPadding: PaddingValues,
-    voiceQuery: String? = null,
-    onVoiceQueryConsumed: () -> Unit = {},
-    onOpenLibrary: (UUID, String, CollectionType) -> Unit,
-    onOpenShow: (UUID) -> Unit,
-    onOpenSeason: (UUID) -> Unit,
-    onOpenItem: (UUID) -> Unit,
-    onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
-    onOpenMaSearch: () -> Unit = {},
-    viewModel: BeamSearchViewModel = hiltViewModel(),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-    val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
-    val scope = rememberCoroutineScope()
-    var submittedInitialSearch by rememberSaveable { mutableStateOf(false) }
-    var pendingSeerrRequest by remember { mutableStateOf<SeerrSearchResult?>(null) }
-
-    LaunchedEffect(voiceQuery) {
-        if (!voiceQuery.isNullOrBlank()) {
-            viewModel.setQuery(voiceQuery)
-            viewModel.search()
-            onVoiceQueryConsumed()
-        }
-    }
-
-    LaunchedEffect(submittedInitialSearch) {
-        if (!submittedInitialSearch && state.query.isBlank()) {
-            submittedInitialSearch = true
-        }
-    }
-
-    pendingSeerrRequest?.let { item ->
-        BeamSeerrRequestDialog(
-            item = item,
-            onConfirm = { is4k ->
-                viewModel.requestSeerrItem(item, is4k)
-                pendingSeerrRequest = null
-            },
-            onDismiss = { pendingSeerrRequest = null },
-        )
-    }
-
-    BeamScaffoldBody(contentPadding = contentPadding) {
-        item {
-            BeamScreenHeader(
-                title = "Search",
-                body = "Find movies, shows, and more.",
-            )
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    OutlinedTextField(
-                        value = state.query,
-                        onValueChange = viewModel::setQuery,
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Search Jellyfin") },
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = viewModel::search) {
-                            Text("Search")
-                        }
-                        if (state.query.isNotBlank()) {
-                            OutlinedButton(onClick = { viewModel.setQuery("") }) {
-                                Text("Clear")
-                            }
-                        }
-                        OutlinedButton(onClick = onOpenMaSearch) {
-                            Text("Search Music Assistant")
-                        }
-                    }
-                }
-            }
-        }
-        when {
-            state.isLoading -> item { LoadingCard("Searching Jellyfin and Jellyseerr...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Search failed.",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = viewModel::search,
-                )
-            }
-            state.hasSearched && state.items.isEmpty() && state.seerrItems.isEmpty() -> item {
-                BeamEmptyCard("No items matched your search.")
-            }
-            state.items.isNotEmpty() -> {
-                item {
-                    Text("In Your Library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                }
-                items(state.items, key = { it.id }) { item ->
-                    BeamServerItemCard(
-                        item = item,
-                        onPlay = {
-                            if (!playNativeAudioItem(item, jellyfinAudioDispatcher)) {
-                                launchServerItem(context, fcastSession, scope, item)
-                            }
-                        },
-                        onOpen = {
-                            openServerItem(
-                                context,
-                                item,
-                                onOpenLibrary,
-                                onOpenShow,
-                                onOpenSeason,
-                                onOpenItem,
-                                audioDispatcher = jellyfinAudioDispatcher,
-                                onOpenJellyfinAudioDetail = onOpenJellyfinAudioDetail,
-                            )
-                        },
-                    )
-                }
-            }
-            else -> Unit
-        }
-        state.seerrError?.let { seerrError ->
-            item {
-                ErrorCard(
-                    title = "Jellyseerr unavailable",
-                    body = seerrError,
-                    onRetry = viewModel::search,
-                )
-            }
-        }
-        if (state.seerrItems.isNotEmpty()) {
-            item {
-                Text("Request From Jellyseerr", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            }
-            items(
-                items = state.seerrItems,
-                key = { "${it.mediaType}-${it.mediaId ?: it.id ?: it.title ?: it.name}" },
-            ) { item ->
-                BeamSeerrItemCard(
-                    item = item,
-                    onRequestClick = { pendingSeerrRequest = item },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamSeerrItemCard(
-    item: SeerrSearchResult,
-    onRequestClick: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.title ?: item.name ?: "Unknown title",
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    buildBeamSeerrSubtitle(item)?.let { subtitle ->
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                BeamSeerrStatusBadge(item.mediaInfo?.status)
-            }
-            item.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-                Text(
-                    text = overview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            when (item.mediaInfo?.status ?: 1) {
-                1 -> Button(onClick = onRequestClick) { Text("Request") }
-                2 -> Text("Request pending", color = MaterialTheme.colorScheme.primary)
-                3 -> Text("Request processing", color = MaterialTheme.colorScheme.primary)
-                4 -> Text("Partially available", color = MaterialTheme.colorScheme.primary)
-                5 -> Text("Already available", color = MaterialTheme.colorScheme.primary)
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamSeerrRequestDialog(
-    item: SeerrSearchResult,
-    onConfirm: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Request From Jellyseerr") },
-        text = {
-            BeamScrollableDialogBody {
-                Text("Choose request quality for ${item.title ?: item.name ?: "this item"}.")
-                FilledTonalButton(onClick = { onConfirm(false) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Standard")
-                }
-                FilledTonalButton(onClick = { onConfirm(true) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("4K")
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
-}
-
-@Composable
-fun BeamDownloadsScreen(
-    contentPadding: PaddingValues,
-    onOpenShow: (UUID) -> Unit,
-    onOpenSeason: (UUID) -> Unit,
-    onOpenItem: (UUID) -> Unit,
-    viewModel: DownloadsViewModel = hiltViewModel(),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
-    val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
-    val continueWatchingItems by viewModel.continueWatchingItems.collectAsStateWithLifecycle()
-    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
-    val scope = rememberCoroutineScope()
-    var pendingDeleteItem by remember { mutableStateOf<SpatialFinItem?>(null) }
-
-    LaunchedEffect(Unit) {
-        viewModel.loadItems()
-    }
-
-    pendingDeleteItem?.let { item ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteItem = null },
-            title = { Text("Delete Download") },
-            text = { Text("Remove ${item.name} from downloaded media?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteItem(item)
-                        pendingDeleteItem = null
-                    }
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteItem = null }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
-
-    BeamScaffoldBody(contentPadding = contentPadding) {
-        item {
-            val storageLabel = if (storageUsedBytes > 0L) {
-                android.text.format.Formatter.formatFileSize(context, storageUsedBytes)
-            } else null
-            BeamScreenHeader(
-                title = "Downloads",
-                body = storageLabel
-                    ?.let { "Movies and shows saved for offline playback. Using $it." }
-                    ?: "Movies and shows saved for offline playback.",
-            )
-        }
-        if (activeDownloads.isNotEmpty()) {
-            item {
-                Text(
-                    text = "In Progress",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(activeDownloads, key = { it.taskId }) { entry ->
-                BeamActiveDownloadCard(
-                    entry = entry,
-                    onPause = { viewModel.pauseDownload(entry.itemId) },
-                    onResume = { viewModel.resumeDownload(entry.itemId) },
-                    onCancel = { viewModel.cancelActiveDownload(entry.itemId) },
-                )
-            }
-        }
-        if (continueWatchingItems.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Continue Watching",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            items(continueWatchingItems, key = { it.id }) { item ->
-                BeamDownloadedItemCard(
-                    item = item,
-                    onPlay = { launchServerItem(context, fcastSession, scope,item) },
-                    onOpen = {
-                        when (item) {
-                            is SpatialFinShow -> onOpenShow(item.id)
-                            is SpatialFinSeason -> onOpenSeason(item.id)
-                            else -> onOpenItem(item.id)
-                        }
-                    },
-                    onDelete = { pendingDeleteItem = item },
-                )
-            }
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = viewModel::setSearchQuery,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Search downloads...") },
-                    singleLine = true,
-                )
-                TextButton(
-                    onClick = {
-                        viewModel.setSortOrder(
-                            if (sortOrder == DownloadSortOrder.NAME) DownloadSortOrder.DATE_ADDED
-                            else DownloadSortOrder.NAME
-                        )
-                    },
-                ) {
-                    Text(if (sortOrder == DownloadSortOrder.NAME) "A–Z" else "Recent")
-                }
-            }
-        }
-        when {
-            state.isLoading -> item { LoadingCard("Loading downloads...") }
-            state.error != null -> item {
-                ErrorCard(
-                    title = "Failed to load downloads.",
-                    body = state.error?.localizedMessage ?: "Unknown error",
-                    onRetry = viewModel::loadItems,
-                )
-            }
-            state.sections.isEmpty() && activeDownloads.isEmpty() ->
-                item { BeamEmptyCard("No downloaded media found.") }
-            else -> {
-                state.sections.forEach { section ->
-                    item {
-                        Text(
-                            text = section.name.asString(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    items(section.items, key = { it.id }) { item ->
-                        BeamDownloadedItemCard(
-                            item = item,
-                            onPlay = { launchServerItem(context, fcastSession, scope,item) },
-                            onOpen = {
-                                when (item) {
-                                    is SpatialFinShow -> onOpenShow(item.id)
-                                    is SpatialFinSeason -> onOpenSeason(item.id)
-                                    else -> onOpenItem(item.id)
-                                }
-                            },
-                            onDelete = { pendingDeleteItem = item },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamActiveDownloadCard(
-    entry: ActiveDownloadEntry,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val context = LocalContext.current
-    val statusLabel = when (entry.status) {
-        android.app.DownloadManager.STATUS_RUNNING -> {
-            val total = entry.totalBytes
-            val sizeStr = if (total != null && total > 0) {
-                "${android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)} / ${android.text.format.Formatter.formatFileSize(context, total)}"
-            } else {
-                "${entry.progress}%"
-            }
-            val speed = entry.downloadSpeedBytesPerSec
-            if (speed != null && speed > 0) {
-                "$sizeStr · ${android.text.format.Formatter.formatFileSize(context, speed)}/s"
-            } else sizeStr
-        }
-        android.app.DownloadManager.STATUS_PAUSED -> "Paused"
-        android.app.DownloadManager.STATUS_FAILED -> "Failed"
-        else -> "Pending"
-    }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f),
-        ),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    text = entry.itemName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (entry.status == android.app.DownloadManager.STATUS_RUNNING || entry.status == android.app.DownloadManager.STATUS_PAUSED) {
-                LinearProgressIndicator(
-                    progress = { entry.progress / 100f },
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = if (entry.status == android.app.DownloadManager.STATUS_PAUSED)
-                        MaterialTheme.colorScheme.outline
-                    else
-                        MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-            }
-            entry.errorMessage?.takeIf { it.isNotBlank() && it != "Paused" }?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (entry.status) {
-                    android.app.DownloadManager.STATUS_RUNNING -> {
-                        FilledTonalButton(onClick = onPause) { Text("Pause") }
-                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                    android.app.DownloadManager.STATUS_PAUSED,
-                    android.app.DownloadManager.STATUS_FAILED -> {
-                        FilledTonalButton(onClick = onResume) { Text("Resume") }
-                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                    else -> {
-                        FilledTonalButton(onClick = onCancel) { Text("Cancel") }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamServerItemCard(
-    item: SpatialFinItem,
-    onPlay: () -> Unit,
-    onOpen: () -> Unit,
-) {
-    BeamMediaFeatureCard(
-        item = item,
-        actions = {
-            when (item) {
-                is SpatialFinMovie,
-                is SpatialFinEpisode,
-                is SpatialFinShow,
-                is SpatialFinSeason,
-                is SpatialFinBoxSet -> {
-                    BeamPrimaryActionButton(label = "Play", onClick = onPlay)
-                }
-                else -> Unit
-            }
-            BeamSecondaryActionButton(
-                label =
-                    when (item) {
-                        is SpatialFinCollection,
-                        is SpatialFinFolder -> "Open"
-                        else -> "Details"
-                    },
-                onClick = onOpen,
-            )
-        },
-    )
-}
-
-@Composable
-private fun BeamDownloadedItemCard(
-    item: SpatialFinItem,
-    onPlay: () -> Unit,
-    onOpen: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    BeamMediaFeatureCard(
-        item = item,
-        actions = {
-            BeamPrimaryActionButton(label = "Play", onClick = onPlay)
-            BeamSecondaryActionButton(label = "Details", onClick = onOpen)
-            BeamSecondaryActionButton(label = "Delete", onClick = onDelete)
-        },
-    )
-}
-
-@Composable
-private fun BeamHeroCard(
+internal fun BeamHeroCard(
     item: SpatialFinItem,
     actions: @Composable RowScope.() -> Unit,
 ) {
@@ -3077,7 +1224,7 @@ private fun BeamHeroCard(
 }
 
 @Composable
-private fun BeamDetailHeroCard(
+internal fun BeamDetailHeroCard(
     item: SpatialFinItem,
     eyebrow: String,
     supportingLine: String?,
@@ -3245,7 +1392,7 @@ private fun BeamDetailHeroCard(
     }
 }
 
-private fun beamHeroFactIcon(kind: HeroFactKind): androidx.compose.ui.graphics.vector.ImageVector? =
+internal fun beamHeroFactIcon(kind: HeroFactKind): androidx.compose.ui.graphics.vector.ImageVector? =
     when (kind) {
         HeroFactKind.CERTIFICATION -> null
         HeroFactKind.YEAR -> Icons.Rounded.CalendarMonth
@@ -3256,7 +1403,7 @@ private fun beamHeroFactIcon(kind: HeroFactKind): androidx.compose.ui.graphics.v
     }
 
 @Composable
-private fun BeamCastAndCrew(
+internal fun BeamCastAndCrew(
     actors: List<dev.jdtech.jellyfin.models.SpatialFinItemPerson>,
     onOpenPerson: (UUID) -> Unit
 ) {
@@ -3315,7 +1462,7 @@ private fun BeamCastAndCrew(
 }
 
 @Composable
-private fun BeamDetailPill(
+internal fun BeamDetailPill(
     text: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     tint: Color = Color.White,
@@ -3347,7 +1494,7 @@ private fun BeamDetailPill(
 }
 
 @Composable
-private fun BeamSeasonStrip(
+internal fun BeamSeasonStrip(
     seasons: List<SpatialFinSeason>,
     onOpenSeason: (UUID) -> Unit,
 ) {
@@ -3362,7 +1509,7 @@ private fun BeamSeasonStrip(
 }
 
 @Composable
-private fun BeamSeasonCard(
+internal fun BeamSeasonCard(
     season: SpatialFinSeason,
     onClick: () -> Unit,
 ) {
@@ -3413,7 +1560,7 @@ private fun BeamSeasonCard(
 }
 
 @Composable
-private fun BeamMediaFeatureCard(
+internal fun BeamMediaFeatureCard(
     item: SpatialFinItem,
     actions: @Composable RowScope.() -> Unit,
 ) {
@@ -3488,7 +1635,7 @@ private fun BeamMediaFeatureCard(
 }
 
 @Composable
-private fun BeamPosterArtwork(
+internal fun BeamPosterArtwork(
     item: SpatialFinItem,
     modifier: Modifier,
 ) {
@@ -3522,7 +1669,7 @@ private fun BeamPosterArtwork(
 }
 
 @Composable
-private fun BeamBadge(text: String) {
+internal fun BeamBadge(text: String) {
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
@@ -3538,7 +1685,7 @@ private fun BeamBadge(text: String) {
 }
 
 @Composable
-private fun BeamPrimaryActionButton(
+internal fun BeamPrimaryActionButton(
     label: String,
     onClick: () -> Unit,
 ) {
@@ -3548,559 +1695,11 @@ private fun BeamPrimaryActionButton(
 }
 
 @Composable
-private fun BeamSecondaryActionButton(
+internal fun BeamSecondaryActionButton(
     label: String,
     onClick: () -> Unit,
 ) {
     OutlinedButton(onClick = onClick) {
         Text(label, maxLines = 1, softWrap = false)
-    }
-}
-
-private fun openServerItem(
-    context: Context,
-    item: SpatialFinItem,
-    onOpenLibrary: (UUID, String, CollectionType) -> Unit,
-    onOpenShow: (UUID) -> Unit,
-    onOpenSeason: (UUID) -> Unit,
-    onOpenItem: (UUID) -> Unit,
-    maPlayDispatcher: dev.spatialfin.unified.MaPlayDispatcher? = null,
-    onOpenMaUriBrowse: ((uri: String, name: String) -> Unit)? = null,
-    audioDispatcher: AudioPlaybackDispatcher? = null,
-    onOpenJellyfinAudioDetail: ((UUID, String, JellyfinAudioDetailType) -> Unit)? = null,
-) {
-    when (item) {
-        is SpatialFinCollection -> onOpenLibrary(item.id, item.name, item.type)
-        is SpatialFinFolder -> onOpenLibrary(item.id, item.name, CollectionType.Folders)
-        is SpatialFinShow -> onOpenShow(item.id)
-        is SpatialFinSeason -> onOpenSeason(item.id)
-        is SpatialFinAudioTrack -> {
-            if (!playNativeAudioItem(item, audioDispatcher)) onOpenItem(item.id)
-        }
-        is SpatialFinMusicAlbum,
-        is SpatialFinMusicArtist,
-        is SpatialFinPlaylist,
-        is SpatialFinAudioBook -> {
-            val detailType = item.jellyfinAudioDetailType()
-            if (detailType != null && onOpenJellyfinAudioDetail != null) {
-                onOpenJellyfinAudioDetail(item.id, item.name, detailType)
-            } else {
-                onOpenItem(item.id)
-            }
-        }
-        else -> {
-            val maUri = item.originalTitle
-            if (!maUri.isNullOrBlank() && maUri.contains("://")) {
-                // Podcasts/audiobooks open a detail screen (episode list /
-                // chapters + resume); tracks & directly-playable items just play.
-                val browseCallback = onOpenMaUriBrowse
-                if (
-                    browseCallback != null &&
-                        dev.spatialfin.unified.music.maDetailTargetForUri(maUri, item.name) != null
-                ) {
-                    browseCallback(maUri, item.name)
-                    return
-                }
-                val artwork = item.images.primary?.toString()
-                if (maPlayDispatcher != null) {
-                    maPlayDispatcher.playUri(maUri, title = item.name, artworkUrl = artwork)
-                } else {
-                    // Fallback for callers that didn't thread the dispatcher;
-                    // the receiver service still works, just no optimistic UI.
-                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService
-                        .playMusicAssistantMedia(
-                            context,
-                            maUri,
-                            dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
-                        )
-                }
-                android.widget.Toast.makeText(context, "Queuing in Music Assistant…", android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                onOpenItem(item.id)
-            }
-        }
-    }
-}
-
-private fun SpatialFinItem.jellyfinAudioDetailType(): JellyfinAudioDetailType? =
-    when (this) {
-        is SpatialFinMusicAlbum -> JellyfinAudioDetailType.Album
-        is SpatialFinMusicArtist -> JellyfinAudioDetailType.Artist
-        is SpatialFinPlaylist -> JellyfinAudioDetailType.Playlist
-        is SpatialFinAudioBook -> JellyfinAudioDetailType.Book
-        else -> null
-    }
-
-private fun openNativeAudioItem(
-    item: SpatialFinItem,
-    audioDispatcher: AudioPlaybackDispatcher?,
-    onOpenJellyfinAudioDetail: (UUID, String, JellyfinAudioDetailType) -> Unit,
-): Boolean {
-    if (playNativeAudioItem(item, audioDispatcher)) return true
-    val detailType = item.jellyfinAudioDetailType() ?: return false
-    onOpenJellyfinAudioDetail(item.id, item.name, detailType)
-    return true
-}
-
-private fun playNativeAudioItem(
-    item: SpatialFinItem,
-    audioDispatcher: AudioPlaybackDispatcher?,
-    fromStart: Boolean = false,
-): Boolean {
-    val track = item as? SpatialFinAudioTrack ?: return false
-    val playableTrack = if (fromStart) track.copy(playbackPositionTicks = 0L) else track
-    audioDispatcher?.playQueue(listOf(playableTrack.toAudioQueueItem()))
-    return audioDispatcher != null
-}
-
-/**
- * Cast actions injected into [BeamOverflowMenu]. Reads the FCast session manager from the
- * composition local installed by [BeamNavigationRoot] (null on surfaces without one — TV,
- * previews — in which case nothing is rendered). Lives in the overflow rather than as a peer
- * icon so the hero-card action row stays single-line on phones.
- */
-@Composable
-private fun BeamCastOverflowItems(onItemSelected: () -> Unit) {
-    val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current ?: return
-    val pickedTarget by fcastSession.pickedTarget.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    androidx.compose.material3.DropdownMenuItem(
-        text = {
-            Text(
-                if (pickedTarget != null) "Cast (${pickedTarget?.name})"
-                else "Cast to receiver…"
-            )
-        },
-        onClick = {
-            onItemSelected()
-            fcastSession.showPicker()
-        },
-        leadingIcon = {
-            androidx.compose.material3.Icon(
-                painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_cast),
-                contentDescription = null,
-                tint = if (pickedTarget != null) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    androidx.compose.material3.LocalContentColor.current
-                },
-            )
-        },
-    )
-    if (pickedTarget != null) {
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("Stop casting") },
-            onClick = {
-                onItemSelected()
-                scope.launch { fcastSession.stopCast() }
-            },
-            leadingIcon = {
-                androidx.compose.material3.Icon(
-                    painter = painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_x),
-                    contentDescription = null,
-                )
-            },
-        )
-    }
-}
-
-@Composable
-private fun BeamOverflowMenu(
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
-    extraItems: @Composable ColumnScope.() -> Unit = {},
-    onRefresh: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null,
-    onShare: (() -> Unit)? = null,
-) {
-    Box {
-        androidx.compose.material3.FilledTonalIconButton(onClick = { onExpandedChange(true) }) {
-            androidx.compose.material3.Icon(
-                imageVector = androidx.compose.material.icons.Icons.Rounded.MoreVert,
-                contentDescription = "More actions",
-            )
-        }
-        androidx.compose.material3.DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { onExpandedChange(false) },
-        ) {
-            extraItems()
-            // Cast affordance lives inside the overflow rather than as a peer icon so hero-card
-            // action rows stay single-line on narrow phones. No-op (nothing rendered) on
-            // surfaces without an CastSessionManager in scope (e.g. TV).
-            BeamCastOverflowItems(onItemSelected = { onExpandedChange(false) })
-            if (onRefresh != null) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("Refresh metadata") },
-                    onClick = {
-                        onExpandedChange(false)
-                        onRefresh()
-                    },
-                    leadingIcon = {
-                        androidx.compose.material3.Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Rounded.Refresh,
-                            contentDescription = null,
-                        )
-                    },
-                )
-            }
-            if (onShare != null) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("Share") },
-                    onClick = {
-                        onExpandedChange(false)
-                        onShare()
-                    },
-                    leadingIcon = {
-                        androidx.compose.material3.Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Rounded.Share,
-                            contentDescription = null,
-                        )
-                    },
-                )
-            }
-            if (onDelete != null) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                    onClick = {
-                        onExpandedChange(false)
-                        onDelete()
-                    },
-                    leadingIcon = {
-                        androidx.compose.material3.Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Rounded.Delete,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamChaptersRow(
-    chapters: List<dev.jdtech.jellyfin.models.SpatialFinChapter>,
-    onChapterClick: (dev.jdtech.jellyfin.models.SpatialFinChapter) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(
-            text = "Chapters",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            // Key by list index, not startPosition — Jellyfin often emits several
-            // chapters at the same position (e.g. a leading marker plus "Chapter 1"
-            // both at 0), and duplicate LazyRow keys crash ("Key 0 already used").
-            itemsIndexed(chapters, key = { index, chapter -> "$index-${chapter.startPosition}" }) { _, chapter ->
-                BeamChapterCard(chapter = chapter, onClick = { onChapterClick(chapter) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun BeamChapterCard(
-    chapter: dev.jdtech.jellyfin.models.SpatialFinChapter,
-    onClick: () -> Unit,
-) {
-    val title = chapter.name?.takeIf { it.isNotBlank() } ?: formatChapterTime(chapter.startPosition)
-    Column(
-        modifier = Modifier
-            .width(200.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1.77f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF161D28)),
-        ) {
-            if (chapter.imageUri != null) {
-                AsyncImage(
-                    model = chapter.imageUri,
-                    contentDescription = title,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .padding(6.dp)
-                    .align(Alignment.BottomStart)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = formatChapterTime(chapter.startPosition),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-private fun beamPeopleOf(item: SpatialFinItem): List<dev.jdtech.jellyfin.models.SpatialFinItemPerson> =
-    when (item) {
-        is SpatialFinMovie -> item.people
-        is SpatialFinEpisode -> item.people
-        is SpatialFinShow -> item.people
-        else -> emptyList()
-    }
-
-private fun formatChapterTime(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val h = totalSeconds / 3600
-    val m = (totalSeconds % 3600) / 60
-    val s = totalSeconds % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
-
-private fun launchServerItem(
-    context: Context,
-    fcastSession: dev.spatialfin.fcast.session.CastSessionManager?,
-    scope: kotlinx.coroutines.CoroutineScope,
-    item: SpatialFinItem,
-    startFromBeginning: Boolean = false,
-    mediaSourceIndex: Int? = null,
-    maxBitrate: Long? = null,
-) {
-    val kind =
-        when (item) {
-            is SpatialFinMovie -> "Movie"
-            is SpatialFinEpisode -> "Episode"
-            is SpatialFinSeason -> "Season"
-            is SpatialFinShow -> "Series"
-            is SpatialFinBoxSet -> "BoxSet"
-            else -> {
-                val maUri = item.originalTitle
-                android.util.Log.e("BeamJellyfinScreens", "launchServerItem: else branch, maUri=$maUri")
-                if (!maUri.isNullOrBlank() && maUri.contains("://")) {
-                    dev.jdtech.jellyfin.sendspin.receiver.SendspinReceiverService.playMusicAssistantMedia(
-                        context,
-                        maUri,
-                        dev.jdtech.jellyfin.api.JellyfinApi.getInstance(context).userId?.toString(),
-                    )
-                    android.widget.Toast.makeText(context, "Playing on Sendspin...", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                return
-            }
-        }
-
-    val intentBuilder: () -> android.content.Intent = {
-        BeamPlayerActivity.createIntent(
-            context = context,
-            itemId = item.id,
-            itemKind = kind,
-            startFromBeginning = startFromBeginning,
-            mediaSourceIndex = mediaSourceIndex,
-            maxBitrate = maxBitrate,
-        )
-    }
-    // Split-A/V on Beam: Pixel plays video locally with audio muted while the picked
-    // receiver plays audio only. Builds the same Beam intent as the non-split path but with
-    // `splitAvVideoRole=true` — BeamPlayerActivity reads that extra and constructs a
-    // PlayerSplitAvAdapter, which binds the SplitAvVideoBridge that the cast controller
-    // needs to drive its first-play seek + drift correction.
-    //
-    // Before this wire-up, the Beam call site passed no splitAvIntentBuilder; launchPlayback
-    // defaulted it to `{ null }`, so castSpatialItemSplitAv's `localPlayerIntentBuilder()`
-    // returned null, no Activity was launched, and SplitAvVideoBridge never received a
-    // master. The receiver's audio stream sat at playWhenReady=false (waiting for a master
-    // signal that never came) and the user saw "no video on phone, no audio on TV."
-    val splitAvIntentBuilder: () -> android.content.Intent? = {
-        BeamPlayerActivity.createIntentForSpatialItem(
-            context = context,
-            item = item,
-            startFromBeginning = startFromBeginning,
-            splitAvVideoRole = true,
-        )
-    }
-    // Route through launchPlayback so a chosen FCast receiver wins over the
-    // local player. With no session manager (defensive null branch) or no
-    // intent-to-cast, launchPlayback falls through to startActivity.
-    if (fcastSession != null) {
-        dev.spatialfin.fcast.session.launchPlayback(
-            context = context,
-            sessionManager = fcastSession,
-            scope = scope,
-            item = item,
-            intentBuilder = intentBuilder,
-            splitAvIntentBuilder = splitAvIntentBuilder,
-        )
-    } else {
-        context.startActivity(intentBuilder())
-    }
-}
-
-private fun buildServerItemSubtitle(item: SpatialFinItem): String =
-    buildList {
-        when (item) {
-            is SpatialFinMovie -> add("Movie")
-            is SpatialFinEpisode -> {
-                add(buildEpisodeLabel(item))
-                item.seasonName?.takeIf { !it.isNullOrBlank() }?.let(::add)
-            }
-            is SpatialFinShow -> add("Series")
-            is SpatialFinSeason -> {
-                add(if (item.indexNumber > 0) "Season ${item.indexNumber}" else "Season")
-                item.seriesName.takeIf { it.isNotBlank() }?.let(::add)
-            }
-            is SpatialFinBoxSet -> add("Box Set")
-            is SpatialFinCollection -> add(item.type.type.replaceFirstChar(Char::titlecase))
-            is SpatialFinFolder -> add("Folder")
-            is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> {
-                item.universalMediaItem.author?.takeIf { it.isNotBlank() }?.let(::add)
-            }
-            else -> Unit
-        }
-        val original = item.originalTitle?.takeIf { it.isNotBlank() && it != item.name }
-        when {
-            // Music Assistant smuggles the play URI in originalTitle; show the
-            // friendly artist/provider line (overview) instead of "library://…".
-            original?.contains("://") == true -> item.overview.takeIf { it.isNotBlank() }?.let(::add)
-            original != null -> add(original)
-        }
-        buildProgressLabel(item)?.let(::add)
-        buildRemainingLabel(item)?.let(::add)
-    }.joinToString(" • ")
-
-private fun buildPrimaryBadge(item: SpatialFinItem): String =
-    when (item) {
-        is SpatialFinMovie -> "Movie"
-        is SpatialFinEpisode -> buildEpisodeLabel(item)
-        is SpatialFinShow -> "Series"
-        is SpatialFinSeason -> if (item.indexNumber > 0) "Season ${item.indexNumber}" else "Season"
-        is SpatialFinBoxSet -> "Collection"
-        is SpatialFinCollection -> item.type.type.replaceFirstChar(Char::titlecase)
-        is SpatialFinFolder -> "Folder"
-        is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> item.universalMediaItem.author?.takeIf { it.isNotBlank() } ?: ""
-        else -> ""
-    }
-
-private fun buildPlaybackFraction(item: SpatialFinItem): Float? {
-    val runtime = item.runtimeTicks
-    val position = item.playbackPositionTicks
-    if (runtime <= 0L || position <= 0L) return null
-    return (position.toFloat() / runtime.toFloat()).coerceIn(0f, 1f)
-}
-
-private fun buildBeamSeerrSubtitle(item: SeerrSearchResult): String? {
-    val parts = mutableListOf<String>()
-    parts += when (item.mediaType) {
-        "movie" -> "Movie"
-        "tv" -> "Series"
-        else -> item.mediaType.replaceFirstChar(Char::titlecase)
-    }
-    item.releaseDate?.takeIf { it.length >= 4 }?.substring(0, 4)?.let(parts::add)
-    item.firstAirDate?.takeIf { it.length >= 4 }?.substring(0, 4)?.let(parts::add)
-    return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
-}
-
-@Composable
-private fun BeamSeerrStatusBadge(status: Int?) {
-    val (text, color) =
-        when (status ?: 1) {
-            2 -> "Pending" to Color(0xFFFFC107)
-            3 -> "Processing" to Color(0xFF2196F3)
-            4 -> "Partial" to Color(0xFF8BC34A)
-            5 -> "Available" to Color(0xFF4CAF50)
-            else -> return
-        }
-    Box(
-        modifier =
-            Modifier
-                .background(color.copy(alpha = 0.92f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-    ) {
-        Text(text = text, color = Color.Black, style = MaterialTheme.typography.labelMedium)
-    }
-}
-
-private fun buildServerItemMeta(item: SpatialFinItem): List<String> {
-    val lines = mutableListOf<String>()
-    val typeLabel =
-        when (item) {
-            is SpatialFinMovie -> "Movie"
-            is SpatialFinEpisode -> item.seriesName.ifBlank { "Episode" }
-            is SpatialFinShow -> "Series"
-            is SpatialFinSeason -> item.seriesName.ifBlank { "Season" }
-            is SpatialFinBoxSet -> "Box Set"
-            is SpatialFinCollection -> item.type.type
-            is SpatialFinFolder -> "Folder"
-            is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> item.universalMediaItem.author
-            else -> null
-        }
-    typeLabel?.takeIf { it.isNotBlank() }?.let { lines += it }
-    when (item) {
-        is SpatialFinEpisode -> lines += "${buildEpisodeLabel(item)}${item.seasonName?.takeIf { !it.isNullOrBlank() }?.let { " • $it" } ?: ""}"
-        is SpatialFinSeason -> if (item.indexNumber > 0) lines += "Season ${item.indexNumber}"
-        else -> Unit
-    }
-    item.originalTitle
-        ?.takeIf { it.isNotBlank() && it != item.name && !it.contains("://") }
-        ?.let { lines += "Original title: $it" }
-    formatRuntime(item.runtimeTicks)?.let { lines += "Runtime: $it" }
-    if (item.playbackPositionTicks > 0L) {
-        formatRuntime(item.playbackPositionTicks)?.let { lines += "Progress: $it watched" }
-        buildRemainingLabel(item)?.let { lines += it }
-    }
-    item.unplayedItemCount?.let { if (it > 0) lines += "Episodes left: $it" }
-    if (item.favorite) lines += "Favorite"
-    if (item.played) lines += "Played"
-    lines += item.ratings.mapNotNull { rating ->
-        rating.value.takeIf { it.isNotBlank() }?.let { "${rating.type.label}: $it" }
-    }
-    return lines
-}
-
-private fun buildEpisodeLabel(episode: SpatialFinEpisode): String {
-    val seasonPart = if (episode.parentIndexNumber > 0) "S${episode.parentIndexNumber}" else "S?"
-    val episodePart = if (episode.indexNumber > 0) "E${episode.indexNumber}" else "E?"
-    return "$seasonPart$episodePart"
-}
-
-private fun buildProgressLabel(item: SpatialFinItem): String? {
-    if (item.played) return "Played"
-    val position = item.playbackPositionTicks
-    val runtime = item.runtimeTicks
-    if (position <= 0L || runtime <= 0L) return null
-    val percent = ((position.toDouble() / runtime.toDouble()) * 100.0).toInt().coerceIn(1, 99)
-    return "$percent% watched"
-}
-
-private fun buildRemainingLabel(item: SpatialFinItem): String? {
-    if (item.played) return null
-    val runtime = item.runtimeTicks
-    val position = item.playbackPositionTicks
-    if (runtime <= 0L || position <= 0L || position >= runtime) return null
-    return formatRuntime(runtime - position)?.let { "$it left" }
-}
-
-private fun formatRuntime(ticks: Long): String? {
-    if (ticks <= 0L) return null
-    val totalMinutes = ticks / 10_000_000L / 60L
-    if (totalMinutes <= 0L) return null
-    val hours = totalMinutes / 60L
-    val minutes = totalMinutes % 60L
-    return when {
-        hours > 0L -> "${hours}h ${minutes}m"
-        else -> "${minutes}m"
     }
 }
