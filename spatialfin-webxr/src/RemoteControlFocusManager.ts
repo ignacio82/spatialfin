@@ -3,11 +3,14 @@
  * Enables 100% remote control operation (ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Enter, Space, Escape, Backspace).
  */
 /**
- * Frames a directional press will wait for a focusable element to appear before
- * giving up. Roughly a third of a second at 60fps — long enough to cover a route
- * transition, short enough that a truly empty screen does not spin.
+ * How long a directional press keeps waiting for something focusable before
+ * giving up. Wall-clock rather than a frame count: requestAnimationFrame is
+ * throttled in headless/background tabs, so "20 frames" was a few hundred ms on
+ * a fast machine and an unpredictable budget on a loaded CI runner. Two seconds
+ * comfortably covers a route transition while staying inside the 5s the browser
+ * test allows.
  */
-const MAX_MOVE_RETRIES = 20;
+const MOVE_RETRY_BUDGET_MS = 2_000;
 
 export class RemoteControlFocusManager {
   private static instance: RemoteControlFocusManager | null = null;
@@ -161,7 +164,23 @@ export class RemoteControlFocusManager {
    */
   private pendingMove: number | null = null;
 
-  public moveFocus(direction: 'up' | 'down' | 'left' | 'right', attempt = 0) {
+  /**
+   * Re-runs the press on the next frame while inside the budget. Returns false
+   * once the budget is spent so callers can fall through.
+   */
+  private retryMove(direction: 'up' | 'down' | 'left' | 'right', deadline: number): boolean {
+    if (performance.now() >= deadline) return false;
+    this.pendingMove = requestAnimationFrame(() => {
+      this.pendingMove = null;
+      this.moveFocus(direction, deadline);
+    });
+    return true;
+  }
+
+  public moveFocus(
+    direction: 'up' | 'down' | 'left' | 'right',
+    deadline: number = performance.now() + MOVE_RETRY_BUDGET_MS,
+  ) {
     if (this.pendingMove !== null) {
       cancelAnimationFrame(this.pendingMove);
       this.pendingMove = null;
@@ -192,12 +211,7 @@ export class RemoteControlFocusManager {
     if (elements.length === 0) {
       // Nothing measurable yet — wait a frame and try again rather than
       // dropping the input. Bounded so a genuinely empty screen settles.
-      if (attempt < MAX_MOVE_RETRIES) {
-        this.pendingMove = requestAnimationFrame(() => {
-          this.pendingMove = null;
-          this.moveFocus(direction, attempt + 1);
-        });
-      }
+      this.retryMove(direction, deadline);
       return;
     }
 
@@ -214,6 +228,10 @@ export class RemoteControlFocusManager {
           return;
         }
       }
+      // Candidates exist but none would take focus — mid-transition, or the
+      // document itself is not focused yet. This path used to drop the press
+      // silently, which is the other half of the same race.
+      this.retryMove(direction, deadline);
       return;
     }
 
