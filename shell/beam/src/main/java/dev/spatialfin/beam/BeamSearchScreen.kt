@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -26,7 +28,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -57,6 +61,7 @@ fun BeamSearchScreen(
     viewModel: BeamSearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
     val fcastSession = dev.spatialfin.fcast.session.LocalFCastSession.current
     val jellyfinAudioDispatcher = LocalAudioPlaybackDispatcher.current
@@ -108,6 +113,16 @@ fun BeamSearchScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Search Jellyfin") },
                         singleLine = true,
+                        // Without these the IME shows a plain Done tick that only
+                        // closes the keyboard, so the query had to be submitted by
+                        // reaching for the on-screen Search button every time.
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                viewModel.search()
+                                keyboardController?.hide()
+                            },
+                        ),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = viewModel::search) {
