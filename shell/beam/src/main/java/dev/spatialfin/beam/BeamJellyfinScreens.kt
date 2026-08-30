@@ -92,6 +92,7 @@ import dev.jdtech.jellyfin.player.beam.isCompact
 import dev.jdtech.jellyfin.presentation.components.HiddenHomeRowsCard
 import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeControls
 import dev.jdtech.jellyfin.presentation.components.homeRowArrangeHandle
+import dev.jdtech.jellyfin.presentation.film.components.HomeSkeleton
 import dev.jdtech.jellyfin.settings.domain.HomeRowIds
 import dev.jdtech.jellyfin.settings.domain.restorableHiddenRows
 import dev.spatialfin.unified.audio.JellyfinAudioDetailType
@@ -392,7 +393,18 @@ fun BeamHomeScreen(
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         when {
-            state.isLoading -> item { LoadingCard("Loading your media...") }
+            // The shape of the home, not a spinner: the first paint already has
+            // the hero and shelf geometry in place, so nothing jumps when the
+            // real rows land. See HomeSkeleton.
+            state.isLoading -> item {
+                HomeSkeleton(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    cardWidth = 132.dp,
+                    cardAspect = 0.67f,
+                    cardShape = RoundedCornerShape(16.dp),
+                    cardSpacing = 14.dp,
+                )
+            }
             state.error != null -> item {
                 ErrorCard(
                     title = "Couldn't reach your server",
@@ -478,7 +490,9 @@ fun BeamHomeScreen(
 
                 // Only while arranging or when all rows have been hidden: the rows
                 // the user switched off, so hiding one from home never becomes a one-way trip.
-                if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
+                // See HomeScreen: only once loading has finished, or a cold start
+                // shows the restore card over a blank home.
+                if (!state.isLoading && (arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                     item(key = "hidden_home_rows") {
                         HiddenHomeRowsCard(
                             rows = hiddenRows,
@@ -1230,6 +1244,8 @@ internal fun BeamDetailHeroCard(
     supportingLine: String?,
     hero: DetailHeroMetadata,
     onBack: (() -> Unit)? = null,
+    onAudioChipClick: (() -> Unit)? = null,
+    onSubtitleChipClick: (() -> Unit)? = null,
     actions: @Composable ColumnScope.() -> Unit,
 ) {
     // Deliberately NOT a fixed height. This used to be `.height(280.dp)`, which on a
@@ -1312,23 +1328,34 @@ internal fun BeamDetailHeroCard(
                     hero.genres.forEach { genre -> BeamDetailPill(text = genre) }
                 }
             }
-            // What will actually play: resolution + HDR, the default audio track,
-            // and the default subtitle track.
-            val streamChips = listOfNotNull(
-                hero.video?.let { it to Icons.Rounded.Movie },
-                hero.audio?.let { it to Icons.Rounded.VolumeUp },
-                hero.subtitle?.let { it to Icons.Rounded.ClosedCaption },
-            )
-            if (streamChips.isNotEmpty()) {
+            // What will actually play: resolution + HDR, the selected/preferred audio track,
+            // and the selected/preferred subtitle track.
+            if (hero.video != null || hero.audio != null || hero.subtitle != null) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    streamChips.forEach { (label, icon) ->
+                    hero.video?.let { label ->
                         BeamDetailPill(
                             text = label,
-                            icon = icon,
+                            icon = Icons.Rounded.Movie,
                             tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    hero.audio?.let { label ->
+                        BeamDetailPill(
+                            text = label,
+                            icon = Icons.Rounded.VolumeUp,
+                            tint = MaterialTheme.colorScheme.primary,
+                            onClick = onAudioChipClick,
+                        )
+                    }
+                    hero.subtitle?.let { label ->
+                        BeamDetailPill(
+                            text = label,
+                            icon = Icons.Rounded.ClosedCaption,
+                            tint = MaterialTheme.colorScheme.primary,
+                            onClick = onSubtitleChipClick,
                         )
                     }
                 }
@@ -1466,10 +1493,14 @@ internal fun BeamDetailPill(
     text: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     tint: Color = Color.White,
+    onClick: (() -> Unit)? = null,
 ) {
     Surface(
+        onClick = onClick ?: {},
+        enabled = onClick != null,
         shape = RoundedCornerShape(999.dp),
         color = Color.Black.copy(alpha = 0.25f),
+        border = if (onClick != null) androidx.compose.foundation.BorderStroke(1.dp, tint.copy(alpha = 0.35f)) else null,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -1487,6 +1518,7 @@ internal fun BeamDetailPill(
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (onClick != null) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (icon != null) tint else Color.White,
             )
         }

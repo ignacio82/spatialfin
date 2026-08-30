@@ -9,6 +9,10 @@ sealed interface EpisodeAction {
         val mediaSourceIndex: Int? = null,
         val maxBitrate: Long? = null,
         val multitask: Boolean = false,
+        /** Track picked on the detail screen; null defers to preferred-language resolution. */
+        val audioStreamIndex: Int? = null,
+        val subtitleStreamIndex: Int? = null,
+        val subtitlesDisabled: Boolean = false,
     ) : EpisodeAction
 
     data object MarkAsPlayed : EpisodeAction

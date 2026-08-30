@@ -81,6 +81,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import java.util.UUID
@@ -103,6 +104,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
             itemKind: String,
             startFromBeginning: Boolean = false,
             mediaSourceIndex: Int? = null,
+            audioStreamIndex: Int? = null,
+            subtitleStreamIndex: Int? = null,
+            subtitlesDisabled: Boolean = false,
             maxBitrate: Long? = null,
         ): Intent {
             return Intent(context, MultitaskPlayerActivity::class.java).apply {
@@ -110,6 +114,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 putExtra("itemKind", itemKind)
                 putExtra("startFromBeginning", startFromBeginning)
                 mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
+                audioStreamIndex?.let { putExtra("audioStreamIndex", it) }
+                subtitleStreamIndex?.let { putExtra("subtitleStreamIndex", it) }
+                if (subtitlesDisabled) putExtra("subtitlesDisabled", true)
                 maxBitrate?.let { putExtra("maxBitrate", it) }
             }
         }
@@ -161,6 +168,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
         val itemKind = intent.extras?.getString("itemKind") ?: ""
         val startFromBeginning = intent.extras!!.getBoolean("startFromBeginning")
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
+        val audioStreamIndex = if (intent.hasExtra("audioStreamIndex")) intent.getIntExtra("audioStreamIndex", -1).takeIf { it >= 0 } else null
+        val subtitleStreamIndex = if (intent.hasExtra("subtitleStreamIndex")) intent.getIntExtra("subtitleStreamIndex", -1).takeIf { it >= 0 } else null
+        val subtitlesDisabled = intent.getBooleanExtra("subtitlesDisabled", false)
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
 
         val audioAttributes = AudioAttributes.Builder()
@@ -216,6 +226,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 startFromBeginning = startFromBeginning,
                 mediaSourceIndex = mediaSourceIndex,
                 maxBitrate = maxBitrate,
+                audioStreamIndex = audioStreamIndex,
+                subtitleStreamIndex = subtitleStreamIndex,
+                subtitlesDisabled = subtitlesDisabled,
             )
         } else if (universalVideoUrl != null && universalItemId != null && universalPluginId != null) {
             viewModel.initializePlayerForUniversal(
@@ -488,7 +501,10 @@ private fun MultitaskControllerOverlay(
                 player = player,
                 trackType = C.TRACK_TYPE_AUDIO,
                 onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index) },
-                onDismiss = { activeDialog = null }
+                onDismiss = { activeDialog = null },
+                mediaStreams = uiState.currentMediaStreams,
+                activeAudioStreamIndex = uiState.currentAudioStreamIndex,
+                onAudioStreamSelected = { streamIndex -> viewModel.changeAudioStream(streamIndex) },
             )
         }
     }
@@ -499,7 +515,8 @@ private fun MultitaskControllerOverlay(
                 player = player,
                 trackType = C.TRACK_TYPE_TEXT,
                 onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_TEXT, index) },
-                onDismiss = { activeDialog = null }
+                onDismiss = { activeDialog = null },
+                mediaStreams = uiState.currentMediaStreams,
             )
         }
     }
@@ -543,6 +560,9 @@ private fun TrackSelectionDialogContent(
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
+    mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
+    activeAudioStreamIndex: Int? = null,
+    onAudioStreamSelected: ((Int) -> Unit)? = null,
 ) {
     var trackGroups by remember(player, trackType) {
         mutableStateOf(player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) })
@@ -556,7 +576,16 @@ private fun TrackSelectionDialogContent(
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    val trackNames = trackGroups.getTrackNames()
+    // See serverSideAudioTracks: a transcode delivers a single audio track, so
+    // switching language means re-requesting the stream from Jellyfin.
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+        if (trackType != C.TRACK_TYPE_AUDIO || onAudioStreamSelected == null) {
+            emptyList()
+        } else {
+            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+        }
+    }
+    val trackNames = trackGroups.getTrackNames(mediaStreams)
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
 
     Surface(
@@ -575,40 +604,69 @@ private fun TrackSelectionDialogContent(
                     .weight(1f)
                     .verticalScroll(rememberScrollState()),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onTrackSelected(-1); onDismiss() }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = selectedIndex == -1,
-                        onClick = { onTrackSelected(-1); onDismiss() },
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(stringResource(LocalR.string.none), color = Color.White, style = MaterialTheme.typography.bodyLarge)
-                }
-                trackNames.forEachIndexed { index, name ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onTrackSelected(index); onDismiss() }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
-                            selected = index == selectedIndex,
-                            onClick = { onTrackSelected(index); onDismiss() },
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            name,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                if (serverAudioTracks.isNotEmpty()) {
+                    serverAudioTracks.forEach { track ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAudioStreamSelected?.invoke(track.streamIndex); onDismiss() }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = track.isSelected,
+                                onClick = { onAudioStreamSelected?.invoke(track.streamIndex); onDismiss() },
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                track.label,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
+                } else {
+                    // Audio always has a track playing; "None" only makes sense
+                    // for subtitles.
+                    if (trackType == C.TRACK_TYPE_TEXT) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onTrackSelected(-1); onDismiss() }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selectedIndex == -1,
+                                onClick = { onTrackSelected(-1); onDismiss() },
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(stringResource(LocalR.string.none), color = Color.White, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                    trackNames.forEachIndexed { index, name ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onTrackSelected(index); onDismiss() }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = index == selectedIndex,
+                                onClick = { onTrackSelected(index); onDismiss() },
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                name,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
                 }
             }

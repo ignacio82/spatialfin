@@ -1,7 +1,9 @@
 package dev.spatialfin.beam
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,10 +11,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -29,11 +36,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -42,17 +53,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderEvent
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderViewModel
 import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
+import dev.jdtech.jellyfin.film.domain.languagePreferences
 import dev.jdtech.jellyfin.models.CollectionType
+import dev.jdtech.jellyfin.models.MediaStreamLanguage
 import dev.jdtech.jellyfin.models.SpatialFinCollection
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinFolder
+import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
@@ -60,10 +77,12 @@ import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
 import dev.spatialfin.unified.audio.JellyfinAudioDetailScreen
 import dev.spatialfin.unified.audio.LocalAudioPlaybackDispatcher
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.jellyfin.sdk.model.api.MediaStreamType
 
 /**
  * The Jellyfin item detail screen — movie / episode, plus the photo-viewer and
@@ -96,6 +115,17 @@ fun BeamItemDetailScreen(
     var showOverflow by rememberSaveable(itemId) { mutableStateOf(false) }
     var showEditExternalIds by rememberSaveable(itemId) { mutableStateOf(false) }
     var showDeleteConfirm by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showAudioTrackDialog by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showSubtitleTrackDialog by rememberSaveable(itemId) { mutableStateOf(false) }
+    var selectedAudioStreamIndex by rememberSaveable(itemId) { mutableStateOf<Int?>(null) }
+    var selectedSubtitleStreamIndex by rememberSaveable(itemId) { mutableStateOf<Int?>(null) }
+    var subtitlesDisabled by rememberSaveable(itemId) { mutableStateOf(false) }
+
+    // The same configuration the in-player selector reads, so the chips promise
+    // what playback will actually do.
+    val languagePreferences = remember(context) {
+        viewModel.appPreferences.languagePreferences(context)
+    }
 
     LaunchedEffect(itemId) {
         viewModel.deletedEvents.collect { ok ->
@@ -156,6 +186,18 @@ fun BeamItemDetailScreen(
         }
     }
 
+    // Resolved once, above the list: the hero chips, the Play buttons and the
+    // two track dialogs must all act on the same answer, and deriving it more
+    // than once is how they drift apart.
+    val heroMetadata = state.item?.detailHeroMetadata(
+        languagePreferences = languagePreferences,
+        selectedAudioStreamIndex = selectedAudioStreamIndex,
+        selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
+        subtitlesDisabled = subtitlesDisabled,
+    )
+    val resolvedAudioStreamIndex = heroMetadata?.audioStreamIndex
+    val resolvedSubtitleStreamIndex = heroMetadata?.subtitleStreamIndex
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
@@ -190,13 +232,19 @@ fun BeamItemDetailScreen(
                         is SpatialFinSeason -> itemData.seriesName
                         else -> itemData.originalTitle?.takeIf { !it.isNullOrBlank() && it != itemData.name }
                     }
+                val hero = heroMetadata ?: return@LazyColumn
+                val effectiveAudioStreamIndex = resolvedAudioStreamIndex
+                val effectiveSubtitleStreamIndex = resolvedSubtitleStreamIndex
+
                 item {
                     BeamDetailHeroCard(
                         item = itemData,
                         eyebrow = buildPrimaryBadge(itemData),
                         supportingLine = supportingLine,
-                        hero = itemData.detailHeroMetadata(),
+                        hero = hero,
                         onBack = onBack,
+                        onAudioChipClick = { showAudioTrackDialog = true },
+                        onSubtitleChipClick = { showSubtitleTrackDialog = true },
                         actions = {} // Actions moved below
                     )
                 }
@@ -210,44 +258,55 @@ fun BeamItemDetailScreen(
                         if (itemData.canPlay) {
                             androidx.compose.material3.Button(
                                 onClick = {
-                                        if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
-                                            launchServerItem(context, fcastSession, scope, itemData)
+                                    if (!playNativeAudioItem(itemData, jellyfinAudioDispatcher)) {
+                                        launchServerItem(
+                                            context = context,
+                                            fcastSession = fcastSession,
+                                            scope = scope,
+                                            item = itemData,
+                                            audioStreamIndex = effectiveAudioStreamIndex,
+                                            subtitleStreamIndex = effectiveSubtitleStreamIndex,
+                                            subtitlesDisabled = subtitlesDisabled,
+                                        )
+                                    }
+                                }
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                                    contentDescription = if (isResume) "Resume" else "Play"
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(if (isResume) "Resume" else "Play")
+                            }
+                            if (isResume) {
+                                androidx.compose.material3.FilledTonalIconButton(
+                                    onClick = {
+                                        if (
+                                            !playNativeAudioItem(
+                                                itemData,
+                                                jellyfinAudioDispatcher,
+                                                fromStart = true,
+                                            )
+                                        ) {
+                                            launchServerItem(
+                                                context = context,
+                                                fcastSession = fcastSession,
+                                                scope = scope,
+                                                item = itemData,
+                                                startFromBeginning = true,
+                                                audioStreamIndex = effectiveAudioStreamIndex,
+                                                subtitleStreamIndex = effectiveSubtitleStreamIndex,
+                                                subtitlesDisabled = subtitlesDisabled,
+                                            )
                                         }
                                     }
                                 ) {
                                     androidx.compose.material3.Icon(
-                                        imageVector = androidx.compose.material.icons.Icons.Rounded.PlayArrow,
-                                        contentDescription = if (isResume) "Resume" else "Play"
+                                        imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
+                                        contentDescription = "From Start"
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(if (isResume) "Resume" else "Play")
                                 }
-                                if (isResume) {
-                                    androidx.compose.material3.FilledTonalIconButton(
-                                        onClick = {
-                                            if (
-                                                !playNativeAudioItem(
-                                                    itemData,
-                                                    jellyfinAudioDispatcher,
-                                                    fromStart = true,
-                                                )
-                                            ) {
-                                                launchServerItem(
-                                                    context = context,
-                                                    fcastSession = fcastSession,
-                                                    scope = scope,
-                                                    item = itemData,
-                                                    startFromBeginning = true,
-                                                )
-                                            }
-                                        }
-                                    ) {
-                                        androidx.compose.material3.Icon(
-                                            imageVector = androidx.compose.material.icons.Icons.Rounded.Replay,
-                                            contentDescription = "From Start"
-                                        )
-                                    }
-                                }
+                            }
                         }
                         androidx.compose.material3.IconButton(
                             onClick = { viewModel.toggleFavorite() }
@@ -506,9 +565,37 @@ fun BeamItemDetailScreen(
                         startFromBeginning = fromBeginning,
                         mediaSourceIndex = sourceIndex,
                         maxBitrate = bitrate,
+                        audioStreamIndex = selectedAudioStreamIndex,
+                        subtitleStreamIndex = selectedSubtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
                     )
                     showPlaybackOptions = false
                 },
+            )
+        }
+    }
+    if (showAudioTrackDialog) {
+        val item = state.item
+        if (item != null) {
+            BeamAudioTrackSelectionDialog(
+                item = item,
+                resolvedStreamIndex = resolvedAudioStreamIndex,
+                onStreamSelected = { selectedAudioStreamIndex = it },
+                onDismiss = { showAudioTrackDialog = false },
+            )
+        }
+    }
+    if (showSubtitleTrackDialog) {
+        val item = state.item
+        if (item != null) {
+            BeamSubtitleTrackSelectionDialog(
+                item = item,
+                resolvedStreamIndex = resolvedSubtitleStreamIndex,
+                onStreamSelected = { streamIndex, disabled ->
+                    selectedSubtitleStreamIndex = streamIndex
+                    subtitlesDisabled = disabled
+                },
+                onDismiss = { showSubtitleTrackDialog = false },
             )
         }
     }
@@ -545,6 +632,251 @@ fun BeamItemDetailScreen(
                     }
                 },
             )
+        }
+    }
+}
+
+@Composable
+internal fun BeamAudioTrackSelectionDialog(
+    item: SpatialFinItem,
+    /**
+     * Stream index that will play. Resolved once by `detailHeroMetadata` and
+     * passed in, so the pre-checked row and the hero chip can never disagree.
+     */
+    resolvedStreamIndex: Int?,
+    onStreamSelected: (Int?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val audioStreams = remember(item) {
+        item.sources.firstOrNull()?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.AUDIO }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 440.dp)
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 520.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF1C1C1E),
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    "Audio Track",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(16.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    audioStreams.forEach { stream ->
+                        val isSelected = stream.index == resolvedStreamIndex
+                        val title = stream.displayTitle?.takeIf { it.isNotBlank() }
+                            ?: buildString {
+                                append(MediaStreamLanguage.displayCode(stream) ?: "UND")
+                                if (stream.title.isNotBlank()) append(" - ").append(stream.title)
+                                if (stream.codec.isNotBlank()) append(" (").append(stream.codec.uppercase(Locale.US)).append(")")
+                            }
+                        val details = buildList {
+                            if (stream.codec.isNotBlank()) add(stream.codec.uppercase(Locale.US))
+                            stream.channelLayout?.takeIf { it.isNotBlank() }?.let { add(it) }
+                        }.joinToString(" · ")
+
+                        Surface(
+                            onClick = {
+                                onStreamSelected(stream.index)
+                                onDismiss()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onStreamSelected(stream.index)
+                                        onDismiss()
+                                    },
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (details.isNotBlank() && details != title) {
+                                        Text(
+                                            text = details,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.6f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BeamSubtitleTrackSelectionDialog(
+    item: SpatialFinItem,
+    /** Subtitle stream that will play, or null for none. See the audio dialog. */
+    resolvedStreamIndex: Int?,
+    onStreamSelected: (streamIndex: Int?, disabled: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val subtitleStreams = remember(item) {
+        item.sources.firstOrNull()?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.SUBTITLE }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 440.dp)
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 520.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF1C1C1E),
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    "Subtitle Track",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(16.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    // "Off" option
+                    val isOffSelected = resolvedStreamIndex == null
+                    Surface(
+                        onClick = {
+                            onStreamSelected(null, true)
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isOffSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                        border = if (isOffSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = isOffSelected,
+                                onClick = {
+                                    onStreamSelected(null, true)
+                                    onDismiss()
+                                },
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = "Off",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isOffSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isOffSelected) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                    }
+
+                    subtitleStreams.forEach { stream ->
+                        val isSelected = stream.index == resolvedStreamIndex
+                        val title = stream.displayTitle?.takeIf { it.isNotBlank() }
+                            ?: buildString {
+                                append(MediaStreamLanguage.displayCode(stream) ?: "UND")
+                                if (stream.title.isNotBlank()) append(" - ").append(stream.title)
+                            }
+                        val details = buildList {
+                            if (stream.codec.isNotBlank()) add(stream.codec.uppercase(Locale.US))
+                            if (stream.isExternal) add("External") else add("Embedded")
+                        }.joinToString(" · ")
+
+                        Surface(
+                            onClick = {
+                                onStreamSelected(stream.index, false)
+                                onDismiss()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onStreamSelected(stream.index, false)
+                                        onDismiss()
+                                    },
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (details.isNotBlank() && details != title) {
+                                        Text(
+                                            text = details,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.6f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Close")
+                    }
+                }
+            }
         }
     }
 }

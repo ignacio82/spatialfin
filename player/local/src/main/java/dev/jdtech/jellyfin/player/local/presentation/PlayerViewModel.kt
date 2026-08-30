@@ -204,6 +204,9 @@ constructor(
                 override val player: Player
                     get() = this@PlayerViewModel.player
 
+                override val currentMediaSourceStreams: List<SpatialFinMediaStream>
+                    get() = this@PlayerViewModel.currentMediaSourceStreams
+
                 override fun currentPlayerItem(): PlayerItem? =
                     this@PlayerViewModel.currentPlayerItem()
 
@@ -264,6 +267,22 @@ constructor(
          * as a blocking error surface instead of leaving a silent black screen.
          */
         val playbackError: PlaybackError? = null,
+        /**
+         * Jellyfin's authoritative stream list for the source now playing.
+         * The container's own headers are not enough: an MKV can ship an
+         * untagged audio track whose language only exists in Jellyfin's
+         * metadata, and while transcoding the player sees a single audio
+         * track even though the source has several. Track dialogs and the
+         * voice snapshot read this to label and to switch.
+         */
+        val currentMediaStreams: List<SpatialFinMediaStream> = emptyList(),
+        /**
+         * Index into [currentMediaStreams] of the audio stream Jellyfin says
+         * it is delivering. While transcoding this is the only way to know
+         * which language is playing: the single delivered track carries no
+         * dependable language tag of its own.
+         */
+        val currentAudioStreamIndex: Int? = null,
     )
 
     /**
@@ -283,7 +302,25 @@ constructor(
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
     private var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()
-    private var currentMediaSourceStreams: List<SpatialFinMediaStream> = emptyList()
+    /**
+     * Mirror of [UiState.currentMediaStreams] for non-Compose callers
+     * ([PlayerTrackSelector], [SyncPlayCoordinator]). Assign through
+     * [updateCurrentMediaSourceStreams] so both stay in step — :player:local
+     * has no Compose dependency, so a plain field read from a composable
+     * would never trigger recomposition.
+     */
+    var currentMediaSourceStreams: List<SpatialFinMediaStream> = emptyList()
+        private set
+
+    private fun updateCurrentMediaSourceStreams(
+        streams: List<SpatialFinMediaStream>,
+        audioStreamIndex: Int?,
+    ) {
+        currentMediaSourceStreams = streams
+        _uiState.update {
+            it.copy(currentMediaStreams = streams, currentAudioStreamIndex = audioStreamIndex)
+        }
+    }
 
     // Items already auto-marked as played this session (e.g. on outro entry). Stops
     // postPlaybackStop from downgrading the played flag if the user exits during the
@@ -535,6 +572,19 @@ constructor(
 
     private var transcodeFallbackAttemptedItem: UUID? = null
 
+    /**
+     * The server-side stream selection the current playback was started with.
+     *
+     * Kept so the automatic transcode fallback in [onPlayerError] can re-request
+     * the *same* tracks. Without it, a decode failure right after the user picks
+     * an audio track drops the selection and the retry silently comes back in
+     * the container's default language — which reads as "switching audio does
+     * nothing", the hardest variant of this bug to diagnose.
+     */
+    private var requestedAudioStreamIndex: Int? = null
+    private var requestedSubtitleStreamIndex: Int? = null
+    private var requestedSubtitlesDisabled: Boolean = false
+
     fun initializePlayer(
         itemId: UUID,
         itemKind: String,
@@ -543,7 +593,14 @@ constructor(
         maxBitrate: Long? = null,
         autoPlay: Boolean = true,
         startPositionMs: Long? = null,
+        audioStreamIndex: Int? = null,
+        subtitleStreamIndex: Int? = null,
+        subtitlesDisabled: Boolean = false,
     ) {
+        trackSelector.setRequestedTracks(audioStreamIndex, subtitleStreamIndex, subtitlesDisabled)
+        requestedAudioStreamIndex = audioStreamIndex
+        requestedSubtitleStreamIndex = subtitleStreamIndex
+        requestedSubtitlesDisabled = subtitlesDisabled
         currentItemKind = itemKind
         if (maxBitrate == null && transcodeFallbackAttemptedItem != itemId) {
             transcodeFallbackAttemptedItem = null
@@ -554,13 +611,16 @@ constructor(
         player.removeListener(this)
         player.addListener(this)
         Timber.i(
-            "initializePlayer itemId=%s kind=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s autoPlay=%b currentPlayer=%s",
+            "initializePlayer itemId=%s kind=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s autoPlay=%b audioStreamIndex=%s subtitleStreamIndex=%s subtitlesDisabled=%b currentPlayer=%s",
             itemId,
             itemKind,
             startFromBeginning,
             mediaSourceIndex,
             maxBitrate,
             autoPlay,
+            audioStreamIndex,
+            subtitleStreamIndex,
+            subtitlesDisabled,
             player.javaClass.simpleName,
         )
 
@@ -573,6 +633,8 @@ constructor(
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
                         startFromBeginning = startFromBeginning,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
                     )
                 } catch (e: Exception) {
                     Timber.e(e)
@@ -597,6 +659,7 @@ constructor(
 
             items = listOfNotNull(startItem).toMutableList()
             currentMediaItemIndex = items.indexOf(startItem)
+            updateCurrentMediaSourceStreams(startItem.mediaStreams, startItem.audioStreamIndex)
 
             val mediaItems = mutableListOf<MediaItem>()
             try {
@@ -614,6 +677,8 @@ constructor(
                     playbackPosition
                 }
 
+            player.stop()
+            player.clearMediaItems()
             player.setMediaItems(mediaItems, 0, startPosition)
             Timber.i(
                 "initializePlayer prepared mediaItems=%d startPosition=%d currentIndex=%d",
@@ -759,7 +824,67 @@ constructor(
             itemId = itemId,
             itemKind = itemKind,
             startFromBeginning = false,
-            mediaSourceIndex = newSourceIndex
+            mediaSourceIndex = newSourceIndex,
+            startPositionMs = currentPosition,
+        )
+    }
+
+    /**
+     * Switches the audio track by asking the server for a new stream.
+     *
+     * Required whenever the source is being transcoded: Jellyfin encodes only
+     * ONE audio stream into the HLS playlist — the one named by
+     * `AudioStreamIndex` in the PlaybackInfo request — so ExoPlayer's track
+     * selector has nothing to switch *to*. The track has to be re-requested
+     * from the server and playback rebuilt at the current position.
+     *
+     * For a direct-played source every audio track is present in the container,
+     * and [switchToTrack] handles it locally without touching the network.
+     */
+    fun changeAudioStream(audioStreamIndex: Int) {
+        reinitializeWithStreams(audioStreamIndex = audioStreamIndex)
+    }
+
+    /**
+     * Switches the subtitle track server-side. Needed when the subtitle is
+     * burned in or delivered by the transcode rather than carried by the
+     * container. Pass [subtitlesDisabled] to turn subtitles off entirely.
+     */
+    fun changeSubtitleStream(subtitleStreamIndex: Int?, subtitlesDisabled: Boolean) {
+        reinitializeWithStreams(
+            subtitleStreamIndex = subtitleStreamIndex,
+            subtitlesDisabled = subtitlesDisabled,
+        )
+    }
+
+    /**
+     * Re-requests the current item with a different server-side stream
+     * selection, resuming where playback is now.
+     *
+     * Only the arguments actually supplied change; everything else carries the
+     * selection the current playback was started with. Rebuilding from scratch
+     * on every switch would be a way to lose the user's audio choice the moment
+     * they touch subtitles.
+     */
+    private fun reinitializeWithStreams(
+        audioStreamIndex: Int? = requestedAudioStreamIndex,
+        subtitleStreamIndex: Int? = requestedSubtitleStreamIndex,
+        subtitlesDisabled: Boolean = requestedSubtitlesDisabled,
+    ) {
+        val currentItem = currentPlayerItem() ?: return
+        val currentPosition = player.currentPosition.coerceAtLeast(0L)
+        playbackPosition = currentPosition
+        // This is a fresh user-driven request, not a retry of the one that
+        // failed, so the item gets its transcode-fallback attempt back.
+        transcodeFallbackAttemptedItem = null
+        initializePlayer(
+            itemId = currentItem.itemId,
+            itemKind = currentItemKind ?: "Movie",
+            startFromBeginning = false,
+            audioStreamIndex = audioStreamIndex,
+            subtitleStreamIndex = subtitleStreamIndex,
+            subtitlesDisabled = subtitlesDisabled,
+            startPositionMs = currentPosition,
         )
     }
 
@@ -1240,10 +1365,27 @@ constructor(
                         }
 
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
+                            if (item.mediaStreams.isNotEmpty()) {
+                                updateCurrentMediaSourceStreams(item.mediaStreams, item.audioStreamIndex)
+                            }
                             val activeSource = repository
-                                .getMediaSources(item.itemId, includePath = true)
+                                .getMediaSources(
+                                    itemId = item.itemId,
+                                    includePath = true,
+                                    // Without the source id and the requested indices the
+                                    // server answers about the container's defaults, which
+                                    // would overwrite the selection actually playing.
+                                    audioStreamIndex = item.audioStreamIndex,
+                                    subtitleStreamIndex = item.subtitleStreamIndex,
+                                    mediaSourceId = item.mediaSourceId,
+                                )
                                 .firstOrNull { source -> source.id == item.mediaSourceId }
-                            currentMediaSourceStreams = activeSource?.mediaStreams.orEmpty()
+                            if (activeSource?.mediaStreams?.isNotEmpty() == true) {
+                                updateCurrentMediaSourceStreams(
+                                    activeSource.mediaStreams,
+                                    item.audioStreamIndex ?: activeSource.defaultAudioStreamIndex,
+                                )
+                            }
                             val (playbackInfoLabel, transcodeReason) = buildPlaybackInfo(activeSource)
                             _uiState.update {
                                 it.copy(
@@ -1264,7 +1406,7 @@ constructor(
                             }
                         } else {
                             currentMediaItemSegments = emptyList()
-                            currentMediaSourceStreams = emptyList()
+                            updateCurrentMediaSourceStreams(emptyList(), null)
                             _uiState.update {
                                 it.copy(
                                     currentPlaybackInfoLabel = null,
@@ -1662,6 +1804,9 @@ constructor(
                 // the resolution itself may be the problem — drop to 1080p.
                 maxBitrate = if (isAudioTrackError) null else QualityOption.FHD.bps,
                 startPositionMs = resumePos,
+                audioStreamIndex = requestedAudioStreamIndex,
+                subtitleStreamIndex = requestedSubtitleStreamIndex,
+                subtitlesDisabled = requestedSubtitlesDisabled,
             )
             return
         }
@@ -2221,7 +2366,14 @@ constructor(
             }
         }
 
-        val resolutionLabel = when (val h = videoStream.height) {
+        // Bucket on the 16:9-equivalent height, not the raw frame height.
+        // Scope content is letterboxed in the file itself — a 4K 2.39:1 master
+        // is 3840x1606 — so bucketing on height alone calls 4K "1440p" and
+        // 1080p "720p", under-reporting every widescreen film by a tier.
+        val effectiveHeight = videoStream.height?.let { h ->
+            maxOf(h, videoStream.width?.let { w -> w * 9 / 16 } ?: 0)
+        }
+        val resolutionLabel = when (effectiveHeight) {
             null -> null
             in 2000..Int.MAX_VALUE -> "4K"
             in 1400..1999 -> "1440p"
@@ -2229,7 +2381,7 @@ constructor(
             in 650..949 -> "720p"
             in 440..649 -> "480p"
             in 300..439 -> "360p"
-            else -> "${h}p"
+            else -> "${effectiveHeight}p"
         }
         val codec = videoStream.codec.takeIf { it.isNotBlank() }?.uppercase()
         val infoLabel = listOfNotNull(methodLabel, resolutionLabel, codec).joinToString(" · ")

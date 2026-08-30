@@ -719,7 +719,10 @@ class JellyfinRepositoryImpl(
     override suspend fun getMediaSources(
         itemId: UUID,
         includePath: Boolean,
-        maxBitrate: Long?
+        maxBitrate: Long?,
+        audioStreamIndex: Int?,
+        subtitleStreamIndex: Int?,
+        mediaSourceId: String?,
     ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
             downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)
@@ -733,8 +736,7 @@ class JellyfinRepositoryImpl(
                 }
             }
             val sources = mutableListOf<SpatialFinSource>()
-            sources.addAll(
-                jellyfinApi.mediaInfoApi
+            val playbackInfo = jellyfinApi.mediaInfoApi
                     .getPostedPlaybackInfo(
                         itemId,
                         PlaybackInfoDto(
@@ -747,11 +749,28 @@ class JellyfinRepositoryImpl(
                                 ),
                             ),
                             maxStreamingBitrate = bitrate.toInt(),
+                            // Jellyfin applies AudioStreamIndex/SubtitleStreamIndex only to
+                            // the source the request identifies; without MediaSourceId it
+                            // drops both and transcodes the container's default track.
+                            mediaSourceId = mediaSourceId,
+                            audioStreamIndex = audioStreamIndex.takeIf { mediaSourceId != null },
+                            subtitleStreamIndex = subtitleStreamIndex.takeIf { mediaSourceId != null },
                         ),
                     )
                     .content
-                    .mediaSources
-                    .map { it.toSpatialFinSource(this@JellyfinRepositoryImpl, itemId, includePath) }
+            for (ms in playbackInfo.mediaSources) {
+                Timber.i(
+                    "getMediaSources: source=%s directPlay=%b directStream=%b transcoding=%b transcodingUrl=%s",
+                    ms.id, ms.supportsDirectPlay, ms.supportsDirectStream, ms.supportsTranscoding, ms.transcodingUrl,
+                )
+            }
+            sources.addAll(
+                playbackInfo.mediaSources
+                    .map {
+                        val sf = it.toSpatialFinSource(this@JellyfinRepositoryImpl, itemId, includePath, audioStreamIndex)
+                        Timber.i("getMediaSources: result path=%s supportsDirectPlay=%b transcodingUrl=%s", sf.path.take(200), sf.supportsDirectPlay, sf.transcodingUrl?.take(200))
+                        sf
+                    }
             )
             sources.addAll(database.getSources(itemId).map { it.toSpatialFinSource(database) })
             sources

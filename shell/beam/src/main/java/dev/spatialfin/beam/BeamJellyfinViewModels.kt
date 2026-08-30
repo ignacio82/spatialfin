@@ -19,6 +19,7 @@ import dev.jdtech.jellyfin.models.browsableItemKinds
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.BulkDownloadResult
 import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
@@ -87,6 +88,7 @@ class BeamItemDetailViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    val appPreferences: AppPreferences,
 ) : ViewModel() {
     /** Exposed for UI callers that need to build share URLs etc. */
     fun serverBaseUrl(): String = repository.getBaseUrl()

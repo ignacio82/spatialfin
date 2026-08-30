@@ -133,6 +133,13 @@ dependencies {
     // driven by FCast ingress, not by a system transport control surface.
     implementation(libs.androidx.media3.exoplayer)
 
+    // Poster art for Continue Watching. The now-playing hero still arrives as a
+    // Data Layer Asset (the watch cannot resolve a Jellyfin image URL on the
+    // Bluetooth-only path); Next Up carries a real primaryImageUrl, which is
+    // loadable whenever the watch has its own route to the server.
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+
     // OkHttp & Serialization
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)

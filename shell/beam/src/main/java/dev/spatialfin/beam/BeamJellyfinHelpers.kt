@@ -392,6 +392,9 @@ internal fun launchServerItem(
     startFromBeginning: Boolean = false,
     mediaSourceIndex: Int? = null,
     maxBitrate: Long? = null,
+    audioStreamIndex: Int? = null,
+    subtitleStreamIndex: Int? = null,
+    subtitlesDisabled: Boolean = false,
 ) {
     val kind =
         when (item) {
@@ -423,6 +426,9 @@ internal fun launchServerItem(
             startFromBeginning = startFromBeginning,
             mediaSourceIndex = mediaSourceIndex,
             maxBitrate = maxBitrate,
+            audioStreamIndex = audioStreamIndex,
+            subtitleStreamIndex = subtitleStreamIndex,
+            subtitlesDisabled = subtitlesDisabled,
         )
     }
     // Split-A/V on Beam: Pixel plays video locally with audio muted while the picked

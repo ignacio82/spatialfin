@@ -1,25 +1,29 @@
 package dev.spatialfin.companion.wear.presentation
 
-import android.graphics.Bitmap
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,72 +37,80 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.FilledTonalButton
-import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import dev.spatialfin.companion.protocol.WearPlayerAction
 import dev.spatialfin.companion.protocol.WearVitalsState
 import dev.spatialfin.companion.wear.ambient.LocalAmbientMode
 import dev.spatialfin.companion.wear.pairing.WearPairingManager
-import dev.spatialfin.companion.wear.presentation.components.WearAudioTracksSheet
-import dev.spatialfin.companion.wear.presentation.components.WearChaptersSheet
-import dev.spatialfin.companion.wear.presentation.components.WearDevicePickerSheet
-import dev.spatialfin.companion.wear.presentation.components.WearSpatialControlsSheet
-import dev.spatialfin.companion.wear.presentation.components.WearSubtitleTracksSheet
+import dev.spatialfin.companion.wear.presentation.components.ArcTimeline
+import dev.spatialfin.companion.wear.presentation.components.ArcTimelineState
+import dev.spatialfin.companion.wear.presentation.components.ArcVolumeRing
 import dev.spatialfin.companion.wear.presentation.components.WearTvPairingDialog
-import dev.spatialfin.companion.wear.presentation.components.WearVoiceDialog
+import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimary
+import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnSurfaceVariant
+import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimaryContainer
+import dev.spatialfin.companion.wear.presentation.theme.WearDarkOutline
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkPrimary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkPrimaryContainer
-import dev.spatialfin.companion.wear.presentation.theme.WearDarkSurfaceVariant
+import dev.spatialfin.companion.wear.presentation.theme.WearGlassBorder
+import dev.spatialfin.companion.wear.presentation.theme.WearGlassFill
+import dev.spatialfin.companion.wear.presentation.theme.WearIcons
+import dev.spatialfin.companion.wear.presentation.theme.WearScrubAmber
+import dev.spatialfin.companion.wear.presentation.theme.WearScrubAmberBright
+import dev.spatialfin.companion.wear.presentation.theme.WearTitleBright
+import dev.spatialfin.companion.wear.presentation.theme.WearVectorIcon
 import dev.spatialfin.companion.wear.rotary.CrownMode
 import dev.spatialfin.companion.wear.rotary.rememberRotaryScrubState
 import dev.spatialfin.companion.wear.rotary.rememberRotaryVolumeState
 import dev.spatialfin.companion.wear.rotary.rotaryControl
 import dev.spatialfin.companion.wear.transport.TransportState
 import dev.spatialfin.companion.wear.transport.WearTransportManager
-import dev.spatialfin.companion.wear.voice.VoiceRecordingState
-import dev.spatialfin.companion.wear.voice.WearVoiceCapture
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
-private sealed interface ActiveWearSheet {
-    data object AudioTracks : ActiveWearSheet
-    data object SubtitleTracks : ActiveWearSheet
-    data object Chapters : ActiveWearSheet
-    data object SpatialControls : ActiveWearSheet
-    data object DevicePicker : ActiveWearSheet
-    data object Voice : ActiveWearSheet
-}
-
+/**
+ * The player.
+ *
+ * The screen *is* the transport: the bezel arc is the timeline, the middle of the
+ * watch is one 70dp play target, and the flanks are the two seek steps. Nothing
+ * scrolls — every switcher lives on the action ring, one swipe up.
+ */
 @Composable
 fun WearRemoteControlScreen(
     transportManager: WearTransportManager,
-    voiceCapture: WearVoiceCapture,
+    voiceCapture: dev.spatialfin.companion.wear.voice.WearVoiceCapture,
     pairingManager: WearPairingManager,
-    onNavigateToNextUp: () -> Unit,
-    onNavigateToReceiverSettings: () -> Unit,
-    onRequestMicPermission: () -> Unit,
+    onNavigateToActions: () -> Unit,
+    onNavigateToDevicePicker: () -> Unit,
 ) {
     val isAmbient = LocalAmbientMode.current
     val coroutineScope = rememberCoroutineScope()
 
-    val transportState by transportManager.transportState.collectAsState()
     val nowPlaying by transportManager.nowPlaying.collectAsState()
+    val transportState by transportManager.transportState.collectAsState()
     val vitals by transportManager.vitals.collectAsState()
     val coverArt by transportManager.coverArt.collectAsState()
     val pendingPairing by pairingManager.pendingPairingRequest.collectAsState()
-    val voiceState by voiceCapture.recordingState.collectAsState()
 
-    var activeSheet by remember { mutableStateOf<ActiveWearSheet?>(null) }
     val focusRequester = remember { FocusRequester() }
 
     val currentPos = nowPlaying?.positionSeconds ?: 0L
@@ -108,13 +120,10 @@ fun WearRemoteControlScreen(
     val scrubState = rememberRotaryScrubState(
         positionSeconds = currentPos,
         durationSeconds = duration,
-        onSeek = { targetSec ->
-            coroutineScope.launch {
-                transportManager.dispatchAction(WearPlayerAction.SeekTo(targetSec))
-            }
+        onSeek = { target ->
+            coroutineScope.launch { transportManager.dispatchAction(WearPlayerAction.SeekTo(target)) }
         },
     )
-
     val volumeState = rememberRotaryVolumeState(
         volume = nowPlaying?.volume ?: 1f,
         onVolumeChange = { level ->
@@ -124,13 +133,11 @@ fun WearRemoteControlScreen(
         },
     )
 
-    // The crown drives one thing at a time. Scrub is the default (it is the reason
-    // this app exists); tapping the volume chip hands the crown to volume until it
-    // is tapped again. Both fall through to list scrolling when nothing is playing.
     var crownMode by remember { mutableStateOf(CrownMode.Scrub) }
-    val scrollState = rememberScrollState()
+    val toggleCrownMode = {
+        crownMode = if (crownMode == CrownMode.Volume) CrownMode.Scrub else CrownMode.Volume
+    }
 
-    // Modal Sheet Overlays
     if (pendingPairing != null) {
         WearTvPairingDialog(
             request = pendingPairing!!,
@@ -140,128 +147,24 @@ fun WearRemoteControlScreen(
         return
     }
 
-    when (activeSheet) {
-        is ActiveWearSheet.AudioTracks -> {
-            WearAudioTracksSheet(
-                tracks = nowPlaying?.audioTracks.orEmpty(),
-                currentTrack = nowPlaying?.currentAudioTrack,
-                onSelectTrack = { track ->
-                    coroutineScope.launch {
-                        transportManager.dispatchAction(
-                            WearPlayerAction.SelectAudioTrack(language = track.language, index = track.index),
-                        )
-                    }
-                },
-                onDismiss = { activeSheet = null },
-            )
-            return
-        }
-
-        is ActiveWearSheet.SubtitleTracks -> {
-            WearSubtitleTracksSheet(
-                tracks = nowPlaying?.subtitleTracks.orEmpty(),
-                currentTrack = nowPlaying?.currentSubtitleTrack,
-                onSelectTrack = { track ->
-                    coroutineScope.launch {
-                        if (track == null) {
-                            transportManager.dispatchAction(WearPlayerAction.DisableSubtitles)
-                        } else {
-                            transportManager.dispatchAction(
-                                WearPlayerAction.SelectSubtitleTrack(language = track.language, index = track.index),
-                            )
-                        }
-                    }
-                },
-                onDismiss = { activeSheet = null },
-            )
-            return
-        }
-
-        is ActiveWearSheet.Chapters -> {
-            WearChaptersSheet(
-                chapters = nowPlaying?.chapters.orEmpty(),
-                onSelectChapter = { ch ->
-                    coroutineScope.launch {
-                        transportManager.dispatchAction(WearPlayerAction.SeekTo(ch.startPositionSeconds))
-                    }
-                },
-                onDismiss = { activeSheet = null },
-            )
-            return
-        }
-
-        is ActiveWearSheet.SpatialControls -> {
-            WearSpatialControlsSheet(
-                onDispatchAction = { action ->
-                    coroutineScope.launch { transportManager.dispatchAction(action) }
-                },
-                onDismiss = { activeSheet = null },
-            )
-            return
-        }
-
-        is ActiveWearSheet.DevicePicker -> {
-            val lanReceivers by transportManager.directLanClient.discoveredReceivers.collectAsState()
-            LaunchedEffect(Unit) {
-                transportManager.directLanClient.startDiscovery()
-            }
-            WearDevicePickerSheet(
-                currentDeviceName = nowPlaying?.targetDeviceName ?: "SpatialFin",
-                lanReceivers = lanReceivers,
-                canFling = !nowPlaying?.streamUrl.isNullOrBlank(),
-                onSelectLanReceiver = { recv ->
-                    coroutineScope.launch {
-                        transportManager.directLanClient.connectToReceiver(recv)
-                        transportManager.checkConnectivity()
-                    }
-                },
-                onFlingToReceiver = { recv ->
-                    val stream = nowPlaying
-                    coroutineScope.launch {
-                        val url = stream?.streamUrl ?: return@launch
-                        transportManager.directLanClient.castStream(
-                            receiver = recv,
-                            streamUrl = url,
-                            container = stream.mediaContainer,
-                            title = stream.title.ifBlank { "SpatialFin" },
-                            positionSeconds = stream.positionSeconds.toDouble(),
-                        )
-                        transportManager.checkConnectivity()
-                    }
-                },
-                onDismiss = {
-                    transportManager.directLanClient.stopDiscovery()
-                    activeSheet = null
-                },
-            )
-            return
-        }
-
-        is ActiveWearSheet.Voice -> {
-            WearVoiceDialog(
-                state = voiceState,
-                onStopCapture = { voiceCapture.stopCapture() },
-                onRequestPermission = onRequestMicPermission,
-                onDismiss = {
-                    voiceCapture.stopCapture()
-                    activeSheet = null
-                },
-            )
-            return
-        }
-
-        null -> Unit
+    if (isAmbient) {
+        AmbientPlayerSurface(
+            positionSeconds = currentPos,
+            durationSeconds = duration,
+            title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin",
+        )
+        return
     }
 
-    // Main Rotary-Scrubbable Remote Surface
-    // Re-requested every time the main surface comes back, because each sheet
-    // replaces this Column outright and takes the focus target with it. Keyed on
-    // activeSheet so returning from a sheet restores crown control.
-    LaunchedEffect(activeSheet, pendingPairing) {
-        runCatching { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    val progress = if (duration > 0) {
+        (scrubState.currentScrubPositionSeconds.toFloat() / duration).coerceIn(0f, 1f)
+    } else {
+        0f
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
@@ -271,318 +174,536 @@ fun WearRemoteControlScreen(
                 scrubState = scrubState,
                 volumeState = volumeState,
                 mode = crownMode,
-                scrollState = scrollState,
+                scrollState = null,
                 enabled = duration > 0,
             )
-            .padding(horizontal = 10.dp, vertical = 14.dp)
-            .verticalScroll(scrollState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        // Top HUD Header
-        RemoteTopHeader(
-            targetName = nowPlaying?.targetDeviceName ?: "SpatialFin",
-            transportState = transportState,
-            vitals = vitals,
-            onDeviceClick = { activeSheet = ActiveWearSheet.DevicePicker },
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Poster & Metadata
-        NowPlayingHero(
-            title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin",
-            seriesName = nowPlaying?.seriesName,
-            seasonNumber = nowPlaying?.seasonNumber,
-            episodeNumber = nowPlaying?.episodeNumber,
-            coverArt = if (!isAmbient) coverArt else null,
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Scrubber Timeline
-        ScrubberTimeline(
-            positionSeconds = scrubState.currentScrubPositionSeconds,
-            durationSeconds = duration,
-            isScrubbing = scrubState.isScrubbing,
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Transport Controls (-10s, Play/Pause, +10s)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilledTonalButton(
-                onClick = {
-                    coroutineScope.launch {
-                        transportManager.dispatchAction(WearPlayerAction.SeekBackward(10))
-                    }
-                },
-                modifier = Modifier.size(42.dp),
-                shape = CircleShape,
-            ) {
-                Text("-10", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            // The crown press is the documented way to swap what the crown drives.
+            // Not every watch delivers STEM_PRIMARY to a foreground app, so a
+            // long-press on the face does the same thing — without it, volume
+            // would be unreachable on those devices.
+            .onKeyEvent { event ->
+                val isStem = event.key == Key(AndroidKeyEvent.KEYCODE_STEM_PRIMARY)
+                if (isStem && event.type == KeyEventType.KeyUp) {
+                    toggleCrownMode()
+                    true
+                } else {
+                    false
+                }
             }
+            .pointerInput(Unit) {
+                var travel = 0f
+                detectVerticalDragGestures(
+                    onDragStart = { travel = 0f },
+                    onDragEnd = { if (travel < -SWIPE_UP_THRESHOLD_PX) onNavigateToActions() },
+                ) { _, dragAmount -> travel += dragAmount }
+            },
+    ) {
+        PlayerBackdrop(
+            art = coverArt?.let { remember(it) { BitmapPainter(it.asImageBitmap()) } },
+            scrubbing = scrubState.isScrubbing,
+        )
 
-            Button(
-                onClick = {
+        ArcTimeline(
+            progress = progress,
+            state = when {
+                scrubState.isScrubbing -> ArcTimelineState.Scrubbing
+                // Volume mode keeps the timeline on screen but demotes it: the
+                // crown is driving the inner ring, and two equally loud arcs read
+                // as one thick smear at arm's length.
+                crownMode == CrownMode.Volume -> ArcTimelineState.Volume
+                else -> ArcTimelineState.Idle
+            },
+        )
+        if (crownMode == CrownMode.Volume) {
+            ArcVolumeRing(volume = volumeState.currentVolume)
+        }
+
+        when {
+            scrubState.isScrubbing -> ScrubbingOverlay(
+                positionSeconds = scrubState.currentScrubPositionSeconds,
+                deltaSeconds = scrubState.currentScrubPositionSeconds - currentPos,
+                title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin",
+            )
+
+            crownMode == CrownMode.Volume -> VolumeOverlay(
+                volume = volumeState.currentVolume,
+                onSwapToScrub = toggleCrownMode,
+            )
+
+            else -> PlayerFace(
+                targetName = nowPlaying?.targetDeviceName ?: "SpatialFin",
+                transportState = transportState,
+                vitals = vitals,
+                title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin",
+                subtitle = nowPlaying.metadataLine(),
+                positionSeconds = currentPos,
+                durationSeconds = duration,
+                isPlaying = isPlaying,
+                showSkipIntro = nowPlaying?.segmentType?.contains("intro", ignoreCase = true) == true,
+                onPlayPause = {
                     coroutineScope.launch {
                         transportManager.dispatchAction(WearPlayerAction.TogglePlayPause)
                     }
                 },
-                modifier = Modifier.size(52.dp),
-                shape = CircleShape,
-            ) {
-                Text(
-                    text = if (isPlaying) "⏸" else "▶",
-                    fontSize = 20.sp,
-                )
-            }
-
-            FilledTonalButton(
-                onClick = {
+                onSeekBack = {
                     coroutineScope.launch {
-                        transportManager.dispatchAction(WearPlayerAction.SeekForward(10))
+                        transportManager.dispatchAction(WearPlayerAction.SeekBackward(SEEK_STEP_SECONDS))
                     }
                 },
-                modifier = Modifier.size(42.dp),
-                shape = CircleShape,
-            ) {
-                Text("+10", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        // Optional Skip Intro button
-        if (nowPlaying?.segmentType?.contains("intro", ignoreCase = true) == true) {
-            Spacer(modifier = Modifier.height(4.dp))
-            FilledTonalButton(
-                onClick = {
+                onSeekForward = {
                     coroutineScope.launch {
-                        transportManager.dispatchAction(WearPlayerAction.SkipIntro)
+                        transportManager.dispatchAction(WearPlayerAction.SeekForward(SEEK_STEP_SECONDS))
                     }
                 },
-                modifier = Modifier.fillMaxWidth(0.85f),
-            ) {
-                Text("⏭ Skip Intro", fontSize = 12.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Crown target selector + live volume readout
-        FilledTonalButton(
-            onClick = {
-                crownMode = if (crownMode == CrownMode.Volume) CrownMode.Scrub else CrownMode.Volume
-            },
-            colors = if (crownMode == CrownMode.Volume) {
-                ButtonDefaults.filledTonalButtonColors(
-                    containerColor = WearDarkPrimaryContainer,
-                    contentColor = Color.White,
-                )
-            } else {
-                ButtonDefaults.filledTonalButtonColors(
-                    containerColor = WearDarkSurfaceVariant,
-                    contentColor = Color.LightGray,
-                )
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                text = if (crownMode == CrownMode.Volume) {
-                    "🔊 Crown: Vol ${(volumeState.currentVolume * 100).toInt()}%"
-                } else {
-                    "🔊 Vol ${(volumeState.currentVolume * 100).toInt()} · crown scrubs"
+                onSkipIntro = {
+                    coroutineScope.launch { transportManager.dispatchAction(WearPlayerAction.SkipIntro) }
                 },
-                fontSize = 11.sp,
+                onDeviceClick = onNavigateToDevicePicker,
+                onLongPress = toggleCrownMode,
+                onActionsClick = onNavigateToActions,
             )
         }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Fast-Switcher Grid Buttons
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            FilledTonalButton(
-                onClick = { activeSheet = ActiveWearSheet.AudioTracks },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("🔊 Aud", fontSize = 11.sp)
-            }
-            FilledTonalButton(
-                onClick = { activeSheet = ActiveWearSheet.SubtitleTracks },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("💬 Sub", fontSize = 11.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            FilledTonalButton(
-                onClick = { activeSheet = ActiveWearSheet.Chapters },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("📑 Chap", fontSize = 11.sp)
-            }
-            FilledTonalButton(
-                onClick = { activeSheet = ActiveWearSheet.SpatialControls },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("🎯 XR", fontSize = 11.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            FilledTonalButton(
-                onClick = {
-                    activeSheet = ActiveWearSheet.Voice
-                    voiceCapture.startCapture()
-                },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("🎤 Voice", fontSize = 11.sp)
-            }
-            FilledTonalButton(
-                onClick = onNavigateToNextUp,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("📋 Next Up", fontSize = 11.sp)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        FilledTonalButton(
-            onClick = onNavigateToReceiverSettings,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("🎧 Private Audio Sink", fontSize = 11.sp)
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
     }
 }
 
+/**
+ * Cover art plus its scrim.
+ *
+ * The scrim is not decoration — white 15sp metadata over an arbitrary poster is
+ * unreadable without it, and it deepens while scrubbing so the amber timecode
+ * carries the screen.
+ *
+ * Takes a [Painter] rather than a Bitmap so the debug screenshot harness can hand
+ * it a drawable and compose the exact same backdrop the player draws.
+ */
 @Composable
-private fun RemoteTopHeader(
+internal fun PlayerBackdrop(art: Painter?, scrubbing: Boolean) {
+    if (art != null) {
+        Image(
+            painter = art,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = if (scrubbing) {
+                        listOf(Color(0xF004060A), Color(0xD604060A), Color(0x9904060A))
+                    } else {
+                        listOf(Color(0xE004060A), Color(0xBD04060A), Color(0x8504060A))
+                    },
+                ),
+            ),
+    )
+}
+
+/**
+ * Frame 1 — the resting player.
+ *
+ * `internal`, not private, so the debug-only store-screenshot harness can render the
+ * real composable rather than a re-drawn lookalike. Nothing in `main` calls it from
+ * outside this file.
+ */
+@Composable
+internal fun BoxScope.PlayerFace(
     targetName: String,
     transportState: TransportState,
     vitals: WearVitalsState?,
-    onDeviceClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(WearDarkSurfaceVariant)
-                .clickable { onDeviceClick() }
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val icon = when (transportState) {
-                is TransportState.ConnectedViaDataLayer -> "📱"
-                is TransportState.ConnectedViaFCastLan -> "📺"
-                is TransportState.ConnectedViaJellyfinRelay -> "🌐"
-                is TransportState.Disconnected -> "⚠️"
-            }
-            Text(text = icon, fontSize = 10.sp)
-            Spacer(modifier = Modifier.width(3.dp))
-            Text(
-                text = targetName,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        // Battery / Vitals Indicator
-        if (vitals != null && vitals.batteryPercent >= 0) {
-            val batteryColor = when {
-                vitals.batteryPercent <= 20 -> Color(0xFFFFB4AB)
-                else -> WearDarkPrimary
-            }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(WearDarkSurfaceVariant)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "${if (vitals.isHeadset) "🥽 " else "🔋 "}${vitals.batteryPercent}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = batteryColor,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun NowPlayingHero(
     title: String,
-    seriesName: String?,
-    seasonNumber: Int?,
-    episodeNumber: Int?,
-    coverArt: Bitmap?,
+    subtitle: String?,
+    positionSeconds: Long,
+    durationSeconds: Long,
+    isPlaying: Boolean,
+    showSkipIntro: Boolean,
+    onPlayPause: () -> Unit,
+    onSeekBack: () -> Unit,
+    onSeekForward: () -> Unit,
+    onSkipIntro: () -> Unit,
+    onDeviceClick: () -> Unit,
+    onLongPress: () -> Unit,
+    onActionsClick: () -> Unit,
 ) {
+    DevicePill(
+        targetName = targetName,
+        transportState = transportState,
+        vitals = vitals,
+        onClick = onDeviceClick,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 19.dp),
+    )
+
+    SeekFlank(
+        icon = WearIcons.RotateCcw,
+        label = "$SEEK_STEP_SECONDS",
+        contentDescription = "Back $SEEK_STEP_SECONDS seconds",
+        onClick = onSeekBack,
+        modifier = Modifier
+            .align(Alignment.CenterStart)
+            .padding(start = 10.dp),
+    )
+    SeekFlank(
+        icon = WearIcons.RotateCw,
+        label = "$SEEK_STEP_SECONDS",
+        contentDescription = "Forward $SEEK_STEP_SECONDS seconds",
+        onClick = onSeekForward,
+        modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .padding(end = 10.dp),
+    )
+
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 65.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (coverArt != null) {
-            Image(
-                bitmap = coverArt.asImageBitmap(),
-                contentDescription = title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(8.dp)),
+        Box(
+            modifier = Modifier
+                .size(70.dp)
+                .clip(CircleShape)
+                .background(WearDarkPrimary)
+                .combinedPress(onClick = onPlayPause, onLongClick = onLongPress),
+            contentAlignment = Alignment.Center,
+        ) {
+            WearVectorIcon(
+                icon = if (isPlaying) WearIcons.Pause else WearIcons.Play,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                tint = WearDarkOnPrimary,
+                modifier = Modifier.size(28.dp),
             )
-            Spacer(modifier = Modifier.height(4.dp))
         }
+    }
 
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 145.dp)
+            .padding(horizontal = 44.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp,
+            lineHeight = 19.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = WearTitleBright,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
-
-        if (!seriesName.isNullOrBlank()) {
-            val epText = if (seasonNumber != null && episodeNumber != null) {
-                "S$seasonNumber:E$episodeNumber • $seriesName"
-            } else {
-                seriesName
-            }
+        if (!subtitle.isNullOrBlank()) {
             Text(
-                text = epText,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.LightGray,
+                text = subtitle,
+                fontSize = 10.sp,
+                lineHeight = 13.sp,
+                color = WearDarkOnSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Row {
+            Text(
+                text = formatSeconds(positionSeconds),
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = WearDarkPrimary,
+            )
+            // The separator is deliberately NOT monospace. Monospace is here for
+            // tabular digits, so the timecode does not jitter as it counts; on Wear
+            // font sets that lack a monospace "/" the fallback resolves to a CJK
+            // glyph, which is what shipped until an emulator capture caught it.
+            Text(
+                text = " / ",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = WearDarkOutline,
+            )
+            Text(
+                text = formatSeconds(durationSeconds),
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = WearDarkOutline,
+            )
+        }
+
+        if (showSkipIntro) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(WearDarkPrimaryContainer)
+                    .clickable(onClick = onSkipIntro)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Skip intro",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = WearDarkOnPrimaryContainer,
+                )
+            }
+        }
+    }
+
+    // The only navigation affordance on the face. It is a hint, not a button —
+    // but it is also tappable, because a swipe-up hint nobody discovers is a
+    // feature nobody uses.
+    Column(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 11.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onActionsClick)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        WearVectorIcon(
+            icon = WearIcons.ChevronUp,
+            contentDescription = null,
+            tint = WearDarkOutline,
+            modifier = Modifier.size(11.dp),
+        )
+        Text(
+            text = "ACTIONS",
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.08.em,
+            color = WearDarkOutline,
+        )
+    }
+}
+
+/** Frame 2 — the crown is moving you. */
+@Composable
+internal fun BoxScope.ScrubbingOverlay(
+    positionSeconds: Long,
+    deltaSeconds: Long,
+    title: String,
+) {
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 22.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(WearScrubAmber.copy(alpha = 0.14f))
+            .border(1.dp, WearScrubAmber.copy(alpha = 0.4f), RoundedCornerShape(11.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        WearVectorIcon(
+            icon = WearIcons.Clock,
+            contentDescription = null,
+            tint = WearScrubAmber,
+            modifier = Modifier.size(9.dp),
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = "SCRUBBING",
+            fontSize = 8.5.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.06.em,
+            color = WearScrubAmber,
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 76.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = formatSeconds(positionSeconds),
+            fontSize = 38.sp,
+            lineHeight = 38.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = WearScrubAmberBright,
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(11.dp))
+                .background(WearScrubAmber.copy(alpha = 0.16f))
+                .padding(horizontal = 9.dp, vertical = 4.dp),
+        ) {
+            Text(
+                text = formatDelta(deltaSeconds),
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = WearScrubAmber,
+            )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 156.dp)
+            .padding(horizontal = 45.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = title,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = WearDarkOutline,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            WearVectorIcon(
+                icon = WearIcons.Detent,
+                contentDescription = null,
+                tint = WearDarkOutline,
+                modifier = Modifier.size(9.dp),
+            )
+            Spacer(modifier = Modifier.width(3.dp))
+            Text(
+                text = "5s per detent",
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Medium,
+                color = WearDarkOutline,
+            )
+        }
+    }
+}
+
+/** Frame 3 — the crown is on volume. */
+@Composable
+internal fun BoxScope.VolumeOverlay(
+    volume: Float,
+    onSwapToScrub: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 75.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        WearVectorIcon(
+            icon = WearIcons.Volume,
+            contentDescription = "Volume",
+            tint = WearDarkOnSurfaceVariant,
+            modifier = Modifier.size(28.dp),
+        )
+        Spacer(modifier = Modifier.height(5.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = "${(volume * 100).toInt()}",
+                fontSize = 34.sp,
+                lineHeight = 34.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = WearTitleBright,
+            )
+            Text(
+                text = "%",
+                fontSize = 17.sp,
+                fontFamily = FontFamily.Monospace,
+                color = WearDarkOutline,
+            )
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 154.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(13.dp))
+                .background(WearDarkPrimaryContainer)
+                .clickable(onClick = onSwapToScrub)
+                .padding(horizontal = 11.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WearVectorIcon(
+                icon = WearIcons.Crown,
+                contentDescription = null,
+                tint = WearDarkOnPrimaryContainer,
+                modifier = Modifier.size(10.dp),
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = "Crown: volume",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = WearDarkOnPrimaryContainer,
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Press to scrub",
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.Medium,
+            color = WearDarkOnSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * Frame 4 — always-on.
+ *
+ * No artwork, no fills, hairline arc. This is the burn-in branch: everything drawn
+ * here has to survive two hours parked in one position on an OLED.
+ */
+@Composable
+internal fun AmbientPlayerSurface(
+    positionSeconds: Long,
+    durationSeconds: Long,
+    title: String,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        val progress = if (durationSeconds > 0) {
+            (positionSeconds.toFloat() / durationSeconds).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        ArcTimeline(progress = progress, state = ArcTimelineState.Ambient)
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            WearVectorIcon(
+                icon = WearIcons.PlayOutline,
+                contentDescription = null,
+                tint = WearDarkOutline,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(modifier = Modifier.height(7.dp))
+            Text(
+                text = formatSeconds(positionSeconds),
+                fontSize = 28.sp,
+                lineHeight = 28.sp,
+                fontFamily = FontFamily.Monospace,
+                color = WearDarkOnSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(7.dp))
+            Text(
+                text = title,
+                fontSize = 11.sp,
+                color = WearDarkOutline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 40.dp),
                 textAlign = TextAlign.Center,
             )
         }
@@ -590,53 +711,130 @@ private fun NowPlayingHero(
 }
 
 @Composable
-private fun ScrubberTimeline(
-    positionSeconds: Long,
-    durationSeconds: Long,
-    isScrubbing: Boolean,
+private fun DevicePill(
+    targetName: String,
+    transportState: TransportState,
+    vitals: WearVitalsState?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val progress = if (durationSeconds > 0) {
-        (positionSeconds.toFloat() / durationSeconds).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(WearGlassFill)
+            .border(1.dp, WearGlassBorder, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Progress Bar
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(if (isScrubbing) Color(0xFF556070) else Color(0xFF2C323D)),
-        ) {
+        // The transport is the icon. A watch that has silently fallen back from the
+        // Data Layer to the Jellyfin relay behaves differently enough (latency,
+        // no local discovery) that hiding it would be a lie.
+        WearVectorIcon(
+            icon = when (transportState) {
+                is TransportState.ConnectedViaDataLayer -> WearIcons.Glasses
+                is TransportState.ConnectedViaFCastLan -> WearIcons.Tv
+                is TransportState.ConnectedViaJellyfinRelay -> WearIcons.Target
+                is TransportState.Disconnected -> WearIcons.Close
+            },
+            contentDescription = null,
+            tint = if (transportState is TransportState.Disconnected) {
+                WearScrubAmber
+            } else {
+                WearDarkOnSurfaceVariant
+            },
+            modifier = Modifier.size(11.dp),
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = targetName,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = WearTitleBright,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 74.dp),
+        )
+        if (vitals != null && vitals.batteryPercent >= 0) {
+            Spacer(modifier = Modifier.width(5.dp))
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(if (isScrubbing) Color(0xFFFFD56B) else WearDarkPrimary),
+                    .size(width = 1.dp, height = 10.dp)
+                    .background(WearGlassBorder),
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = "${vitals.batteryPercent}%",
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Medium,
+                color = if (vitals.batteryPercent <= LOW_BATTERY_PERCENT) {
+                    WearScrubAmber
+                } else {
+                    WearDarkPrimary
+                },
             )
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(2.dp))
-
-        // Time format: 01:24:18 / 02:46:00
-        val posStr = formatSeconds(positionSeconds)
-        val durStr = formatSeconds(durationSeconds)
+@Composable
+private fun SeekFlank(
+    icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon,
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(WearGlassFill)
+            .border(1.dp, WearGlassBorder, CircleShape)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        WearVectorIcon(
+            icon = icon,
+            contentDescription = contentDescription,
+            tint = WearTitleBright,
+            modifier = Modifier.size(14.dp),
+        )
         Text(
-            text = "$posStr / $durStr",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isScrubbing) Color(0xFFFFD56B) else Color.LightGray,
-            fontWeight = if (isScrubbing) FontWeight.Bold else FontWeight.Normal,
+            text = label,
+            fontSize = 7.5.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = WearDarkOnSurfaceVariant,
         )
     }
 }
 
-private fun formatSeconds(totalSeconds: Long): String {
+/** Play/pause needs a long-press too; [combinedClickable] without a ripple. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.combinedPress(onClick: () -> Unit, onLongClick: () -> Unit): Modifier =
+    combinedClickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
+        onLongClick = onLongClick,
+        onClick = onClick,
+    )
+
+/** "S2:E4 · The Expanse", or the bare series name when the numbering is missing. */
+private fun dev.spatialfin.companion.protocol.WearNowPlayingState?.metadataLine(): String? {
+    val series = this?.seriesName
+    if (series.isNullOrBlank()) return null
+    return if (seasonNumber != null && episodeNumber != null) {
+        "S$seasonNumber:E$episodeNumber · $series"
+    } else {
+        series
+    }
+}
+
+internal fun formatSeconds(totalSeconds: Long): String {
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
@@ -646,3 +844,14 @@ private fun formatSeconds(totalSeconds: Long): String {
         String.format("%02d:%02d", minutes, seconds)
     }
 }
+
+/** Signed offset from the live position, e.g. "+1:33". */
+private fun formatDelta(deltaSeconds: Long): String {
+    val sign = if (deltaSeconds < 0) "-" else "+"
+    val abs = abs(deltaSeconds)
+    return "$sign${abs / 60}:${String.format("%02d", abs % 60)}"
+}
+
+private const val SEEK_STEP_SECONDS = 10
+private const val LOW_BATTERY_PERCENT = 20
+private const val SWIPE_UP_THRESHOLD_PX = 40f

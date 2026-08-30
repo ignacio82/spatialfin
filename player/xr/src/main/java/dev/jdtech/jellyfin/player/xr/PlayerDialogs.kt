@@ -36,8 +36,10 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import dev.jdtech.jellyfin.core.R as CoreR
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
 
@@ -152,6 +154,11 @@ internal fun TrackSelectionDialogContent(
     extraSelectedIndex: Int = -1,
     /** Invoked when the user picks one of [extraTrackNames]. */
     onExtraTrackSelected: (Int) -> Unit = {},
+    mediaStreams: List<SpatialFinMediaStream> = emptyList(),
+    /** Audio stream Jellyfin says it is delivering, for the server-side list. */
+    activeAudioStreamIndex: Int? = null,
+    /** Re-requests the item from the server with a different `AudioStreamIndex`. */
+    onAudioStreamSelected: ((Int) -> Unit)? = null,
 ) {
     var trackGroups by remember(player, trackType) {
         mutableStateOf(player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) })
@@ -165,7 +172,17 @@ internal fun TrackSelectionDialogContent(
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    val trackNames = trackGroups.getTrackNames()
+    // While the server transcodes it delivers one audio track out of many, so
+    // the player's track selector has nothing to switch between and the choice
+    // must be sent back to Jellyfin instead. See serverSideAudioTracks.
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+        if (trackType != C.TRACK_TYPE_AUDIO || onAudioStreamSelected == null) {
+            emptyList()
+        } else {
+            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+        }
+    }
+    val trackNames = trackGroups.getTrackNames(mediaStreams)
     val mediaSelectedIndex = if (trackType == C.TRACK_TYPE_TEXT && !visualSubtitlesEnabled) {
         -1
     } else {
@@ -190,19 +207,34 @@ internal fun TrackSelectionDialogContent(
                 .height(400.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            XrOptionRow(
-                title = stringResource(LocalR.string.none),
-                icon = rowIcon,
-                selected = noneSelected,
-                onClick = { onTrackSelected(-1); onDismiss() },
-            )
-            trackNames.forEachIndexed { index, name ->
-                XrOptionRow(
-                    title = name,
-                    icon = rowIcon,
-                    selected = index == effectiveMediaSelected,
-                    onClick = { onTrackSelected(index); onDismiss() },
-                )
+            if (serverAudioTracks.isNotEmpty()) {
+                serverAudioTracks.forEach { track ->
+                    XrOptionRow(
+                        title = track.label,
+                        icon = rowIcon,
+                        selected = track.isSelected,
+                        onClick = { onAudioStreamSelected?.invoke(track.streamIndex); onDismiss() },
+                    )
+                }
+            } else {
+                // "None" is meaningless for audio — there is always a track playing,
+                // and disabling audio outright is not something this sheet offers.
+                if (trackType == C.TRACK_TYPE_TEXT) {
+                    XrOptionRow(
+                        title = stringResource(LocalR.string.none),
+                        icon = rowIcon,
+                        selected = noneSelected,
+                        onClick = { onTrackSelected(-1); onDismiss() },
+                    )
+                }
+                trackNames.forEachIndexed { index, name ->
+                    XrOptionRow(
+                        title = name,
+                        icon = rowIcon,
+                        selected = index == effectiveMediaSelected,
+                        onClick = { onTrackSelected(index); onDismiss() },
+                    )
+                }
             }
             extraTrackNames.forEachIndexed { index, name ->
                 XrOptionRow(

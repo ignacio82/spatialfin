@@ -17,10 +17,8 @@ import org.jellyfin.sdk.model.api.SubtitleProfile
  * while Media3 can decode supported bitmap tracks from the media container.
  */
 internal fun createPlaybackSubtitleProfiles(): List<SubtitleProfile> =
-    CLIENT_RENDERED_TEXT_SUBTITLE_FORMATS.map { format ->
-        SubtitleProfile(format, SubtitleDeliveryMethod.EXTERNAL)
-    } + LEGACY_SUBTITLE_FORMATS.flatMap(::externalAndEmbeddedProfiles) +
-        BITMAP_SUBTITLE_FORMATS.flatMap(::externalAndEmbeddedProfiles)
+    (CLIENT_RENDERED_TEXT_SUBTITLE_FORMATS + LEGACY_SUBTITLE_FORMATS + BITMAP_SUBTITLE_FORMATS)
+        .flatMap(::externalAndEmbeddedProfiles)
 
 private fun externalAndEmbeddedProfiles(format: String): List<SubtitleProfile> =
     listOf(

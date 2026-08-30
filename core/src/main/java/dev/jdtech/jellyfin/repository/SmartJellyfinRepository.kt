@@ -334,10 +334,21 @@ constructor(
         itemId: UUID,
         includePath: Boolean,
         maxBitrate: Long?,
+        audioStreamIndex: Int?,
+        subtitleStreamIndex: Int?,
+        mediaSourceId: String?,
     ): List<SpatialFinSource> =
         runWithFallback(
-            online = { onlineRepository.getMediaSources(itemId, includePath, maxBitrate) },
-            offline = { offlineRepository.getMediaSources(itemId, includePath, maxBitrate) },
+            online = {
+                onlineRepository.getMediaSources(
+                    itemId, includePath, maxBitrate, audioStreamIndex, subtitleStreamIndex, mediaSourceId,
+                )
+            },
+            offline = {
+                offlineRepository.getMediaSources(
+                    itemId, includePath, maxBitrate, audioStreamIndex, subtitleStreamIndex, mediaSourceId,
+                )
+            },
         )
 
     override suspend fun getStreamUrl(

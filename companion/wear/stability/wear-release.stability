@@ -5,42 +5,133 @@
 //   ./gradlew :wear:stabilityDump
 
 @Composable
-private fun dev.spatialfin.companion.wear.presentation.NextUpCard(item: dev.spatialfin.companion.protocol.WearNextUpItem, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
-  skippable: false
+internal fun dev.spatialfin.companion.wear.presentation.AmbientPlayerSurface(positionSeconds: kotlin.Long, durationSeconds: kotlin.Long, title: kotlin.String): kotlin.Unit
+  skippable: true
   restartable: true
   params:
-    - item: UNSTABLE (cross-module type without @Stable/@Immutable)
-    - onClick: STABLE (function type)
-
-@Composable
-private fun dev.spatialfin.companion.wear.presentation.NowPlayingHero(title: kotlin.String, seriesName: kotlin.String?, seasonNumber: kotlin.Int?, episodeNumber: kotlin.Int?, coverArt: android.graphics.Bitmap?): kotlin.Unit
-  skippable: false
-  restartable: true
-  params:
+    - positionSeconds: STABLE (primitive type)
+    - durationSeconds: STABLE (primitive type)
     - title: STABLE (String is immutable)
-    - seriesName: STABLE (class with no mutable properties)
-    - seasonNumber: STABLE (class with no mutable properties)
-    - episodeNumber: STABLE (class with no mutable properties)
-    - coverArt: UNSTABLE (Java class; stability cannot be inferred)
 
 @Composable
-private fun dev.spatialfin.companion.wear.presentation.RemoteTopHeader(targetName: kotlin.String, transportState: dev.spatialfin.companion.wear.transport.TransportState, vitals: dev.spatialfin.companion.protocol.WearVitalsState?, onDeviceClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+private fun dev.spatialfin.companion.wear.presentation.DevicePill(targetName: kotlin.String, transportState: dev.spatialfin.companion.wear.transport.TransportState, vitals: dev.spatialfin.companion.protocol.WearVitalsState?, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - targetName: STABLE (String is immutable)
     - transportState: STABLE (class with no mutable properties)
     - vitals: UNSTABLE (cross-module type without @Stable/@Immutable)
-    - onDeviceClick: STABLE (function type)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
-private fun dev.spatialfin.companion.wear.presentation.ScrubberTimeline(positionSeconds: kotlin.Long, durationSeconds: kotlin.Long, isScrubbing: kotlin.Boolean): kotlin.Unit
+private fun dev.spatialfin.companion.wear.presentation.NextUpRow(item: dev.spatialfin.companion.protocol.WearNextUpItem, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - item: UNSTABLE (cross-module type without @Stable/@Immutable)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+internal fun dev.spatialfin.companion.wear.presentation.PlayerBackdrop(art: androidx.compose.ui.graphics.painter.Painter?, scrubbing: kotlin.Boolean): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - art: UNKNOWN (interface or non-final class; concrete implementation unknown)
+    - scrubbing: STABLE (primitive type)
+
+@Composable
+internal fun dev.spatialfin.companion.wear.presentation.PlayerFace(targetName: kotlin.String, transportState: dev.spatialfin.companion.wear.transport.TransportState, vitals: dev.spatialfin.companion.protocol.WearVitalsState?, title: kotlin.String, subtitle: kotlin.String?, positionSeconds: kotlin.Long, durationSeconds: kotlin.Long, isPlaying: kotlin.Boolean, showSkipIntro: kotlin.Boolean, onPlayPause: kotlin.Function0<kotlin.Unit>, onSeekBack: kotlin.Function0<kotlin.Unit>, onSeekForward: kotlin.Function0<kotlin.Unit>, onSkipIntro: kotlin.Function0<kotlin.Unit>, onDeviceClick: kotlin.Function0<kotlin.Unit>, onLongPress: kotlin.Function0<kotlin.Unit>, onActionsClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - targetName: STABLE (String is immutable)
+    - transportState: STABLE (class with no mutable properties)
+    - vitals: UNSTABLE (cross-module type without @Stable/@Immutable)
+    - title: STABLE (String is immutable)
+    - subtitle: STABLE (class with no mutable properties)
+    - positionSeconds: STABLE (primitive type)
+    - durationSeconds: STABLE (primitive type)
+    - isPlaying: STABLE (primitive type)
+    - showSkipIntro: STABLE (primitive type)
+    - onPlayPause: STABLE (function type)
+    - onSeekBack: STABLE (function type)
+    - onSeekForward: STABLE (function type)
+    - onSkipIntro: STABLE (function type)
+    - onDeviceClick: STABLE (function type)
+    - onLongPress: STABLE (function type)
+    - onActionsClick: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.RingTarget(icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, label: kotlin.String, highlighted: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - icon: STABLE (marked @Stable or @Immutable)
+    - label: STABLE (String is immutable)
+    - highlighted: STABLE (primitive type)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+internal fun dev.spatialfin.companion.wear.presentation.ScrubbingOverlay(positionSeconds: kotlin.Long, deltaSeconds: kotlin.Long, title: kotlin.String): kotlin.Unit
   skippable: true
   restartable: true
   params:
     - positionSeconds: STABLE (primitive type)
-    - durationSeconds: STABLE (primitive type)
-    - isScrubbing: STABLE (primitive type)
+    - deltaSeconds: STABLE (primitive type)
+    - title: STABLE (String is immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.SeekFlank(icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, label: kotlin.String, contentDescription: kotlin.String, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - icon: STABLE (marked @Stable or @Immutable)
+    - label: STABLE (String is immutable)
+    - contentDescription: STABLE (String is immutable)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.SinkSwitchRow(active: kotlin.Boolean, onToggle: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - active: STABLE (primitive type)
+    - onToggle: STABLE (function type)
+
+@Composable
+internal fun dev.spatialfin.companion.wear.presentation.VolumeOverlay(volume: kotlin.Float, onSwapToScrub: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - volume: STABLE (primitive type)
+    - onSwapToScrub: STABLE (function type)
+
+@Composable
+public fun dev.spatialfin.companion.wear.presentation.WearActionRingScreen(onOpenAudio: kotlin.Function0<kotlin.Unit>, onOpenSubtitles: kotlin.Function0<kotlin.Unit>, onOpenChapters: kotlin.Function0<kotlin.Unit>, onOpenNextUp: kotlin.Function0<kotlin.Unit>, onOpenSpatial: kotlin.Function0<kotlin.Unit>, onOpenVoice: kotlin.Function0<kotlin.Unit>, onOpenPrivateAudio: kotlin.Function0<kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - onOpenAudio: STABLE (function type)
+    - onOpenSubtitles: STABLE (function type)
+    - onOpenChapters: STABLE (function type)
+    - onOpenNextUp: STABLE (function type)
+    - onOpenSpatial: STABLE (function type)
+    - onOpenVoice: STABLE (function type)
+    - onOpenPrivateAudio: STABLE (function type)
+    - onDismiss: STABLE (function type)
+
+@Composable
+internal fun dev.spatialfin.companion.wear.presentation.WearNextUpContent(items: kotlin.collections.List<dev.spatialfin.companion.protocol.WearNextUpItem>, onPlay: kotlin.Function1<dev.spatialfin.companion.protocol.WearNextUpItem, kotlin.Unit>, onNavigateBack: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: false
+  restartable: true
+  params:
+    - items: RUNTIME (requires runtime check)
+    - onPlay: STABLE (function type)
+    - onNavigateBack: STABLE (function type)
 
 @Composable
 public fun dev.spatialfin.companion.wear.presentation.WearNextUpScreen(transportManager: dev.spatialfin.companion.wear.transport.WearTransportManager, onNavigateBack: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -58,16 +149,15 @@ public fun dev.spatialfin.companion.wear.presentation.WearReceiverSettingsScreen
     - onNavigateBack: STABLE (function type)
 
 @Composable
-public fun dev.spatialfin.companion.wear.presentation.WearRemoteControlScreen(transportManager: dev.spatialfin.companion.wear.transport.WearTransportManager, voiceCapture: dev.spatialfin.companion.wear.voice.WearVoiceCapture, pairingManager: dev.spatialfin.companion.wear.pairing.WearPairingManager, onNavigateToNextUp: kotlin.Function0<kotlin.Unit>, onNavigateToReceiverSettings: kotlin.Function0<kotlin.Unit>, onRequestMicPermission: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+public fun dev.spatialfin.companion.wear.presentation.WearRemoteControlScreen(transportManager: dev.spatialfin.companion.wear.transport.WearTransportManager, voiceCapture: dev.spatialfin.companion.wear.voice.WearVoiceCapture, pairingManager: dev.spatialfin.companion.wear.pairing.WearPairingManager, onNavigateToActions: kotlin.Function0<kotlin.Unit>, onNavigateToDevicePicker: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - transportManager: UNSTABLE (has mutable properties or unstable members)
     - voiceCapture: UNSTABLE (has mutable properties or unstable members)
     - pairingManager: RUNTIME (requires runtime check)
-    - onNavigateToNextUp: STABLE (function type)
-    - onNavigateToReceiverSettings: STABLE (function type)
-    - onRequestMicPermission: STABLE (function type)
+    - onNavigateToActions: STABLE (function type)
+    - onNavigateToDevicePicker: STABLE (function type)
 
 @Composable
 public fun dev.spatialfin.companion.wear.presentation.WearStandaloneSetupScreen(onRetry: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -75,6 +165,80 @@ public fun dev.spatialfin.companion.wear.presentation.WearStandaloneSetupScreen(
   restartable: true
   params:
     - onRetry: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.combinedPress(onClick: kotlin.Function0<kotlin.Unit>, onLongClick: kotlin.Function0<kotlin.Unit>): androidx.compose.ui.Modifier
+  skippable: false
+  restartable: false
+  params:
+    - onClick: STABLE (function type)
+    - onLongClick: STABLE (function type)
+
+@Composable
+public fun dev.spatialfin.companion.wear.presentation.components.ArcCountdownRing(fraction: kotlin.Float, modifier: androidx.compose.ui.Modifier, color: androidx.compose.ui.graphics.Color, strokeWidth: androidx.compose.ui.unit.Dp, edgeInset: androidx.compose.ui.unit.Dp): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - fraction: STABLE (primitive type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - color: STABLE (marked @Stable or @Immutable)
+    - strokeWidth: STABLE (marked @Stable or @Immutable)
+    - edgeInset: STABLE (marked @Stable or @Immutable)
+
+@Composable
+public fun dev.spatialfin.companion.wear.presentation.components.ArcTimeline(progress: kotlin.Float, state: dev.spatialfin.companion.wear.presentation.components.ArcTimelineState, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - progress: STABLE (primitive type)
+    - state: STABLE (class with no mutable properties)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+public fun dev.spatialfin.companion.wear.presentation.components.ArcVolumeRing(volume: kotlin.Float, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - volume: STABLE (primitive type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.ListeningRings(amplitude: kotlin.Float, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - amplitude: STABLE (primitive type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.PairingButton(label: kotlin.String, icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, container: androidx.compose.ui.graphics.Color, content: androidx.compose.ui.graphics.Color, border: androidx.compose.ui.graphics.Color, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - label: STABLE (String is immutable)
+    - icon: STABLE (marked @Stable or @Immutable)
+    - container: STABLE (marked @Stable or @Immutable)
+    - content: STABLE (marked @Stable or @Immutable)
+    - border: STABLE (marked @Stable or @Immutable)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.StepperButton(icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, contentDescription: kotlin.String, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - icon: STABLE (marked @Stable or @Immutable)
+    - contentDescription: STABLE (String is immutable)
+    - onClick: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.VoiceButton(label: kotlin.String, onClick: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - label: STABLE (String is immutable)
+    - onClick: STABLE (function type)
 
 @Composable
 public fun dev.spatialfin.companion.wear.presentation.components.WearAudioTracksSheet(tracks: kotlin.collections.List<dev.spatialfin.companion.protocol.WearStreamInfo>, currentTrack: kotlin.String?, onSelectTrack: kotlin.Function1<dev.spatialfin.companion.protocol.WearStreamInfo, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -87,13 +251,29 @@ public fun dev.spatialfin.companion.wear.presentation.components.WearAudioTracks
     - onDismiss: STABLE (function type)
 
 @Composable
-public fun dev.spatialfin.companion.wear.presentation.components.WearChaptersSheet(chapters: kotlin.collections.List<dev.spatialfin.companion.protocol.WearChapterInfo>, onSelectChapter: kotlin.Function1<dev.spatialfin.companion.protocol.WearChapterInfo, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
+public fun dev.spatialfin.companion.wear.presentation.components.WearChaptersSheet(chapters: kotlin.collections.List<dev.spatialfin.companion.protocol.WearChapterInfo>, currentChapterName: kotlin.String?, positionSeconds: kotlin.Long, durationSeconds: kotlin.Long, onSelectChapter: kotlin.Function1<dev.spatialfin.companion.protocol.WearChapterInfo, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: false
   restartable: true
   params:
     - chapters: RUNTIME (requires runtime check)
+    - currentChapterName: STABLE (class with no mutable properties)
+    - positionSeconds: STABLE (primitive type)
+    - durationSeconds: STABLE (primitive type)
     - onSelectChapter: STABLE (function type)
     - onDismiss: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.WearChoiceRow(label: kotlin.String, secondary: kotlin.String?, selected: kotlin.Boolean, onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier, trailing: kotlin.String?, leadingIcon: dev.spatialfin.companion.wear.presentation.theme.WearIcon?): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - label: STABLE (String is immutable)
+    - secondary: STABLE (class with no mutable properties)
+    - selected: STABLE (primitive type)
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - trailing: STABLE (class with no mutable properties)
+    - leadingIcon: STABLE (marked @Stable or @Immutable)
 
 @Composable
 public fun dev.spatialfin.companion.wear.presentation.components.WearDevicePickerSheet(currentDeviceName: kotlin.String, lanReceivers: kotlin.collections.List<dev.jdtech.jellyfin.fcast.sender.FCastReceiver>, canFling: kotlin.Boolean, onSelectLanReceiver: kotlin.Function1<dev.jdtech.jellyfin.fcast.sender.FCastReceiver, kotlin.Unit>, onFlingToReceiver: kotlin.Function1<dev.jdtech.jellyfin.fcast.sender.FCastReceiver, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -108,12 +288,48 @@ public fun dev.spatialfin.companion.wear.presentation.components.WearDevicePicke
     - onDismiss: STABLE (function type)
 
 @Composable
+private fun dev.spatialfin.companion.wear.presentation.components.WearSheetBackButton(onClick: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier, label: kotlin.String): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - onClick: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - label: STABLE (String is immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.WearSheetEmptyState(message: kotlin.String, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - message: STABLE (String is immutable)
+    - modifier: STABLE (marked @Stable or @Immutable)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.WearSheetScaffold(title: kotlin.String, icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, content: @[ExtensionFunctionType] kotlin.Function1<androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope, kotlin.Unit>): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - title: STABLE (String is immutable)
+    - icon: STABLE (marked @Stable or @Immutable)
+    - content: STABLE (function type)
+
+@Composable
 public fun dev.spatialfin.companion.wear.presentation.components.WearSpatialControlsSheet(onDispatchAction: kotlin.Function1<dev.spatialfin.companion.protocol.WearPlayerAction, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
   skippable: true
   restartable: true
   params:
     - onDispatchAction: STABLE (function type)
     - onDismiss: STABLE (function type)
+
+@Composable
+private fun dev.spatialfin.companion.wear.presentation.components.WearStepperRow(label: kotlin.String, onDecrease: kotlin.Function0<kotlin.Unit>, onIncrease: kotlin.Function0<kotlin.Unit>, modifier: androidx.compose.ui.Modifier): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - label: STABLE (String is immutable)
+    - onDecrease: STABLE (function type)
+    - onIncrease: STABLE (function type)
+    - modifier: STABLE (marked @Stable or @Immutable)
 
 @Composable
 public fun dev.spatialfin.companion.wear.presentation.components.WearSubtitleTracksSheet(tracks: kotlin.collections.List<dev.spatialfin.companion.protocol.WearStreamInfo>, currentTrack: kotlin.String?, onSelectTrack: kotlin.Function1<dev.spatialfin.companion.protocol.WearStreamInfo?, kotlin.Unit>, onDismiss: kotlin.Function0<kotlin.Unit>): kotlin.Unit
@@ -152,6 +368,16 @@ public fun dev.spatialfin.companion.wear.presentation.theme.SpatialFinWearTheme(
     - content: STABLE (composable function type)
 
 @Composable
+public fun dev.spatialfin.companion.wear.presentation.theme.WearVectorIcon(icon: dev.spatialfin.companion.wear.presentation.theme.WearIcon, contentDescription: kotlin.String?, modifier: androidx.compose.ui.Modifier, tint: androidx.compose.ui.graphics.Color): kotlin.Unit
+  skippable: true
+  restartable: true
+  params:
+    - icon: STABLE (marked @Stable or @Immutable)
+    - contentDescription: STABLE (class with no mutable properties)
+    - modifier: STABLE (marked @Stable or @Immutable)
+    - tint: STABLE (marked @Stable or @Immutable)
+
+@Composable
 public fun dev.spatialfin.companion.wear.rotary.rememberRotaryScrubState(positionSeconds: kotlin.Long, durationSeconds: kotlin.Long, onSeek: kotlin.Function1<kotlin.Long, kotlin.Unit>): dev.spatialfin.companion.wear.rotary.RotaryScrubState
   skippable: false
   restartable: false
@@ -169,7 +395,7 @@ public fun dev.spatialfin.companion.wear.rotary.rememberRotaryVolumeState(volume
     - onVolumeChange: STABLE (function type)
 
 @Composable
-public fun dev.spatialfin.companion.wear.rotary.rotaryControl(scrubState: dev.spatialfin.companion.wear.rotary.RotaryScrubState, volumeState: dev.spatialfin.companion.wear.rotary.RotaryVolumeState, mode: dev.spatialfin.companion.wear.rotary.CrownMode, scrollState: androidx.compose.foundation.ScrollState, enabled: kotlin.Boolean): androidx.compose.ui.Modifier
+public fun dev.spatialfin.companion.wear.rotary.rotaryControl(scrubState: dev.spatialfin.companion.wear.rotary.RotaryScrubState, volumeState: dev.spatialfin.companion.wear.rotary.RotaryVolumeState, mode: dev.spatialfin.companion.wear.rotary.CrownMode, scrollState: androidx.compose.foundation.ScrollState?, enabled: kotlin.Boolean): androidx.compose.ui.Modifier
   skippable: false
   restartable: false
   params:

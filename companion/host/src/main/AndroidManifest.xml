@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- WearVitalsCollector reads the active network's link speed to publish
+         WearVitalsState.wifiSpeedMbps. It was arriving transitively from a
+         dependency's manifest; declare it where it is actually used. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application>
         <service
             android:name=".WearHostDataLayerService"

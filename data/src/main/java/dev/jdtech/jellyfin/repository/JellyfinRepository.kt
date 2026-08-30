@@ -122,10 +122,19 @@ interface JellyfinRepository {
         offline: Boolean = false,
     ): List<SpatialFinEpisode>
 
+    /**
+     * @param mediaSourceId REQUIRED for [audioStreamIndex] / [subtitleStreamIndex] to have
+     *   any effect. Jellyfin only applies a requested stream index to the media source the
+     *   request names — with no `MediaSourceId` it silently ignores both and builds the
+     *   transcode against the container's own default track.
+     */
     suspend fun getMediaSources(
         itemId: UUID,
         includePath: Boolean = false,
-        maxBitrate: Long? = null
+        maxBitrate: Long? = null,
+        audioStreamIndex: Int? = null,
+        subtitleStreamIndex: Int? = null,
+        mediaSourceId: String? = null,
     ): List<SpatialFinSource>
 
     suspend fun getStreamUrl(

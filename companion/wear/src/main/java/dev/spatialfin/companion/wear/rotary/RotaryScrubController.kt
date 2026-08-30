@@ -116,14 +116,18 @@ fun rememberRotaryScrubState(
  *
  * Events that do not produce a step — and every event while [enabled] is false, i.e.
  * nothing is playing — fall through to [scrollState] so the crown still scrolls the
- * remote instead of being swallowed by a scrubber with nothing to scrub.
+ * list instead of being swallowed by a scrubber with nothing to scrub.
+ *
+ * [scrollState] is null on the player, which after the arc-timeline redesign has
+ * nothing to scroll: there, an unconsumed event is simply dropped rather than
+ * silently nudging a surface the user cannot see move.
  */
 @Composable
 fun Modifier.rotaryControl(
     scrubState: RotaryScrubState,
     volumeState: RotaryVolumeState,
     mode: CrownMode,
-    scrollState: ScrollState,
+    scrollState: ScrollState?,
     enabled: Boolean,
 ): Modifier {
     val view = LocalView.current
@@ -137,7 +141,7 @@ fun Modifier.rotaryControl(
             mode == CrownMode.Volume -> volumeState.onRotaryDelta(pixels, haptics, scope)
             else -> scrubState.onRotaryDelta(pixels, haptics, scope)
         }
-        if (!consumed) {
+        if (!consumed && scrollState != null) {
             scope.launch { scrollState.scrollBy(pixels) }
         }
         true

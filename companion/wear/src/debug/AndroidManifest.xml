@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only. StoreScreenshotActivity renders single production screens with fixed
+  data so Play Store captures can be taken on an emulator with no paired host. It is
+  exported so `adb shell am start` can drive it, which is safe precisely because this
+  manifest is never merged into a release build.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name="dev.spatialfin.companion.wear.screenshots.StoreScreenshotActivity"
+            android:exported="true"
+            android:label="SpatialFin Screenshots"
+            android:theme="@android:style/Theme.DeviceDefault" />
+    </application>
+
+</manifest>

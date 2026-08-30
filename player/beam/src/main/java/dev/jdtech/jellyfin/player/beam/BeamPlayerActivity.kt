@@ -126,6 +126,7 @@ import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.SplitAvVideoBridge
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
@@ -142,10 +143,10 @@ import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceService
 import dev.jdtech.jellyfin.player.beam.voice.BeamVoiceState
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import javax.inject.Inject
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import androidx.lifecycle.lifecycleScope
@@ -170,6 +171,9 @@ class BeamPlayerActivity : AppCompatActivity() {
         private const val EXTRA_MAX_BITRATE = "maxBitrate"
         const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
         const val EXTRA_START_POSITION_MS = "startPositionMs"
+        const val EXTRA_AUDIO_STREAM_INDEX = "audioStreamIndex"
+        const val EXTRA_SUBTITLE_STREAM_INDEX = "subtitleStreamIndex"
+        const val EXTRA_SUBTITLES_DISABLED = "subtitlesDisabled"
 
         /**
          * Boolean Intent extra: when true, this Activity binds itself as the
@@ -189,6 +193,9 @@ class BeamPlayerActivity : AppCompatActivity() {
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
             splitAvVideoRole: Boolean = false,
+            audioStreamIndex: Int? = null,
+            subtitleStreamIndex: Int? = null,
+            subtitlesDisabled: Boolean = false,
         ): Intent =
             Intent(context, BeamPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -199,6 +206,9 @@ class BeamPlayerActivity : AppCompatActivity() {
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
                 startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
                 if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
+                audioStreamIndex?.let { putExtra(EXTRA_AUDIO_STREAM_INDEX, it) }
+                subtitleStreamIndex?.let { putExtra(EXTRA_SUBTITLE_STREAM_INDEX, it) }
+                if (subtitlesDisabled) putExtra(EXTRA_SUBTITLES_DISABLED, true)
             }
 
         fun createIntentForLocalMedia(
@@ -418,6 +428,20 @@ class BeamPlayerActivity : AppCompatActivity() {
             } else {
                 null
             }
+        val audioStreamIndex =
+            if (intent.hasExtra(EXTRA_AUDIO_STREAM_INDEX)) {
+                intent.getIntExtra(EXTRA_AUDIO_STREAM_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val subtitleStreamIndex =
+            if (intent.hasExtra(EXTRA_SUBTITLE_STREAM_INDEX)) {
+                intent.getIntExtra(EXTRA_SUBTITLE_STREAM_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val subtitlesDisabled = intent.getBooleanExtra(EXTRA_SUBTITLES_DISABLED, false)
+
         val universalPluginId = intent.getStringExtra("universalPluginId")
         val universalItemId = intent.getStringExtra("universalItemId")
         val universalVideoUrl = intent.getStringExtra("universalVideoUrl")
@@ -432,7 +456,7 @@ class BeamPlayerActivity : AppCompatActivity() {
         )
 
         Timber.i(
-            "BeamPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s intent=%s",
+            "BeamPlayerActivity launch itemId=%s itemKind=%s localMediaId=%s networkVideoId=%s startFromBeginning=%b mediaSourceIndex=%s maxBitrate=%s audioStreamIndex=%s subtitleStreamIndex=%s subtitlesDisabled=%b intent=%s",
             itemIdString,
             itemKind,
             localMediaId,
@@ -440,23 +464,30 @@ class BeamPlayerActivity : AppCompatActivity() {
             startFromBeginning,
             mediaSourceIndex,
             maxBitrate,
+            audioStreamIndex,
+            subtitleStreamIndex,
+            subtitlesDisabled,
             intent.extras,
         )
 
         val itemIdUuid = itemIdString?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        
-        if (itemIdUuid != null) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val fonts = runCatching { loadLibassFonts(itemIdUuid, maxBitrate) }
-                    .onFailure { err -> Timber.w(err, "beam subtitle: preload embedded ASS fonts failed") }
+        // The player must be swapped before initializePlayer below, or the item
+        // loads into the player this call is about to throw away. The fonts
+        // themselves are fetched off-thread and only awaited when the renderer
+        // first meets a styled subtitle — doing the fetch inside the loader
+        // would stall the playback thread on a network round trip.
+        val fontsDeferred = itemIdUuid?.let { id ->
+            lifecycleScope.async(Dispatchers.IO) {
+                runCatching { loadLibassFonts(id, maxBitrate) }
+                    .onFailure { Timber.w(it, "beam subtitle: preload embedded ASS fonts failed") }
                     .getOrDefault(emptyList())
-                kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    replacePlayerForBeamSubtitles { fonts }
-                }
             }
-        } else {
-            replacePlayerForBeamSubtitles(null)
         }
+        replacePlayerForBeamSubtitles(
+            fontsDeferred?.let { deferred ->
+                { runCatching { runBlocking { deferred.await() } }.getOrDefault(emptyList()) }
+            }
+        )
 
         when {
             localMediaId != null -> {
@@ -493,6 +524,9 @@ class BeamPlayerActivity : AppCompatActivity() {
                     mediaSourceIndex = mediaSourceIndex,
                     maxBitrate = maxBitrate,
                     startPositionMs = startPositionMs,
+                    audioStreamIndex = audioStreamIndex,
+                    subtitleStreamIndex = subtitleStreamIndex,
+                    subtitlesDisabled = subtitlesDisabled,
                 )
             }
             else -> {
@@ -1099,6 +1133,7 @@ private fun BeamPlayerScreen(
                     player = player,
                     controlsVisible = latestControlsVisible,
                     syncPlayState = latestSyncPlayState,
+                    mediaStreams = uiState.currentMediaStreams,
                 )
             },
             chaptersProvider = {
@@ -1131,6 +1166,7 @@ private fun BeamPlayerScreen(
                     player = player,
                     controlsVisible = latestControlsVisible,
                     syncPlayState = latestSyncPlayState,
+                    mediaStreams = uiState.currentMediaStreams,
                 )
                 val parsed = commandCoordinator.parse(transcript, snapshot)
                 when (val action = parsed.action) {
@@ -1606,6 +1642,7 @@ private fun BeamPlayerScreen(
                                             player = player,
                                             controlsVisible = latestControlsVisible,
                                             syncPlayState = latestSyncPlayState,
+                                            mediaStreams = uiState.currentMediaStreams,
                                         )
                                         val result = commandCoordinator.parse(transcript, snapshot)
                                         val feedback =
@@ -1704,7 +1741,13 @@ private fun BeamPlayerScreen(
                     viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index)
                     activeDialog = null
                 },
+                onStreamSelected = { streamIndex ->
+                    viewModel.changeAudioStream(streamIndex)
+                    activeDialog = null
+                },
                 onDismiss = { activeDialog = null },
+                mediaStreams = uiState.currentMediaStreams,
+                activeAudioStreamIndex = uiState.currentAudioStreamIndex,
             )
         BeamPlayerDialog.Subtitle ->
             BeamTrackSelectionDialog(
@@ -1716,7 +1759,8 @@ private fun BeamPlayerScreen(
                     activeDialog = null
                 },
                 onDismiss = { activeDialog = null },
-                onSearchSubtitles = { activeDialog = BeamPlayerDialog.SearchSubtitles }
+                onSearchSubtitles = { activeDialog = BeamPlayerDialog.SearchSubtitles },
+                mediaStreams = uiState.currentMediaStreams,
             )
         BeamPlayerDialog.SearchSubtitles ->
             Dialog(onDismissRequest = { 
@@ -2092,11 +2136,12 @@ private fun buildVoiceSnapshot(
     player: Player,
     controlsVisible: Boolean,
     syncPlayState: PlayerViewModel.SyncPlayUiState,
+    mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
 ): PlayerStateSnapshot {
     val audioGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
     val subtitleGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    val audioNames = audioGroups.getTrackNames().toList()
-    val subtitleNames = subtitleGroups.getTrackNames().toList()
+    val audioNames = audioGroups.getTrackNames(mediaStreams).toList()
+    val subtitleNames = subtitleGroups.getTrackNames(mediaStreams).toList()
     return PlayerStateSnapshot(
         isPlaying = player.isPlaying,
         positionSeconds = player.currentPosition / 1000L,
@@ -2281,6 +2326,9 @@ private fun BeamTrackSelectionDialog(
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
+    onStreamSelected: ((Int) -> Unit)? = null,
+    mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
+    activeAudioStreamIndex: Int? = null,
 ) {
     var trackGroups by remember(player, trackType) {
         mutableStateOf(player.currentTracks.groups.filter { it.type == trackType })
@@ -2294,8 +2342,17 @@ private fun BeamTrackSelectionDialog(
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    val trackNames = trackGroups.getTrackNames()
-    val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
+
+    // Non-empty only while the server is delivering a single audio track out of
+    // several — then the player has nothing to switch between and the choice
+    // has to go back to Jellyfin. See serverSideAudioTracks.
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+        if (trackType != C.TRACK_TYPE_AUDIO) {
+            emptyList()
+        } else {
+            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -2316,31 +2373,61 @@ private fun BeamTrackSelectionDialog(
                             .weight(1f, fill = false)
                             .verticalScroll(rememberScrollState()),
                 ) {
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onTrackSelected(-1)
-                                }.padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = selectedIndex == -1, onClick = { onTrackSelected(-1) })
-                        Spacer(Modifier.width(12.dp))
-                        Text(stringResource(LocalR.string.none), color = Color.White)
-                    }
-                    trackNames.forEachIndexed { index, name ->
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onTrackSelected(index) }
-                                    .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = index == selectedIndex, onClick = { onTrackSelected(index) })
-                            Spacer(Modifier.width(12.dp))
-                            Text(name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (serverAudioTracks.isNotEmpty()) {
+                        serverAudioTracks.forEach { track ->
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onStreamSelected?.invoke(track.streamIndex) }
+                                        .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = track.isSelected,
+                                    onClick = { onStreamSelected?.invoke(track.streamIndex) },
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    track.label,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    } else {
+                        val trackNames = trackGroups.getTrackNames(mediaStreams)
+                        val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
+
+                        if (trackType == C.TRACK_TYPE_TEXT) {
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onTrackSelected(-1)
+                                        }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(selected = selectedIndex == -1, onClick = { onTrackSelected(-1) })
+                                Spacer(Modifier.width(12.dp))
+                                Text(stringResource(LocalR.string.none), color = Color.White)
+                            }
+                        }
+                        trackNames.forEachIndexed { index, name ->
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onTrackSelected(index) }
+                                        .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(selected = index == selectedIndex, onClick = { onTrackSelected(index) })
+                                Spacer(Modifier.width(12.dp))
+                                Text(name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }

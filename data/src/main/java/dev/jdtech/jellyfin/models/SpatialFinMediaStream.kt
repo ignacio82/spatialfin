@@ -1,10 +1,13 @@
 package dev.jdtech.jellyfin.models
 
+import android.os.Parcelable
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import kotlinx.parcelize.Parcelize
 import org.jellyfin.sdk.model.api.MediaStream
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.VideoRangeType
 
+@Parcelize
 data class SpatialFinMediaStream(
     val index: Int?,
     val title: String,
@@ -19,7 +22,8 @@ data class SpatialFinMediaStream(
     val height: Int?,
     val width: Int?,
     val videoDoViTitle: String?,
-)
+    val isDefault: Boolean = false,
+) : Parcelable
 
 fun MediaStream.toSpatialFinMediaStream(jellyfinRepository: JellyfinRepository): SpatialFinMediaStream {
     return SpatialFinMediaStream(
@@ -38,6 +42,7 @@ fun MediaStream.toSpatialFinMediaStream(jellyfinRepository: JellyfinRepository):
         height = height,
         width = width,
         videoDoViTitle = videoDoViTitle,
+        isDefault = isDefault ?: false,
     )
 }
 

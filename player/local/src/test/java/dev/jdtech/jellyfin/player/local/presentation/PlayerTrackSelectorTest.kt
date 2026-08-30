@@ -10,6 +10,7 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
+import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import io.mockk.every
 import io.mockk.mockk
@@ -239,5 +240,72 @@ class PlayerTrackSelectorTest {
         selector.applySmart()
 
         assertFalse("Forced subtitles should not be enabled if disabled in preferences", visualSubtitlesEnabled)
+    }
+
+    @Test
+    fun `auto selects audio track using MediaStreams metadata when container language tag is missing`() {
+        val mediaItem = createMediaItem("item8")
+        every { player.currentMediaItem } returns mediaItem
+        every { host.currentPlayerItem() } returns createPlayerItem()
+
+        // Track 1 is Portuguese; Track 2 has no language/label in container (like MKV with missing lang tag)
+        val audioGroup1 = createAudioGroup("por", "Brazilian")
+        val audioGroup2 = createAudioGroup(null, "")
+
+        val tracks = Tracks(listOf(audioGroup1, audioGroup2))
+        every { player.currentTracks } returns tracks
+        every { player.trackSelectionParameters } returns TrackSelectionParameters.DEFAULT_WITHOUT_CONTEXT
+
+        val stream1 = createMediaStream(index = 1, language = "por", title = "Brazilian", displayTitle = "Brazilian - Portuguese")
+        val stream2 = createMediaStream(index = 2, language = "eng", title = "", displayTitle = "English - Dolby Digital Plus")
+        every { host.currentMediaSourceStreams } returns listOf(stream1, stream2)
+
+        selector.applySmart()
+
+        val slot = slot<TrackSelectionParameters>()
+        verify { player.trackSelectionParameters = capture(slot) }
+        val overrides = slot.captured.overrides
+        assertEquals("Should select audio track override for English stream", 1, overrides.size)
+        assertEquals(audioGroup2.mediaTrackGroup, overrides.keys.first())
+    }
+
+    @Test
+    fun `getTrackNames falls back to MediaStreams metadata when container format is missing language and label`() {
+        val audioGroup1 = createAudioGroup("por", "Brazilian")
+        val audioGroup2 = createAudioGroup(null, "")
+
+        val stream1 = createMediaStream(index = 1, language = "por", title = "Brazilian", displayTitle = "Brazilian - Portuguese")
+        val stream2 = createMediaStream(index = 2, language = "eng", title = "", displayTitle = "English - Dolby Digital Plus")
+        val streams = listOf(stream1, stream2)
+
+        val trackNames = listOf(audioGroup1, audioGroup2).getTrackNames(streams)
+        assertEquals(2, trackNames.size)
+        assertTrue("Track 1 should include Brazilian or Portuguese", trackNames[0].contains("Brazilian") || trackNames[0].contains("Portuguese"))
+        assertTrue("Track 2 should resolve English from MediaStreams", trackNames[1].contains("English"))
+    }
+
+    private fun createMediaStream(
+        index: Int,
+        language: String,
+        title: String = "",
+        displayTitle: String? = null,
+        type: org.jellyfin.sdk.model.api.MediaStreamType = org.jellyfin.sdk.model.api.MediaStreamType.AUDIO,
+        codec: String = "eac3",
+    ): dev.jdtech.jellyfin.models.SpatialFinMediaStream {
+        return dev.jdtech.jellyfin.models.SpatialFinMediaStream(
+            index = index,
+            title = title,
+            displayTitle = displayTitle,
+            language = language,
+            type = type,
+            codec = codec,
+            isExternal = false,
+            path = null,
+            channelLayout = "5.1",
+            videoRangeType = null,
+            height = null,
+            width = null,
+            videoDoViTitle = null,
+        )
     }
 }

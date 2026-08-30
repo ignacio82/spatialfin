@@ -6,11 +6,13 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
-import dev.jdtech.jellyfin.player.local.presentation.PlayerTrackSignatures
+import dev.jdtech.jellyfin.player.local.domain.pairedStream
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
 import dev.jdtech.jellyfin.settings.language.SeriesLanguageOverride
+import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
 
 /**
@@ -29,11 +31,26 @@ internal class PlayerTrackSelector(
 
     interface Host {
         val player: Player
+        val currentMediaSourceStreams: List<SpatialFinMediaStream>
+            get() = emptyList()
         fun currentPlayerItem(): PlayerItem?
         fun setVisualSubtitlesEnabled(enabled: Boolean)
     }
 
     private var lastAutoLanguageSelectionMediaId: String? = null
+    private var requestedAudioStreamIndex: Int? = null
+    private var requestedSubtitleStreamIndex: Int? = null
+    private var requestedSubtitlesDisabled: Boolean = false
+
+    fun setRequestedTracks(
+        audioStreamIndex: Int?,
+        subtitleStreamIndex: Int?,
+        subtitlesDisabled: Boolean = false,
+    ) {
+        requestedAudioStreamIndex = audioStreamIndex
+        requestedSubtitleStreamIndex = subtitleStreamIndex
+        requestedSubtitlesDisabled = subtitlesDisabled
+    }
 
     /** Called from `onMediaItemTransition` so the next track apply pass re-runs smart selection. */
     fun resetAutoSelection() {
@@ -92,35 +109,44 @@ internal class PlayerTrackSelector(
         val inferredOriginalAudio = inferOriginalAudioLanguage(audioGroups, spokenLanguages)
         val seriesOverrideAudio = seriesOverride?.audioLanguageCode
         val seriesOverrideAudioSignature = seriesOverride?.audioTrackSignature
-        val selectedAudioGroup =
-            when {
-                seriesOverrideAudioSignature != null ->
-                    audioGroups.firstOrNull { group ->
-                        audioTrackSignature(group) == seriesOverrideAudioSignature
-                    } ?: audioGroups.firstOrNull {
-                        seriesOverrideAudio != null && groupMatchesLanguage(it, seriesOverrideAudio)
-                    } ?: audioGroups.first()
-                seriesOverrideAudio != null ->
-                    audioGroups.firstOrNull {
-                        groupMatchesLanguage(it, seriesOverrideAudio)
-                    } ?: audioGroups.first()
-                !preferredAudioForContent.isNullOrBlank() ->
-                    audioGroups.firstOrNull {
-                        groupMatchesLanguage(it, preferredAudioForContent)
-                    } ?: audioGroups.first()
-                appPreferences.getValue(appPreferences.smartPreferOriginalAudio) &&
-                    inferredOriginalAudio != null -> {
-                    audioGroups.firstOrNull {
-                        groupMatchesLanguage(it, inferredOriginalAudio)
-                    } ?: audioGroups.first()
-                }
-                else ->
-                    spokenLanguages.firstNotNullOfOrNull { preferredCode ->
-                        audioGroups.firstOrNull { group ->
-                            groupMatchesLanguage(group, preferredCode)
-                        }
-                    } ?: audioGroups.first()
+
+        val requestedAudioGroup = if (requestedAudioStreamIndex != null) {
+            audioGroups.firstOrNull { group ->
+                matchingMediaStream(group)?.index == requestedAudioStreamIndex
+            } ?: audioGroups.getOrNull(
+                host.currentMediaSourceStreams.filter { it.type == MediaStreamType.AUDIO }
+                    .indexOfFirst { it.index == requestedAudioStreamIndex }
+            )
+        } else null
+
+        val selectedAudioGroup = requestedAudioGroup ?: when {
+            seriesOverrideAudioSignature != null ->
+                audioGroups.firstOrNull { group ->
+                    audioTrackSignature(group) == seriesOverrideAudioSignature
+                } ?: audioGroups.firstOrNull {
+                    seriesOverrideAudio != null && groupMatchesLanguage(it, seriesOverrideAudio)
+                } ?: audioGroups.first()
+            seriesOverrideAudio != null ->
+                audioGroups.firstOrNull {
+                    groupMatchesLanguage(it, seriesOverrideAudio)
+                } ?: audioGroups.first()
+            !preferredAudioForContent.isNullOrBlank() ->
+                audioGroups.firstOrNull {
+                    groupMatchesLanguage(it, preferredAudioForContent)
+                } ?: audioGroups.first()
+            appPreferences.getValue(appPreferences.smartPreferOriginalAudio) &&
+                inferredOriginalAudio != null -> {
+                audioGroups.firstOrNull {
+                    groupMatchesLanguage(it, inferredOriginalAudio)
+                } ?: audioGroups.first()
             }
+            else ->
+                spokenLanguages.firstNotNullOfOrNull { preferredCode ->
+                    audioGroups.firstOrNull { group ->
+                        groupMatchesLanguage(group, preferredCode)
+                    }
+                } ?: audioGroups.first()
+        }
 
         val selectedAudioLanguage = groupPrimaryLanguage(selectedAudioGroup)
         val audioUnderstood =
@@ -137,8 +163,22 @@ internal class PlayerTrackSelector(
 
         val seriesOverrideSubtitle = seriesOverride?.subtitleLanguageCode
         val seriesOverrideSubtitleSignature = seriesOverride?.subtitleTrackSignature
+
+        val requestedSubtitleGroup = if (requestedSubtitleStreamIndex != null) {
+            subtitleGroups.firstOrNull { group ->
+                matchingMediaStream(group)?.index == requestedSubtitleStreamIndex
+            } ?: subtitleGroups.getOrNull(
+                host.currentMediaSourceStreams.filter { it.type == MediaStreamType.SUBTITLE }
+                    .indexOfFirst { it.index == requestedSubtitleStreamIndex }
+            )
+        } else null
+
         var selectedSubtitleGroup =
-            if (seriesOverride?.subtitlesEnabled == false) {
+            if (requestedSubtitlesDisabled) {
+                null
+            } else if (requestedSubtitleGroup != null) {
+                requestedSubtitleGroup
+            } else if (seriesOverride?.subtitlesEnabled == false) {
                 null
             } else if (seriesOverrideSubtitleSignature != null) {
                 // Explicit user pick by signature — respect even a forced/signs track.
@@ -162,7 +202,7 @@ internal class PlayerTrackSelector(
 
         // If we want subtitles because the audio is foreign or it's anime, but couldn't find a language match,
         // fall back to a default or single available track rather than silently disabling subtitles.
-        if (selectedSubtitleGroup == null && (!audioUnderstood || isAnime) && seriesOverride?.subtitlesEnabled != false) {
+        if (selectedSubtitleGroup == null && !requestedSubtitlesDisabled && requestedSubtitleStreamIndex == null && (!audioUnderstood || isAnime) && seriesOverride?.subtitlesEnabled != false) {
             selectedSubtitleGroup = subtitleGroups.firstOrNull { (it.getTrackFormat(0).selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0 }
                 ?: subtitleGroups.takeIf { it.size == 1 }?.firstOrNull()
         }
@@ -174,6 +214,8 @@ internal class PlayerTrackSelector(
         // per-series disables and manual signature picks, and skip if the user opted out.
         if (
             selectedSubtitleGroup == null &&
+            !requestedSubtitlesDisabled &&
+            requestedSubtitleStreamIndex == null &&
             audioUnderstood &&
             seriesOverride?.subtitlesEnabled != false &&
             seriesOverrideSubtitleSignature == null &&
@@ -190,39 +232,69 @@ internal class PlayerTrackSelector(
             .buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setPreferredAudioLanguage(selectedAudioLanguage)
             .setOverrideForType(
-                TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0)
+                TrackSelectionOverride(selectedAudioGroup.mediaTrackGroup, 0),
             )
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
 
         if (selectedSubtitleGroup != null) {
             host.setVisualSubtitlesEnabled(true)
-            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            builder.setOverrideForType(
-                TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0)
-            )
-            builder.setIgnoredTextSelectionFlags(0)
+            builder
+                .setOverrideForType(
+                    TrackSelectionOverride(selectedSubtitleGroup.mediaTrackGroup, 0),
+                )
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setIgnoredTextSelectionFlags(0)
         } else {
             host.setVisualSubtitlesEnabled(false)
             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         }
 
+        if (requestedAudioGroup != null) {
+            persistSeriesLanguageOverride(
+                trackType = C.TRACK_TYPE_AUDIO,
+                languageCode = selectedAudioLanguage,
+                trackSignature = audioTrackSignature(selectedAudioGroup),
+                enabled = true,
+            )
+        }
+        if (requestedSubtitlesDisabled) {
+            persistSeriesLanguageOverride(
+                trackType = C.TRACK_TYPE_TEXT,
+                languageCode = null,
+                trackSignature = null,
+                enabled = false,
+            )
+        } else if (requestedSubtitleGroup != null) {
+            persistSeriesLanguageOverride(
+                trackType = C.TRACK_TYPE_TEXT,
+                languageCode = groupPrimaryLanguage(requestedSubtitleGroup),
+                trackSignature = subtitleTrackSignature(requestedSubtitleGroup),
+                enabled = true,
+            )
+        }
+
         player.trackSelectionParameters = builder.build()
         lastAutoLanguageSelectionMediaId = mediaId
 
-        Timber.d(
-            "Smart language track prefs: isAnime=%b preferOriginal=%b contentAudio=%s contentSubtitle=%s seriesOverride=%s inferredOriginal=%s spoken=%s selectedAudio=%s subtitlesDisabled=%b selectedSubtitle=%s subtitleSignature=%s",
-            isAnime,
-            appPreferences.getValue(appPreferences.smartPreferOriginalAudio),
-            preferredAudioForContent,
-            preferredSubtitleForContent,
-            seriesOverride,
-            inferredOriginalAudio,
-            spokenLanguages.joinToString(","),
+        val wasRequestedAudio = requestedAudioStreamIndex
+        val wasRequestedSub = requestedSubtitleStreamIndex
+        val wasRequestedDisabled = requestedSubtitlesDisabled
+
+        requestedAudioStreamIndex = null
+        requestedSubtitleStreamIndex = null
+        requestedSubtitlesDisabled = false
+
+        Timber.i(
+            "Smart language track apply: mediaId=%s requestedAudio=%s requestedSub=%s requestedSubDisabled=%b selectedAudio=%s (lang=%s) selectedSubtitle=%s (disabled=%b)",
+            mediaId,
+            wasRequestedAudio,
+            wasRequestedSub,
+            wasRequestedDisabled,
+            audioTrackSignature(selectedAudioGroup),
             selectedAudioLanguage,
-            selectedSubtitleGroup == null,
-            groupPrimaryLanguage(selectedSubtitleGroup),
             selectedSubtitleGroup?.let(::subtitleTrackSignature),
+            selectedSubtitleGroup == null,
         )
     }
 
@@ -340,24 +412,50 @@ internal class PlayerTrackSelector(
         } ?: availableLanguages.first()
     }
 
+    /**
+     * Jellyfin's metadata for [group], when it can be attributed with
+     * confidence. See [pairedStream] — during a transcode the player's track
+     * list and the source's stream list do not correspond, and guessing there
+     * would mislabel the one delivered track.
+     */
+    private fun matchingMediaStream(group: Tracks.Group): SpatialFinMediaStream? =
+        group.pairedStream(
+            allGroups = host.player.currentTracks.groups.filter { it.type == group.type },
+            mediaStreams = host.currentMediaSourceStreams,
+        )
+
     private fun groupPrimaryLanguage(group: Tracks.Group?): String? {
         if (group == null) return null
-        return (0 until group.length)
+        val fromFormat = (0 until group.length)
             .mapNotNull { index ->
+                val format = group.getTrackFormat(index)
                 LanguageCatalog.normalize(
                     application,
-                    group.getTrackFormat(index).language ?: group.getTrackFormat(index).label,
+                    format.language?.takeUnless { it.equals("und", ignoreCase = true) } ?: format.label,
                 )
             }
             .firstOrNull()
+        if (fromFormat != null) return fromFormat
+
+        val stream = matchingMediaStream(group) ?: return null
+        val streamCandidate = stream.language.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
+            ?: stream.title.takeIf { it.isNotBlank() }
+            ?: stream.displayTitle?.takeIf { it.isNotBlank() }
+        return LanguageCatalog.normalize(application, streamCandidate)
     }
 
     private fun groupMatchesLanguage(group: Tracks.Group, languageCode: String): Boolean {
-        return (0 until group.length).any { index ->
+        val formatMatch = (0 until group.length).any { index ->
             val format = group.getTrackFormat(index)
             LanguageCatalog.matches(application, format.language, languageCode) ||
                 LanguageCatalog.matches(application, format.label, languageCode)
         }
+        if (formatMatch) return true
+
+        val stream = matchingMediaStream(group) ?: return false
+        return LanguageCatalog.matches(application, stream.language, languageCode) ||
+            LanguageCatalog.matches(application, stream.title, languageCode) ||
+            LanguageCatalog.matches(application, stream.displayTitle, languageCode)
     }
 
     private fun persistSeriesLanguageOverride(
@@ -388,11 +486,40 @@ internal class PlayerTrackSelector(
         Timber.d("Saved series language override seriesId=%s override=%s", seriesId, updatedOverride)
     }
 
-    private fun subtitleTrackSignature(group: Tracks.Group): String =
-        PlayerTrackSignatures.subtitle(group)
+    private fun subtitleTrackSignature(group: Tracks.Group): String {
+        val format = group.getTrackFormat(0)
+        val stream = matchingMediaStream(group)
+        val language = format.language?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
+            ?: stream?.language?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
+        val label = format.label?.takeIf { it.isNotBlank() }
+            ?: stream?.title?.takeIf { it.isNotBlank() }
+            ?: stream?.displayTitle
+        return PlayerTrackSignatures.subtitle(
+            language = language,
+            label = label,
+            roleFlags = format.roleFlags,
+            selectionFlags = format.selectionFlags,
+            mimeType = format.sampleMimeType ?: stream?.codec,
+        )
+    }
 
-    private fun audioTrackSignature(group: Tracks.Group): String =
-        PlayerTrackSignatures.audio(group)
+    private fun audioTrackSignature(group: Tracks.Group): String {
+        val format = group.getTrackFormat(0)
+        val stream = matchingMediaStream(group)
+        val language = format.language?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
+            ?: stream?.language?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
+        val label = format.label?.takeIf { it.isNotBlank() }
+            ?: stream?.title?.takeIf { it.isNotBlank() }
+            ?: stream?.displayTitle
+        return PlayerTrackSignatures.audio(
+            language = language,
+            label = label,
+            roleFlags = format.roleFlags,
+            selectionFlags = format.selectionFlags,
+            mimeType = format.sampleMimeType ?: stream?.codec,
+            codecs = format.codecs ?: stream?.codec,
+        )
+    }
 
     /**
      * Automatic dialogue-subtitle picker: finds the best full-dialogue subtitle group for
@@ -463,7 +590,8 @@ internal class PlayerTrackSelector(
         preferredLanguageCode: String?,
     ): Int {
         val format = group.getTrackFormat(0)
-        val label = format.label.orEmpty().lowercase()
+        val stream = matchingMediaStream(group)
+        val label = (format.label?.takeIf { it.isNotBlank() } ?: stream?.title ?: stream?.displayTitle).orEmpty().lowercase()
         var score = 0
 
         if (preferredLanguageCode != null && groupMatchesLanguage(group, preferredLanguageCode)) {
@@ -475,10 +603,10 @@ internal class PlayerTrackSelector(
         if (label.contains("default")) {
             score += 30
         }
-        if ((format.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0) {
+        if ((format.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0 || stream?.displayTitle?.contains("Default", ignoreCase = true) == true) {
             score += 25
         }
-        if ((format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0) {
+        if ((format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0 || stream?.displayTitle?.contains("Forced", ignoreCase = true) == true) {
             score -= 40
         }
         if (label.contains("sign") || label.contains("song")) {

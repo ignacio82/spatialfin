@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.player.local.presentation
 
 import androidx.media3.common.C
 import androidx.media3.common.Tracks
+import dev.jdtech.jellyfin.models.SubtitleTrackRole
 
 /**
  * Pure, unit-testable predicates over track formats used by [PlayerTrackSelector].
@@ -17,27 +18,6 @@ import androidx.media3.common.Tracks
  * session — keeping the policy identical across direct playback and casting.
  */
 object PlayerTrackHeuristics {
-
-    /**
-     * Matches labels of forced / signs-only sibling subtitle tracks as whole words, so
-     * "Designer's Cut" or "Assigned" don't accidentally look forced. Covers common muxes:
-     * "Forced", "English (Forced)", "Signs", "Signs & Songs", "Songs".
-     */
-    /**
-     * Matches labels of forced / signs-only sibling subtitle tracks as whole words, so
-     * "Designer's Cut" or "Assigned" don't accidentally look forced. Covers common muxes:
-     * "Forced", "English (Forced)", "Foreign Dialogue", "Foreign Parts", "Foreign Spoken",
-     * "Foreign Language", "Non-English", "Force", "Signs", "Signs & Songs", "Songs", "S&S",
-     * "S+S", "S/S", "Narrative", "Partly Foreign".
-     */
-    private val FORCED_LABEL_PATTERN = Regex(
-        """\b(forced?|foreign|narrative|non[-_\s]?english|signs?|songs?|short|partly)\b|s[&+/]s""",
-        RegexOption.IGNORE_CASE,
-    )
-    private val FULL_DIALOGUE_LABEL_PATTERN = Regex(
-        """\b(full|dialogue?|subtitles?)\b""",
-        RegexOption.IGNORE_CASE,
-    )
 
     /**
      * Returns true when a subtitle track is marked forced or is clearly a signs/songs/foreign-dialogue
@@ -56,17 +36,12 @@ object PlayerTrackHeuristics {
      * Full Dialogue / Forced / Foreign Dialogue without setting the selection flag correctly.
      */
     fun isForcedOrSignsOnly(label: String?, selectionFlags: Int): Boolean {
-        val normalized = label.orEmpty()
-        if (
-            normalized.isNotBlank() &&
-                FULL_DIALOGUE_LABEL_PATTERN.containsMatchIn(normalized) &&
-                !FORCED_LABEL_PATTERN.containsMatchIn(normalized)
-        ) {
-            return false
-        }
+        // An explicit "Full Dialogue" marking outranks even the container's
+        // forced flag: muxes set that bit wrong far more often than they
+        // mislabel the track.
+        if (SubtitleTrackRole.isFullDialogueLabel(label)) return false
         if ((selectionFlags and C.SELECTION_FLAG_FORCED) != 0) return true
-        if (normalized.isEmpty()) return false
-        return FORCED_LABEL_PATTERN.containsMatchIn(normalized)
+        return SubtitleTrackRole.isForcedOrSignsOnlyLabel(label)
     }
 
     fun isForcedOrSignsOnly(group: Tracks.Group): Boolean {

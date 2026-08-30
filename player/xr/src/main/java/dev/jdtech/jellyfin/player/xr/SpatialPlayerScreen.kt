@@ -254,6 +254,9 @@ fun SpatialPlayerScreen(
     startFromBeginning: Boolean,
     mediaSourceIndex: Int? = null,
     maxBitrate: Long? = null,
+    audioStreamIndex: Int? = null,
+    subtitleStreamIndex: Int? = null,
+    subtitlesDisabled: Boolean = false,
     openSyncPlayDialogOnStart: Boolean = false,
     libassRenderer: LibassRenderer?,
     onSearchQuery: suspend (String) -> List<SpatialFinItem>,
@@ -642,6 +645,7 @@ fun SpatialPlayerScreen(
             voiceSearchResults = voiceSearchResults,
             recommendationContext = voice.recommendationContext,
             passthroughEnabled = passthroughEnabled,
+            mediaStreams = uiState.currentMediaStreams,
         )
 
     // Re-anchor the immersive 180/360 surface onto the viewer's current head
@@ -956,6 +960,7 @@ fun SpatialPlayerScreen(
                 voiceSearchResults = voiceSearchResults,
                 recommendationContext = voice.recommendationContext,
                 passthroughEnabled = passthroughEnabled,
+                mediaStreams = uiState.currentMediaStreams,
             ),
             controller = sessionController,
             telemetryStore = telemetryStore,
@@ -966,10 +971,10 @@ fun SpatialPlayerScreen(
                 spokenRepliesEnabled = assistantSpokenReplies,
             ),
             responseLanguageHint =
-                selectedTrackLanguage(player, C.TRACK_TYPE_TEXT)
-                    ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO)
-                    ?: selectedTrackName(player, C.TRACK_TYPE_TEXT)
-                    ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO),
+                selectedTrackLanguage(player, C.TRACK_TYPE_TEXT, uiState.currentMediaStreams)
+                    ?: selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO, uiState.currentMediaStreams)
+                    ?: selectedTrackName(player, C.TRACK_TYPE_TEXT, uiState.currentMediaStreams)
+                    ?: selectedTrackName(player, C.TRACK_TYPE_AUDIO, uiState.currentMediaStreams),
             conversationHistory = voice.conversationHistory,
             onConversationTurn = { q, a ->
                 voice.conversationHistory.add(q to a)
@@ -1789,7 +1794,10 @@ fun SpatialPlayerScreen(
     val playerMediaKey = when {
         localMediaId != null -> "local:$localMediaId:start=$startFromBeginning"
         networkVideoId != null -> "network:$networkVideoId:start=$startFromBeginning"
-        itemId != null -> "jellyfin:$itemId:kind=$itemKind:start=$startFromBeginning:source=${mediaSourceIndex ?: -1}:bitrate=${maxBitrate ?: 0L}"
+        itemId != null ->
+            "jellyfin:$itemId:kind=$itemKind:start=$startFromBeginning:source=${mediaSourceIndex ?: -1}" +
+                ":bitrate=${maxBitrate ?: 0L}:audio=${audioStreamIndex ?: -1}" +
+                ":sub=${subtitleStreamIndex ?: -1}:subOff=$subtitlesDisabled"
         universalVideoUrl != null && universalItemId != null && universalPluginId != null ->
             "universal:$universalPluginId:$universalItemId:$universalVideoUrl"
         else -> null
@@ -1839,6 +1847,9 @@ fun SpatialPlayerScreen(
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
                     )
                 }
                 universalVideoUrl != null && universalItemId != null && universalPluginId != null -> {
@@ -2537,6 +2548,11 @@ fun SpatialPlayerScreen(
                                 trackType = C.TRACK_TYPE_AUDIO,
                                 onTrackSelected = { index -> viewModel.switchToTrack(C.TRACK_TYPE_AUDIO, index) },
                                 onDismiss = { activeDialog = null },
+                                mediaStreams = uiState.currentMediaStreams,
+                                activeAudioStreamIndex = uiState.currentAudioStreamIndex,
+                                onAudioStreamSelected = { streamIndex ->
+                                    viewModel.changeAudioStream(streamIndex)
+                                },
                             )
                         }
                     }
@@ -2550,6 +2566,7 @@ fun SpatialPlayerScreen(
                                 onDismiss = { activeDialog = null },
                                 onSearchSubtitles = { activeDialog = "search_subtitles" },
                                 visualSubtitlesEnabled = uiState.visualSubtitlesEnabled,
+                                mediaStreams = uiState.currentMediaStreams,
                             )
                         }
                     }

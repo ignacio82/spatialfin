@@ -3,7 +3,8 @@ package dev.spatialfin.companion.host
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.wifi.WifiManager
+import android.net.ConnectivityManager
+import android.net.wifi.WifiInfo
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -51,8 +52,19 @@ class WearVitalsCollector @Inject constructor(
 
         var wifiSpeedMbps = -1
         try {
-            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val info = wifiManager?.connectionInfo
+            // NOT WifiManager.getConnectionInfo(): deprecated in API 31, and the watch
+            // only ever wants the link speed of whatever network is actually carrying
+            // traffic — which on a headset can be a second interface.
+            //
+            // linkSpeed is not one of WifiInfo's location-sensitive fields, so it
+            // survives the redaction applied without a location grant; SSID and BSSID
+            // would not, and are not read here. Needs ACCESS_NETWORK_STATE, declared
+            // in this module's manifest.
+            val connectivityManager = context.applicationContext
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val capabilities = connectivityManager?.activeNetwork
+                ?.let { connectivityManager.getNetworkCapabilities(it) }
+            val info = capabilities?.transportInfo as? WifiInfo
             if (info != null) {
                 wifiSpeedMbps = info.linkSpeed
             }

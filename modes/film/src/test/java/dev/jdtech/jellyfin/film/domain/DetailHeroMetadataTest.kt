@@ -15,6 +15,9 @@ import org.junit.Test
 class DetailHeroMetadataTest {
     private fun stream(
         type: MediaStreamType,
+        index: Int = 0,
+        title: String = "",
+        displayTitle: String? = null,
         language: String = "",
         width: Int? = null,
         height: Int? = null,
@@ -22,9 +25,9 @@ class DetailHeroMetadataTest {
         doVi: String? = null,
         channels: String? = null,
     ) = SpatialFinMediaStream(
-        index = 0,
-        title = "",
-        displayTitle = null,
+        index = index,
+        title = title,
+        displayTitle = displayTitle,
         language = language,
         type = type,
         codec = "hevc",
@@ -138,6 +141,83 @@ class DetailHeroMetadataTest {
         assertEquals("SPA - 2.0", hero.audio)
     }
 
+    /**
+     * Silo S3:E2 — Portuguese-default audio, English audio track, and 44
+     * subtitle tracks whose first entry is Portuguese. A viewer configured for
+     * English must not be told Portuguese subtitles are about to play.
+     */
+    @Test
+    fun `understood audio leaves subtitles off rather than picking the first track`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "por", channels = "5.1"),
+                stream(MediaStreamType.AUDIO, index = 2, language = "eng", channels = "5.1"),
+                stream(MediaStreamType.SUBTITLE, index = 3, language = "por"),
+                stream(MediaStreamType.SUBTITLE, index = 4, language = "por", displayTitle = "Brazilian (Forced) - Portuguese"),
+                stream(MediaStreamType.SUBTITLE, index = 14, language = "eng"),
+            )
+        ).detailHeroMetadata(
+            preferredAudioLanguage = "eng",
+            preferredSubtitleLanguage = "eng",
+            spokenLanguages = listOf("eng"),
+        )
+
+        assertEquals("ENG - 5.1", hero.audio)
+        assertEquals(2, hero.audioStreamIndex)
+        assertEquals("Off", hero.subtitle)
+        assertNull(hero.subtitleStreamIndex)
+    }
+
+    @Test
+    fun `foreign audio picks the full dialogue track in a language the viewer reads`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "jpn", channels = "5.1"),
+                stream(MediaStreamType.SUBTITLE, index = 2, language = "eng", displayTitle = "English (Signs & Songs)"),
+                stream(MediaStreamType.SUBTITLE, index = 3, language = "eng", displayTitle = "English (Full Dialogue)"),
+            )
+        ).detailHeroMetadata(
+            preferredSubtitleLanguage = "eng",
+            spokenLanguages = listOf("eng"),
+        )
+
+        // Not the signs-only sibling, which would leave the dialogue untranslated.
+        assertEquals(3, hero.subtitleStreamIndex)
+    }
+
+    @Test
+    fun `understood audio still surfaces a forced track for foreign dialogue`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "eng", channels = "5.1"),
+                stream(MediaStreamType.SUBTITLE, index = 2, language = "eng", displayTitle = "English (Forced)"),
+                stream(MediaStreamType.SUBTITLE, index = 3, language = "eng", displayTitle = "English"),
+            )
+        ).detailHeroMetadata(
+            preferredAudioLanguage = "eng",
+            spokenLanguages = listOf("eng"),
+        )
+
+        assertEquals(2, hero.subtitleStreamIndex)
+    }
+
+    @Test
+    fun `an explicit subtitle pick overrides the smart default`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "eng", channels = "5.1"),
+                stream(MediaStreamType.SUBTITLE, index = 3, language = "por"),
+            )
+        ).detailHeroMetadata(
+            preferredAudioLanguage = "eng",
+            spokenLanguages = listOf("eng"),
+            selectedSubtitleStreamIndex = 3,
+        )
+
+        assertEquals(3, hero.subtitleStreamIndex)
+        assertEquals("POR", hero.subtitle)
+    }
+
     @Test
     fun `an item with no streams yields no stream chips`() {
         val hero = movie().detailHeroMetadata()
@@ -159,6 +239,48 @@ class DetailHeroMetadataTest {
     fun `runtime under an hour drops the hour part`() {
         assertEquals("47m", formatRuntime(47L * 600_000_000L))
         assertNull(formatRuntime(0L))
+    }
+
+    @Test
+    fun `preferred audio language picks matching audio stream over first stream`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "por", channels = "5.1"),
+                stream(MediaStreamType.AUDIO, index = 2, language = "eng", channels = "5.1"),
+            )
+        ).detailHeroMetadata(preferredAudioLanguage = "en")
+
+        assertEquals("ENG - 5.1", hero.audio)
+    }
+
+    @Test
+    fun `explicitly selected audio and subtitle stream indexes are respected`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "por", channels = "5.1"),
+                stream(MediaStreamType.AUDIO, index = 2, language = "eng", channels = "7.1"),
+                stream(MediaStreamType.SUBTITLE, index = 3, language = "por"),
+                stream(MediaStreamType.SUBTITLE, index = 4, language = "eng", title = "Forced"),
+            )
+        ).detailHeroMetadata(
+            selectedAudioStreamIndex = 2,
+            selectedSubtitleStreamIndex = 4,
+        )
+
+        assertEquals("ENG - 7.1", hero.audio)
+        assertEquals("ENG (Forced)", hero.subtitle)
+    }
+
+    @Test
+    fun `subtitlesDisabled displays Off`() {
+        val hero = movie(
+            streams = listOf(
+                stream(MediaStreamType.AUDIO, index = 1, language = "eng", channels = "5.1"),
+                stream(MediaStreamType.SUBTITLE, index = 2, language = "eng"),
+            )
+        ).detailHeroMetadata(subtitlesDisabled = true)
+
+        assertEquals("Off", hero.subtitle)
     }
 
     @Test

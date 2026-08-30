@@ -1,7 +1,6 @@
 package dev.spatialfin.companion.wear.tiles
 
 import androidx.wear.protolayout.ActionBuilders
-import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.DimensionBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
@@ -21,6 +20,13 @@ import kotlinx.coroutines.guava.future
 import timber.log.Timber
 import javax.inject.Inject
 
+/**
+ * Frame 16 — the Now Playing tile.
+ *
+ * Cover art, the timeline arc, and three real transport targets. Same three
+ * [ActionBuilders.LoadAction] clickables as before, given shapes you can hit
+ * without looking.
+ */
 @AndroidEntryPoint
 class NowPlayingTileService : TileService() {
 
@@ -47,9 +53,12 @@ class NowPlayingTileService : TileService() {
             val nowPlaying = transportManager.nowPlaying.value
             val title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin"
             val isPlaying = nowPlaying?.isPlaying ?: false
-            val subtitle = nowPlaying?.seriesName ?: if (isPlaying) "Playing" else "Ready to play"
+            val position = nowPlaying?.positionSeconds ?: 0L
+            val duration = nowPlaying?.durationSeconds ?: 0L
+            val progress = if (duration > 0) position.toFloat() / duration else 0f
+            val hasArt = transportManager.coverArt.value != null
 
-            val rootLayout = LayoutElementBuilders.Box.Builder()
+            val root = LayoutElementBuilders.Box.Builder()
                 .setWidth(DimensionBuilders.expand())
                 .setHeight(DimensionBuilders.expand())
                 .setModifiers(
@@ -70,116 +79,114 @@ class NowPlayingTileService : TileService() {
                         )
                         .build(),
                 )
+                .apply {
+                    TileChrome.coverArtBackground(hasArt)?.let { addContent(it) }
+                    addContent(TileChrome.scrim())
+                    addContent(TileChrome.progressArcTrack())
+                    addContent(TileChrome.progressArcFill(progress))
+                }
                 .addContent(
                     LayoutElementBuilders.Column.Builder()
                         .setWidth(DimensionBuilders.wrap())
                         .setHeight(DimensionBuilders.wrap())
+                        .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                        .addContent(TileChrome.eyebrow("NOW PLAYING"))
+                        .addContent(TileChrome.spacerH(2f))
+                        .addContent(TileChrome.title(title))
+                        .addContent(TileChrome.spacerH(2f))
                         .addContent(
-                            LayoutElementBuilders.Text.Builder()
-                                .setText(title)
-                                .setFontStyle(
-                                    LayoutElementBuilders.FontStyle.Builder()
-                                        .setColor(ColorBuilders.argb(0xFFA4C9FE.toInt()))
-                                        .build(),
-                                )
-                                .setMaxLines(1)
-                                .build(),
+                            TileChrome.caption("${formatClock(position)} / ${formatClock(duration)}"),
                         )
-                        .addContent(
-                            LayoutElementBuilders.Spacer.Builder()
-                                .setHeight(DimensionBuilders.dp(4f))
-                                .build(),
-                        )
-                        .addContent(
-                            LayoutElementBuilders.Text.Builder()
-                                .setText(subtitle)
-                                .setFontStyle(
-                                    LayoutElementBuilders.FontStyle.Builder()
-                                        .setColor(ColorBuilders.argb(0xFFC4C6D0.toInt()))
-                                        .build(),
-                                )
-                                .setMaxLines(1)
-                                .build(),
-                        )
-                        .addContent(
-                            LayoutElementBuilders.Spacer.Builder()
-                                .setHeight(DimensionBuilders.dp(8f))
-                                .build(),
-                        )
+                        .addContent(TileChrome.spacerH(12f))
                         .addContent(
                             LayoutElementBuilders.Row.Builder()
                                 .setWidth(DimensionBuilders.wrap())
                                 .setHeight(DimensionBuilders.wrap())
-                                .addContent(transportControl("-10", ID_REWIND))
+                                .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
                                 .addContent(
-                                    LayoutElementBuilders.Spacer.Builder()
-                                        .setWidth(DimensionBuilders.dp(12f))
-                                        .build(),
+                                    TileChrome.circleButton(
+                                        glyph = "−10",
+                                        clickableId = ID_REWIND,
+                                        sizeDp = 38f,
+                                        containerColor = TileChrome.COLOR_BUTTON,
+                                        contentColor = TileChrome.COLOR_TITLE,
+                                        fontSize = 12f,
+                                    ),
                                 )
+                                .addContent(TileChrome.spacerW(11f))
                                 .addContent(
-                                    transportControl(if (isPlaying) "⏸" else "▶", ID_PLAY_PAUSE),
+                                    TileChrome.circleButton(
+                                        glyph = if (isPlaying) "▌▌" else "▶",
+                                        clickableId = ID_PLAY_PAUSE,
+                                        sizeDp = 52f,
+                                        containerColor = TileChrome.COLOR_PRIMARY,
+                                        contentColor = TileChrome.COLOR_ON_PRIMARY,
+                                        fontSize = 18f,
+                                    ),
                                 )
+                                .addContent(TileChrome.spacerW(11f))
                                 .addContent(
-                                    LayoutElementBuilders.Spacer.Builder()
-                                        .setWidth(DimensionBuilders.dp(12f))
-                                        .build(),
+                                    TileChrome.circleButton(
+                                        glyph = "+10",
+                                        clickableId = ID_FORWARD,
+                                        sizeDp = 38f,
+                                        containerColor = TileChrome.COLOR_BUTTON,
+                                        contentColor = TileChrome.COLOR_TITLE,
+                                        fontSize = 12f,
+                                    ),
                                 )
-                                .addContent(transportControl("+10", ID_FORWARD))
                                 .build(),
                         )
                         .build(),
                 )
                 .build()
 
-            val timelineEntry = TimelineBuilders.TimelineEntry.Builder()
-                .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(rootLayout).build())
-                .build()
-
-            val timeline = TimelineBuilders.Timeline.Builder()
-                .addTimelineEntry(timelineEntry)
-                .build()
-
             TileBuilders.Tile.Builder()
-                .setResourcesVersion(RESOURCES_VERSION)
-                .setTileTimeline(timeline)
+                .setResourcesVersion(resourcesVersion())
+                .setTileTimeline(
+                    TimelineBuilders.Timeline.Builder()
+                        .addTimelineEntry(
+                            TimelineBuilders.TimelineEntry.Builder()
+                                .setLayout(
+                                    LayoutElementBuilders.Layout.Builder().setRoot(root).build(),
+                                )
+                                .build(),
+                        )
+                        .build(),
+                )
                 .build()
         }
 
     override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest) =
         serviceScope.future {
-            ResourceBuilders.Resources.Builder()
-                .setVersion(RESOURCES_VERSION)
-                .build()
+            val builder = ResourceBuilders.Resources.Builder().setVersion(resourcesVersion())
+            transportManager.coverArt.value?.let { art ->
+                builder.addIdToImageMapping(TileChrome.ID_COVER_ART, TileChrome.inlineCoverArt(art))
+            }
+            builder.build()
         }
 
-    /** A tappable label wired to a LoadAction, identified by [clickableId]. */
-    private fun transportControl(label: String, clickableId: String): LayoutElementBuilders.LayoutElement =
-        LayoutElementBuilders.Text.Builder()
-            .setText(label)
-            .setFontStyle(
-                LayoutElementBuilders.FontStyle.Builder()
-                    .setColor(ColorBuilders.argb(0xFFFFFFFF.toInt()))
-                    .build(),
-            )
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(
-                        ModifiersBuilders.Clickable.Builder()
-                            .setId(clickableId)
-                            .setOnClick(ActionBuilders.LoadAction.Builder().build())
-                            .build(),
-                    )
-                    .setPadding(
-                        ModifiersBuilders.Padding.Builder()
-                            .setAll(DimensionBuilders.dp(6f))
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
+    /**
+     * Keyed on the item, not a constant.
+     *
+     * The system caches tile resources by version string, so a fixed "1" would pin
+     * the first poster the tile ever drew for the life of the install.
+     */
+    private fun resourcesVersion(): String =
+        transportManager.nowPlaying.value?.itemId?.takeIf { it.isNotBlank() } ?: "empty"
+
+    private fun formatClock(totalSeconds: Long): String {
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format("%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
+    }
 
     companion object {
-        private const val RESOURCES_VERSION = "1"
         private const val ID_PLAY_PAUSE = "np_play_pause"
         private const val ID_REWIND = "np_rewind"
         private const val ID_FORWARD = "np_forward"

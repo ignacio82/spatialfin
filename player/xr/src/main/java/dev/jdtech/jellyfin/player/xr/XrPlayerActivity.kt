@@ -105,6 +105,9 @@ class XrPlayerActivity : AppCompatActivity() {
             stereoMode: String = "mono",
             projection: String = ProjectionModeDetector.PROJECTION_FLAT,
             mediaSourceIndex: Int? = null,
+            audioStreamIndex: Int? = null,
+            subtitleStreamIndex: Int? = null,
+            subtitlesDisabled: Boolean = false,
             maxBitrate: Long? = null,
             openSyncPlayDialogOnStart: Boolean = false,
             splitAvVideoRole: Boolean = false,
@@ -117,6 +120,9 @@ class XrPlayerActivity : AppCompatActivity() {
                 putExtra("projection", projection)
                 putExtra("openSyncPlayDialogOnStart", openSyncPlayDialogOnStart)
                 mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
+                audioStreamIndex?.let { putExtra("audioStreamIndex", it) }
+                subtitleStreamIndex?.let { putExtra("subtitleStreamIndex", it) }
+                if (subtitlesDisabled) putExtra("subtitlesDisabled", true)
                 maxBitrate?.let { putExtra("maxBitrate", it) }
                 if (splitAvVideoRole) putExtra(EXTRA_SPLIT_AV_VIDEO_ROLE, true)
             }
@@ -242,6 +248,9 @@ class XrPlayerActivity : AppCompatActivity() {
         val itemKind = extras.getString("itemKind").orEmpty()
         val startFromBeginning = intent.getBooleanExtra("startFromBeginning", false)
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
+        val audioStreamIndex = if (intent.hasExtra("audioStreamIndex")) intent.getIntExtra("audioStreamIndex", -1).takeIf { it >= 0 } else null
+        val subtitleStreamIndex = if (intent.hasExtra("subtitleStreamIndex")) intent.getIntExtra("subtitleStreamIndex", -1).takeIf { it >= 0 } else null
+        val subtitlesDisabled = intent.getBooleanExtra("subtitlesDisabled", false)
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
         currentStereoMode = extras.getString("stereoMode") ?: "mono"
@@ -585,6 +594,9 @@ class XrPlayerActivity : AppCompatActivity() {
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,
                         maxBitrate = maxBitrate,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
                         openSyncPlayDialogOnStart = openSyncPlayDialogOnStart,
                         libassRenderer = libassRenderer,
                         onSearchQuery = { query -> repository.getSearchItems(query) },

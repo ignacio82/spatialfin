@@ -8,6 +8,10 @@ sealed interface MovieAction {
         val mediaSourceIndex: Int? = null,
         val maxBitrate: Long? = null,
         val multitask: Boolean = false,
+        /** Track picked on the detail screen; null defers to preferred-language resolution. */
+        val audioStreamIndex: Int? = null,
+        val subtitleStreamIndex: Int? = null,
+        val subtitlesDisabled: Boolean = false,
     ) : MovieAction
 
     data class SelectVersion(val movieId: UUID) : MovieAction

@@ -232,10 +232,11 @@ internal fun buildTvPlayerSnapshot(
     currentPosition: Long,
     duration: Long,
     controlsVisible: Boolean,
+    mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
 ): PlayerStateSnapshot {
     val groups = player.currentTracks.groups
-    val audioNames = groups.filter { it.type == C.TRACK_TYPE_AUDIO }.getTrackNames().toList()
-    val subtitleNames = groups.filter { it.type == C.TRACK_TYPE_TEXT }.getTrackNames().toList()
+    val audioNames = groups.filter { it.type == C.TRACK_TYPE_AUDIO }.getTrackNames(mediaStreams).toList()
+    val subtitleNames = groups.filter { it.type == C.TRACK_TYPE_TEXT }.getTrackNames(mediaStreams).toList()
     return PlayerStateSnapshot(
         screenContext = VoiceScreenContext.PLAYER,
         isPlaying = player.isPlaying,

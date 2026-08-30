@@ -16,6 +16,7 @@ import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.BulkDownloadResult
 import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
@@ -39,6 +40,8 @@ class TvItemDetailViewModel
 @Inject
 constructor(
     private val repository: JellyfinRepository,
+    /** Read by the detail screen's track chips; see LanguagePreferences. */
+    val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvItemDetailState())
     val state = _state.asStateFlow()

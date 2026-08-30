@@ -126,6 +126,9 @@ private fun launchLibraryItem(
                 putExtra("startFromBeginning", request.startFromBeginning)
                 request.mediaSourceIndex?.let { putExtra("mediaSourceIndex", it) }
                 request.maxBitrate?.let { putExtra("maxBitrate", it) }
+                request.audioStreamIndex?.let { putExtra("audioStreamIndex", it) }
+                request.subtitleStreamIndex?.let { putExtra("subtitleStreamIndex", it) }
+                if (request.subtitlesDisabled) putExtra("subtitlesDisabled", true)
                 if (request.immersive) {
                     putExtra("stereoMode", request.stereoMode)
                     request.projection?.let { putExtra("projection", it) }

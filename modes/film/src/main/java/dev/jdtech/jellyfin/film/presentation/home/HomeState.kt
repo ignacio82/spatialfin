@@ -39,7 +39,14 @@ data class HomeState(
     val isConnectionDegraded: Boolean = false,
     val manualOfflineMode: Boolean = false,
     val syncStatus: OfflineSyncStatus = OfflineSyncStatus(),
-    val isLoading: Boolean = false,
+    /**
+     * Starts true: every shell calls `loadData()` from a `LaunchedEffect` as it
+     * enters, so "loading" is the honest first state. Defaulting to false meant
+     * the first frame rendered the *loaded* layout over empty data — a bare top
+     * bar, no hero, no rows — which read as a broken gray screen for as long as
+     * the first fetch took.
+     */
+    val isLoading: Boolean = true,
     val error: HomeLoadError? = null,
 )
 

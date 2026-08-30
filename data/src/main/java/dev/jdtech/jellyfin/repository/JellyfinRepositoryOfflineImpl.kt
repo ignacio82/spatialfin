@@ -323,7 +323,10 @@ class JellyfinRepositoryOfflineImpl(
     override suspend fun getMediaSources(
         itemId: UUID,
         includePath: Boolean,
-        maxBitrate: Long?
+        maxBitrate: Long?,
+        audioStreamIndex: Int?,
+        subtitleStreamIndex: Int?,
+        mediaSourceId: String?,
     ): List<SpatialFinSource> =
         withContext(Dispatchers.IO) {
             downloadStorageManager.reconcileItem(itemId, jellyfinApi.userId)

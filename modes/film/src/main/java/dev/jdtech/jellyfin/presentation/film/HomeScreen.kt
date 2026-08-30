@@ -68,6 +68,7 @@ import dev.jdtech.jellyfin.presentation.components.HomeRowArrangeState
 import dev.jdtech.jellyfin.presentation.film.components.HomeCarousel
 import dev.jdtech.jellyfin.presentation.film.components.HomeHeader
 import dev.jdtech.jellyfin.presentation.film.components.HomeSection
+import dev.jdtech.jellyfin.presentation.film.components.HomeSkeleton
 import dev.jdtech.jellyfin.presentation.film.components.HomeView
 import dev.jdtech.jellyfin.presentation.player.PlayRequest
 import dev.jdtech.jellyfin.presentation.film.components.ServerSelectionBottomSheet
@@ -410,6 +411,24 @@ private fun HomeScreenLayout(
                         )
                     }
                 }
+                // The shape of the home, not a spinner: the first paint already
+                // has the shelf geometry in place, so nothing jumps when the real
+                // rows land. Suppressed once anything is on screen — a refresh
+                // over cached rows must not blank them out. See HomeSkeleton.
+                if (state.isLoading && orderedRows.isEmpty()) {
+                    item(key = "home_skeleton") {
+                        HomeSkeleton(
+                            modifier = Modifier.padding(start = paddingStart, end = paddingEnd),
+                            // Matches ItemCard(Direction.HORIZONTAL) + HomeSection's LazyRow.
+                            cardWidth = 360.dp,
+                            cardAspect = 1.77f,
+                            cardShape = MaterialTheme.shapes.small,
+                            cardSpacing = MaterialTheme.spacings.default,
+                            // The XR home opens on the Suggestions carousel, not a hero.
+                            showHero = false,
+                        )
+                    }
+                }
                 orderedRows.forEachIndexed { index, row ->
                     item(key = row.id) {
                         row.content(
@@ -431,7 +450,11 @@ private fun HomeScreenLayout(
 
                 // Only while arranging or when all rows have been hidden: the rows
                 // the user switched off, so hiding one from home never becomes a one-way trip.
-                if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
+                // Gated on the load having finished — an empty row list means
+                // "nothing has arrived yet" until then, and offering to restore
+                // hidden rows over a blank screen is how a cold start came to look
+                // like a broken one.
+                if (!state.isLoading && (arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                     item(key = "hidden_home_rows") {
                         HiddenHomeRowsCard(
                             rows = hiddenRows,

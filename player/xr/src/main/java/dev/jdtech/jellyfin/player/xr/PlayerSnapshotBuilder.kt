@@ -3,6 +3,7 @@ package dev.jdtech.jellyfin.player.xr
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import dev.jdtech.jellyfin.models.SpatialFinItem
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.session.voice.VoiceScreenContext
@@ -26,6 +27,7 @@ internal fun buildPlayerStateSnapshot(
     voiceSearchResults: List<SpatialFinItem>,
     recommendationContext: RecommendationContext?,
     passthroughEnabled: Boolean,
+    mediaStreams: List<SpatialFinMediaStream> = emptyList(),
 ): PlayerStateSnapshot =
     PlayerStateSnapshot(
         screenContext = VoiceScreenContext.PLAYER,
@@ -61,13 +63,13 @@ internal fun buildPlayerStateSnapshot(
             .toImmutableList(),
         productionYear = uiState.currentProductionYear,
         officialRating = uiState.currentOfficialRating,
-        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO).toImmutableList(),
-        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT).toImmutableList(),
+        audioTrackNames = trackNames(player, C.TRACK_TYPE_AUDIO, mediaStreams).toImmutableList(),
+        subtitleTrackNames = trackNames(player, C.TRACK_TYPE_TEXT, mediaStreams).toImmutableList(),
         chapterNames = uiState.currentChapters.mapNotNull { it.name }.toImmutableList(),
-        currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO),
-        currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT),
-        currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO),
-        currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT),
+        currentAudioTrack = selectedTrackName(player, C.TRACK_TYPE_AUDIO, mediaStreams),
+        currentSubtitleTrack = selectedTrackName(player, C.TRACK_TYPE_TEXT, mediaStreams),
+        currentAudioLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_AUDIO, mediaStreams),
+        currentSubtitleLanguageCode = selectedTrackLanguage(player, C.TRACK_TYPE_TEXT, mediaStreams),
         inVoiceSearch = voiceSearchOpen,
         voiceSearchQuery = voiceSearchQuery.ifBlank { null },
         voiceSearchResultsCount = voiceSearchResults.size,

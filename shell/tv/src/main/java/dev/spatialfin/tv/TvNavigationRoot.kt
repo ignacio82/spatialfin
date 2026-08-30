@@ -81,6 +81,10 @@ import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
+import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
+import dev.jdtech.jellyfin.film.domain.languagePreferences
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -168,6 +172,7 @@ import dev.jdtech.jellyfin.models.toAudioQueueItem
 import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
 import dev.jdtech.jellyfin.player.tv.TvPlayerActivity
+import dev.jdtech.jellyfin.presentation.film.components.HomeSkeleton
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.getShowDateString
@@ -851,8 +856,23 @@ private fun TvHomeScreen(
                 TvHomeStatusCard(model = model, onReconnect = onRefresh)
             }
         }
-        if (homeState.isLoading) item { TvPlaceholderScreen("Loading your room", "Fetching Continue Watching, Next Up, suggestions, and library rails from Jellyfin.") }
-        else if (homeState.error != null) {
+        // The shape of the home, not a placeholder card: the first paint already
+        // has the hero and rail geometry in place, so nothing jumps when the real
+        // rows land. See HomeSkeleton.
+        if (homeState.isLoading) {
+            item(key = "home_skeleton") {
+                HomeSkeleton(
+                    // Matches TvMediaShelf's landscape rail (Continue Watching / Next Up).
+                    cardWidth = 300.dp,
+                    cardAspect = 16f / 9f,
+                    cardShape = RoundedCornerShape(20.dp),
+                    cardSpacing = 16.dp,
+                    // The hero only renders once a featured item exists, so the
+                    // skeleton has to stand in for it too.
+                    showHero = featuredItems.isEmpty(),
+                )
+            }
+        } else if (homeState.error != null) {
             item { TvPlaceholderScreen("Home unavailable", homeState.error?.message ?: "Failed to load TV home content.") }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -879,8 +899,8 @@ private fun TvHomeScreen(
                 )
             }
             // Only while arranging or when all rows have been hidden: the rows the user switched off, so hiding one
-            // from home never becomes a one-way trip.
-            if ((arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
+            // from home never becomes a one-way trip. Gated on the load having finished — see HomeScreen.
+            if (!homeState.isLoading && (arrangingRowId != null || orderedRows.isEmpty()) && hiddenRows.isNotEmpty()) {
                 item(key = "hidden_home_rows") {
                     HiddenHomeRowsCard(
                         rows = hiddenRows,
@@ -1469,14 +1489,86 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                     else -> Unit
                 }
             }
+            // Pre-playback track selection, resolved the same way as Beam and XR so
+            // the chip, the picker's checkmark and the Play intent all agree.
+            val languagePreferences = remember(context) { viewModel.appPreferences.languagePreferences(context) }
+            var selectedAudioStreamIndex by remember(item.id) { mutableStateOf<Int?>(null) }
+            var selectedSubtitleStreamIndex by remember(item.id) { mutableStateOf<Int?>(null) }
+            var subtitlesDisabled by remember(item.id) { mutableStateOf(false) }
+            var trackPicker by remember(item.id) { mutableStateOf<String?>(null) }
+            val trackHero = item.detailHeroMetadata(
+                languagePreferences = languagePreferences,
+                selectedAudioStreamIndex = selectedAudioStreamIndex,
+                selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
+                subtitlesDisabled = subtitlesDisabled,
+            )
+            val audioStreams = item.sources.firstOrNull()?.mediaStreams.orEmpty()
+                .filter { it.type == org.jellyfin.sdk.model.api.MediaStreamType.AUDIO }
+            val subtitleStreams = item.sources.firstOrNull()?.mediaStreams.orEmpty()
+                .filter { it.type == org.jellyfin.sdk.model.api.MediaStreamType.SUBTITLE }
+
+            when (trackPicker) {
+                "audio" -> TvOverflowSheet(
+                    title = "Audio track",
+                    actions = audioStreams.map { stream ->
+                        TvOverflowAction(
+                            id = "audio-${stream.index}",
+                            icon = if (stream.index == trackHero.audioStreamIndex) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                            label = stream.displayTitle?.takeIf { it.isNotBlank() }
+                                ?: listOfNotNull(
+                                    dev.jdtech.jellyfin.models.MediaStreamLanguage.displayCode(stream) ?: "Unknown",
+                                    stream.title.takeIf { it.isNotBlank() },
+                                ).joinToString(" - "),
+                            subtitle = listOfNotNull(
+                                stream.codec.takeIf { it.isNotBlank() }?.uppercase(java.util.Locale.US),
+                                stream.channelLayout?.takeIf { it.isNotBlank() },
+                            ).joinToString(" · ").takeIf { it.isNotBlank() },
+                            onClick = { selectedAudioStreamIndex = stream.index; trackPicker = null },
+                        )
+                    },
+                    onDismissRequest = { trackPicker = null },
+                )
+                "subtitle" -> TvOverflowSheet(
+                    title = "Subtitle track",
+                    actions = buildList {
+                        add(
+                            TvOverflowAction(
+                                id = "subtitle-off",
+                                icon = if (trackHero.subtitleStreamIndex == null) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                label = "Off",
+                                onClick = { selectedSubtitleStreamIndex = null; subtitlesDisabled = true; trackPicker = null },
+                            )
+                        )
+                        subtitleStreams.forEach { stream ->
+                            add(
+                                TvOverflowAction(
+                                    id = "subtitle-${stream.index}",
+                                    icon = if (stream.index == trackHero.subtitleStreamIndex) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                    label = stream.displayTitle?.takeIf { it.isNotBlank() }
+                                        ?: listOfNotNull(
+                                            dev.jdtech.jellyfin.models.MediaStreamLanguage.displayCode(stream) ?: "Unknown",
+                                            stream.title.takeIf { it.isNotBlank() },
+                                        ).joinToString(" - "),
+                                    subtitle = stream.codec.takeIf { it.isNotBlank() }?.uppercase(java.util.Locale.US),
+                                    onClick = { selectedSubtitleStreamIndex = stream.index; subtitlesDisabled = false; trackPicker = null },
+                                )
+                            )
+                        }
+                    },
+                    onDismissRequest = { trackPicker = null },
+                )
+            }
+
             Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 TvDetailHeroCard(item, tvItemLabel(item), supportingLine, metadata, item.overview, onBack = onBack, actions = {
                     val i = item
                     if (i is SpatialFinMovie || i is SpatialFinEpisode) {
                         val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
                         val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
-                        TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i)?.let(context::startActivity) }
-                        if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity) }
+                        TvHeroButton(if (i.playbackPositionTicks > 0L) "Resume" else "Play", Icons.Rounded.PlayArrow, true, modifier = Modifier.focusRequester(playFocus)) { TvPlayerActivity.createIntentForSpatialItem(context, i, audioStreamIndex = trackHero.audioStreamIndex, subtitleStreamIndex = trackHero.subtitleStreamIndex, subtitlesDisabled = subtitlesDisabled)?.let(context::startActivity) }
+                        if (i.playbackPositionTicks > 0L) TvIconHeroButton(Icons.Rounded.Replay, "Restart") { TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true, audioStreamIndex = trackHero.audioStreamIndex, subtitleStreamIndex = trackHero.subtitleStreamIndex, subtitlesDisabled = subtitlesDisabled)?.let(context::startActivity) }
+                        if (audioStreams.size > 1) TvHeroButton(trackHero.audio ?: "Audio", Icons.Rounded.VolumeUp, primary = false) { trackPicker = "audio" }
+                        if (subtitleStreams.isNotEmpty()) TvHeroButton(trackHero.subtitle ?: "Off", Icons.Rounded.ClosedCaption, primary = false) { trackPicker = "subtitle" }
                         TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (item.played) "Watched" else "Mark watched", item.played) { viewModel.togglePlayed() }
                         TvIconHeroButton(if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (item.favorite) "Favorited" else "Favorite", item.favorite) { viewModel.toggleFavorite() }
                         TvIconHeroButton(Icons.Rounded.CloudDownload, "Download") { }

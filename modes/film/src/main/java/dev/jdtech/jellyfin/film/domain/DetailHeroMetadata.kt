@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.film.domain
 
 import dev.jdtech.jellyfin.models.AudioChannel
 import dev.jdtech.jellyfin.models.DisplayProfile
+import dev.jdtech.jellyfin.models.MediaStreamLanguage
 import dev.jdtech.jellyfin.models.Resolution
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -9,6 +10,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.isForcedOrSignsOnly
 import java.util.Locale
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.VideoRangeType
@@ -41,10 +43,44 @@ data class DetailHeroMetadata(
     val video: String? = null,
     val audio: String? = null,
     val subtitle: String? = null,
+    val audioStreamIndex: Int? = null,
+    val subtitleStreamIndex: Int? = null,
+)
+
+/**
+ * Overload taking the viewer's language configuration as one value, so a call
+ * site cannot supply half of it. See [LanguagePreferences].
+ */
+fun SpatialFinItem.detailHeroMetadata(
+    languagePreferences: LanguagePreferences,
+    maxGenres: Int = 3,
+    selectedAudioStreamIndex: Int? = null,
+    selectedSubtitleStreamIndex: Int? = null,
+    subtitlesDisabled: Boolean = false,
+): DetailHeroMetadata = detailHeroMetadata(
+    maxGenres = maxGenres,
+    preferredAudioLanguage = languagePreferences.preferredAudioLanguage,
+    preferredSubtitleLanguage = languagePreferences.preferredSubtitleLanguage,
+    spokenLanguages = languagePreferences.spokenLanguages,
+    forcedSubtitlesInUnderstoodAudio = languagePreferences.forcedSubtitlesInUnderstoodAudio,
+    selectedAudioStreamIndex = selectedAudioStreamIndex,
+    selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
+    subtitlesDisabled = subtitlesDisabled,
 )
 
 /** Builds the hero metadata for [item]. Pure — safe to call during composition. */
-fun SpatialFinItem.detailHeroMetadata(maxGenres: Int = 3): DetailHeroMetadata {
+fun SpatialFinItem.detailHeroMetadata(
+    maxGenres: Int = 3,
+    preferredAudioLanguage: String? = null,
+    preferredSubtitleLanguage: String? = null,
+    /** Languages the viewer understands; subtitles default off when the audio is one of them. */
+    spokenLanguages: List<String> = emptyList(),
+    /** Mirrors `AppPreferences.smartForcedSubtitles`. */
+    forcedSubtitlesInUnderstoodAudio: Boolean = true,
+    selectedAudioStreamIndex: Int? = null,
+    selectedSubtitleStreamIndex: Int? = null,
+    subtitlesDisabled: Boolean = false,
+): DetailHeroMetadata {
     val item = this
     val facts = buildList {
         when (item) {
@@ -88,13 +124,69 @@ fun SpatialFinItem.detailHeroMetadata(maxGenres: Int = 3): DetailHeroMetadata {
     // The first source is the one playback defaults to; a version switch
     // reloads the screen with that version's item, so this stays in step.
     val streams = item.sources.firstOrNull()?.mediaStreams.orEmpty()
+    val audioStreams = streams.filter { it.type == MediaStreamType.AUDIO }
+    val subtitleStreams = streams.filter { it.type == MediaStreamType.SUBTITLE }
+
+    val activeAudioStream = when {
+        selectedAudioStreamIndex != null -> audioStreams.firstOrNull { it.index == selectedAudioStreamIndex }
+        !preferredAudioLanguage.isNullOrBlank() -> audioStreams.firstOrNull { streamMatchesLanguage(it, preferredAudioLanguage) }
+        else -> null
+    } ?: audioStreams.firstOrNull()
+
+    // Whether the viewer can follow the audio that is going to play. Everything
+    // about the subtitle default hangs off this.
+    val audioUnderstood = activeAudioStream != null && (
+        streamMatchesLanguage(activeAudioStream, preferredAudioLanguage) ||
+            spokenLanguages.any { streamMatchesLanguage(activeAudioStream, it) }
+        )
+
+    // Mirrors PlayerTrackSelector.applySmart. Notably there is NO "first
+    // subtitle in the file" fallback: that is how a 44-track mux whose first
+    // entry happens to be Portuguese ended up advertising Portuguese subtitles
+    // to a viewer who had only ever asked for English.
+    val activeSubtitleStream = when {
+        subtitlesDisabled -> null
+        selectedSubtitleStreamIndex != null ->
+            subtitleStreams.firstOrNull { it.index == selectedSubtitleStreamIndex }
+        audioUnderstood -> {
+            // The dialogue needs no translating. Only a forced/signs track earns
+            // a place, to cover foreign lines and on-screen text.
+            // audioUnderstood already implies activeAudioStream is non-null,
+            // and the compiler smart-casts it here.
+            val audioLanguage = MediaStreamLanguage.displayCode(activeAudioStream)
+            if (forcedSubtitlesInUnderstoodAudio) {
+                subtitleStreams.firstOrNull { stream ->
+                    stream.isForcedOrSignsOnly() && streamMatchesLanguage(stream, audioLanguage)
+                }
+            } else {
+                null
+            }
+        }
+        else ->
+            // Foreign audio: a full-dialogue track in a language the viewer reads,
+            // then the same last resorts the player takes — the track the file
+            // marks default, or the only track on offer.
+            fullDialogueSubtitle(subtitleStreams, preferredSubtitleLanguage)
+                ?: spokenLanguages.firstNotNullOfOrNull { fullDialogueSubtitle(subtitleStreams, it) }
+                ?: subtitleStreams.firstOrNull { it.isDefault && !it.isForcedOrSignsOnly() }
+                ?: subtitleStreams.singleOrNull()
+    }
 
     return DetailHeroMetadata(
         facts = facts,
         genres = genres,
         video = streams.firstOrNull { it.type == MediaStreamType.VIDEO }?.let(::videoLabel),
-        audio = streams.firstOrNull { it.type == MediaStreamType.AUDIO }?.let(::audioLabel),
-        subtitle = streams.firstOrNull { it.type == MediaStreamType.SUBTITLE }?.let(::subtitleLabel),
+        audio = activeAudioStream?.let(::audioLabel),
+        // "Off" is a real, informative answer when the item HAS subtitles and none
+        // will play — the chip is a promise about what happens on Play. With no
+        // subtitle tracks at all there is nothing to promise, so show no chip.
+        subtitle = when {
+            activeSubtitleStream != null -> subtitleLabel(activeSubtitleStream)
+            subtitleStreams.isEmpty() -> null
+            else -> "Off"
+        },
+        audioStreamIndex = activeAudioStream?.index,
+        subtitleStreamIndex = activeSubtitleStream?.index,
     )
 }
 
@@ -175,13 +267,29 @@ private fun channelsOf(stream: SpatialFinMediaStream): String? =
         else -> stream.channelLayout?.takeIf { it.isNotBlank() }
     }
 
-private fun subtitleLabel(stream: SpatialFinMediaStream): String? = languageLabel(stream)
+private fun subtitleLabel(stream: SpatialFinMediaStream): String? {
+    val language = languageLabel(stream) ?: return null
+    return when {
+        stream.title.contains("forced", ignoreCase = true) || stream.displayTitle?.contains("forced", ignoreCase = true) == true ->
+            "$language (Forced)"
+        else -> language
+    }
+}
 
 private fun languageLabel(stream: SpatialFinMediaStream): String? =
-    stream.language
-        .takeIf { it.isNotBlank() }
-        ?.uppercase(Locale.US)
-        ?: stream.displayTitle?.takeIf { it.isNotBlank() }?.substringBefore(' ')
+    MediaStreamLanguage.displayCode(stream)
+
+private fun streamMatchesLanguage(stream: SpatialFinMediaStream, preferred: String?): Boolean =
+    MediaStreamLanguage.matchesLanguage(stream, preferred)
+
+/** The full-dialogue subtitle track in [language], never a forced/signs sibling. */
+private fun fullDialogueSubtitle(
+    subtitleStreams: List<SpatialFinMediaStream>,
+    language: String?,
+): SpatialFinMediaStream? {
+    if (language.isNullOrBlank()) return null
+    return subtitleStreams.firstOrNull { streamMatchesLanguage(it, language) && !it.isForcedOrSignsOnly() }
+}
 
 private fun episodeLabel(episode: SpatialFinEpisode): String =
     "S${episode.parentIndexNumber}:E${episode.indexNumber}"

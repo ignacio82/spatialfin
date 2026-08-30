@@ -36,6 +36,13 @@ sealed interface PlayRequest {
         val openSyncPlayDialogOnStart: Boolean = false,
         /** false → never route through a picked FCast receiver (watch-party path). */
         val allowFcastRouting: Boolean = true,
+        /**
+         * Server-side track selection made on the detail screen. Null leaves the
+         * choice to `PlaylistManager`'s preferred-language resolution.
+         */
+        val audioStreamIndex: Int? = null,
+        val subtitleStreamIndex: Int? = null,
+        val subtitlesDisabled: Boolean = false,
     ) : PlayRequest
 
     /** A device MediaStore video. */

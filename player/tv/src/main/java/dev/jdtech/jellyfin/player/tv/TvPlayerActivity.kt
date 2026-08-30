@@ -126,6 +126,7 @@ import dev.jdtech.jellyfin.player.xr.ProgressSection
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
+import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.settings.presentation.enums.QualityOption
@@ -157,6 +158,9 @@ class TvPlayerActivity : AppCompatActivity() {
         // extra is threaded through so detail-screen SyncPlay buttons can flip
         // this on once the TV dialog lands.
         const val EXTRA_OPEN_SYNC_PLAY = "openSyncPlayDialog"
+        const val EXTRA_AUDIO_STREAM_INDEX = "audioStreamIndex"
+        const val EXTRA_SUBTITLE_STREAM_INDEX = "subtitleStreamIndex"
+        const val EXTRA_SUBTITLES_DISABLED = "subtitlesDisabled"
         const val EXTRA_START_POSITION_MS = "startPositionMs"
 
         fun createIntent(
@@ -169,6 +173,9 @@ class TvPlayerActivity : AppCompatActivity() {
             openSyncPlayDialogOnStart: Boolean = false,
             startPositionMs: Long? = null,
             trailer: Boolean = false,
+            audioStreamIndex: Int? = null,
+            subtitleStreamIndex: Int? = null,
+            subtitlesDisabled: Boolean = false,
         ): Intent =
             Intent(context, TvPlayerActivity::class.java).apply {
                 putExtra(EXTRA_ITEM_ID, itemId.toString())
@@ -179,6 +186,9 @@ class TvPlayerActivity : AppCompatActivity() {
                 if (openSyncPlayDialogOnStart) putExtra(EXTRA_OPEN_SYNC_PLAY, true)
                 startPositionMs?.let { putExtra(EXTRA_START_POSITION_MS, it) }
                 if (trailer) putExtra(EXTRA_TRAILER, true)
+                audioStreamIndex?.let { putExtra(EXTRA_AUDIO_STREAM_INDEX, it) }
+                subtitleStreamIndex?.let { putExtra(EXTRA_SUBTITLE_STREAM_INDEX, it) }
+                if (subtitlesDisabled) putExtra(EXTRA_SUBTITLES_DISABLED, true)
             }
 
         fun createIntentForLocalMedia(
@@ -223,6 +233,9 @@ class TvPlayerActivity : AppCompatActivity() {
             startPositionMs: Long? = null,
             trailer: Boolean = false,
             maxBitrate: Long? = null,
+            audioStreamIndex: Int? = null,
+            subtitleStreamIndex: Int? = null,
+            subtitlesDisabled: Boolean = false,
         ): Intent? =
             when (item) {
                 is SpatialFinMovie ->
@@ -235,6 +248,9 @@ class TvPlayerActivity : AppCompatActivity() {
                         startPositionMs = startPositionMs,
                         trailer = trailer,
                         maxBitrate = maxBitrate,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
                     )
                 is SpatialFinEpisode ->
                     createIntent(
@@ -246,6 +262,9 @@ class TvPlayerActivity : AppCompatActivity() {
                         startPositionMs = startPositionMs,
                         trailer = trailer,
                         maxBitrate = maxBitrate,
+                        audioStreamIndex = audioStreamIndex,
+                        subtitleStreamIndex = subtitleStreamIndex,
+                        subtitlesDisabled = subtitlesDisabled,
                     )
                 else -> null
             }
@@ -288,6 +307,19 @@ class TvPlayerActivity : AppCompatActivity() {
             } else {
                 null
             }
+        val audioStreamIndex =
+            if (intent.hasExtra(EXTRA_AUDIO_STREAM_INDEX)) {
+                intent.getIntExtra(EXTRA_AUDIO_STREAM_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val subtitleStreamIndex =
+            if (intent.hasExtra(EXTRA_SUBTITLE_STREAM_INDEX)) {
+                intent.getIntExtra(EXTRA_SUBTITLE_STREAM_INDEX, -1).takeIf { it >= 0 }
+            } else {
+                null
+            }
+        val subtitlesDisabled = intent.getBooleanExtra(EXTRA_SUBTITLES_DISABLED, false)
         val startPositionMs =
             deepLink?.startPositionMs
                 ?: if (intent.hasExtra(EXTRA_START_POSITION_MS)) {
@@ -347,6 +379,9 @@ class TvPlayerActivity : AppCompatActivity() {
                     mediaSourceIndex = mediaSourceIndex,
                     maxBitrate = maxBitrate,
                     startPositionMs = startPositionMs,
+                    audioStreamIndex = audioStreamIndex,
+                    subtitleStreamIndex = subtitleStreamIndex,
+                    subtitlesDisabled = subtitlesDisabled,
                 )
             }
             else -> {
@@ -772,7 +807,7 @@ private fun TvPlayerScreen(
     DisposableEffect(voice) {
         val activeSession = ActivePlayerSessionHolder.ActiveSession(
             controller = voice.controller,
-            snapshotProvider = { buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible) },
+            snapshotProvider = { buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible, uiState.currentMediaStreams) },
             chaptersProvider = {
                 viewModel.uiState.value.currentChapters.mapIndexed { index, chapter ->
                     (chapter.name ?: "Chapter ${index + 1}") to chapter.startPosition
@@ -788,7 +823,7 @@ private fun TvPlayerScreen(
             onVoiceCommand = { transcript ->
                 voice.handleVoiceTranscript(
                     transcript,
-                    buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible),
+                    buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible, uiState.currentMediaStreams),
                 )
             },
         )
@@ -801,7 +836,7 @@ private fun TvPlayerScreen(
     val voiceUi by voice.ui.collectAsStateWithLifecycle()
     val voicePartial by voice.partialTranscript.collectAsStateWithLifecycle()
     val latestStartVoice by rememberUpdatedState({
-        voice.toggle(buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible))
+        voice.toggle(buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible, uiState.currentMediaStreams))
     })
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -1217,6 +1252,12 @@ private fun TvPlayerScreen(
                     activeDialog = null
                 },
                 onDismiss = { activeDialog = null },
+                mediaStreams = uiState.currentMediaStreams,
+                activeAudioStreamIndex = uiState.currentAudioStreamIndex,
+                onAudioStreamSelected = { streamIndex ->
+                    viewModel.changeAudioStream(streamIndex)
+                    activeDialog = null
+                },
             )
         TvPlayerDialog.Subtitle ->
             TvTrackSelectionDialog(
@@ -1228,6 +1269,7 @@ private fun TvPlayerScreen(
                     activeDialog = null
                 },
                 onDismiss = { activeDialog = null },
+                mediaStreams = uiState.currentMediaStreams,
                 onSearchSubtitles = { activeDialog = TvPlayerDialog.SearchSubtitles },
             )
         TvPlayerDialog.SearchSubtitles ->
@@ -1918,9 +1960,22 @@ private fun TvTrackSelectionDialog(
     onTrackSelected: (Int) -> Unit,
     onDismiss: () -> Unit,
     onSearchSubtitles: (() -> Unit)? = null,
+    mediaStreams: List<dev.jdtech.jellyfin.models.SpatialFinMediaStream> = emptyList(),
+    activeAudioStreamIndex: Int? = null,
+    onAudioStreamSelected: ((Int) -> Unit)? = null,
 ) {
     val trackGroups = player.currentTracks.groups.filter { it.type == trackType }
-    val trackNames = trackGroups.getTrackNames()
+    // See serverSideAudioTracks: while the server transcodes it delivers one
+    // audio track, so switching language means asking Jellyfin for a different
+    // stream rather than re-pointing the local track selector.
+    val serverAudioTracks = remember(trackGroups, mediaStreams, activeAudioStreamIndex, trackType) {
+        if (trackType != C.TRACK_TYPE_AUDIO || onAudioStreamSelected == null) {
+            emptyList()
+        } else {
+            serverSideAudioTracks(trackGroups, mediaStreams, activeAudioStreamIndex)
+        }
+    }
+    val trackNames = trackGroups.getTrackNames(mediaStreams)
     val selectedIndex = trackGroups.indexOfFirst { it.isSelected }
     val initialFocusRequester = remember { FocusRequester() }
 
@@ -1936,18 +1991,38 @@ private fun TvTrackSelectionDialog(
             onSearchSubtitles = onSearchSubtitles,
             trackType = trackType,
         ) {
-            TvDialogOptionRow(
-                label = "None",
-                selected = selectedIndex == -1,
-                onClick = { onTrackSelected(-1) },
-                modifier = Modifier.focusRequester(initialFocusRequester),
-            )
-            trackNames.forEachIndexed { index, name ->
-                TvDialogOptionRow(
-                    label = name,
-                    selected = index == selectedIndex,
-                    onClick = { onTrackSelected(index) },
-                )
+            if (serverAudioTracks.isNotEmpty()) {
+                serverAudioTracks.forEachIndexed { index, track ->
+                    TvDialogOptionRow(
+                        label = track.label,
+                        selected = track.isSelected,
+                        supportingText = track.detail,
+                        onClick = { onAudioStreamSelected?.invoke(track.streamIndex) },
+                        modifier = if (index == 0) Modifier.focusRequester(initialFocusRequester) else Modifier,
+                    )
+                }
+            } else {
+                // Audio always has a track playing; only subtitles can be turned off.
+                if (trackType == C.TRACK_TYPE_TEXT) {
+                    TvDialogOptionRow(
+                        label = "None",
+                        selected = selectedIndex == -1,
+                        onClick = { onTrackSelected(-1) },
+                        modifier = Modifier.focusRequester(initialFocusRequester),
+                    )
+                }
+                trackNames.forEachIndexed { index, name ->
+                    TvDialogOptionRow(
+                        label = name,
+                        selected = index == selectedIndex,
+                        onClick = { onTrackSelected(index) },
+                        modifier = if (index == 0 && trackType != C.TRACK_TYPE_TEXT) {
+                            Modifier.focusRequester(initialFocusRequester)
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
             }
         }
     }

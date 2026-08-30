@@ -4,6 +4,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.MimeTypes
 import java.net.HttpURLConnection
 import java.net.URL
+import dev.jdtech.jellyfin.models.MediaStreamLanguage
 import dev.jdtech.jellyfin.models.SpatialFinChapter
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
@@ -65,6 +66,8 @@ class PlaylistManager @Inject internal constructor(
         mediaSourceIndex: Int? = null,
         maxBitrate: Long? = null,
         startFromBeginning: Boolean = false,
+        audioStreamIndex: Int? = null,
+        subtitleStreamIndex: Int? = null,
     ): PlayerItem? {
         Timber.d("Retrieving initial player item")
 
@@ -161,7 +164,13 @@ class PlaylistManager @Inject internal constructor(
 
         val playbackPosition =
             if (!startFromBeginning) initialItem.playbackPositionTicks.div(10000) else 0
-        val playerItem = initialItem.toPlayerItem(mediaSourceIndex, maxBitrate, playbackPosition)
+        val playerItem = initialItem.toPlayerItem(
+            mediaSourceIndex = mediaSourceIndex,
+            maxBitrate = maxBitrate,
+            playbackPosition = playbackPosition,
+            audioStreamIndex = audioStreamIndex,
+            subtitleStreamIndex = subtitleStreamIndex,
+        )
         playerItems.add(playerItem)
 
         return playerItem
@@ -388,10 +397,11 @@ class PlaylistManager @Inject internal constructor(
         mediaSourceIndex: Int?,
         maxBitrate: Long?,
         playbackPosition: Long,
+        audioStreamIndex: Int? = null,
+        subtitleStreamIndex: Int? = null,
     ): PlayerItem {
         Timber.d("Converting SpatialFinItem ${this.id} to PlayerItem")
 
-        val mediaSources = repository.getMediaSources(id, true, maxBitrate)
         val resolvedGenres =
             when (this) {
                 is SpatialFinMovie -> genres
@@ -401,7 +411,11 @@ class PlaylistManager @Inject internal constructor(
                         .getOrDefault(emptyList())
                 else -> emptyList()
             }
-        val inferredAnime = isAnimeItem(this, resolvedGenres, mediaSources)
+        // Phase 1 — discover the sources. Deliberately no stream indices: Jellyfin
+        // needs a MediaSourceId alongside them, and which source we want is exactly
+        // what this call is here to find out.
+        val discoveredSources = repository.getMediaSources(id, true, maxBitrate)
+        val inferredAnime = isAnimeItem(this, resolvedGenres, discoveredSources)
         val preferredAudioLanguage =
             if (inferredAnime) {
                 appPreferences.getValue(appPreferences.animeAudioLanguage)
@@ -409,33 +423,59 @@ class PlaylistManager @Inject internal constructor(
                 appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
                     ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
             }
-        val selectedSource =
+        val discoveredSource =
             if (mediaSourceIndex == null) {
                 chooseBestMediaSource(
-                    mediaSources = mediaSources,
+                    mediaSources = discoveredSources,
                     preferredAudioLanguage = preferredAudioLanguage,
                     preferStyledSubtitles = inferredAnime,
+                    requestedAudioStreamIndex = audioStreamIndex,
                 )
             } else {
-                mediaSources.getOrNull(mediaSourceIndex)
+                discoveredSources.getOrNull(mediaSourceIndex)
             } ?: throw PlaylistConversionException("No media sources available for item $id")
+
+        // An explicit pick wins; otherwise fall back to the preferred language,
+        // matched against titles too so a track with no container language tag
+        // still counts.
+        val effectiveAudioStreamIndex = audioStreamIndex
+            ?: discoveredSource.mediaStreams
+                .filter { it.type == MediaStreamType.AUDIO }
+                .firstOrNull { streamMatchesLanguage(it, preferredAudioLanguage) }
+                ?.index
+
         val effectiveMaxBitrate =
             when {
                 maxBitrate != null -> maxBitrate
                 preferredAudioLanguage.isNullOrBlank() -> null
-                sourceHasPreferredLanguageInUnsupportedCodec(selectedSource, preferredAudioLanguage) -> 8_000_000L
+                sourceHasPreferredLanguageInUnsupportedCodec(discoveredSource, preferredAudioLanguage) -> 8_000_000L
                 else -> null
             }
+
+        // Phase 2 — re-request the chosen source by id so the stream indices are
+        // honoured. Skipped when there is nothing to ask for beyond phase 1.
+        val needsStreamSelection =
+            effectiveAudioStreamIndex != null || subtitleStreamIndex != null
         val mediaSource =
-            if (effectiveMaxBitrate == maxBitrate) {
-                selectedSource
+            if (!needsStreamSelection && effectiveMaxBitrate == maxBitrate) {
+                discoveredSource
             } else {
-                val rescoredSources = repository.getMediaSources(id, true, effectiveMaxBitrate)
-                chooseBestMediaSource(
-                    mediaSources = rescoredSources,
-                    preferredAudioLanguage = preferredAudioLanguage,
-                    preferStyledSubtitles = inferredAnime,
-                ) ?: selectedSource
+                val resolvedSources = repository.getMediaSources(
+                    itemId = id,
+                    includePath = true,
+                    maxBitrate = effectiveMaxBitrate,
+                    audioStreamIndex = effectiveAudioStreamIndex,
+                    subtitleStreamIndex = subtitleStreamIndex,
+                    mediaSourceId = discoveredSource.id,
+                )
+                resolvedSources.firstOrNull { it.id == discoveredSource.id }
+                    ?: chooseBestMediaSource(
+                        mediaSources = resolvedSources,
+                        preferredAudioLanguage = preferredAudioLanguage,
+                        preferStyledSubtitles = inferredAnime,
+                        requestedAudioStreamIndex = effectiveAudioStreamIndex,
+                    )
+                    ?: discoveredSource
             }
         Timber.i(
             "Playlist source selection itemId=%s inferredAnime=%b preferredAudio=%s selectedSource=%s selectedCodec=%s effectiveMaxBitrate=%s",
@@ -443,7 +483,7 @@ class PlaylistManager @Inject internal constructor(
             inferredAnime,
             preferredAudioLanguage,
             mediaSource.name.ifBlank { mediaSource.id },
-            mediaSource.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO && languageMatches(it.language, preferredAudioLanguage) }?.codec,
+            mediaSource.mediaStreams.firstOrNull { it.type == MediaStreamType.AUDIO && streamMatchesLanguage(it, preferredAudioLanguage) }?.codec,
             effectiveMaxBitrate,
         )
         // Include both embedded and truly-external subtitle streams. Use Jellyfin's
@@ -579,7 +619,13 @@ class PlaylistManager @Inject internal constructor(
             },
             seriesName = if (this is SpatialFinEpisode) seriesName else null,
             seriesId = if (this is SpatialFinEpisode) seriesId else null,
-            isLive = if (this is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) this.universalMediaItem.isLive else false
+            isLive = if (this is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) this.universalMediaItem.isLive else false,
+            mediaStreams = mediaSource.mediaStreams,
+            // What we asked for, since that is also what the local track selector
+            // will target on a direct play — where Jellyfin keeps reporting the
+            // container's own default because every track is being delivered.
+            audioStreamIndex = effectiveAudioStreamIndex ?: mediaSource.defaultAudioStreamIndex,
+            subtitleStreamIndex = subtitleStreamIndex ?: mediaSource.defaultSubtitleStreamIndex,
         )
     }
 
@@ -587,15 +633,20 @@ class PlaylistManager @Inject internal constructor(
         mediaSources: List<dev.jdtech.jellyfin.models.SpatialFinSource>,
         preferredAudioLanguage: String?,
         preferStyledSubtitles: Boolean,
+        requestedAudioStreamIndex: Int? = null,
     ): dev.jdtech.jellyfin.models.SpatialFinSource? {
         return mediaSources.maxByOrNull { source ->
             var score = 0
             if (source.type == SpatialFinSourceType.LOCAL) score += 500
 
+            if (requestedAudioStreamIndex != null && source.mediaStreams.any { it.index == requestedAudioStreamIndex }) {
+                score += 1000
+            }
+
             val preferredAudioStream =
                 preferredAudioLanguage?.let { preferred ->
                     source.mediaStreams.firstOrNull { stream ->
-                        stream.type == MediaStreamType.AUDIO && languageMatches(stream.language, preferred)
+                        stream.type == MediaStreamType.AUDIO && streamMatchesLanguage(stream, preferred)
                     }
                 }
             if (preferredAudioStream != null) {
@@ -628,7 +679,7 @@ class PlaylistManager @Inject internal constructor(
         if (genres.any { it.contains("anime", ignoreCase = true) }) return true
         val hasJapaneseAudio = mediaSources.any { source ->
             source.mediaStreams.any { stream ->
-                stream.type == MediaStreamType.AUDIO && languageMatches(stream.language, "jpn")
+                stream.type == MediaStreamType.AUDIO && streamMatchesLanguage(stream, "jpn")
             }
         }
         val hasStyledSubtitles = mediaSources.any { source ->
@@ -650,32 +701,24 @@ class PlaylistManager @Inject internal constructor(
         val preferredAudioStream =
             source.mediaStreams.firstOrNull { stream ->
                 stream.type == MediaStreamType.AUDIO &&
-                    languageMatches(stream.language, preferredAudioLanguage)
+                    streamMatchesLanguage(stream, preferredAudioLanguage)
             } ?: return false
         return !isBeamFriendlyAudioCodec(preferredAudioStream.codec)
     }
 
     private fun isBeamFriendlyAudioCodec(codec: String): Boolean {
         return when (codec.lowercase()) {
-            "aac", "mp4a-latm", "opus", "vorbis", "flac", "mp3" -> true
+            "aac", "mp4a-latm", "opus", "vorbis", "flac", "mp3",
+            "eac3", "ac3", "ac4", "dts", "dtshd", "dts-hd", "dca", "truehd", "mlp", "alac",
+            "pcm", "pcm_s16le", "pcm_s24le", "pcm_s32le", "wav" -> true
             else -> false
         }
     }
 
-    private fun languageMatches(candidate: String?, preferred: String?): Boolean {
-        val normalizedCandidate = normalizeLanguage(candidate) ?: return false
-        val normalizedPreferred = normalizeLanguage(preferred) ?: return false
-        return normalizedCandidate == normalizedPreferred
-    }
-
-    private fun normalizeLanguage(value: String?): String? {
-        val normalized = value?.trim()?.lowercase()?.replace('_', '-')?.takeIf { it.isNotBlank() } ?: return null
-        return when {
-            normalized == "ja" || normalized == "jpn" || normalized.startsWith("ja-") || normalized.contains("japanese") -> "jpn"
-            normalized == "en" || normalized == "eng" || normalized.startsWith("en-") || normalized.contains("english") -> "eng"
-            else -> normalized
-        }
-    }
+    private fun streamMatchesLanguage(
+        stream: dev.jdtech.jellyfin.models.SpatialFinMediaStream,
+        preferred: String?,
+    ): Boolean = MediaStreamLanguage.matchesLanguage(stream, preferred)
 
     private fun List<SpatialFinChapter>.toPlayerChapters(): List<PlayerChapter> {
         return this.map { chapter ->

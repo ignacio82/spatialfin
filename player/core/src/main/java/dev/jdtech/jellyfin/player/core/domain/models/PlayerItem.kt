@@ -2,6 +2,7 @@ package dev.jdtech.jellyfin.player.core.domain.models
 
 import android.os.Parcelable
 import dev.jdtech.jellyfin.models.Rating
+import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import java.util.UUID
 import kotlinx.parcelize.Parcelize
 
@@ -41,5 +42,14 @@ data class PlayerItem(
     val audioUrl: String? = null,
     val videoMimeType: String? = null,
     val audioMimeType: String? = null,
-    val isLive: Boolean = false
+    val isLive: Boolean = false,
+    val mediaStreams: List<SpatialFinMediaStream> = emptyList(),
+    /**
+     * Index of the audio stream this item was resolved with, as Jellyfin
+     * reported it. Survives into the player so the track dialog can show which
+     * of the source's streams is actually playing — while transcoding, the
+     * delivered stream is the only one the player can see.
+     */
+    val audioStreamIndex: Int? = null,
+    val subtitleStreamIndex: Int? = null,
 ) : Parcelable

@@ -20,6 +20,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -55,6 +58,10 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
+import dev.jdtech.jellyfin.film.domain.LanguagePreferences
+import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
+import dev.jdtech.jellyfin.film.domain.languagePreferences
+import dev.jdtech.jellyfin.presentation.film.components.TrackSelectionChips
 import dev.jdtech.jellyfin.presentation.film.components.VideoMetadataBar
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -106,11 +113,15 @@ fun EpisodeScreen(
 
     val appPreferences = viewModel.appPreferences
     val initialMaxBitrate = androidx.compose.runtime.remember { appPreferences.getValue(appPreferences.playerMaxBitrate) }
+    val languagePreferences = androidx.compose.runtime.remember(context) {
+        appPreferences.languagePreferences(context)
+    }
 
     EpisodeScreenLayout(
         state = state,
         downloaderState = downloaderState,
         initialMaxBitrate = initialMaxBitrate,
+        languagePreferences = languagePreferences,
         onAction = { action ->
             when (action) {
                 is EpisodeAction.Play -> {
@@ -165,6 +176,9 @@ fun EpisodeScreen(
                                 if (action.startFromBeginning) 0L
                                 else it.playbackPositionTicks / 10_000L
                             },
+                            audioStreamIndex = action.audioStreamIndex,
+                            subtitleStreamIndex = action.subtitleStreamIndex,
+                            subtitlesDisabled = action.subtitlesDisabled,
                         )
                     )
                 }
@@ -186,6 +200,7 @@ private fun EpisodeScreenLayout(
     state: EpisodeState,
     downloaderState: DownloaderState,
     initialMaxBitrate: Long,
+    languagePreferences: LanguagePreferences = LanguagePreferences(),
     onAction: (EpisodeAction) -> Unit,
     onDownloaderAction: (DownloaderAction) -> Unit,
     onPlay: (PlayRequest) -> Unit,
@@ -198,6 +213,18 @@ private fun EpisodeScreenLayout(
     val paddingBottom = safePadding.bottom + MaterialTheme.spacings.default
 
     val scrollState = rememberScrollState()
+
+    // Pre-playback track picks — see TrackSelectionChips. Resolved through
+    // detailHeroMetadata so the chips and the Play intent cannot disagree.
+    var selectedAudioStreamIndex by rememberSaveable(state.episode?.id) { mutableStateOf<Int?>(null) }
+    var selectedSubtitleStreamIndex by rememberSaveable(state.episode?.id) { mutableStateOf<Int?>(null) }
+    var subtitlesDisabled by rememberSaveable(state.episode?.id) { mutableStateOf(false) }
+    val trackHero = state.episode?.detailHeroMetadata(
+        languagePreferences = languagePreferences,
+        selectedAudioStreamIndex = selectedAudioStreamIndex,
+        selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
+        subtitlesDisabled = subtitlesDisabled,
+    )
 
     Box(modifier = Modifier.fillMaxSize()) {
         state.episode?.let { episode ->
@@ -266,6 +293,18 @@ private fun EpisodeScreenLayout(
                         )
                     }
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    trackHero?.let { hero ->
+                        TrackSelectionChips(
+                            item = episode,
+                            hero = hero,
+                            onAudioStreamSelected = { selectedAudioStreamIndex = it },
+                            onSubtitleStreamSelected = { streamIndex, disabled ->
+                                selectedSubtitleStreamIndex = streamIndex
+                                subtitlesDisabled = disabled
+                            },
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
                     state.videoMetadata?.let { videoMetadata ->
                         VideoMetadataBar(videoMetadata)
                         Spacer(Modifier.height(MaterialTheme.spacings.small))
@@ -316,7 +355,10 @@ private fun EpisodeScreenLayout(
                                     startFromBeginning = startFromBeginning,
                                     mediaSourceIndex = mediaSourceIndex,
                                     maxBitrate = maxBitrate,
-                                    multitask = multitask
+                                    multitask = multitask,
+                                    audioStreamIndex = trackHero?.audioStreamIndex,
+                                    subtitleStreamIndex = trackHero?.subtitleStreamIndex,
+                                    subtitlesDisabled = subtitlesDisabled,
                                 )
                             )
                         },

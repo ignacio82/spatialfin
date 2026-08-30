@@ -24,12 +24,23 @@ data class SpatialFinSource(
      * local / direct-play sources.
      */
     val transcodingUrl: String? = null,
+    /**
+     * The audio stream Jellyfin resolved for this source, echoing back the
+     * `AudioStreamIndex` of the PlaybackInfo request (or the container default
+     * when none was asked for). While transcoding this is the *only* audio
+     * track the player will receive, so it is what the UI must report as
+     * playing — the delivered HLS track carries no reliable language tag of
+     * its own to infer it from.
+     */
+    val defaultAudioStreamIndex: Int? = null,
+    val defaultSubtitleStreamIndex: Int? = null,
 )
 
 suspend fun MediaSourceInfo.toSpatialFinSource(
     jellyfinRepository: JellyfinRepository,
     itemId: UUID,
     includePath: Boolean = false,
+    audioStreamIndex: Int? = null,
 ): SpatialFinSource {
     val isAudioItem = mediaStreams?.none { it.type == org.jellyfin.sdk.model.api.MediaStreamType.VIDEO } == true && 
                       mediaStreams?.any { it.type == org.jellyfin.sdk.model.api.MediaStreamType.AUDIO } == true
@@ -61,7 +72,7 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
                         if (isAudioItem) {
                             jellyfinRepository.getAudioStreamUrl(itemId, id.orEmpty())
                         } else {
-                            jellyfinRepository.getStreamUrl(itemId, id.orEmpty())
+                            jellyfinRepository.getStreamUrl(itemId, id.orEmpty(), audioStreamIndex)
                         }
                     } catch (e: Exception) {
                         ""
@@ -84,6 +95,8 @@ suspend fun MediaSourceInfo.toSpatialFinSource(
         supportsDirectPlay = supportsDirectPlay,
         bitrate = bitrate,
         transcodingUrl = absoluteTranscodingUrl,
+        defaultAudioStreamIndex = defaultAudioStreamIndex,
+        defaultSubtitleStreamIndex = defaultSubtitleStreamIndex,
     )
 }
 
