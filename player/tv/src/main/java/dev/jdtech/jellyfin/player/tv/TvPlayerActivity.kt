@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
@@ -768,7 +769,35 @@ private fun TvPlayerScreen(
             onOpenSyncPlay = { activeDialog = TvPlayerDialog.SyncPlay; viewModel.refreshSyncPlayGroups() },
         )
     }
-    DisposableEffect(voice) { onDispose { voice.destroy() } }
+    DisposableEffect(voice) {
+        val activeSession = ActivePlayerSessionHolder.ActiveSession(
+            controller = voice.controller,
+            snapshotProvider = { buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible) },
+            chaptersProvider = {
+                viewModel.uiState.value.currentChapters.mapIndexed { index, chapter ->
+                    (chapter.name ?: "Chapter ${index + 1}") to chapter.startPosition
+                }
+            },
+            volumeProvider = { player.volume },
+            speedProvider = { player.playbackParameters.speed },
+            streamUrlProvider = { player.currentMediaItem?.localConfiguration?.uri?.toString() },
+            currentItemIdProvider = { viewModel.uiState.value.currentItemId },
+            // Resume position comes from Jellyfin's own playback state, which is what
+            // "Continue Watching" means; startPositionMs is advisory only.
+            onPlayMediaItem = { itemId, _, _ -> voice.playItemById(itemId) },
+            onVoiceCommand = { transcript ->
+                voice.handleVoiceTranscript(
+                    transcript,
+                    buildTvPlayerSnapshot(uiState, player, currentPosition, duration, controlsVisible),
+                )
+            },
+        )
+        ActivePlayerSessionHolder.bind(activeSession)
+        onDispose {
+            ActivePlayerSessionHolder.unbind(activeSession)
+            voice.destroy()
+        }
+    }
     val voiceUi by voice.ui.collectAsStateWithLifecycle()
     val voicePartial by voice.partialTranscript.collectAsStateWithLifecycle()
     val latestStartVoice by rememberUpdatedState({

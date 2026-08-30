@@ -69,15 +69,22 @@ jobs:
         bash .github/scripts/run-gradle-with-retry.sh \
           "${common_gradle_args[@]}" \
           :app:unified:bundleTvRelease
+        # Third Play artifact (Wear OS). Also the only place the wear module's R8 config
+        # and its signing-config resolution get exercised before a release.
+        bash .github/scripts/run-gradle-with-retry.sh \
+          "${common_gradle_args[@]}" \
+          :companion:wear:bundleRelease
 
     - name: Assemble shipped debug variants
-      run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:assembleLibreDebug :app:unified:assembleTvDebug
+      run: bash .github/scripts/run-gradle-with-retry.sh :app:unified:assembleLibreDebug :app:unified:assembleTvDebug :companion:wear:assembleDebug
 
     - name: Run debug unit tests
       run: |
         bash .github/scripts/run-gradle-with-retry.sh \
           :app:unified:testLibreDebugUnitTest \
           :app:unified:testTvDebugUnitTest \
+          :companion:protocol:test \
+          :companion:wear:testDebugUnitTest \
           :core:testLibreDebugUnitTest \
           :data:testDebugUnitTest \
           :fcast:testDebugUnitTest \
@@ -120,4 +127,5 @@ jobs:
           :player:beam:debugStabilityCheck \
           :player:session:debugStabilityCheck \
           :player:tv:debugStabilityCheck \
-          :player:xr:debugStabilityCheck
+          :player:xr:debugStabilityCheck \
+          :companion:wear:debugStabilityCheck

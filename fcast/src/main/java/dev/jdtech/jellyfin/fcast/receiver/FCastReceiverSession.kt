@@ -120,9 +120,10 @@ class FCastReceiverSession(
                     sendInternal(FCastMessage.Pong())
                 }
             }
-            // We don't care about senders' Version or Initial bodies for routing — the
-            // handshake is informational once we've sent ours.
-            is FCastMessage.Version, is FCastMessage.Initial -> Unit
+            // The sender's Initial body is informational for routing, but its
+            // friendlyName is what a receiver UI shows to identify who connected.
+            is FCastMessage.Initial -> router.onSenderIdentified(message.payload.displayName)
+            is FCastMessage.Version -> Unit
             else -> {
                 Timber.tag(TAG).d("FCast session %s ignored %s", remoteAddress, message.opcode)
             }

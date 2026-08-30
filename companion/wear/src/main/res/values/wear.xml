@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Must match WearProtocolPaths.CAPABILITY_WEAR. -->
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>spatialfin_wear</item>
+    </string-array>
+</resources>

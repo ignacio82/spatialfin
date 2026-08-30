@@ -86,7 +86,7 @@ internal class TvPlayerVoiceController(
         SmartChatEngine(geminiNano, geminiCloud, viewModel.appPreferences, modelManager, viewModel.repository)
     }
 
-    private val controller: PlayerSessionController by lazy {
+    internal val controller: PlayerSessionController by lazy {
         PlayerSessionController(
             viewModel = viewModel,
             player = player,
@@ -114,6 +114,26 @@ internal class TvPlayerVoiceController(
             getPassthroughEnabled = { false },
         )
     }
+
+    /**
+     * Runs a transcript through the same coordinator the on-screen mic uses and returns
+     * the spoken feedback. Exposed for the Wear companion, whose host service cannot
+     * reach `SpatialCommandCoordinator` directly.
+     */
+    internal suspend fun handleVoiceTranscript(transcript: String, snapshot: PlayerStateSnapshot): String =
+        runCatching {
+            coordinator.initialize()
+            controller.dispatch(coordinator.parse(transcript, snapshot).action)
+        }.getOrElse { "Sorry, I couldn't process that." }
+
+    /** Resolve an item id and hand it to the TV shell's own launch path. */
+    internal suspend fun playItemById(itemId: String): String =
+        runCatching {
+            val item = viewModel.repository.getItem(java.util.UUID.fromString(itemId))
+                ?: return@runCatching "Item not found"
+            onLaunchItem(item)
+            "Playing ${item.name}"
+        }.getOrElse { "Could not start that item" }
 
     private var turnJob: Job? = null
 

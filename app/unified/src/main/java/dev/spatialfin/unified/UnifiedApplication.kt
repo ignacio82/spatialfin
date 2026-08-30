@@ -54,6 +54,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var watchNextScheduler: WatchNextScheduler
     @Inject lateinit var splitAvDebugBridge: SplitAvDebugBridge
     @Inject lateinit var rememberedReceiversStore: dev.spatialfin.fcast.session.RememberedReceiversStore
+    @Inject lateinit var wearStatePublisher: dev.spatialfin.companion.host.WearStatePublisher
+    @Inject lateinit var wearCredentialPusher: dev.spatialfin.companion.host.WearCredentialPusher
+    @Inject lateinit var wearTvPairingBroker: dev.spatialfin.companion.host.WearTvPairingBroker
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -78,6 +81,8 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
                 key == appPreferences.companionToken.backendName
             ) {
                 CompanionLiveSyncClient.from(this).refreshConnection()
+            } else if (key == appPreferences.currentServer.backendName) {
+                deferredStartupScope.launch { wearCredentialPusher.pushCredentials() }
             }
         }
 
@@ -139,6 +144,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             reportPendingPlayerLaunch()
             eagerInitializeLlmIfNeeded()
             CompanionLiveSyncClient.from(this@UnifiedApplication).start()
+            wearStatePublisher.startObserving()
+            wearTvPairingBroker.startObserving()
+            wearCredentialPusher.pushCredentials()
             // Google TV launcher's Watch Next row — Leanback-only surface.
             if (capabilities.hasLeanback) {
                 watchNextScheduler.schedulePeriodic(this@UnifiedApplication)

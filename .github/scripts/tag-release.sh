@@ -42,7 +42,7 @@ if [[ "$HIGHEST" -gt 0 && "$CODE" -le "$HIGHEST" ]]; then
   exit 1
 fi
 
-git tag -a "$TAG" -m "SpatialFin ${NAME} (${CODE}) — libre ${CODE}, tv $((CODE + 1000000))"
+git tag -a "$TAG" -m "SpatialFin ${NAME} (${CODE}) — libre ${CODE}, tv $((CODE + 1000000)), wear $((CODE + 2000000))"
 echo ""
 echo "Tagged ${TAG} at $(git rev-parse --short HEAD)."
 echo "Highest previously tagged code: ${HIGHEST:-none}"

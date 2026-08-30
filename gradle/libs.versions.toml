@@ -33,6 +33,13 @@ androidx-tv-foundation = "1.0.0"
 androidx-tv-material3 = "1.1.0"
 androidx-tvprovider = "1.1.0"
 androidx-uiautomator = "2.4.0"
+androidx-watchface = "1.3.0"
+androidx-wear = "1.3.0"
+androidx-wear-compose = "1.4.1"
+androidx-wear-compose-material3 = "1.0.0-alpha32"
+androidx-wear-ongoing = "1.1.0"
+androidx-wear-protolayout = "1.3.0"
+androidx-wear-tiles = "1.5.0"
 androidx-window = "1.5.1"
 androidx-work = "2.11.2"
 androidx-xr = "1.0.0-beta02"
@@ -68,6 +75,7 @@ moshi = "1.15.2"
 nfs4j = "0.28.5"
 okhttp = "5.5.0"
 org-json = "20260814"
+play-services-wearable = "19.0.0"
 quickjs-kt = "1.0.14"
 # Duplicated in settings.gradle.kts pluginManagement (see the note there) — update both.
 r8 = "9.4.14"
@@ -125,14 +133,23 @@ androidx-navigation-compose = { module = "androidx.navigation:navigation-compose
 androidx-paging = { module = "androidx.paging:paging-runtime", version.ref = "androidx-paging" }
 androidx-paging-compose = { module = "androidx.paging:paging-compose", version.ref = "androidx-paging" }
 androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "androidx-profileinstaller" }
+androidx-protolayout = { module = "androidx.wear.protolayout:protolayout", version.ref = "androidx-wear-protolayout" }
+androidx-protolayout-material3 = { module = "androidx.wear.protolayout:protolayout-material3", version.ref = "androidx-wear-protolayout" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "androidx-room" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "androidx-room" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
+androidx-tiles = { module = "androidx.wear.tiles:tiles", version.ref = "androidx-wear-tiles" }
 androidx-tv-foundation = { module = "androidx.tv:tv-foundation", version.ref = "androidx-tv-foundation" }
 androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "androidx-tv-material3" }
 androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref = "androidx-tvprovider" }
 androidx-uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "androidx-uiautomator" }
+androidx-watchface-complications-data-source-ktx = { module = "androidx.wear.watchface:watchface-complications-data-source-ktx", version.ref = "androidx-watchface" }
+androidx-wear = { module = "androidx.wear:wear", version.ref = "androidx-wear" }
+androidx-wear-compose-foundation = { module = "androidx.wear.compose:compose-foundation", version.ref = "androidx-wear-compose" }
+androidx-wear-compose-material3 = { module = "androidx.wear.compose:compose-material3", version.ref = "androidx-wear-compose-material3" }
+androidx-wear-compose-navigation = { module = "androidx.wear.compose:compose-navigation", version.ref = "androidx-wear-compose" }
+androidx-wear-ongoing = { module = "androidx.wear:wear-ongoing", version.ref = "androidx-wear-ongoing" }
 androidx-window = { module = "androidx.window:window", version.ref = "androidx-window" }
 androidx-work = { module = "androidx.work:work-runtime", version.ref = "androidx-work" }
 androidx-xr-arcore = { module = "androidx.xr.arcore:arcore", version.ref = "androidx-xr" }
@@ -155,6 +172,8 @@ junit4 = { module = "junit:junit", version.ref = "junit" }
 kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin" }
 kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinx-collections-immutable" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-play-services = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-play-services", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-guava = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-guava", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
@@ -168,6 +187,7 @@ moshi-kotlin = { module = "com.squareup.moshi:moshi-kotlin", version.ref = "mosh
 nfs4j = { module = "org.dcache:nfs4j-core", version.ref = "nfs4j" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 org-json = { module = "org.json:json", version.ref = "org-json" }
+play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "play-services-wearable" }
 quickjs-kt = { module = "io.github.dokar3:quickjs-kt", version.ref = "quickjs-kt" }
 r8 = { module = "com.android.tools:r8", version.ref = "r8" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }

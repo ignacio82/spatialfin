@@ -24,6 +24,9 @@ include(":settings")
 include(":baselineprofile")
 include(":plugins")
 include(":sendspin")
+include(":companion:protocol")
+include(":companion:host")
+include(":companion:wear")
 
 pluginManagement {
     // Keep the compiler and keep-annotation API on the same version. The app uses one precise

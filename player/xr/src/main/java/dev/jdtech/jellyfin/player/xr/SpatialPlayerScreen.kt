@@ -129,6 +129,7 @@ import androidx.core.content.ContextCompat
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
+import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import dev.jdtech.jellyfin.player.xr.voice.AssistantPreferences
@@ -829,6 +830,43 @@ fun SpatialPlayerScreen(
                 },
             )
         }
+
+    DisposableEffect(sessionController) {
+        val activeSession = ActivePlayerSessionHolder.ActiveSession(
+            controller = sessionController,
+            snapshotProvider = { currentRecommendationSnapshot() },
+            chaptersProvider = {
+                viewModel.uiState.value.currentChapters.mapIndexed { index, chapter ->
+                    (chapter.name ?: "Chapter ${index + 1}") to chapter.startPosition
+                }
+            },
+            volumeProvider = { player.volume },
+            speedProvider = { player.playbackParameters.speed },
+            streamUrlProvider = { player.currentMediaItem?.localConfiguration?.uri?.toString() },
+            currentItemIdProvider = { viewModel.uiState.value.currentItemId },
+            // Resume position comes from Jellyfin's own playback state, which is what
+            // "Continue Watching" means; startPositionMs is advisory only.
+            onPlayMediaItem = { itemId, _, _ ->
+                runCatching {
+                    val item = viewModel.repository.getItem(java.util.UUID.fromString(itemId))
+                        ?: return@runCatching "Item not found"
+                    onLaunchSearchResult(item)
+                    "Playing ${item.name}"
+                }.getOrElse { "Could not start that item" }
+            },
+            onVoiceCommand = { transcript ->
+                runCatching {
+                    val parsed = requireCommandCoordinator()
+                        .parse(transcript, currentRecommendationSnapshot())
+                    dispatchVoiceParseResult(sessionController, parsed)
+                }.getOrElse { "Sorry, I couldn't process that." }
+            },
+        )
+        ActivePlayerSessionHolder.bind(activeSession)
+        onDispose {
+            ActivePlayerSessionHolder.unbind(activeSession)
+        }
+    }
 
     fun speakAssistantReply(text: String, languageHint: String?, queueMode: Int = android.speech.tts.TextToSpeech.QUEUE_FLUSH) {
         voice.speakAssistantReply(

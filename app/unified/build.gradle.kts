@@ -174,6 +174,8 @@ baselineProfile {
 
 dependencies {
     // Shared modules
+    implementation(project(":companion:protocol"))
+    implementation(project(":companion:host"))
     implementation(project(":core"))
     implementation(project(":core:ui"))
     implementation(project(":data"))

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Declares this install as a SpatialFin playback host to the Wearable
+      CapabilityClient. Without it `getCapability("spatialfin_host")` returns no
+      nodes and the watch can only fall back to "first connected node", which
+      picks the wrong device as soon as more than one is paired.
+      Must match WearProtocolPaths.CAPABILITY_HOST.
+    -->
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>spatialfin_host</item>
+    </string-array>
+</resources>

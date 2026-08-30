@@ -69,6 +69,7 @@ import dev.jdtech.jellyfin.models.companion.CompanionConfig
 import dev.jdtech.jellyfin.models.companion.CompanionEndpoint
 import dev.jdtech.jellyfin.models.companion.CompanionMusicAssistant
 import dev.jdtech.jellyfin.models.companion.CompanionNetworkShare
+import dev.jdtech.jellyfin.models.companion.CompanionPairingOffers
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingEnvelope
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingInfo
 import dev.jdtech.jellyfin.models.companion.CompanionTvPairingPayload
@@ -91,6 +92,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -144,6 +146,28 @@ constructor(
     private val json = Json { ignoreUnknownKeys = true }
     private var pairingServer: TvCompanionPairingServer? = null
     private var nsdRegistrationListener: NsdManager.RegistrationListener? = null
+
+    private var decisionJob: Job? = null
+
+    /**
+     * A rejection from a confirmation surface closes the pairing window immediately.
+     * Silence is never taken as consent — the code still expires on its own timer, and
+     * with no watch paired nothing here changes behaviour at all.
+     */
+    private fun observePairingDecisions(token: String) {
+        decisionJob?.cancel()
+        decisionJob = viewModelScope.launch {
+            CompanionPairingOffers.decisions
+                .filter { it.pairingToken == token }
+                .collect { decision ->
+                    if (!decision.approved) {
+                        Timber.i("TV companion pairing rejected from a paired device")
+                        closePairingWindow()
+                        _state.value = TvCompanionState.Error("Pairing was rejected from your watch.")
+                    }
+                }
+        }
+    }
 
     fun startPairing() {
         pairingServer?.close()
@@ -210,6 +234,18 @@ constructor(
             }
             .onSuccess {
                 registerNsdService(manualCode)
+                // Mirror the prompt to any confirmation surface (today: a paired watch),
+                // so the user can reject an unexpected pairing without walking to the TV.
+                CompanionPairingOffers.offer(
+                    CompanionPairingOffers.PairingOffer(
+                        deviceName = buildDeviceName(),
+                        pairingToken = token,
+                        manualCode = manualCode,
+                        receiverUrl = localUrls.first(),
+                        expiresAtEpochMs = expiresAt,
+                    ),
+                )
+                observePairingDecisions(token)
                 _state.value =
                     TvCompanionState.Ready(
                         payload = payload,
@@ -258,10 +294,17 @@ constructor(
         _state.value = TvCompanionState.Idle
     }
 
-    override fun onCleared() {
+    private fun closePairingWindow() {
+        decisionJob?.cancel()
+        decisionJob = null
         pairingServer?.close()
         pairingServer = null
         unregisterNsdService()
+        CompanionPairingOffers.clear()
+    }
+
+    override fun onCleared() {
+        closePairingWindow()
         super.onCleared()
     }
 

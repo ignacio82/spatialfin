@@ -22,6 +22,17 @@ interface FCastIngressRouter {
      */
     fun onPlay(request: PlayMessage): IngressResult
 
+    /**
+     * The sender identified itself in the v2/v3 handshake. [displayName] is the
+     * sender's `friendlyName` (null when it sent none).
+     *
+     * A receiver advertised over mDNS is an unauthenticated sink: anything on the
+     * subnet can push a URL to it. Implementations should surface this name so an
+     * unexpected sender is visible rather than silent. Defaults to a no-op so
+     * existing routers need no change.
+     */
+    fun onSenderIdentified(displayName: String?) = Unit
+
     fun onPause()
     fun onResume()
 

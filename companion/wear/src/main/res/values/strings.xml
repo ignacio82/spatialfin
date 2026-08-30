@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SpatialFin</string>
+    <string name="tile_now_playing_label">Now Playing</string>
+    <string name="tile_up_next_label">Continue Watching</string>
+    <string name="complication_now_playing_label">SpatialFin Now Playing</string>
+    <string name="complication_battery_label">Headset Battery</string>
+    <string name="wear_connect_phone_prompt">Connect your phone once to finish setup</string>
+    <string name="wear_remote_title">SpatialFin Remote</string>
+    <string name="wear_audio_sink_title">Split-A/V Audio Sink</string>
+    <string name="wear_audio_sink_desc">Stream private cinema audio to your watch earbuds</string>
+    <string name="wear_no_media_playing">Nothing playing</string>
+</resources>

@@ -128,6 +128,7 @@ import dev.jdtech.jellyfin.player.local.presentation.PlayerEvents
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
 import dev.jdtech.jellyfin.player.local.R as LocalR
+import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
 import dev.jdtech.jellyfin.player.session.voice.PlayerSessionController
 import dev.jdtech.jellyfin.player.session.voice.PlayerStateSnapshot
 import kotlinx.collections.immutable.toImmutableList
@@ -1085,6 +1086,71 @@ private fun BeamPlayerScreen(
                 },
             )
         }
+
+    DisposableEffect(sessionController) {
+        val activeSession = ActivePlayerSessionHolder.ActiveSession(
+            controller = sessionController,
+            // Reuse the assistant's own snapshot builder rather than a second, thinner
+            // copy: it is the only one that fills in track names, chapters and the
+            // current selections, which is exactly what the watch's switcher sheets read.
+            snapshotProvider = {
+                buildVoiceSnapshot(
+                    uiState = viewModel.uiState.value,
+                    player = player,
+                    controlsVisible = latestControlsVisible,
+                    syncPlayState = latestSyncPlayState,
+                )
+            },
+            chaptersProvider = {
+                viewModel.uiState.value.currentChapters.mapIndexed { index, chapter ->
+                    (chapter.name ?: "Chapter ${index + 1}") to chapter.startPosition
+                }
+            },
+            volumeProvider = { player.volume },
+            speedProvider = { player.playbackParameters.speed },
+            streamUrlProvider = { player.currentMediaItem?.localConfiguration?.uri?.toString() },
+            currentItemIdProvider = { viewModel.uiState.value.currentItemId },
+            // Resume position comes from Jellyfin's own playback state, which is what
+            // "Continue Watching" means; startPositionMs is advisory only.
+            onPlayMediaItem = { itemId, _, _ ->
+                runCatching {
+                    val item = viewModel.repository.getItem(java.util.UUID.fromString(itemId))
+                        ?: return@runCatching "Item not found"
+                    val intent = BeamPlayerActivity.resolveAndCreateIntentForSpatialItem(
+                        context = latestContext,
+                        repository = viewModel.repository,
+                        item = item,
+                    ) ?: return@runCatching "Can't play that item here"
+                    latestContext.startActivity(intent)
+                    "Playing ${item.name}"
+                }.getOrElse { "Could not start that item" }
+            },
+            onVoiceCommand = { transcript ->
+                val snapshot = buildVoiceSnapshot(
+                    uiState = viewModel.uiState.value,
+                    player = player,
+                    controlsVisible = latestControlsVisible,
+                    syncPlayState = latestSyncPlayState,
+                )
+                val parsed = commandCoordinator.parse(transcript, snapshot)
+                when (val action = parsed.action) {
+                    is XrPlayerAction.ChatQuery -> chatEngine.query(
+                        question = action.query,
+                        playerState = snapshot,
+                        verbosity = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantVerbosity),
+                        spoilerPolicy = viewModel.appPreferences.getValue(viewModel.appPreferences.voiceAssistantSpoilerPolicy),
+                        conversationHistory = emptyList(),
+                        onGetSuggestions = { viewModel.repository.getSuggestions() },
+                    ) ?: "No answer"
+                    else -> sessionController.dispatch(action)
+                }
+            },
+        )
+        ActivePlayerSessionHolder.bind(activeSession)
+        onDispose {
+            ActivePlayerSessionHolder.unbind(activeSession)
+        }
+    }
 
     LaunchedEffect(player.currentTracks) {
         val libassPref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
