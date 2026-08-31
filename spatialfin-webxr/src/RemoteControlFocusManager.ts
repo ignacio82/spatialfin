@@ -10,11 +10,13 @@
  * comfortably covers a route transition while staying inside the 5s the browser
  * test allows.
  */
-const MOVE_RETRY_BUDGET_MS = 2_000;
+const MOVE_RETRY_BUDGET_MS = 4_000;
 
 export class RemoteControlFocusManager {
   private static instance: RemoteControlFocusManager | null = null;
   private enabled = true;
+  private pendingMove: number | null = null;
+  private retryTimer: number | null = null;
 
   private constructor() {
     window.addEventListener('keydown', this.handleKeyDown.bind(this), true);
@@ -162,18 +164,33 @@ export class RemoteControlFocusManager {
    * still being laid out. Without this the press is silently swallowed and the
    * D-pad looks dead until the user presses again.
    */
-  private pendingMove: number | null = null;
-
   /**
-   * Re-runs the press on the next frame while inside the budget. Returns false
-   * once the budget is spent so callers can fall through.
+   * Re-runs the press on the next frame (and via timer fallback) while inside
+   * the budget. Returns false once the budget is spent so callers can fall through.
    */
   private retryMove(direction: 'up' | 'down' | 'left' | 'right', deadline: number): boolean {
     if (performance.now() >= deadline) return false;
-    this.pendingMove = requestAnimationFrame(() => {
+    if (this.pendingMove !== null) {
+      cancelAnimationFrame(this.pendingMove);
       this.pendingMove = null;
+    }
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    const run = () => {
+      if (this.pendingMove !== null) {
+        cancelAnimationFrame(this.pendingMove);
+        this.pendingMove = null;
+      }
+      if (this.retryTimer !== null) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
       this.moveFocus(direction, deadline);
-    });
+    };
+    this.pendingMove = requestAnimationFrame(run);
+    this.retryTimer = window.setTimeout(run, 32);
     return true;
   }
 
@@ -184,6 +201,10 @@ export class RemoteControlFocusManager {
     if (this.pendingMove !== null) {
       cancelAnimationFrame(this.pendingMove);
       this.pendingMove = null;
+    }
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
     }
     const container = this.getActiveContainer();
 
