@@ -45,6 +45,37 @@ fun SpatialFinMovie.versionChipLabel(): String {
     return qualityLabel?.let { "$stereoLabel $it" } ?: stereoLabel
 }
 
+fun SpatialFinSource.versionChipLabel(fallbackIndex: Int = 0): String {
+    val stereoMode = detectMovieStereoMode("", null, listOf(name, path))
+    val stereoLabel =
+        when (stereoMode) {
+            MovieStereoMode.SIDE_BY_SIDE -> "3D SBS"
+            MovieStereoMode.TOP_BOTTOM -> "3D T/B"
+            MovieStereoMode.MULTIVIEW -> "Spatial"
+            else -> null
+        }
+    val quality = qualityTag()
+    val cleanName = name.trim().takeIf {
+        it.isNotBlank() &&
+            !it.endsWith(".mkv", ignoreCase = true) &&
+            !it.endsWith(".mp4", ignoreCase = true) &&
+            !it.endsWith(".avi", ignoreCase = true) &&
+            !it.endsWith(".mov", ignoreCase = true)
+    }
+
+    val baseLabel = when {
+        cleanName != null && cleanName.length <= 25 -> cleanName
+        quality != null -> quality
+        cleanName != null -> quality ?: "Version ${fallbackIndex + 1}"
+        else -> "Version ${fallbackIndex + 1}"
+    }
+    return if (stereoLabel != null && !baseLabel.contains(stereoLabel, ignoreCase = true)) {
+        "$stereoLabel $baseLabel"
+    } else {
+        baseLabel
+    }
+}
+
 fun SpatialFinItem.movieVersionGroupKey(): String? {
     val title = canonicalMovieTitle() ?: return null
     // A year is required evidence that two same-titled files are alternate versions of

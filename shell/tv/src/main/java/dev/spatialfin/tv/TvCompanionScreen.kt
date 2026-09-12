@@ -413,6 +413,10 @@ constructor(
                 importedSessions.firstOrNull { it.serverId == previousCurrentServer }
                     ?: importedSessions.firstOrNull()
 
+            if (config.servers.isNotEmpty() && activeSession == null) {
+                throw IllegalStateException("No valid server or user could be imported from companion config.")
+            }
+
             activeSession?.let { session ->
                 appPreferences.setValue(appPreferences.currentServer, session.serverId)
                 appPreferences.setValue(appPreferences.onboardingCompleted, true)
@@ -446,31 +450,49 @@ constructor(
         serverId: String,
     ): User? {
         if (user.accessToken != null) {
-            runCatching {
+            val userFromToken = runCatching {
                 jellyfinApi.api.update(baseUrl = baseUrl, accessToken = user.accessToken)
                 val userInfo = jellyfinApi.userApi.getCurrentUser().content
-                return User(
+                User(
                     id = userInfo.id,
                     name = user.username,
                     serverId = serverId,
                     accessToken = user.accessToken,
                     preferences = serializeUserPrefs(user.preferences),
                 )
-            }
+            }.getOrNull()
+            if (userFromToken != null) return userFromToken
         }
 
         if (user.password != null) {
-            jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-            val authResult =
-                jellyfinApi.userApi.authenticateUserByName(
-                    data = AuthenticateUserByName(username = user.username, pw = user.password),
-                ).content
+            val userFromPassword = runCatching {
+                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
+                val authResult =
+                    jellyfinApi.userApi.authenticateUserByName(
+                        data = AuthenticateUserByName(username = user.username, pw = user.password),
+                    ).content
 
+                User(
+                    id = authResult.user?.id ?: UUID.randomUUID(),
+                    name = user.username,
+                    serverId = serverId,
+                    accessToken = authResult.accessToken,
+                    preferences = serializeUserPrefs(user.preferences),
+                )
+            }.getOrNull()
+            if (userFromPassword != null) return userFromPassword
+        }
+
+        // Offline / server unreachable fallback: preserve the user using credentials from companion
+        // so setup succeeds and persists even if the media server has a temporary connection glitch.
+        if (user.accessToken != null || user.password != null) {
+            val fallbackId = runCatching { user.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
+            Timber.i("TV COMPANION: Server unreachable; using companion offline credentials for ${user.username}")
             return User(
-                id = authResult.user?.id ?: UUID.randomUUID(),
+                id = fallbackId,
                 name = user.username,
                 serverId = serverId,
-                accessToken = authResult.accessToken,
+                accessToken = user.accessToken,
                 preferences = serializeUserPrefs(user.preferences),
             )
         }

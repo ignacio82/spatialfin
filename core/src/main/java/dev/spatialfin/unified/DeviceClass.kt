@@ -29,6 +29,12 @@ data class DeviceClassCapabilities(val deviceClass: DeviceClass) {
     /** Leanback platform features (Watch Next channel, system-wide recommendations). */
     val hasLeanback: Boolean = deviceClass == DeviceClass.TV
 
+    /**
+     * Wear OS companion host support (mirrors now-playing, vitals, and next-up to paired watch).
+     * Android TV does not pair with Wear OS watches via Google Play Services Wearable.
+     */
+    val hasWearCompanionHost: Boolean = deviceClass != DeviceClass.TV
+
     /** Only XR persists a user-placed immersive panel pose. */
     val hasPersistedPanelPose: Boolean = deviceClass == DeviceClass.XR
 

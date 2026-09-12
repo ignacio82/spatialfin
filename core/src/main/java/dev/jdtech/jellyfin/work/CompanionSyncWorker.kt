@@ -256,17 +256,33 @@ class CompanionSyncWorker @AssistedInject constructor(
 
         if (u.password != null) {
             Timber.d("COMPANION SYNC: Authenticating ${u.username} with password")
-            jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-            val authResult = jellyfinApi.userApi.authenticateUserByName(
-                data = AuthenticateUserByName(username = u.username, pw = u.password)
-            ).content
+            val authUser = runCatching {
+                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
+                val authResult = jellyfinApi.userApi.authenticateUserByName(
+                    data = AuthenticateUserByName(username = u.username, pw = u.password)
+                ).content
 
-            val userId = authResult.user?.id ?: UUID.randomUUID()
+                val userId = authResult.user?.id ?: UUID.randomUUID()
+                User(
+                    id = userId,
+                    name = u.username,
+                    serverId = serverId,
+                    accessToken = authResult.accessToken,
+                    preferences = serializeUserPrefs(u.preferences)
+                )
+            }.getOrNull()
+            if (authUser != null) return authUser
+        }
+
+        // Offline / server unreachable fallback: preserve the user using credentials from companion
+        if (u.accessToken != null || u.password != null) {
+            val fallbackId = runCatching { u.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
+            Timber.i("COMPANION SYNC: Server unreachable; using companion offline credentials for ${u.username}")
             return User(
-                id = userId,
+                id = fallbackId,
                 name = u.username,
                 serverId = serverId,
-                accessToken = authResult.accessToken,
+                accessToken = u.accessToken,
                 preferences = serializeUserPrefs(u.preferences)
             )
         }

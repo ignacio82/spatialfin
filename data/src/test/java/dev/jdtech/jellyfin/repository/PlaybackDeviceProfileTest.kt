@@ -40,14 +40,20 @@ class PlaybackDeviceProfileTest {
             assertTrue(aCodecs.contains("mp3"))
         }
 
-        // Must include transcoding profiles for video (HLS) and audio
-        val hlsTranscoding = profile.transcodingProfiles.firstOrNull {
-            it.type == DlnaProfileType.VIDEO && it.protocol == MediaStreamProtocol.HLS
+        // Must include transcoding profiles for video (HLS fMP4 and TS) and audio
+        val hlsMp4Transcoding = profile.transcodingProfiles.firstOrNull {
+            it.type == DlnaProfileType.VIDEO && it.protocol == MediaStreamProtocol.HLS && it.container == "mp4"
         }
-        assertNotNull("Must include HLS video transcoding profile", hlsTranscoding)
-        assertEquals("ts", hlsTranscoding?.container)
-        assertTrue(hlsTranscoding?.videoCodec?.contains("h264") == true)
-        assertTrue(hlsTranscoding?.audioCodec?.contains("aac") == true)
+        assertNotNull("Must include HLS fMP4 video transcoding profile for Jellyfin 12 dvh1/AV1", hlsMp4Transcoding)
+        assertTrue(hlsMp4Transcoding?.videoCodec?.contains("av1") == true)
+        assertTrue(hlsMp4Transcoding?.audioCodec?.contains("eac3") == true)
+
+        val hlsTsTranscoding = profile.transcodingProfiles.firstOrNull {
+            it.type == DlnaProfileType.VIDEO && it.protocol == MediaStreamProtocol.HLS && it.container == "ts"
+        }
+        assertNotNull("Must include HLS TS video transcoding profile for legacy compatibility", hlsTsTranscoding)
+        assertTrue(hlsTsTranscoding?.videoCodec?.contains("h264") == true)
+        assertTrue(hlsTsTranscoding?.audioCodec?.contains("aac") == true)
 
         // Subtitle profiles must be included
         assertFalse(profile.subtitleProfiles.isEmpty())

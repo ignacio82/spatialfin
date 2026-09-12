@@ -64,11 +64,15 @@ fun TrackSelectionChips(
     onAudioStreamSelected: (Int?) -> Unit,
     onSubtitleStreamSelected: (streamIndex: Int?, disabled: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    selectedSourceIndex: Int = 0,
 ) {
     var showAudioPicker by rememberSaveable { mutableStateOf(false) }
     var showSubtitlePicker by rememberSaveable { mutableStateOf(false) }
 
-    val streams = remember(item) { item.sources.firstOrNull()?.mediaStreams.orEmpty() }
+    val streams = remember(item, selectedSourceIndex) {
+        item.sources.getOrNull(selectedSourceIndex)?.mediaStreams
+            ?: item.sources.firstOrNull()?.mediaStreams.orEmpty()
+    }
     val audioStreams = remember(streams) { streams.filter { it.type == MediaStreamType.AUDIO } }
     val subtitleStreams = remember(streams) { streams.filter { it.type == MediaStreamType.SUBTITLE } }
 

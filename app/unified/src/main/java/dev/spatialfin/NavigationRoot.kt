@@ -63,6 +63,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavOptions
 import androidx.navigation.NavOptionsBuilder
 import androidx.navigation.Navigator
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -297,16 +299,17 @@ fun NavigationRoot(
                     listOf(sourcesTab)
                 }
         }
-    val navigationItemClassNames = navigationItems.map { it.route::class.qualifiedName }
-
     val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
 
     var searchExpanded by remember { mutableStateOf(false) }
     var pendingInitialSearchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
     var showAudioNowPlaying by remember { mutableStateOf(false) }
 
-    val currentRoute = navBackStackEntry?.destination?.route
-    val showBottomBar = currentRoute in navigationItemClassNames && !searchExpanded
+    val showBottomBar =
+        navigationItems.any { item ->
+            currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
+        } && !searchExpanded
 
     // Re-scope Music Assistant config to the active Jellyfin user whenever the
     // user switches — but only while the SendSpin receiver is actually running,
@@ -326,8 +329,9 @@ fun NavigationRoot(
         }
     }
 
-    LaunchedEffect(pendingInitialSearchQuery, currentRoute) {
-        if (!pendingInitialSearchQuery.isNullOrBlank() && currentRoute != MediaRoute::class.qualifiedName) {
+    val isCurrentMediaRoute = currentDestination?.hasRoute(MediaRoute::class) == true
+    LaunchedEffect(pendingInitialSearchQuery, isCurrentMediaRoute) {
+        if (!pendingInitialSearchQuery.isNullOrBlank() && !isCurrentMediaRoute) {
             searchExpanded = true
             navController.navigate(MediaRoute) {
                 popUpTo(navController.graph.startDestinationId) { saveState = true }
@@ -401,13 +405,12 @@ fun NavigationRoot(
             containerColor = androidx.compose.ui.graphics.Color.Transparent
         ) {
             navigationItems.forEach { item ->
+                val isSelected =
+                    currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
                 NavigationRailItem(
-                    selected = currentRoute == item.route::class.qualifiedName,
+                    selected = isSelected,
                     onClick = {
-                        if (
-                            item.route is MediaRoute &&
-                                currentRoute == MediaRoute::class.qualifiedName
-                        ) {
+                        if (item.route is MediaRoute && isSelected) {
                             searchExpanded = true
                         }
 

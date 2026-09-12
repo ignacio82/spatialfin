@@ -1,15 +1,41 @@
-SpatialFin is a Jellyfin client built for Android XR and adapted for phones, tablets, TV, and other Android form factors.
+SpatialFin: The Ultimate XR-First Jellyfin Client
 
-Enjoy an immersive theater experience on Android XR with Home Space and Full Space playback modes, or use SpatialFin as a native Jellyfin client on the rest of your Android devices.
+SpatialFin is not just another media player - it is a premium Jellyfin client built for the way you actually watch. Whether diving into a private virtual cinema on your Galaxy XR headset, catching a series on your phone, or relaxing with Android TV, SpatialFin delivers a fluid, high-performance experience tailored to every screen.
 
-Features:
-- Immersive Android XR playback with spatial theater controls
-- Native Jellyfin browsing for movies, shows, seasons, and episodes
-- ASS/SSA anime subtitle support, subtitle search, and track selection
-- Downloads and offline playback
-- Local media and network share playback
-- Companion setup and cross-device playback features
+Immersive XR & Spatial Video
+Designed from the ground up for Android XR and spatial computing:
+- Flexible Spaces: Immerse yourself in a virtual cinema in Full Space, or multitask with a floating, resizable window in Home Space alongside other apps.
+- Spatial & 3D Video: Hardware-accelerated playback for Side-by-Side (SBS), Over-Under (OU), and Apple Vision MV-HEVC spatial video files.
+- Persistent Layouts: Position and scale your screen anywhere in your physical environment; SpatialFin remembers exactly where you left it.
 
-You need your own Jellyfin server to use most app features.
+Context-Aware Voice Assistant
+Ditch the cumbersome on-screen keyboard with an intelligent, media-aware voice assistant:
+- Conversational Control: Ask naturally: "Play the next episode," "Find a sci-fi comedy under 90 minutes," or "What did they just say?" to immediately rewind with dialogue captions.
+- Privacy-First Intelligence: Fast on-device AI processing powered by local models, with optional cloud fallback.
 
-SpatialFin is a third-party Jellyfin client and is not affiliated with the Jellyfin project.
+Tailored for Every Android Screen
+- Android TV & Google TV: Full D-pad Leanback interface with Google TV "Watch Next" launcher integration and system-wide voice search.
+- Mobile & Handhelds: Intuitive touch navigation with gesture scrubbing, picture-in-picture, and a dedicated mic action button for voice commands on the go.
+
+Pixel-Perfect Subtitles & Audio
+- libass Native Engine: Razor-sharp subtitle rendering designed specifically to eliminate blur and aliasing on high-angular-resolution XR displays.
+- Full Styling Support: Flawless positioning and typography for ASS/SSA anime subtitles, styled fonts, signs, dialogue effects, and karaoke text.
+- Smart Language Logic: Automatic audio and subtitle track matching based on your language preferences, with per-series remember rules.
+
+Wear OS Companion
+Turn your smartwatch into the ultimate media controller:
+- Rotary Crown Scrubbing: Precision timeline seek with haptic detent stepping, volume control, and rapid transport actions right from your wrist.
+- Wear OS Tiles: Instantly jump back into your media with the "Up Next" carousel tile, or manage current playback via the "Now Playing" tile.
+- Wear OS Complications: Add complications to your favorite watch faces to monitor playback status and headset battery levels at a glance.
+- Private Audio Streaming: Route cinema audio directly to watch-paired Bluetooth earbuds while video stays on your headset or TV screen.
+- Quick Switchers: Change audio tracks, toggle subtitles, jump chapters, or calibrate spatial viewing angles without opening a menu on screen.
+
+Built for Power Users
+- Offline Downloads: Download movies and episodes directly to device storage for travel and flights.
+- Direct Network Shares: Stream directly from local SMB and NFS network shares with zero server transcoding overhead.
+- SyncPlay: Watch in perfect synchronization with friends and family across rooms or continents.
+- Multi-Server & Quick Pair: Seamlessly switch between multiple Jellyfin servers and pair new devices in seconds using companion QR codes.
+
+---
+Note: A personal Jellyfin server is required for media streaming. SpatialFin is an independent third-party client and is not affiliated with the official Jellyfin project.
+

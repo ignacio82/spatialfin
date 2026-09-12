@@ -43,13 +43,16 @@ constructor(
         viewModelScope.launch {
             try {
                 val episode = repository.getEpisode(episodeId)
-                val videoMetadata = videoMetadataParser.parse(episode.sources.first())
+                val selectedIndex = _state.value.selectedSourceIndex.coerceIn(0, (episode.sources.size - 1).coerceAtLeast(0))
+                val source = episode.sources.getOrNull(selectedIndex) ?: episode.sources.firstOrNull()
+                val videoMetadata = source?.let { videoMetadataParser.parse(it) }
                 val actors = getActors(episode)
                 val displayExtraInfo = appPreferences.getValue(appPreferences.displayExtraInfo)
                 val displayRatings = appPreferences.getValue(appPreferences.displayRatings)
                 _state.emit(
                     _state.value.copy(
                         episode = episode,
+                        selectedSourceIndex = selectedIndex,
                         videoMetadata = videoMetadata,
                         actors = actors,
                         displayExtraInfo = displayExtraInfo,
@@ -113,6 +116,19 @@ constructor(
                 viewModelScope.launch {
                     kotlinx.coroutines.delay(METADATA_REFRESH_WAIT_MS)
                     loadEpisode(episodeId)
+                }
+            }
+            is EpisodeAction.SelectSource -> {
+                val episode = _state.value.episode ?: return
+                if (action.index in episode.sources.indices) {
+                    viewModelScope.launch {
+                        val newSource = episode.sources[action.index]
+                        val videoMetadata = videoMetadataParser.parse(newSource)
+                        _state.value = _state.value.copy(
+                            selectedSourceIndex = action.index,
+                            videoMetadata = videoMetadata,
+                        )
+                    }
                 }
             }
             else -> Unit

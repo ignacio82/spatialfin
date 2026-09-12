@@ -117,9 +117,10 @@ fun BeamItemDetailScreen(
     var showDeleteConfirm by rememberSaveable(itemId) { mutableStateOf(false) }
     var showAudioTrackDialog by rememberSaveable(itemId) { mutableStateOf(false) }
     var showSubtitleTrackDialog by rememberSaveable(itemId) { mutableStateOf(false) }
-    var selectedAudioStreamIndex by rememberSaveable(itemId) { mutableStateOf<Int?>(null) }
-    var selectedSubtitleStreamIndex by rememberSaveable(itemId) { mutableStateOf<Int?>(null) }
-    var subtitlesDisabled by rememberSaveable(itemId) { mutableStateOf(false) }
+    var selectedSourceIndex by rememberSaveable(itemId) { mutableStateOf(0) }
+    var selectedAudioStreamIndex by rememberSaveable(itemId, selectedSourceIndex) { mutableStateOf<Int?>(null) }
+    var selectedSubtitleStreamIndex by rememberSaveable(itemId, selectedSourceIndex) { mutableStateOf<Int?>(null) }
+    var subtitlesDisabled by rememberSaveable(itemId, selectedSourceIndex) { mutableStateOf(false) }
 
     // The same configuration the in-player selector reads, so the chips promise
     // what playback will actually do.
@@ -194,6 +195,7 @@ fun BeamItemDetailScreen(
         selectedAudioStreamIndex = selectedAudioStreamIndex,
         selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
         subtitlesDisabled = subtitlesDisabled,
+        selectedSourceIndex = selectedSourceIndex,
     )
     val resolvedAudioStreamIndex = heroMetadata?.audioStreamIndex
     val resolvedSubtitleStreamIndex = heroMetadata?.subtitleStreamIndex
@@ -264,6 +266,7 @@ fun BeamItemDetailScreen(
                                             fcastSession = fcastSession,
                                             scope = scope,
                                             item = itemData,
+                                            mediaSourceIndex = selectedSourceIndex,
                                             audioStreamIndex = effectiveAudioStreamIndex,
                                             subtitleStreamIndex = effectiveSubtitleStreamIndex,
                                             subtitlesDisabled = subtitlesDisabled,
@@ -294,6 +297,7 @@ fun BeamItemDetailScreen(
                                                 scope = scope,
                                                 item = itemData,
                                                 startFromBeginning = true,
+                                                mediaSourceIndex = selectedSourceIndex,
                                                 audioStreamIndex = effectiveAudioStreamIndex,
                                                 subtitleStreamIndex = effectiveSubtitleStreamIndex,
                                                 subtitlesDisabled = subtitlesDisabled,
@@ -460,6 +464,32 @@ fun BeamItemDetailScreen(
                                     )
                                 }
                             }
+                        } else if (itemData is SpatialFinEpisode && itemData.sources.size > 1) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Version",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFD7DDE6),
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                itemData.sources.forEachIndexed { index, source ->
+                                    FilterChip(
+                                        selected = index == selectedSourceIndex,
+                                        onClick = {
+                                            if (index != selectedSourceIndex) {
+                                                selectedSourceIndex = index
+                                                selectedAudioStreamIndex = null
+                                                selectedSubtitleStreamIndex = null
+                                            }
+                                        },
+                                        label = { Text(source.versionChipLabel(index)) },
+                                    )
+                                }
+                            }
                         }
                     }
                 item {
@@ -579,6 +609,7 @@ fun BeamItemDetailScreen(
         if (item != null) {
             BeamAudioTrackSelectionDialog(
                 item = item,
+                selectedSourceIndex = selectedSourceIndex,
                 resolvedStreamIndex = resolvedAudioStreamIndex,
                 onStreamSelected = { selectedAudioStreamIndex = it },
                 onDismiss = { showAudioTrackDialog = false },
@@ -590,6 +621,7 @@ fun BeamItemDetailScreen(
         if (item != null) {
             BeamSubtitleTrackSelectionDialog(
                 item = item,
+                selectedSourceIndex = selectedSourceIndex,
                 resolvedStreamIndex = resolvedSubtitleStreamIndex,
                 onStreamSelected = { streamIndex, disabled ->
                     selectedSubtitleStreamIndex = streamIndex
@@ -639,6 +671,7 @@ fun BeamItemDetailScreen(
 @Composable
 internal fun BeamAudioTrackSelectionDialog(
     item: SpatialFinItem,
+    selectedSourceIndex: Int = 0,
     /**
      * Stream index that will play. Resolved once by `detailHeroMetadata` and
      * passed in, so the pre-checked row and the hero chip can never disagree.
@@ -647,8 +680,9 @@ internal fun BeamAudioTrackSelectionDialog(
     onStreamSelected: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val audioStreams = remember(item) {
-        item.sources.firstOrNull()?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.AUDIO }
+    val source = item.sources.getOrNull(selectedSourceIndex) ?: item.sources.firstOrNull()
+    val audioStreams = remember(item, selectedSourceIndex) {
+        source?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.AUDIO }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -746,13 +780,15 @@ internal fun BeamAudioTrackSelectionDialog(
 @Composable
 internal fun BeamSubtitleTrackSelectionDialog(
     item: SpatialFinItem,
+    selectedSourceIndex: Int = 0,
     /** Subtitle stream that will play, or null for none. See the audio dialog. */
     resolvedStreamIndex: Int?,
     onStreamSelected: (streamIndex: Int?, disabled: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val subtitleStreams = remember(item) {
-        item.sources.firstOrNull()?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.SUBTITLE }
+    val source = item.sources.getOrNull(selectedSourceIndex) ?: item.sources.firstOrNull()
+    val subtitleStreams = remember(item, selectedSourceIndex) {
+        source?.mediaStreams.orEmpty().filter { it.type == MediaStreamType.SUBTITLE }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {

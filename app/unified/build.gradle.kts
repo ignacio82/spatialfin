@@ -282,9 +282,11 @@ dependencies {
     baselineProfile(project(":baselineprofile"))
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockk)
     testImplementation(libs.robolectric)
     testImplementation(libs.turbine)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }

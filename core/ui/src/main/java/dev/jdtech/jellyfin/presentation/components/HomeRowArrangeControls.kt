@@ -1,6 +1,8 @@
 package dev.jdtech.jellyfin.presentation.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -18,9 +20,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -43,6 +49,7 @@ fun HomeRowArrangeControls(
     onToggleVisibility: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    initialFocusRequester: FocusRequester? = null,
 ) {
     Surface(
         modifier = modifier,
@@ -60,18 +67,21 @@ fun HomeRowArrangeControls(
                 description = "Move row up",
                 enabled = canMoveUp,
                 onClick = onMoveUp,
+                focusRequester = if (canMoveUp) initialFocusRequester else null,
             )
             ArrangeButton(
                 icon = Icons.Rounded.KeyboardArrowDown,
                 description = "Move row down",
                 enabled = canMoveDown,
                 onClick = onMoveDown,
+                focusRequester = if (!canMoveUp && canMoveDown) initialFocusRequester else null,
             )
             ArrangeButton(
                 icon = if (isHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                 description = if (isHidden) "Show row on home" else "Hide row from home",
                 enabled = true,
                 onClick = onToggleVisibility,
+                focusRequester = if (!canMoveUp && !canMoveDown) initialFocusRequester else null,
             )
             ArrangeButton(
                 icon = Icons.Rounded.Check,
@@ -89,19 +99,34 @@ private fun ArrangeButton(
     description: String,
     enabled: Boolean,
     onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
 ) {
     // Deliberately NOT size-constrained: an explicit `Modifier.size()` here lands
     // outside IconButton's own minimumInteractiveComponentSize(), which clamps the
     // touch target below the 48dp minimum. That is survivable on a phone and close
     // to unusable on an XR panel driven by a hand ray, where these controls first
     // shipped too small to hit. Shrink the glyph, never the target.
+    var isFocused by remember { mutableStateOf(false) }
+    val focusShape = RoundedCornerShape(99.dp)
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.semantics { contentDescription = description },
+        modifier = Modifier
+            .semantics { contentDescription = description }
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused }
+            .background(
+                if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
+                focusShape
+            )
+            .border(
+                if (isFocused) 2.dp else 0.dp,
+                if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                focusShape
+            ),
         colors =
             IconButtonDefaults.iconButtonColors(
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentColor = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
     ) {
         Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -149,7 +174,11 @@ data class HomeRowArrangeState(
 
 /** Renders [HomeRowArrangeControls] for [state] when that row is being arranged. */
 @Composable
-fun HomeRowArrangeSlot(state: HomeRowArrangeState?, modifier: Modifier = Modifier) {
+fun HomeRowArrangeSlot(
+    state: HomeRowArrangeState?,
+    modifier: Modifier = Modifier,
+    initialFocusRequester: FocusRequester? = null,
+) {
     if (state == null || !state.isArranging) return
     HomeRowArrangeControls(
         canMoveUp = state.canMoveUp,
@@ -160,5 +189,6 @@ fun HomeRowArrangeSlot(state: HomeRowArrangeState?, modifier: Modifier = Modifie
         onToggleVisibility = state.onHide,
         onDone = state.onDone,
         modifier = modifier,
+        initialFocusRequester = initialFocusRequester,
     )
 }

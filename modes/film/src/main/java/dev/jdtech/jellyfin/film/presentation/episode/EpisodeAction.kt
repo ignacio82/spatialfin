@@ -31,6 +31,8 @@ sealed interface EpisodeAction {
 
     data class NavigateToSeason(val seasonId: UUID) : EpisodeAction
 
+    data class SelectSource(val index: Int) : EpisodeAction
+
     /** See MovieAction.ReloadAfterMetadataEdit. */
     data object ReloadAfterMetadataEdit : EpisodeAction
 }

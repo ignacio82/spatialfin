@@ -110,6 +110,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -421,7 +423,7 @@ fun TvNavigationRoot(
                     kotlinx.coroutines.delay(50)
                     try { contentFocusRequester.requestFocus() } catch (e: Exception) {}
                 }
-                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = if (currentRoute == TvRoute.Home) 24.dp else 48.dp).focusRequester(contentFocusRequester).focusGroup()) {
                     when (currentRoute) {
                         TvRoute.Home -> TvHomeScreen(
                             homeState,
@@ -697,6 +699,7 @@ private fun TvHomeScreen(
     // row title. Order and visibility persist through HomeRowPreferences and are
     // shared with the phone and XR homes.
     var arrangingRowId by rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = arrangingRowId != null) { arrangingRowId = null }
     val context = LocalContext.current
     val naturalRows = buildList {
         homeState.resumeSection?.let { section ->
@@ -846,14 +849,16 @@ private fun TvHomeScreen(
         contentPadding = PaddingValues(top = 64.dp, bottom = 48.dp),
     ) {
         if (featuredItems.isNotEmpty()) item {
-            Carousel(itemCount = featuredItems.size, autoScrollDurationMillis = 5000L, modifier = Modifier.fillMaxWidth().height(LocalConfiguration.current.screenHeightDp.dp * 0.46f)) { index ->
+            Carousel(itemCount = featuredItems.size, autoScrollDurationMillis = 5000L, modifier = Modifier.fillMaxWidth().height(LocalConfiguration.current.screenHeightDp.dp * 0.46f).padding(horizontal = 24.dp)) { index ->
                 val item = featuredItems[index]
                 TvHomeHeroCard(item, featuredEyebrow, !heroFocusParked && index == 0, { heroFocusParked = true }, { onOpenItem(item) }, { onOpenItem(item) })
             }
         }
         status?.let { model ->
             item(key = "tv_status") {
-                TvHomeStatusCard(model = model, onReconnect = onRefresh)
+                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+                    TvHomeStatusCard(model = model, onReconnect = onRefresh)
+                }
             }
         }
         // The shape of the home, not a placeholder card: the first paint already
@@ -1128,9 +1133,18 @@ private fun TvContentShelf(
     arrangeState: HomeRowArrangeState? = null,
 ) {
     if (items.isEmpty()) return
+    val arrangeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(arrangeState?.isArranging) {
+        if (arrangeState?.isArranging == true) {
+            kotlinx.coroutines.delay(80)
+            try {
+                arrangeFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -1148,7 +1162,7 @@ private fun TvContentShelf(
                 modifier = Modifier.weight(1f),
             )
             if (arrangeState?.isArranging == true) {
-                HomeRowArrangeSlot(arrangeState)
+                HomeRowArrangeSlot(arrangeState, initialFocusRequester = arrangeFocusRequester)
             } else if (actionLabel != null && onAction != null) {
                 TvHeroButton(
                     label = actionLabel,
@@ -1159,7 +1173,15 @@ private fun TvContentShelf(
             }
         }
         LazyRow(
-            modifier = Modifier.focusRestorer(),
+            modifier = Modifier
+                .focusRestorer()
+                .graphicsLayer { clip = false }
+                .focusProperties {
+                    if (arrangeState?.isArranging == true) {
+                        up = arrangeFocusRequester
+                    }
+                },
+            contentPadding = PaddingValues(start = 24.dp, end = 48.dp, top = 14.dp, bottom = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(if (portrait) 18.dp else 16.dp),
             state = rememberTvShelfListState(),
         ) {
@@ -1184,9 +1206,18 @@ private fun TvLibraryShelf(
     arrangeState: HomeRowArrangeState? = null,
 ) {
     if (libraries.isEmpty()) return
+    val arrangeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(arrangeState?.isArranging) {
+        if (arrangeState?.isArranging == true) {
+            kotlinx.coroutines.delay(80)
+            try {
+                arrangeFocusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -1196,10 +1227,18 @@ private fun TvLibraryShelf(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-            HomeRowArrangeSlot(arrangeState)
+            HomeRowArrangeSlot(arrangeState, initialFocusRequester = arrangeFocusRequester)
         }
         LazyRow(
-            modifier = Modifier.focusRestorer(),
+            modifier = Modifier
+                .focusRestorer()
+                .graphicsLayer { clip = false }
+                .focusProperties {
+                    if (arrangeState?.isArranging == true) {
+                        up = arrangeFocusRequester
+                    }
+                },
+            contentPadding = PaddingValues(start = 24.dp, end = 48.dp, top = 14.dp, bottom = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             state = rememberTvShelfListState(),
         ) {
@@ -1926,16 +1965,40 @@ private fun TvLibraryCard(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TvOnboardingHero(companionReady: Boolean, onOpenCompanion: () -> Unit) {
-    Carousel(itemCount = 3, modifier = Modifier.fillMaxWidth().height(420.dp)) { index ->
-        Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0x664FC3F7), Color(0x331A2A3A), Color.Transparent), radius = 1200f)))
-            Column(Modifier.fillMaxSize().padding(48.dp), verticalArrangement = Arrangement.Bottom) {
-                Text("Welcome to SpatialFin", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(Modifier.height(24.dp))
-                Button(onClick = onOpenCompanion) { Text(if (companionReady) "Open companion" else "Pair companion") }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(420.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0x22131A24))
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.radialGradient(
+                        listOf(Color(0x664FC3F7), Color(0x331A2A3A), Color.Transparent),
+                        radius = 1200f,
+                    )
+                )
+        )
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(48.dp),
+            verticalArrangement = Arrangement.Bottom,
+        ) {
+            Text(
+                "Welcome to SpatialFin",
+                style = MaterialTheme.typography.displayMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onClick = onOpenCompanion) {
+                Text(if (companionReady) "Open companion" else "Pair companion")
             }
         }
     }

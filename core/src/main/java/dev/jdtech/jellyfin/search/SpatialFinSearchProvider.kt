@@ -41,7 +41,7 @@ class SpatialFinSearchProvider : ContentProvider() {
         fun appPreferences(): AppPreferences
     }
 
-    private lateinit var uriMatcher: UriMatcher
+    private var uriMatcher: UriMatcher = UriMatcher(UriMatcher.NO_MATCH)
     private var manifestAuthority: String = ""
     private val deps: Deps by lazy {
         EntryPointAccessors.fromApplication(requireAttachedContext(), Deps::class.java)
@@ -60,12 +60,13 @@ class SpatialFinSearchProvider : ContentProvider() {
     }
 
     override fun onCreate(): Boolean {
-        if (manifestAuthority.isBlank()) return false
-        uriMatcher =
-            UriMatcher(UriMatcher.NO_MATCH).apply {
-                addURI(manifestAuthority, SearchManager.SUGGEST_URI_PATH_QUERY, SUGGEST_ROOT)
-                addURI(manifestAuthority, "${SearchManager.SUGGEST_URI_PATH_QUERY}/*", SUGGEST_WITH_QUERY)
-            }
+        if (manifestAuthority.isNotBlank()) {
+            uriMatcher =
+                UriMatcher(UriMatcher.NO_MATCH).apply {
+                    addURI(manifestAuthority, SearchManager.SUGGEST_URI_PATH_QUERY, SUGGEST_ROOT)
+                    addURI(manifestAuthority, "${SearchManager.SUGGEST_URI_PATH_QUERY}/*", SUGGEST_WITH_QUERY)
+                }
+        }
         return true
     }
 

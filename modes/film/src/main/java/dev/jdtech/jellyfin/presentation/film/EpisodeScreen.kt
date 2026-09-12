@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,6 +64,7 @@ import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
 import dev.jdtech.jellyfin.film.domain.LanguagePreferences
 import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
 import dev.jdtech.jellyfin.film.domain.languagePreferences
+import dev.jdtech.jellyfin.models.versionChipLabel
 import dev.jdtech.jellyfin.presentation.film.components.TrackSelectionChips
 import dev.jdtech.jellyfin.presentation.film.components.VideoMetadataBar
 import dev.spatialfin.presentation.theme.SpatialFinTheme
@@ -168,7 +172,7 @@ fun EpisodeScreen(
                             item = episode,
                             startFromBeginning = action.startFromBeginning,
                             immersive = useImmersivePlayer,
-                            mediaSourceIndex = action.mediaSourceIndex,
+                            mediaSourceIndex = action.mediaSourceIndex ?: state.selectedSourceIndex,
                             maxBitrate = action.maxBitrate,
                             stereoMode = resolvedStereoMode,
                             projection = projectionStr,
@@ -216,14 +220,15 @@ private fun EpisodeScreenLayout(
 
     // Pre-playback track picks — see TrackSelectionChips. Resolved through
     // detailHeroMetadata so the chips and the Play intent cannot disagree.
-    var selectedAudioStreamIndex by rememberSaveable(state.episode?.id) { mutableStateOf<Int?>(null) }
-    var selectedSubtitleStreamIndex by rememberSaveable(state.episode?.id) { mutableStateOf<Int?>(null) }
-    var subtitlesDisabled by rememberSaveable(state.episode?.id) { mutableStateOf(false) }
+    var selectedAudioStreamIndex by rememberSaveable(state.episode?.id, state.selectedSourceIndex) { mutableStateOf<Int?>(null) }
+    var selectedSubtitleStreamIndex by rememberSaveable(state.episode?.id, state.selectedSourceIndex) { mutableStateOf<Int?>(null) }
+    var subtitlesDisabled by rememberSaveable(state.episode?.id, state.selectedSourceIndex) { mutableStateOf(false) }
     val trackHero = state.episode?.detailHeroMetadata(
         languagePreferences = languagePreferences,
         selectedAudioStreamIndex = selectedAudioStreamIndex,
         selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
         subtitlesDisabled = subtitlesDisabled,
+        selectedSourceIndex = state.selectedSourceIndex,
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -293,10 +298,38 @@ private fun EpisodeScreenLayout(
                         )
                     }
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    if (episode.sources.size > 1) {
+                        Text(
+                            text = "Version",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.extraSmall))
+                        LazyRow(
+                            horizontalArrangement =
+                                Arrangement.spacedBy(MaterialTheme.spacings.small),
+                        ) {
+                            itemsIndexed(
+                                episode.sources,
+                                key = { index, source -> source.id.ifEmpty { "$index" } },
+                            ) { index, source ->
+                                FilterChip(
+                                    selected = index == state.selectedSourceIndex,
+                                    onClick = {
+                                        if (index != state.selectedSourceIndex) {
+                                            onAction(EpisodeAction.SelectSource(index))
+                                        }
+                                    },
+                                    label = { Text(source.versionChipLabel(index)) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
                     trackHero?.let { hero ->
                         TrackSelectionChips(
                             item = episode,
                             hero = hero,
+                            selectedSourceIndex = state.selectedSourceIndex,
                             onAudioStreamSelected = { selectedAudioStreamIndex = it },
                             onSubtitleStreamSelected = { streamIndex, disabled ->
                                 selectedSubtitleStreamIndex = streamIndex
@@ -334,6 +367,7 @@ private fun EpisodeScreenLayout(
                                     itemKind = BaseItemKind.EPISODE.serialName,
                                     startFromBeginning = false,
                                     immersive = true,
+                                    mediaSourceIndex = state.selectedSourceIndex,
                                     stereoMode =
                                         when (stereoMode) {
                                             StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
@@ -353,7 +387,7 @@ private fun EpisodeScreenLayout(
                             onAction(
                                 EpisodeAction.Play(
                                     startFromBeginning = startFromBeginning,
-                                    mediaSourceIndex = mediaSourceIndex,
+                                    mediaSourceIndex = mediaSourceIndex ?: state.selectedSourceIndex,
                                     maxBitrate = maxBitrate,
                                     multitask = multitask,
                                     audioStreamIndex = trackHero?.audioStreamIndex,

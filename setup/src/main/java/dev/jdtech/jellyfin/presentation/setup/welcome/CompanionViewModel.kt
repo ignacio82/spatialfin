@@ -238,6 +238,10 @@ class CompanionViewModel @Inject constructor(
             importedSessions.firstOrNull { it.serverId == previousCurrentServer }
                 ?: importedSessions.firstOrNull()
 
+        if (config.servers.isNotEmpty() && activeSession == null) {
+            throw IllegalStateException("No valid server or user could be imported from companion config.")
+        }
+
         // If we found any valid server, set it as active and update the live API session.
         activeSession?.let { session ->
             appPreferences.setValue(appPreferences.currentServer, session.serverId)
@@ -286,7 +290,7 @@ class CompanionViewModel @Inject constructor(
     }
 
     /**
-     * Authenticate a companion user against the Jellyfin server.
+     * Authenticates a companion user or uses pre-authenticated credentials.
      * Uses the pre-authenticated access_token from the companion app if available,
      * falling back to username/password authentication.
      */
@@ -314,18 +318,34 @@ class CompanionViewModel @Inject constructor(
         // Fall back to password authentication
         if (u.password != null) {
             Timber.d("COMPANION: Authenticating ${u.username} with password on $baseUrl")
-            jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
-            val authResult = jellyfinApi.userApi.authenticateUserByName(
-                data = AuthenticateUserByName(username = u.username, pw = u.password)
-            ).content
+            val authUser = runCatching {
+                jellyfinApi.api.update(baseUrl = baseUrl, accessToken = null)
+                val authResult = jellyfinApi.userApi.authenticateUserByName(
+                    data = AuthenticateUserByName(username = u.username, pw = u.password)
+                ).content
 
-            val userId = authResult.user?.id ?: UUID.randomUUID()
-            Timber.d("COMPANION: Password auth succeeded for ${u.username}, userId=$userId, hasToken=${authResult.accessToken != null}")
+                val userId = authResult.user?.id ?: UUID.randomUUID()
+                Timber.d("COMPANION: Password auth succeeded for ${u.username}, userId=$userId, hasToken=${authResult.accessToken != null}")
+                User(
+                    id = userId,
+                    name = u.username,
+                    serverId = serverId,
+                    accessToken = authResult.accessToken,
+                    preferences = serializeUserPrefs(u.preferences)
+                )
+            }.getOrNull()
+            if (authUser != null) return authUser
+        }
+
+        // Offline / server unreachable fallback: preserve the user using credentials from companion
+        if (u.accessToken != null || u.password != null) {
+            val fallbackId = runCatching { u.id?.let { UUID.fromString(it) } }.getOrNull() ?: UUID.randomUUID()
+            Timber.i("COMPANION: Server unreachable; using companion offline credentials for ${u.username}")
             return User(
-                id = userId,
+                id = fallbackId,
                 name = u.username,
                 serverId = serverId,
-                accessToken = authResult.accessToken,
+                accessToken = u.accessToken,
                 preferences = serializeUserPrefs(u.preferences)
             )
         }

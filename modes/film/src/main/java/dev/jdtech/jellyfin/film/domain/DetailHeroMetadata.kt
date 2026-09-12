@@ -57,6 +57,7 @@ fun SpatialFinItem.detailHeroMetadata(
     selectedAudioStreamIndex: Int? = null,
     selectedSubtitleStreamIndex: Int? = null,
     subtitlesDisabled: Boolean = false,
+    selectedSourceIndex: Int = 0,
 ): DetailHeroMetadata = detailHeroMetadata(
     maxGenres = maxGenres,
     preferredAudioLanguage = languagePreferences.preferredAudioLanguage,
@@ -66,6 +67,7 @@ fun SpatialFinItem.detailHeroMetadata(
     selectedAudioStreamIndex = selectedAudioStreamIndex,
     selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
     subtitlesDisabled = subtitlesDisabled,
+    selectedSourceIndex = selectedSourceIndex,
 )
 
 /** Builds the hero metadata for [item]. Pure — safe to call during composition. */
@@ -80,6 +82,7 @@ fun SpatialFinItem.detailHeroMetadata(
     selectedAudioStreamIndex: Int? = null,
     selectedSubtitleStreamIndex: Int? = null,
     subtitlesDisabled: Boolean = false,
+    selectedSourceIndex: Int = 0,
 ): DetailHeroMetadata {
     val item = this
     val facts = buildList {
@@ -121,9 +124,10 @@ fun SpatialFinItem.detailHeroMetadata(
             else -> emptyList()
         }.filter { it.isNotBlank() }.take(maxGenres)
 
-    // The first source is the one playback defaults to; a version switch
-    // reloads the screen with that version's item, so this stays in step.
-    val streams = item.sources.firstOrNull()?.mediaStreams.orEmpty()
+    // The selected source (defaulting to the first) is what the hero tracks
+    // and video badges are derived from.
+    val streams = item.sources.getOrNull(selectedSourceIndex)?.mediaStreams
+        ?: item.sources.firstOrNull()?.mediaStreams.orEmpty()
     val audioStreams = streams.filter { it.type == MediaStreamType.AUDIO }
     val subtitleStreams = streams.filter { it.type == MediaStreamType.SUBTITLE }
 

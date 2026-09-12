@@ -9,6 +9,7 @@
     <application>
         <service
             android:name=".WearHostDataLayerService"
+            android:permission="com.google.android.gms.permission.BIND_LISTENER"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />

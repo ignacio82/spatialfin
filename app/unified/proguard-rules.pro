@@ -48,3 +48,10 @@
 -keep class androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer {
     <init>(android.os.Handler, androidx.media3.exoplayer.audio.AudioRendererEventListener, androidx.media3.exoplayer.audio.AudioSink);
 }
+
+# Navigation Compose type-safe route classes.
+# Retain route classes and serializers so R8 optimization does not alter
+# route identity, reflection descriptors, or destination route comparisons.
+-keep class dev.spatialfin.**Route { *; }
+-keepclassmembers class dev.spatialfin.**Route { *; }
+

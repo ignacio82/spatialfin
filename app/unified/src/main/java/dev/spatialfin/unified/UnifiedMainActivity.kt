@@ -216,7 +216,6 @@ class UnifiedMainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        dev.spatialfin.unified.MusicAssistantTest.runTest(this)
         super.onCreate(savedInstanceState)
 
         // External display: the browse shell stays on the phone. When the user plays a video and

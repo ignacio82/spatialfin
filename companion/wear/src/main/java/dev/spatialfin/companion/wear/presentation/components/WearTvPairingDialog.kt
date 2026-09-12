@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +33,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.scrollTransform
 import dev.spatialfin.companion.protocol.WearTvPairingRequest
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkError
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimary
@@ -51,6 +56,9 @@ import kotlinx.coroutines.delay
  * The countdown becomes the full bezel ring so it reads at a glance rather than as
  * a number you have to find. The manual code gets mono type and real tracking,
  * because its whole job is to be read aloud to someone standing at the TV.
+ *
+ * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on
+ * smaller watch displays the action buttons never get cut off by screen edges.
  */
 @Composable
 fun WearTvPairingDialog(
@@ -82,84 +90,100 @@ fun WearTvPairingDialog(
     ) {
         ArcCountdownRing(fraction = remainingSeconds.toFloat() / totalSeconds)
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 30.dp, vertical = 24.dp),
+        val listState = rememberTransformingLazyColumnState()
+
+        TransformingLazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
+            item {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(WearDarkSurfaceVariant),
-                    contentAlignment = Alignment.Center,
+                        .scrollTransform(this)
+                        .padding(horizontal = 4.dp),
                 ) {
-                    WearVectorIcon(
-                        icon = WearIcons.Tv,
-                        contentDescription = null,
-                        tint = WearDarkPrimary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "PAIR DEVICE",
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Normal,
-                    letterSpacing = 0.08.em,
-                    color = WearDarkOutline,
-                )
-                Text(
-                    text = request.deviceName,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WearTitleBright,
-                    textAlign = TextAlign.Center,
-                )
-                if (request.manualCode.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(WearDarkSurfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        WearVectorIcon(
+                            icon = WearIcons.Tv,
+                            contentDescription = null,
+                            tint = WearDarkPrimary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = request.manualCode,
-                        fontSize = 16.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 0.22.em,
-                        color = WearDarkPrimary,
+                        text = "PAIR DEVICE",
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Normal,
+                        letterSpacing = 0.08.em,
+                        color = WearDarkOutline,
+                    )
+                    Text(
+                        text = request.deviceName,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = WearTitleBright,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (request.manualCode.isNotBlank()) {
+                        Text(
+                            text = request.manualCode,
+                            fontSize = 16.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.22.em,
+                            color = WearDarkPrimary,
+                        )
+                    }
+                    Text(
+                        text = "Expires in ${remainingSeconds}s",
+                        fontSize = 8.5.sp,
+                        color = WearDarkOutline,
                     )
                 }
-                Text(
-                    text = "Expires in ${remainingSeconds}s",
-                    fontSize = 8.5.sp,
-                    color = WearDarkOutline,
-                )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                PairingButton(
-                    label = "Reject",
-                    icon = WearIcons.Close,
-                    container = WearRejectContainer,
-                    content = WearDarkError,
-                    border = WearDarkError.copy(alpha = 0.28f),
-                    onClick = onReject,
-                    modifier = Modifier.weight(1f),
-                )
-                PairingButton(
-                    label = "Approve",
-                    icon = WearIcons.Check,
-                    container = WearDarkPrimary,
-                    content = WearDarkOnPrimary,
-                    border = Color.Transparent,
-                    onClick = onApprove,
-                    modifier = Modifier.weight(1.35f),
-                )
+            item {
+                Row(
+                    modifier = Modifier
+                        .scrollTransform(this)
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PairingButton(
+                        label = "Reject",
+                        icon = WearIcons.Close,
+                        container = WearRejectContainer,
+                        content = WearDarkError,
+                        border = WearDarkError.copy(alpha = 0.28f),
+                        onClick = onReject,
+                        modifier = Modifier.weight(1f),
+                    )
+                    PairingButton(
+                        label = "Approve",
+                        icon = WearIcons.Check,
+                        container = WearDarkPrimary,
+                        content = WearDarkOnPrimary,
+                        border = Color.Transparent,
+                        onClick = onApprove,
+                        modifier = Modifier.weight(1.35f),
+                    )
+                }
             }
         }
+
+        ScrollIndicator(state = listState, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 

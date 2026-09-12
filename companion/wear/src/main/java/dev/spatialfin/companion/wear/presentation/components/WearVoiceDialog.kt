@@ -7,6 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -26,7 +28,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.scrollTransform
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkError
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnSurfaceVariant
@@ -45,12 +51,8 @@ import dev.spatialfin.companion.wear.voice.VoiceRecordingState
  * concentric rings breathing with the normalised RMS the capture layer already
  * emits. Everything else here is static, because the answer is the point.
  *
- * The design's answered state also shows the results as tappable poster rows.
- * That is not built, and cannot be from the watch side alone: recognition returns
- * `VoiceRecordingState.Completed(message: String)` — one line of host prose — and
- * the response path carries no structured item list to render or to play. Giving
- * the rows a home means returning items on the command-response path, not a
- * change on this screen.
+ * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or
+ * longer transcribed phrases the action controls never get cut off by screen edges.
  */
 @Composable
 fun WearVoiceDialog(
@@ -66,12 +68,12 @@ fun WearVoiceDialog(
     }
     val pulse by animateFloatAsState(targetValue = rms, label = "voice_pulse")
     val listening = state is VoiceRecordingState.Recording || state is VoiceRecordingState.Connecting
+    val listState = rememberTransformingLazyColumnState()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF06070A)),
-        contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
@@ -90,67 +92,87 @@ fun WearVoiceDialog(
             ListeningRings(amplitude = pulse, modifier = Modifier.fillMaxSize())
         }
 
-        Column(
+        TransformingLazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            if (listening) {
-                Box(
+            item {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .size((66 + pulse * 8).dp)
-                        .clip(CircleShape)
-                        .background(WearDarkPrimary)
-                        .clickable { onStopCapture() },
-                    contentAlignment = Alignment.Center,
+                        .scrollTransform(this)
+                        .padding(horizontal = 6.dp),
                 ) {
-                    WearVectorIcon(
-                        icon = WearIcons.Mic,
-                        contentDescription = "Stop listening",
-                        tint = WearDarkOnPrimary,
-                        modifier = Modifier.size(26.dp),
+                    if (listening) {
+                        Box(
+                            modifier = Modifier
+                                .size((60 + pulse * 6).dp)
+                                .clip(CircleShape)
+                                .background(WearDarkPrimary)
+                                .clickable { onStopCapture() },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            WearVectorIcon(
+                                icon = WearIcons.Mic,
+                                contentDescription = "Stop listening",
+                                tint = WearDarkOnPrimary,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    } else {
+                        WearVectorIcon(
+                            icon = WearIcons.Mic,
+                            contentDescription = null,
+                            tint = WearDarkOutline,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    Text(
+                        text = state.headline(),
+                        fontSize = if (listening) 13.5.sp else 11.sp,
+                        lineHeight = if (listening) 17.sp else 14.sp,
+                        fontWeight = if (listening) FontWeight.Medium else FontWeight.Normal,
+                        color = when (state) {
+                            is VoiceRecordingState.Error, is VoiceRecordingState.PermissionRequired ->
+                                WearDarkError
+                            is VoiceRecordingState.Transcribed -> WearDarkOnSurfaceVariant
+                            is VoiceRecordingState.Completed -> WearTitleBright
+                            else -> WearTitleBright
+                        },
+                        textAlign = TextAlign.Center,
                     )
                 }
-                Spacer(modifier = Modifier.height(10.dp))
-            } else {
-                WearVectorIcon(
-                    icon = WearIcons.Mic,
-                    contentDescription = null,
-                    tint = WearDarkOutline,
-                    modifier = Modifier.size(13.dp),
-                )
-                Spacer(modifier = Modifier.height(5.dp))
             }
-
-            Text(
-                text = state.headline(),
-                fontSize = if (listening) 14.sp else 10.5.sp,
-                lineHeight = if (listening) 17.sp else 14.sp,
-                fontWeight = if (listening) FontWeight.Medium else FontWeight.Normal,
-                color = when (state) {
-                    is VoiceRecordingState.Error, is VoiceRecordingState.PermissionRequired ->
-                        WearDarkError
-                    is VoiceRecordingState.Transcribed -> WearDarkOnSurfaceVariant
-                    is VoiceRecordingState.Completed -> WearTitleBright
-                    else -> WearTitleBright
-                },
-                textAlign = TextAlign.Center,
-            )
 
             if (state is VoiceRecordingState.PermissionRequired) {
-                Spacer(modifier = Modifier.height(8.dp))
-                VoiceButton(label = "Grant access", onClick = onRequestPermission)
+                item {
+                    VoiceButton(
+                        label = "Grant access",
+                        onClick = onRequestPermission,
+                        modifier = Modifier.scrollTransform(this),
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-            VoiceButton(
-                label = if (listening) "Done" else "Close",
-                onClick = {
-                    onStopCapture()
-                    onDismiss()
-                },
-            )
+            item {
+                VoiceButton(
+                    label = if (listening) "Done" else "Close",
+                    onClick = {
+                        onStopCapture()
+                        onDismiss()
+                    },
+                    modifier = Modifier.scrollTransform(this),
+                )
+            }
         }
+
+        ScrollIndicator(state = listState, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -174,9 +196,13 @@ private fun ListeningRings(amplitude: Float, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun VoiceButton(label: String, onClick: () -> Unit) {
+private fun VoiceButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(width = 96.dp, height = 32.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(WearDarkPrimary)

@@ -2,7 +2,9 @@ package dev.spatialfin.tv
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.People
@@ -38,7 +40,7 @@ internal fun TvTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(104.dp)
-            .padding(horizontal = 48.dp, vertical = 24.dp),
+            .padding(start = 36.dp, end = 36.dp, top = 24.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -52,7 +54,14 @@ internal fun TvTopBar(
         }
         
         // Tabs
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             navItems.forEach { (route, info) ->
                 val (label, icon) = info
                 val selected = currentRouteName == route
@@ -62,10 +71,10 @@ internal fun TvTopBar(
                         .onFocusChanged { isFocused = it.isFocused }
                         .tvFocus(isFocused, RoundedCornerShape(20.dp))
                         .clickable { onNavigate(route) }
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (selected || isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = if (selected || isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(0.7f))
                         Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected || isFocused) Color.White else Color.White.copy(0.7f), fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                     }
                 }
@@ -77,6 +86,7 @@ internal fun TvTopBar(
         val userShape = RoundedCornerShape(20.dp)
         Row(
             modifier = Modifier
+                .padding(start = 12.dp)
                 .onFocusChanged { isUserFocused = it.isFocused }
                 .tvFocus(isUserFocused, userShape)
                 .clickable(onClick = onUserClick)

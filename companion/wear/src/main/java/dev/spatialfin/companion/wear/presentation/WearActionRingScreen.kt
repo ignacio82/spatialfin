@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -150,6 +151,8 @@ fun WearActionRingScreen(
                 fontSize = 7.5.sp,
                 fontWeight = FontWeight.Medium,
                 color = WearDarkOnSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = if (isSinkActive) "ON" else "OFF",
@@ -157,6 +160,7 @@ fun WearActionRingScreen(
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 0.06.em,
                 color = if (isSinkActive) WearMint else WearDarkOutline,
+                maxLines = 1,
             )
         }
     }
@@ -196,6 +200,8 @@ private fun RingTarget(
             fontSize = 7.5.sp,
             fontWeight = FontWeight.Medium,
             color = if (highlighted) WearDarkOnPrimaryContainer else WearDarkOnSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

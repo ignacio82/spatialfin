@@ -6,6 +6,7 @@ import dev.jdtech.jellyfin.models.VideoMetadata
 
 data class EpisodeState(
     val episode: SpatialFinEpisode? = null,
+    val selectedSourceIndex: Int = 0,
     val videoMetadata: VideoMetadata? = null,
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val displayExtraInfo: Boolean = false,

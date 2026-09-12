@@ -53,5 +53,11 @@
             android:name="dev.jdtech.jellyfin.search.SpatialFinSearchProvider"
             android:authorities="${applicationId}.search"
             android:exported="true" />
+
+        <!-- Android TV does not pair with Wear OS watches; remove the host listener service. -->
+        <service
+            android:name="dev.spatialfin.companion.host.WearHostDataLayerService"
+            tools:node="remove"
+            tools:ignore="Instantiatable" />
     </application>
 </manifest>

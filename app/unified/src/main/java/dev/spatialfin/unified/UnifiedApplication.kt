@@ -82,7 +82,9 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             ) {
                 CompanionLiveSyncClient.from(this).refreshConnection()
             } else if (key == appPreferences.currentServer.backendName) {
-                deferredStartupScope.launch { wearCredentialPusher.pushCredentials() }
+                if (capabilities.hasWearCompanionHost) {
+                    deferredStartupScope.launch { wearCredentialPusher.pushCredentials() }
+                }
             }
         }
 
@@ -144,9 +146,11 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             reportPendingPlayerLaunch()
             eagerInitializeLlmIfNeeded()
             CompanionLiveSyncClient.from(this@UnifiedApplication).start()
-            wearStatePublisher.startObserving()
-            wearTvPairingBroker.startObserving()
-            wearCredentialPusher.pushCredentials()
+            if (capabilities.hasWearCompanionHost) {
+                wearStatePublisher.startObserving()
+                wearTvPairingBroker.startObserving()
+                wearCredentialPusher.pushCredentials()
+            }
             // Google TV launcher's Watch Next row — Leanback-only surface.
             if (capabilities.hasLeanback) {
                 watchNextScheduler.schedulePeriodic(this@UnifiedApplication)

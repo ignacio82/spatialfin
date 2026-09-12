@@ -3,10 +3,13 @@ package dev.jdtech.jellyfin.api
 import android.content.Context
 import dev.jdtech.jellyfin.data.BuildConfig
 import dev.jdtech.jellyfin.settings.domain.Constants
+import java.util.Locale
 import java.util.UUID
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
+import okhttp3.OkHttpClient
 import org.jellyfin.sdk.api.client.HttpClientOptions
+import org.jellyfin.sdk.api.okhttp.OkHttpFactory
 import org.jellyfin.sdk.api.client.extensions.brandingApi
 import org.jellyfin.sdk.api.client.extensions.artistsApi
 import org.jellyfin.sdk.api.client.extensions.audioApi
@@ -60,6 +63,26 @@ class JellyfinApi(
                 version = BuildConfig.VERSION_NAME,
             )
         context = androidContext
+
+        val okHttpClient =
+            OkHttpClient.Builder()
+                .addInterceptor { chain ->
+                    val originalRequest = chain.request()
+                    val headerValue = buildAcceptLanguageHeader()
+                    val request =
+                        if (originalRequest.header("Accept-Language") == null && headerValue != null) {
+                            originalRequest.newBuilder()
+                                .header("Accept-Language", headerValue)
+                                .build()
+                        } else {
+                            originalRequest
+                        }
+                    chain.proceed(request)
+                }
+                .build()
+        val factory = OkHttpFactory(okHttpClient)
+        apiClientFactory = factory
+        socketConnectionFactory = factory
     }
     val api =
         jellyfin.createApi(
@@ -124,5 +147,20 @@ class JellyfinApi(
                 return instance
             }
         }
+    }
+}
+
+/**
+ * Builds an RFC 9110 / BCP 47 compliant Accept-Language header value from the given [locale].
+ * Used by Jellyfin 12+ for server-side metadata localization matching the device locale.
+ */
+internal fun buildAcceptLanguageHeader(locale: Locale = Locale.getDefault()): String? {
+    val tag = locale.toLanguageTag()
+    if (tag.isEmpty() || tag == "und") return null
+    val lang = locale.language
+    return if (lang.isNotEmpty() && lang != tag) {
+        "$tag, $lang;q=0.9"
+    } else {
+        tag
     }
 }

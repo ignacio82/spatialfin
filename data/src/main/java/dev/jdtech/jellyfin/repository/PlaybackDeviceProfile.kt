@@ -179,8 +179,29 @@ internal fun createPlaybackDeviceProfile(
     }
 
     val transcodingProfiles = listOf(
-        // HLS video transcoding profile: used when Jellyfin decides the source cannot be direct-played
-        // (unsupported video/audio codec or bitrate exceeds cap)
+        // HLS fragmented MP4 (fMP4) video transcoding profile:
+        // Jellyfin 12+ supports fMP4 for spec-compliant Dolby Vision Profile 5 (dvh1), AV1, and E-AC3 HLS streaming.
+        // Media3 (ExoPlayer) natively handles fMP4 HLS segments alongside traditional TS.
+        TranscodingProfile(
+            container = "mp4",
+            type = DlnaProfileType.VIDEO,
+            videoCodec = "h264,hevc,av1",
+            audioCodec = "aac,mp3,opus,eac3",
+            protocol = MediaStreamProtocol.HLS,
+            estimateContentLength = false,
+            enableMpegtsM2TsMode = false,
+            transcodeSeekInfo = TranscodeSeekInfo.AUTO,
+            copyTimestamps = false,
+            context = EncodingContext.STREAMING,
+            enableSubtitlesInManifest = false,
+            maxAudioChannels = null,
+            minSegments = 0,
+            segmentLength = 0,
+            breakOnNonKeyFrames = false,
+            conditions = emptyList(),
+            enableAudioVbrEncoding = true,
+        ),
+        // HLS MPEG-TS video transcoding profile: fallback for servers or codecs where TS is used.
         TranscodingProfile(
             container = "ts",
             type = DlnaProfileType.VIDEO,

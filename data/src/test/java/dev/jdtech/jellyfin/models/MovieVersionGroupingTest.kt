@@ -39,6 +39,29 @@ class MovieVersionGroupingTest {
         assertEquals(1, listOf(first, second).deduplicateMovieVersions().size)
     }
 
+    @Test
+    fun `source version chip label formats quality and clean names`() {
+        val s1 = source(name = "4K Remux", path = "/media/show.mkv")
+        val s2 = source(name = "Director's Cut", path = "/media/show_extended.1080p.mkv")
+        val s3 = source(name = "Show.S01E01.720p.mkv", path = "/media/Show.S01E01.720p.mkv")
+        val s4 = source(name = "", path = "")
+
+        assertEquals("4K Remux", s1.versionChipLabel(0))
+        assertEquals("Director's Cut", s2.versionChipLabel(1))
+        assertEquals("720P", s3.versionChipLabel(2))
+        assertEquals("Version 4", s4.versionChipLabel(3))
+    }
+
+    private fun source(name: String, path: String): SpatialFinSource =
+        SpatialFinSource(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            type = SpatialFinSourceType.REMOTE,
+            path = path,
+            size = 0L,
+            mediaStreams = emptyList(),
+        )
+
     private fun movie(
         name: String,
         productionYear: Int?,
