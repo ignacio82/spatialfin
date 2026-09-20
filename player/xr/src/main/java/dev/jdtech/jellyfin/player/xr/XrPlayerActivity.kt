@@ -5,6 +5,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.Looper
 import android.graphics.Color as AndroidColor
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.annotation.OptIn
@@ -52,6 +53,7 @@ import java.util.UUID
 import javax.inject.Inject
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -215,6 +217,16 @@ class XrPlayerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         recordLaunchPhase("onCreate:start")
 
+        // Crucial for Android XR: ensure DecorView is instantiated immediately.
+        // Galaxy XR's platform extension (android.extensions.xr.node.Node.setIsRenderableAndAttached,
+        // Node.java:561) invokes `window.peekDecorView().getWindowToken()` during the compositor's
+        // initial window-leash transform callback. If the DecorView hasn't been instantiated yet,
+        // peekDecorView() returns null and throws an unhandled NullPointerException on the binder
+        // stub, causing the compositor transaction to fail and getSpatialState() to deadlock the
+        // main thread indefinitely.
+        enableEdgeToEdge()
+        window.decorView
+
         // Enable wide color gamut for HDR support
         window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
 
@@ -267,18 +279,21 @@ class XrPlayerActivity : AppCompatActivity() {
         recordLaunchPhase("onCreate:before-viewmodel-preferences")
         val libassUsagePref = viewModel.appPreferences.getValue(viewModel.appPreferences.libassSubtitleUsage)
         val xrSubtitleSize = viewModel.appPreferences.getValue(viewModel.appPreferences.xrSubtitleSize)
-        // Preload embedded ASS fonts synchronously once at activity start. This blocks
-        // the main thread briefly here (same as the other sync prefs/I/O already above),
-        // but keeps the renderer thread free — previously the loader ran runBlocking()
-        // inside LibassTextRenderer.ensureFontsLoaded, stalling ExoPlayer during track
-        // initialization.
-        val preloadedLibassFonts: List<Pair<String, ByteArray>> = itemId?.let {
-            runCatching { runBlocking(Dispatchers.IO) { loadLibassFonts(it, maxBitrate) } }
-                .onFailure { err -> Timber.w(err, "subtitle: preload embedded ASS fonts failed") }
-                .getOrDefault(emptyList())
-        }.orEmpty()
+        // Embedded ASS fonts are fetched asynchronously off the main thread and only
+        // awaited if and when LibassTextRenderer initializes a styled subtitle track.
+        // Fetching them synchronously via runBlocking in onCreate blocked activity startup
+        // for up to 13+ seconds on network requests, risking WindowManager timeouts.
+        val fontsDeferred = itemId?.let { id ->
+            lifecycleScope.async(Dispatchers.IO) {
+                runCatching { loadLibassFonts(id, maxBitrate) }
+                    .onFailure { err -> Timber.w(err, "subtitle: preload embedded ASS fonts failed") }
+                    .getOrDefault(emptyList())
+            }
+        }
         val libassFontLoader: (() -> List<Pair<String, ByteArray>>)? =
-            if (itemId != null) ({ preloadedLibassFonts }) else null
+            fontsDeferred?.let { deferred ->
+                { runCatching { runBlocking { deferred.await() } }.getOrDefault(emptyList()) }
+            }
         Timber.i(
             "subtitle: libassUsagePref=%s libassAvailable=%b stereoMode=%s",
             libassUsagePref,

@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -196,6 +197,13 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Crucial for Android XR: ensure DecorView is instantiated immediately.
+        // Galaxy XR's platform extension (Node.setIsRenderableAndAttached) calls
+        // window.peekDecorView().getWindowToken() without a null check; uninitialized
+        // decorView throws NPE on the compositor binder thread, causing a main thread deadlock.
+        enableEdgeToEdge()
+        window.decorView
+
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
         window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))

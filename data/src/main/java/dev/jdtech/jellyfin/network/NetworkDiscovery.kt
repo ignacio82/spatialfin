@@ -95,15 +95,14 @@ class NetworkDiscovery(
 
     private fun findBindableAddress(): InetAddress? {
         val interfaces = try {
-            NetworkInterface.getNetworkInterfaces()
+            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         } catch (e: Exception) {
             Timber.w(e, "Unable to enumerate network interfaces for mDNS discovery")
             return null
-        } ?: return null
+        }
 
         var fallback: InetAddress? = null
-        while (interfaces.hasMoreElements()) {
-            val networkInterface = interfaces.nextElement()
+        for (networkInterface in interfaces) {
             val usable = try {
                 networkInterface.isUp && !networkInterface.isLoopback && networkInterface.supportsMulticast()
             } catch (_: Exception) {
@@ -111,21 +110,49 @@ class NetworkDiscovery(
             }
             if (!usable) continue
 
-            val addresses = networkInterface.inetAddresses
-            while (addresses.hasMoreElements()) {
-                val address = addresses.nextElement()
+            val name = networkInterface.name.orEmpty().lowercase()
+            if (isExcludedInterface(name)) continue
+
+            val isPreferred = isPreferredInterface(name)
+            val addresses = try {
+                networkInterface.inetAddresses?.toList().orEmpty()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (address in addresses) {
                 if (address.isLoopbackAddress || address.isAnyLocalAddress) continue
                 if (address is Inet4Address && !address.isLinkLocalAddress) {
-                    return address
-                }
-                if (fallback == null && !address.isLinkLocalAddress) {
-                    fallback = address
+                    if (isPreferred) {
+                        return address
+                    }
+                    if (fallback == null) {
+                        fallback = address
+                    }
                 }
             }
         }
 
         return fallback
     }
+
+    private fun isExcludedInterface(lower: String): Boolean =
+        lower.startsWith("rmnet") ||
+            lower.startsWith("ccmni") ||
+            lower.startsWith("pdp") ||
+            lower.startsWith("wwan") ||
+            lower.startsWith("clat") ||
+            lower.startsWith("radio") ||
+            lower.startsWith("cellular") ||
+            lower.startsWith("dummy") ||
+            lower.startsWith("p2p")
+
+    private fun isPreferredInterface(lower: String): Boolean =
+        lower.startsWith("wlan") ||
+            lower.startsWith("wifi") ||
+            lower.startsWith("ap") ||
+            lower.startsWith("softap") ||
+            lower.startsWith("eth") ||
+            lower.startsWith("en")
 
     private fun ServiceInfo.resolveHostAddress(): String? {
         val ipv4Host = inet4Addresses.firstOrNull()?.hostAddress

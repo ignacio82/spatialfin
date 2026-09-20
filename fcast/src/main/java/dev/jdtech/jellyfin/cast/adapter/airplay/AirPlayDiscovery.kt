@@ -218,27 +218,55 @@ class AirPlayDiscovery(private val context: Context) {
 
     private fun findBindableAddress(): InetAddress? {
         val interfaces = try {
-            NetworkInterface.getNetworkInterfaces()
+            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         } catch (_: Exception) {
             return null
-        } ?: return null
+        }
         var fallback: InetAddress? = null
-        while (interfaces.hasMoreElements()) {
-            val iface = interfaces.nextElement()
+        for (iface in interfaces) {
             val usable = try {
                 iface.isUp && !iface.isLoopback && iface.supportsMulticast()
             } catch (_: Exception) { false }
             if (!usable) continue
-            val addresses = iface.inetAddresses
-            while (addresses.hasMoreElements()) {
-                val address = addresses.nextElement()
+
+            val name = iface.name.orEmpty().lowercase()
+            if (isExcludedInterface(name)) continue
+
+            val isPreferred = isPreferredInterface(name)
+            val addresses = try {
+                iface.inetAddresses?.toList().orEmpty()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (address in addresses) {
                 if (address.isLoopbackAddress || address.isAnyLocalAddress) continue
-                if (address is Inet4Address && !address.isLinkLocalAddress) return address
-                if (fallback == null && !address.isLinkLocalAddress) fallback = address
+                if (address is Inet4Address && !address.isLinkLocalAddress) {
+                    if (isPreferred) return address
+                    if (fallback == null) fallback = address
+                }
             }
         }
         return fallback
     }
+
+    private fun isExcludedInterface(lower: String): Boolean =
+        lower.startsWith("rmnet") ||
+            lower.startsWith("ccmni") ||
+            lower.startsWith("pdp") ||
+            lower.startsWith("wwan") ||
+            lower.startsWith("clat") ||
+            lower.startsWith("radio") ||
+            lower.startsWith("cellular") ||
+            lower.startsWith("dummy") ||
+            lower.startsWith("p2p")
+
+    private fun isPreferredInterface(lower: String): Boolean =
+        lower.startsWith("wlan") ||
+            lower.startsWith("wifi") ||
+            lower.startsWith("ap") ||
+            lower.startsWith("softap") ||
+            lower.startsWith("eth") ||
+            lower.startsWith("en")
 
     private fun ServiceInfo.resolveHostAddress(): String? {
         val ipv4 = inet4Addresses.firstOrNull()?.hostAddress

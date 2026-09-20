@@ -18,7 +18,13 @@ import timber.log.Timber
  * Lifecycle: [register] when the receiver service starts, [unregister] when it stops.
  * Re-registering replaces the previous record.
  */
-class FCastReceiverAdvertiser(private val context: Context) {
+class FCastReceiverAdvertiser(
+    private val context: Context,
+    private val jmdnsFactory: (InetAddress) -> JmDNS = { JmDNS.create(it) },
+    private val interfaceProvider: () -> List<NetworkInterface>? = {
+        try { NetworkInterface.getNetworkInterfaces()?.toList() } catch (_: Exception) { null }
+    },
+) {
 
     private var jmdns: JmDNS? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -31,28 +37,39 @@ class FCastReceiverAdvertiser(private val context: Context) {
     ) {
         unregister()
         withContext(Dispatchers.IO) {
-            multicastLock = acquireMulticastLock()
-            val bind = findBindableAddress() ?: run {
-                Timber.tag(TAG).w("FCast advertise skipped: no bindable address")
-                return@withContext
-            }
-            val dns = JmDNS.create(bind)
-            val info = ServiceInfo.create(
-                FCAST_MDNS_SERVICE_TYPE,
-                instanceName,
-                port,
-                0, // weight
-                0, // priority
-                properties,
-            )
+            var dns: JmDNS? = null
             try {
+                multicastLock = acquireMulticastLock()
+                val bind = findBindableAddress() ?: run {
+                    Timber.tag(TAG).w("FCast advertise skipped: no bindable address")
+                    releaseMulticastLock()
+                    return@withContext
+                }
+                dns = jmdnsFactory(bind)
+                val info = ServiceInfo.create(
+                    FCAST_MDNS_SERVICE_TYPE,
+                    instanceName,
+                    port,
+                    0, // weight
+                    0, // priority
+                    properties,
+                )
                 dns.registerService(info)
                 jmdns = dns
                 serviceInfo = info
                 Timber.tag(TAG).i("FCast advertised as %s on %s:%d", instanceName, bind.hostAddress, port)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                try { dns?.close() } catch (_: Exception) {}
+                jmdns = null
+                serviceInfo = null
+                releaseMulticastLock()
+                throw e
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "FCast advertise failed")
-                try { dns.close() } catch (_: Exception) {}
+                try { dns?.close() } catch (_: Exception) {}
+                jmdns = null
+                serviceInfo = null
+                releaseMulticastLock()
             }
         }
     }
@@ -66,8 +83,7 @@ class FCastReceiverAdvertiser(private val context: Context) {
             } finally {
                 jmdns = null
                 serviceInfo = null
-                try { multicastLock?.release() } catch (_: Exception) {}
-                multicastLock = null
+                releaseMulticastLock()
             }
         }
     }
@@ -86,30 +102,71 @@ class FCastReceiverAdvertiser(private val context: Context) {
         }
     }
 
-    private fun findBindableAddress(): InetAddress? {
-        val interfaces = try {
-            NetworkInterface.getNetworkInterfaces()
+    private fun releaseMulticastLock() {
+        try {
+            multicastLock?.release()
         } catch (_: Exception) {
-            return null
-        } ?: return null
+        } finally {
+            multicastLock = null
+        }
+    }
+
+    internal fun findBindableAddress(): InetAddress? {
+        val interfaces = interfaceProvider() ?: return null
         var fallback: InetAddress? = null
-        while (interfaces.hasMoreElements()) {
-            val iface = interfaces.nextElement()
+        for (iface in interfaces) {
             val usable = try {
                 iface.isUp && !iface.isLoopback && iface.supportsMulticast()
             } catch (_: Exception) {
                 false
             }
             if (!usable) continue
-            val addresses = iface.inetAddresses
-            while (addresses.hasMoreElements()) {
-                val address = addresses.nextElement()
+
+            val name = iface.name.orEmpty()
+            if (isExcludedInterface(name)) continue
+
+            val isPreferred = isPreferredInterface(name)
+            val addresses = try {
+                iface.inetAddresses?.toList().orEmpty()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (address in addresses) {
                 if (address.isLoopbackAddress || address.isAnyLocalAddress) continue
-                if (address is java.net.Inet4Address && !address.isLinkLocalAddress) return address
-                if (fallback == null && !address.isLinkLocalAddress) fallback = address
+                if (address is java.net.Inet4Address && !address.isLinkLocalAddress) {
+                    if (isPreferred) {
+                        return address
+                    }
+                    if (fallback == null) {
+                        fallback = address
+                    }
+                }
             }
         }
         return fallback
+    }
+
+    internal fun isExcludedInterface(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.startsWith("rmnet") ||
+            lower.startsWith("ccmni") ||
+            lower.startsWith("pdp") ||
+            lower.startsWith("wwan") ||
+            lower.startsWith("clat") ||
+            lower.startsWith("radio") ||
+            lower.startsWith("cellular") ||
+            lower.startsWith("dummy") ||
+            lower.startsWith("p2p")
+    }
+
+    internal fun isPreferredInterface(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.startsWith("wlan") ||
+            lower.startsWith("wifi") ||
+            lower.startsWith("ap") ||
+            lower.startsWith("softap") ||
+            lower.startsWith("eth") ||
+            lower.startsWith("en")
     }
 
     private companion object {
