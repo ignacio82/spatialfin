@@ -156,8 +156,10 @@ android {
         baseline = file("lint-baseline.xml")
         abortOnError = true
         warningsAsErrors = false
-        // Release is optimized, so keep release-specific checks enabled.
-        checkReleaseBuilds = true
+        // Release is optimized; keep checkReleaseBuilds opt-in to avoid running
+        // memory-intensive whole-program lintVital analysis concurrently with R8 on developers' machines.
+        checkReleaseBuilds =
+            (project.findProperty("SPATIALFIN_CHECK_RELEASE_BUILDS") as String?)?.toBoolean() ?: false
     }
 }
 
