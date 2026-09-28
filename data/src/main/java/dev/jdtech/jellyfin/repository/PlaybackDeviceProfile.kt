@@ -40,6 +40,13 @@ object AndroidCodecDetector {
         "h264", "avc", "hevc", "h265", "vp9", "av1", "vp8",
     )
 
+    @androidx.annotation.VisibleForTesting
+    internal var dolbyVisionDecoderOverride: Boolean? = null
+
+    fun hasDolbyVisionDecoder(): Boolean {
+        return dolbyVisionDecoderOverride ?: getSupportedVideoCodecs().contains("dvhe")
+    }
+
     fun getSupportedVideoCodecs(): Set<String> {
         val detected = mutableSetOf<String>()
         runCatching {
@@ -269,25 +276,52 @@ internal fun createPlaybackDeviceProfile(
     // away DTS-HD MA and DTS:X — both of which bitstream correctly as their core.
     // isRequired = false so a stream whose profile the server could not determine still plays:
     // Jellyfin treats an unknown value as satisfying a non-required condition.
-    val codecProfiles = if (!forceDirectPlay && AudioPassthroughDetector.needsDtsExpressGuard(passthroughMode)) {
-        Timber.i("DeviceProfile: excluding DTS Express from direct play (core-only route, no local DTS decoder)")
-        listOf(
-            CodecProfile(
-                type = CodecType.VIDEO_AUDIO,
-                codec = "dts",
-                conditions = listOf(
-                    ProfileCondition(
-                        condition = ProfileConditionType.NOT_EQUALS,
-                        property = ProfileConditionValue.AUDIO_PROFILE,
-                        value = AudioPassthroughDetector.DTS_EXPRESS_PROFILE,
-                        isRequired = false,
+    val codecProfiles = mutableListOf<CodecProfile>()
+    if (!forceDirectPlay) {
+        if (AudioPassthroughDetector.needsDtsExpressGuard(passthroughMode)) {
+            Timber.i("DeviceProfile: excluding DTS Express from direct play (core-only route, no local DTS decoder)")
+            codecProfiles.add(
+                CodecProfile(
+                    type = CodecType.VIDEO_AUDIO,
+                    codec = "dts",
+                    conditions = listOf(
+                        ProfileCondition(
+                            condition = ProfileConditionType.NOT_EQUALS,
+                            property = ProfileConditionValue.AUDIO_PROFILE,
+                            value = AudioPassthroughDetector.DTS_EXPRESS_PROFILE,
+                            isRequired = false,
+                        ),
                     ),
+                    applyConditions = emptyList(),
                 ),
-                applyConditions = emptyList(),
-            ),
-        )
-    } else {
-        emptyList()
+            )
+        }
+
+        // Dolby Vision Profile 5 (DOVI) uses proprietary ICtCp color space with no backward-compatible
+        // base layer. Devices lacking a hardware Dolby Vision decoder (such as Samsung Galaxy XR /
+        // Samsung TVs or Google Pixel devices) cannot decode video/dolby-vision, resulting in blank video
+        // (audio-only) if direct-played.
+        // Files with standard HDR10/HLG/SDR fallback layers (e.g. DOVIWithHDR10 / Profile 7 & 8) direct-play
+        // cleanly via the HEVC base layer. Excluding pure DOVI forces the server to transcode Profile 5
+        // with tone-mapping into a playable stream.
+        if (!AndroidCodecDetector.hasDolbyVisionDecoder()) {
+            Timber.i("DeviceProfile: excluding pure Dolby Vision (DOVI / Profile 5) from direct play (no local DV decoder)")
+            codecProfiles.add(
+                CodecProfile(
+                    type = CodecType.VIDEO,
+                    codec = "hevc,h265",
+                    conditions = listOf(
+                        ProfileCondition(
+                            condition = ProfileConditionType.NOT_EQUALS,
+                            property = ProfileConditionValue.VIDEO_RANGE_TYPE,
+                            value = "DOVI",
+                            isRequired = false,
+                        ),
+                    ),
+                    applyConditions = emptyList(),
+                ),
+            )
+        }
     }
 
     return DeviceProfile(

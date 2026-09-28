@@ -10,14 +10,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.spatialfin.companion.wear.presentation.theme.WearAmbientArcProgress
 import dev.spatialfin.companion.wear.presentation.theme.WearAmbientArcTrack
 import dev.spatialfin.companion.wear.presentation.theme.WearArcTrack
 import dev.spatialfin.companion.wear.presentation.theme.WearArcTrackActive
-import dev.spatialfin.companion.wear.presentation.theme.WearDarkPrimary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkOnPrimaryContainer
+import dev.spatialfin.companion.wear.presentation.theme.WearDarkPrimary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkSecondary
 import dev.spatialfin.companion.wear.presentation.theme.WearDarkSecondaryContainer
 import dev.spatialfin.companion.wear.presentation.theme.WearScrubAmber
@@ -28,31 +32,35 @@ import kotlin.math.sin
 /**
  * Bezel-arc geometry.
  *
- * A 310-degree sweep opening at the bottom, so the gap sits under the "Actions"
- * affordance and the timeline never runs behind it. In Compose's [DrawScope.drawArc]
- * frame zero degrees is 3 o'clock and sweep is clockwise, so 115 + 310 leaves a
- * 50-degree notch centred on 6 o'clock.
+ * A 310-degree sweep opening at the bottom, so the gap sits under the "Actions" affordance and the
+ * timeline never runs behind it. In Compose's [DrawScope.drawArc] frame zero degrees is 3 o'clock
+ * and sweep is clockwise, so 115 + 310 leaves a 50-degree notch centred on 6 o'clock.
  *
- * The point of the arc: 310 degrees at a 108dp radius is ~1,170px of scrub travel
- * against the 369px a full-width linear bar could offer.
+ * The point of the arc: 310 degrees at a 108dp radius is ~1,170px of scrub travel against the 369px
+ * a full-width linear bar could offer.
  */
 const val ARC_START_DEGREES = 115f
 const val ARC_SWEEP_DEGREES = 310f
 
 /** What the timeline is currently expressing. */
-enum class ArcTimelineState { Idle, Scrubbing, Volume, Ambient }
+enum class ArcTimelineState {
+    Idle,
+    Scrubbing,
+    Volume,
+    Ambient,
+}
 
 /**
  * The timeline. [progress] is 0..1 of the whole runtime.
  *
- * Ambient draws a hairline with no fills and no thumb — burn-in protection is the
- * reason the always-on branch exists at all, and a 5dp filled arc parked in one
- * position for two hours is exactly what it exists to prevent.
+ * Ambient draws a hairline with no fills and no thumb — burn-in protection is the reason the
+ * always-on branch exists at all, and a 5dp filled arc parked in one position for two hours is
+ * exactly what it exists to prevent.
  *
- * [ArcTimelineState.Volume] thins the arc to 3dp and drops its fill to the muted
- * container tone, because in volume mode the crown is not driving this ring. It
- * stays on screen — seeing position and volume at once is the whole argument for
- * two rings — but it stops competing with the one the crown *is* driving.
+ * [ArcTimelineState.Volume] thins the arc to 3dp and drops its fill to the muted container tone,
+ * because in volume mode the crown is not driving this ring. It stays on screen — seeing position
+ * and volume at once is the whole argument for two rings — but it stops competing with the one the
+ * crown *is* driving.
  */
 @Composable
 fun ArcTimeline(
@@ -60,26 +68,35 @@ fun ArcTimeline(
     state: ArcTimelineState,
     modifier: Modifier = Modifier,
 ) {
-    val strokeWidth: Dp = when (state) {
-        ArcTimelineState.Idle -> 5.dp
-        ArcTimelineState.Scrubbing -> 6.dp
-        ArcTimelineState.Volume -> 3.dp
-        ArcTimelineState.Ambient -> 2.dp
-    }
-    val trackColor = when (state) {
-        ArcTimelineState.Idle -> WearArcTrack
-        ArcTimelineState.Scrubbing -> WearArcTrackActive
-        ArcTimelineState.Volume -> WearArcTrack
-        ArcTimelineState.Ambient -> WearAmbientArcTrack
-    }
-    val progressColor = when (state) {
-        ArcTimelineState.Idle -> WearDarkPrimary
-        ArcTimelineState.Scrubbing -> WearScrubAmber
-        ArcTimelineState.Volume -> WearDarkSecondaryContainer
-        ArcTimelineState.Ambient -> WearAmbientArcProgress
-    }
+    val strokeWidth: Dp =
+        when (state) {
+            ArcTimelineState.Idle -> 5.dp
+            ArcTimelineState.Scrubbing -> 6.dp
+            ArcTimelineState.Volume -> 3.dp
+            ArcTimelineState.Ambient -> 2.dp
+        }
+    val trackColor =
+        when (state) {
+            ArcTimelineState.Idle -> WearArcTrack
+            ArcTimelineState.Scrubbing -> WearArcTrackActive
+            ArcTimelineState.Volume -> WearArcTrack
+            ArcTimelineState.Ambient -> WearAmbientArcTrack
+        }
+    val progressColor =
+        when (state) {
+            ArcTimelineState.Idle -> WearDarkPrimary
+            ArcTimelineState.Scrubbing -> WearScrubAmber
+            ArcTimelineState.Volume -> WearDarkSecondaryContainer
+            ArcTimelineState.Ambient -> WearAmbientArcProgress
+        }
 
-    Canvas(modifier = modifier.fillMaxSize()) {
+    Canvas(
+        modifier =
+            modifier.fillMaxSize().semantics {
+                contentDescription = "Playback progress"
+                progressBarRangeInfo = ProgressBarRangeInfo(progress.coerceIn(0f, 1f), 0f..1f)
+            }
+    ) {
         val stroke = strokeWidth.toPx()
         val inset = stroke / 2f + 3.dp.toPx()
         val sweep = ARC_SWEEP_DEGREES * progress.coerceIn(0f, 1f)
@@ -105,9 +122,9 @@ fun ArcTimeline(
 /**
  * The volume ring — a second, tighter arc inside the timeline.
  *
- * Drawn concurrently with [ArcTimeline] rather than replacing it: the redesign's
- * whole argument against the old full-width crown-mode pill is that you should be
- * able to see position and volume at the same time.
+ * Drawn concurrently with [ArcTimeline] rather than replacing it: the redesign's whole argument
+ * against the old full-width crown-mode pill is that you should be able to see position and volume
+ * at the same time.
  */
 @Composable
 fun ArcVolumeRing(
@@ -125,8 +142,8 @@ fun ArcVolumeRing(
 }
 
 /**
- * Pairing countdown — a full ring, not a notched arc, because it is a clock rather
- * than a position and a gap would read as elapsed time.
+ * Pairing countdown — a full ring, not a notched arc, because it is a clock rather than a position
+ * and a gap would read as elapsed time.
  */
 @Composable
 fun ArcCountdownRing(

@@ -5,9 +5,8 @@ import androidx.compose.ui.graphics.Color
 /**
  * SpatialFin Wear OS Color Palette.
  *
- * NOTE: [WearBlack] (0xFF000000) is a deliberate, Wear-only override of
- * DESIGN.md's darkSurface (0xFF111318) to turn off inactive OLED pixels
- * and maximize battery life on smartwatches.
+ * NOTE: [WearBlack] (0xFF000000) is a deliberate, Wear-only override of DESIGN.md's darkSurface
+ * (0xFF111318) to turn off inactive OLED pixels and maximize battery life on smartwatches.
  */
 val WearBlack = Color(0xFF000000)
 val WearDarkPrimary = Color(0xFFA4C9FE)

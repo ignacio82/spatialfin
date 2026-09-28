@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,9 +50,9 @@ import kotlin.math.sin
 /**
  * The action ring — everything that used to be a stacked pill on the player.
  *
- * Six 48dp targets laid out on a circle plus the Split-A/V toggle in the middle.
- * The point is that all seven are reachable without scrolling: on a round screen a
- * ring fits more 48dp targets above the fold than a column ever can.
+ * Six 48dp targets laid out on a circle plus the Split-A/V toggle in the middle. The point is that
+ * all seven are reachable without scrolling: on a round screen a ring fits more 48dp targets above
+ * the fold than a column ever can.
  */
 @Composable
 fun WearActionRingScreen(
@@ -67,25 +68,29 @@ fun WearActionRingScreen(
     val isSinkActive by WearAudioReceiverService.isSinkActive.collectAsState()
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF06070A))
-            .pointerInput(Unit) {
+        modifier =
+            Modifier.fillMaxSize().background(Color(0xFF06070A)).pointerInput(Unit) {
                 var travel = 0f
                 detectVerticalDragGestures(
                     onDragStart = { travel = 0f },
                     onDragEnd = { if (travel > SWIPE_DOWN_THRESHOLD_PX) onDismiss() },
-                ) { _, dragAmount -> travel += dragAmount }
-            },
+                ) { _, dragAmount ->
+                    travel += dragAmount
+                }
+            }
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(WearDarkPrimaryContainer.copy(alpha = 0.34f), Color.Transparent),
-                    ),
-                ),
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors =
+                                listOf(
+                                    WearDarkPrimaryContainer.copy(alpha = 0.34f),
+                                    Color.Transparent,
+                                )
+                        )
+                    )
         )
 
         Text(
@@ -94,21 +99,20 @@ fun WearActionRingScreen(
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.1.em,
             color = WearDarkOutline,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 16.dp),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
         )
 
         // Six seats, starting at 12 o'clock and stepping 60 degrees, on a ring whose
         // centre is pushed below the screen's so the top seat clears the title.
-        val handlers = mapOf(
-            RingAction.Audio to onOpenAudio,
-            RingAction.Subtitles to onOpenSubtitles,
-            RingAction.Chapters to onOpenChapters,
-            RingAction.NextUp to onOpenNextUp,
-            RingAction.Recenter to onOpenSpatial,
-            RingAction.Voice to onOpenVoice,
-        )
+        val handlers =
+            mapOf(
+                RingAction.Audio to onOpenAudio,
+                RingAction.Subtitles to onOpenSubtitles,
+                RingAction.Chapters to onOpenChapters,
+                RingAction.NextUp to onOpenNextUp,
+                RingAction.Recenter to onOpenSpatial,
+                RingAction.Voice to onOpenVoice,
+            )
 
         RING_ITEMS.forEachIndexed { index, item ->
             val angle = Math.toRadians(-90.0 + index * 60.0)
@@ -117,25 +121,25 @@ fun WearActionRingScreen(
                 label = item.label,
                 highlighted = item.highlighted,
                 onClick = handlers.getValue(item.action),
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(
-                        x = (RING_RADIUS_DP * cos(angle)).roundToInt().dp,
-                        y = (RING_RADIUS_DP * sin(angle) + RING_CENTRE_DROP_DP).roundToInt().dp,
-                    ),
+                modifier =
+                    Modifier.align(Alignment.Center)
+                        .offset(
+                            x = (RING_RADIUS_DP * cos(angle)).roundToInt().dp,
+                            y = (RING_RADIUS_DP * sin(angle) + RING_CENTRE_DROP_DP).roundToInt().dp,
+                        ),
             )
         }
 
         // Split-A/V in the middle: it is a state, not a destination, so it reads
         // as the hub rather than a seventh spoke.
         Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(63.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF0D0F14))
-                .border(1.dp, WearDarkPrimary.copy(alpha = 0.34f), CircleShape)
-                .clickable(onClick = onOpenPrivateAudio),
+            modifier =
+                Modifier.align(Alignment.Center)
+                    .size(63.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0D0F14))
+                    .border(1.dp, WearDarkPrimary.copy(alpha = 0.34f), CircleShape)
+                    .clickable(role = Role.Button, onClick = onOpenPrivateAudio),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -175,16 +179,19 @@ private fun RingTarget(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .background(if (highlighted) WearDarkPrimaryContainer else WearDarkSurfaceContainer)
-            .border(
-                width = 1.dp,
-                color = if (highlighted) WearDarkOnPrimaryContainer.copy(alpha = 0.24f) else WearGlassBorder,
-                shape = CircleShape,
-            )
-            .clickable(onClick = onClick),
+        modifier =
+            modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(if (highlighted) WearDarkPrimaryContainer else WearDarkSurfaceContainer)
+                .border(
+                    width = 1.dp,
+                    color =
+                        if (highlighted) WearDarkOnPrimaryContainer.copy(alpha = 0.24f)
+                        else WearGlassBorder,
+                    shape = CircleShape,
+                )
+                .clickable(role = Role.Button, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -207,7 +214,14 @@ private fun RingTarget(
 }
 
 /** Seat identity, so a seat's handler never depends on its display label. */
-private enum class RingAction { Audio, Subtitles, Chapters, NextUp, Recenter, Voice }
+private enum class RingAction {
+    Audio,
+    Subtitles,
+    Chapters,
+    NextUp,
+    Recenter,
+    Voice,
+}
 
 private data class RingItem(
     val action: RingAction,
@@ -217,28 +231,28 @@ private data class RingItem(
 )
 
 /** Clockwise from 12 o'clock, matching the design's seat order. */
-private val RING_ITEMS = listOf(
-    RingItem(RingAction.Audio, WearIcons.VolumeSmall, "Audio"),
-    RingItem(RingAction.Voice, WearIcons.Mic, "Voice", highlighted = true),
-    RingItem(RingAction.Recenter, WearIcons.Target, "Recenter"),
-    RingItem(RingAction.NextUp, WearIcons.Tv, "Up Next"),
-    RingItem(RingAction.Chapters, WearIcons.ListOrdered, "Chapters"),
-    RingItem(RingAction.Subtitles, WearIcons.CaptionsSmall, "Subs"),
-)
+private val RING_ITEMS =
+    listOf(
+        RingItem(RingAction.Audio, WearIcons.VolumeSmall, "Audio"),
+        RingItem(RingAction.Voice, WearIcons.Mic, "Voice", highlighted = true),
+        RingItem(RingAction.Recenter, WearIcons.Target, "Recenter"),
+        RingItem(RingAction.NextUp, WearIcons.Tv, "Up Next"),
+        RingItem(RingAction.Chapters, WearIcons.ListOrdered, "Chapters"),
+        RingItem(RingAction.Subtitles, WearIcons.CaptionsSmall, "Subs"),
+    )
 
 /**
  * Seat centres sit 71dp out — the design's 142px on a 454px face.
  *
- * The two constants are one decision, not two. Shrinking the radius alone is what
- * makes the top seat clear the "ACTIONS" title, and it also walks all six seats
- * into the 31.5dp hub. The design instead keeps the radius and drops the ring's
- * centre 14.5dp below the screen's, buying the title its headroom out of the slack
- * at 6 o'clock. The hub does *not* move with it — it stays on the screen centre,
- * which is why the top seat clears it by only 1dp while the bottom seat clears it
- * by 30dp.
+ * The two constants are one decision, not two. Shrinking the radius alone is what makes the top
+ * seat clear the "ACTIONS" title, and it also walks all six seats into the 31.5dp hub. The design
+ * instead keeps the radius and drops the ring's centre 14.5dp below the screen's, buying the title
+ * its headroom out of the slack at 6 o'clock. The hub does *not* move with it — it stays on the
+ * screen centre, which is why the top seat clears it by only 1dp while the bottom seat clears it by
+ * 30dp.
  *
- * Bezel check: the lowest seat's far edge lands 109.5dp from the centre of a
- * 113.5dp screen, so nothing is clipped.
+ * Bezel check: the lowest seat's far edge lands 109.5dp from the centre of a 113.5dp screen, so
+ * nothing is clipped.
  */
 private const val RING_RADIUS_DP = 71.0
 private const val RING_CENTRE_DROP_DP = 14.5

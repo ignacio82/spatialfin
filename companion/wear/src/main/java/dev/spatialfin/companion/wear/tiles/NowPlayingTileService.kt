@@ -13,52 +13,53 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.spatialfin.companion.protocol.WearPlayerAction
 import dev.spatialfin.companion.wear.presentation.WearMainActivity
 import dev.spatialfin.companion.wear.transport.WearTransportManager
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.guava.future
 import timber.log.Timber
-import javax.inject.Inject
 
 /**
  * Frame 16 — the Now Playing tile.
  *
  * Cover art, the timeline arc, and three real transport targets. Same three
- * [ActionBuilders.LoadAction] clickables as before, given shapes you can hit
- * without looking.
+ * [ActionBuilders.LoadAction] clickables as before, given shapes you can hit without looking.
  */
 @AndroidEntryPoint
 class NowPlayingTileService : TileService() {
 
-    @Inject
-    lateinit var transportManager: WearTransportManager
+    @Inject lateinit var transportManager: WearTransportManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    override fun onTileRequest(requestParams: RequestBuilders.TileRequest) =
-        serviceScope.future {
-            Timber.d("NowPlayingTileService: onTileRequest received")
+    override fun onTileRequest(requestParams: RequestBuilders.TileRequest) = serviceScope.future {
+        Timber.d("NowPlayingTileService: onTileRequest received")
 
-            // ProtoLayout Clickables can only launch an activity or re-request the tile.
-            // We take the second option: the tap arrives here as a clickable id, we run
-            // the command, then render the refreshed state in the same pass. No
-            // trampoline activity, so the watch face never flashes.
+        transportManager.refreshForSurface()
+        // ProtoLayout Clickables can only launch an activity or re-request the tile.
+        // We take the second option: the tap arrives here as a clickable id, we run
+        // the command, then render the refreshed state in the same pass. No
+        // trampoline activity, so the watch face never flashes.
+        val commandResult =
             when (requestParams.currentState.lastClickableId) {
                 ID_PLAY_PAUSE -> transportManager.dispatchAction(WearPlayerAction.TogglePlayPause)
                 ID_REWIND -> transportManager.dispatchAction(WearPlayerAction.SeekBackward(10))
                 ID_FORWARD -> transportManager.dispatchAction(WearPlayerAction.SeekForward(10))
-                else -> Unit
+                else -> null
             }
 
-            val nowPlaying = transportManager.nowPlaying.value
-            val title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin"
-            val isPlaying = nowPlaying?.isPlaying ?: false
-            val position = nowPlaying?.positionSeconds ?: 0L
-            val duration = nowPlaying?.durationSeconds ?: 0L
-            val progress = if (duration > 0) position.toFloat() / duration else 0f
-            val hasArt = transportManager.coverArt.value != null
+        val nowPlaying = transportManager.nowPlaying.value
+        val title = nowPlaying?.title?.ifBlank { "SpatialFin" } ?: "SpatialFin"
+        val isPlaying = nowPlaying?.isPlaying ?: false
+        val position = nowPlaying?.positionSeconds ?: 0L
+        val duration = nowPlaying?.durationSeconds ?: 0L
+        val progress = if (duration > 0) position.toFloat() / duration else 0f
+        val hasArt = transportManager.coverArt.value != null
 
-            val root = LayoutElementBuilders.Box.Builder()
+        val root =
+            LayoutElementBuilders.Box.Builder()
                 .setWidth(DimensionBuilders.expand())
                 .setHeight(DimensionBuilders.expand())
                 .setModifiers(
@@ -71,13 +72,13 @@ class NowPlayingTileService : TileService() {
                                             ActionBuilders.AndroidActivity.Builder()
                                                 .setPackageName(packageName)
                                                 .setClassName(WearMainActivity::class.java.name)
-                                                .build(),
+                                                .build()
                                         )
-                                        .build(),
+                                        .build()
                                 )
-                                .build(),
+                                .build()
                         )
-                        .build(),
+                        .build()
                 )
                 .apply {
                     TileChrome.coverArtBackground(hasArt)?.let { addContent(it) }
@@ -95,7 +96,14 @@ class NowPlayingTileService : TileService() {
                         .addContent(TileChrome.title(title))
                         .addContent(TileChrome.spacerH(2f))
                         .addContent(
-                            TileChrome.caption("${formatClock(position)} / ${formatClock(duration)}"),
+                            TileChrome.caption(
+                                commandResult?.getOrElse { it.message ?: "Command failed" }
+                                    ?: if (
+                                        !transportManager.isTargetAvailable || nowPlaying == null
+                                    )
+                                        transportManager.connectionStatus.value
+                                    else "${formatClock(position)} / ${formatClock(duration)}"
+                            )
                         )
                         .addContent(TileChrome.spacerH(12f))
                         .addContent(
@@ -111,7 +119,7 @@ class NowPlayingTileService : TileService() {
                                         containerColor = TileChrome.COLOR_BUTTON,
                                         contentColor = TileChrome.COLOR_TITLE,
                                         fontSize = 12f,
-                                    ),
+                                    )
                                 )
                                 .addContent(TileChrome.spacerW(11f))
                                 .addContent(
@@ -122,7 +130,7 @@ class NowPlayingTileService : TileService() {
                                         containerColor = TileChrome.COLOR_PRIMARY,
                                         contentColor = TileChrome.COLOR_ON_PRIMARY,
                                         fontSize = 18f,
-                                    ),
+                                    )
                                 )
                                 .addContent(TileChrome.spacerW(11f))
                                 .addContent(
@@ -133,29 +141,28 @@ class NowPlayingTileService : TileService() {
                                         containerColor = TileChrome.COLOR_BUTTON,
                                         contentColor = TileChrome.COLOR_TITLE,
                                         fontSize = 12f,
-                                    ),
+                                    )
                                 )
-                                .build(),
+                                .build()
                         )
-                        .build(),
+                        .build()
                 )
                 .build()
 
-            TileBuilders.Tile.Builder()
-                .setResourcesVersion(resourcesVersion())
-                .setTileTimeline(
-                    TimelineBuilders.Timeline.Builder()
-                        .addTimelineEntry(
-                            TimelineBuilders.TimelineEntry.Builder()
-                                .setLayout(
-                                    LayoutElementBuilders.Layout.Builder().setRoot(root).build(),
-                                )
-                                .build(),
-                        )
-                        .build(),
-                )
-                .build()
-        }
+        TileBuilders.Tile.Builder()
+            .setFreshnessIntervalMillis(60_000)
+            .setResourcesVersion(resourcesVersion())
+            .setTileTimeline(
+                TimelineBuilders.Timeline.Builder()
+                    .addTimelineEntry(
+                        TimelineBuilders.TimelineEntry.Builder()
+                            .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(root).build())
+                            .build()
+                    )
+                    .build()
+            )
+            .build()
+    }
 
     override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest) =
         serviceScope.future {
@@ -169,11 +176,11 @@ class NowPlayingTileService : TileService() {
     /**
      * Keyed on the item, not a constant.
      *
-     * The system caches tile resources by version string, so a fixed "1" would pin
-     * the first poster the tile ever drew for the life of the install.
+     * The system caches tile resources by version string, so a fixed "1" would pin the first poster
+     * the tile ever drew for the life of the install.
      */
     private fun resourcesVersion(): String =
-        transportManager.nowPlaying.value?.itemId?.takeIf { it.isNotBlank() } ?: "empty"
+        "${transportManager.nowPlaying.value?.itemId ?: "empty"}-${transportManager.coverArt.value?.generationId ?: 0}"
 
     private fun formatClock(totalSeconds: Long): String {
         val hours = totalSeconds / 3600
@@ -184,6 +191,11 @@ class NowPlayingTileService : TileService() {
         } else {
             String.format("%02d:%02d", minutes, seconds)
         }
+    }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
     }
 
     companion object {

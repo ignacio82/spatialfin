@@ -10,15 +10,18 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
 import dagger.hilt.android.qualifiers.ApplicationContext
-import dev.spatialfin.companion.protocol.WearCredentials
 import dev.spatialfin.companion.protocol.WearNextUpState
 import dev.spatialfin.companion.protocol.WearNowPlayingState
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
 import dev.spatialfin.companion.protocol.WearVitalsState
 import dev.spatialfin.companion.wear.tiles.WearSurfaceUpdater
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,11 +29,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Singleton
-class WearDataClientRepository @Inject constructor(
+class WearDataClientRepository
+@Inject
+constructor(
     @ApplicationContext private val context: Context,
     private val credentialsStore: WearCredentialsStore,
     private val surfaceUpdater: WearSurfaceUpdater,
@@ -47,8 +50,16 @@ class WearDataClientRepository @Inject constructor(
     private val _nextUpState = MutableStateFlow<WearNextUpState?>(null)
     val nextUpState: StateFlow<WearNextUpState?> = _nextUpState.asStateFlow()
 
+    private var coverArtAsset: Asset? = null
+    private var coverArtJob: Job? = null
+    private var coverArtGeneration = 0L
+
     private val _coverArtBitmap = MutableStateFlow<Bitmap?>(null)
     val coverArtBitmap: StateFlow<Bitmap?> = _coverArtBitmap.asStateFlow()
+
+    fun requestSurfaceUpdate() = surfaceUpdater.requestNowPlayingUpdate()
+
+    fun requestUpNextUpdate() = surfaceUpdater.requestUpNextUpdate()
 
     fun startListening() {
         Wearable.getDataClient(context).addListener(this)
@@ -64,17 +75,26 @@ class WearDataClientRepository @Inject constructor(
             runCatching {
                 val dataItems = Wearable.getDataClient(context).dataItems.await()
                 try {
-                    for (item in dataItems) {
-                        runCatching { processDataItem(item) }.onFailure {
-                            Timber.w(it, "WearDataClientRepository: failed to seed %s", item.uri)
-                        }
+                    for (item in
+                        dataItems.sortedBy {
+                            if (it.uri.path == WearProtocolPaths.PATH_STATE_CREDENTIALS) 0 else 1
+                        }) {
+                        runCatching { processDataItem(item) }
+                            .onFailure {
+                                Timber.w(
+                                    it,
+                                    "WearDataClientRepository: failed to seed %s",
+                                    item.uri,
+                                )
+                            }
                     }
                 } finally {
                     dataItems.release()
                 }
-            }.onFailure {
-                Timber.w(it, "WearDataClientRepository: failed to fetch initial data items")
             }
+                .onFailure {
+                    Timber.w(it, "WearDataClientRepository: failed to fetch initial data items")
+                }
         }
     }
 
@@ -85,16 +105,26 @@ class WearDataClientRepository @Inject constructor(
                 when (event.type) {
                     DataEvent.TYPE_CHANGED -> processDataItem(event.dataItem)
                     DataEvent.TYPE_DELETED -> {
+                        if (event.dataItem.uri.path == WearProtocolPaths.PATH_STATE_CREDENTIALS) {
+                            credentialsStore.clearCredentials()
+                            clearAccountState()
+                        }
                         if (event.dataItem.uri.path == WearProtocolPaths.PATH_STATE_NOW_PLAYING) {
+                            clearCoverArt()
                             _nowPlayingState.value = null
-                            _coverArtBitmap.value = null
+                            surfaceUpdater.requestNowPlayingUpdate()
                         }
                     }
                     else -> Unit
                 }
-            }.onFailure {
-                Timber.w(it, "WearDataClientRepository: failed to process %s", event.dataItem.uri)
             }
+                .onFailure {
+                    Timber.w(
+                        it,
+                        "WearDataClientRepository: failed to process %s",
+                        event.dataItem.uri,
+                    )
+                }
         }
     }
 
@@ -102,65 +132,117 @@ class WearDataClientRepository @Inject constructor(
         val path = dataItem.uri.path ?: return
         if (path !in HANDLED_PATHS) return
         val dataMap = DataMapItem.fromDataItem(dataItem).dataMap
+        if (
+            path == WearProtocolPaths.PATH_STATE_CREDENTIALS &&
+                dataMap.getBoolean(WearProtocolPaths.DATA_KEY_REVOKED)
+        ) {
+            credentialsStore.clearCredentials()
+            clearAccountState()
+            return
+        }
         val payload = dataMap.getByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD) ?: return
 
         when (path) {
             WearProtocolPaths.PATH_STATE_NOW_PLAYING -> {
                 val state = runCatching { WearProtocolCodec.decodeNowPlaying(payload) }.getOrNull()
+                val previousItemId = _nowPlayingState.value?.itemId
                 _nowPlayingState.value = state
-                Timber.d("WearDataClientRepository: updated now playing state for '%s'", state?.title)
+                Timber.d(
+                    "WearDataClientRepository: updated now playing state for '%s'",
+                    state?.title,
+                )
 
                 val asset = dataMap.getAsset(WearProtocolPaths.ASSET_KEY_COVER_ART)
-                if (asset != null) loadCoverArtAsset(asset) else _coverArtBitmap.value = null
+                if (asset != coverArtAsset || previousItemId != state?.itemId) {
+                    clearCoverArt()
+                    coverArtAsset = asset
+                    if (asset != null) loadCoverArtAsset(asset)
+                }
                 surfaceUpdater.requestNowPlayingUpdate()
             }
 
             WearProtocolPaths.PATH_STATE_VITALS -> {
                 val vitals = runCatching { WearProtocolCodec.decodeVitals(payload) }.getOrNull()
                 _vitalsState.value = vitals
-                Timber.d("WearDataClientRepository: updated vitals (battery=%d%%)", vitals?.batteryPercent)
+                Timber.d(
+                    "WearDataClientRepository: updated vitals (battery=%d%%)",
+                    vitals?.batteryPercent,
+                )
                 surfaceUpdater.requestVitalsUpdate()
             }
 
             WearProtocolPaths.PATH_STATE_NEXT_UP -> {
                 val nextUp = runCatching { WearProtocolCodec.decodeNextUp(payload) }.getOrNull()
                 _nextUpState.value = nextUp
-                Timber.d("WearDataClientRepository: updated next up items (%d)", nextUp?.items?.size)
+                Timber.d(
+                    "WearDataClientRepository: updated next up items (%d)",
+                    nextUp?.items?.size,
+                )
                 surfaceUpdater.requestUpNextUpdate()
             }
 
             WearProtocolPaths.PATH_STATE_CREDENTIALS -> {
                 val creds = runCatching { WearProtocolCodec.decodeCredentials(payload) }.getOrNull()
                 if (creds != null) {
+                    val previous = credentialsStore.credentials.value
+                    if (previous?.serverId != creds.serverId || previous?.userId != creds.userId)
+                        clearAccountState()
                     credentialsStore.saveCredentials(creds)
-                    Timber.i("WearDataClientRepository: bootstrapped credentials for server %s", creds.serverName)
+                    Timber.i(
+                        "WearDataClientRepository: bootstrapped credentials for server %s",
+                        creds.serverName,
+                    )
                 }
             }
         }
     }
 
+    private fun clearAccountState() {
+        _nowPlayingState.value = null
+        clearCoverArt()
+        _nextUpState.value = null
+        _vitalsState.value = null
+        surfaceUpdater.requestNowPlayingUpdate()
+        surfaceUpdater.requestUpNextUpdate()
+    }
+
+    private fun clearCoverArt() {
+        coverArtAsset = null
+        coverArtGeneration++
+        coverArtJob?.cancel()
+        _coverArtBitmap.value = null
+    }
+
     private fun loadCoverArtAsset(asset: Asset) {
-        scope.launch {
-            runCatching {
+        val generation = coverArtGeneration
+        coverArtJob = scope.launch {
+            try {
                 val fd = Wearable.getDataClient(context).getFdForAsset(asset).await()
-                val inputStream = fd.inputStream
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream.close()
-                fd.release()
-                _coverArtBitmap.value = bitmap
-                Timber.d("WearDataClientRepository: cover art bitmap loaded (%dx%d)", bitmap?.width, bitmap?.height)
-            }.onFailure {
-                Timber.w(it, "WearDataClientRepository: failed to load cover art asset")
+                val bitmap =
+                    try {
+                        fd.inputStream.use { BitmapFactory.decodeStream(it) }
+                    } finally {
+                        fd.release()
+                    }
+                if (generation == coverArtGeneration) {
+                    _coverArtBitmap.value = bitmap
+                    surfaceUpdater.requestNowPlayingUpdate()
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                Timber.w("Could not load watch cover art")
             }
         }
     }
 
     private companion object {
-        val HANDLED_PATHS = setOf(
-            WearProtocolPaths.PATH_STATE_NOW_PLAYING,
-            WearProtocolPaths.PATH_STATE_VITALS,
-            WearProtocolPaths.PATH_STATE_NEXT_UP,
-            WearProtocolPaths.PATH_STATE_CREDENTIALS,
-        )
+        val HANDLED_PATHS =
+            setOf(
+                WearProtocolPaths.PATH_STATE_NOW_PLAYING,
+                WearProtocolPaths.PATH_STATE_VITALS,
+                WearProtocolPaths.PATH_STATE_NEXT_UP,
+                WearProtocolPaths.PATH_STATE_CREDENTIALS,
+            )
     }
 }

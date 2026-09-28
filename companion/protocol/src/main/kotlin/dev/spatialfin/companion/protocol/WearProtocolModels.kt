@@ -5,6 +5,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 object WearProtocolPaths {
+    const val PATH_COMMAND_REQUEST = "/command/request/v1"
+    const val PATH_CREDENTIAL_REFRESH = "/credentials/refresh"
+    const val DATA_KEY_REVOKED = "revoked"
+    const val RELAY_ACTION_ARGUMENT = "SpatialFinWearAction"
+    const val RELAY_VOICE_ARGUMENT = "SpatialFinWearVoice"
     const val PATH_ACTION = "/command/action"
     const val PATH_ACTION_RESPONSE = "/command/response"
     const val PATH_STATE_NOW_PLAYING = "/state/now_playing"
@@ -12,11 +17,10 @@ object WearProtocolPaths {
     const val PATH_STATE_CREDENTIALS = "/state/credentials"
     const val PATH_STATE_NEXT_UP = "/state/next_up"
     /**
-     * Transcript, not PCM. The host's `SpatialVoiceService` wraps Android's
-     * `SpeechRecognizer`, which has no API for injecting an external audio buffer, so
-     * a raw PCM stream had nowhere to land. Recognition therefore runs on the watch
-     * and only the text crosses the link; every LLM step (`SpatialCommandCoordinator`,
-     * Gemini/Gemma) still runs on the paired host.
+     * Transcript, not PCM. The host's `SpatialVoiceService` wraps Android's `SpeechRecognizer`,
+     * which has no API for injecting an external audio buffer, so a raw PCM stream had nowhere to
+     * land. Recognition therefore runs on the watch and only the text crosses the link; every LLM
+     * step (`SpatialCommandCoordinator`, Gemini/Gemma) still runs on the paired host.
      */
     const val PATH_VOICE_QUERY = "/voice/query"
     const val PATH_PAIRING_REQUEST = "/pairing/request"
@@ -28,28 +32,36 @@ object WearProtocolPaths {
     const val ASSET_KEY_COVER_ART = "cover_art"
 
     /**
-     * Every state DataItem carries its serialized body under this DataMap key.
-     * Never write a state item with a raw `PutDataRequest.setData(...)` body:
-     * `DataMapItem.fromDataItem` throws `IllegalStateException` on anything that is
-     * not a serialized DataMap, which takes down the watch's whole listener loop.
+     * Every state DataItem carries its serialized body under this DataMap key. Never write a state
+     * item with a raw `PutDataRequest.setData(...)` body: `DataMapItem.fromDataItem` throws
+     * `IllegalStateException` on anything that is not a serialized DataMap, which takes down the
+     * watch's whole listener loop.
      */
     const val DATA_KEY_PAYLOAD = "payload"
     const val DATA_KEY_TIMESTAMP = "timestamp"
 }
 
 @Serializable
+data class WearCommandRequest(
+    val requestId: String,
+    val action: WearPlayerAction? = null,
+    val transcript: String? = null,
+)
+
+@Serializable
+data class WearCommandResponse(
+    val requestId: String,
+    val message: String,
+    val successful: Boolean = true,
+)
+
+@Serializable
 sealed interface WearPlayerAction {
-    @Serializable
-    @SerialName("play")
-    data object Play : WearPlayerAction
+    @Serializable @SerialName("play") data object Play : WearPlayerAction
 
-    @Serializable
-    @SerialName("pause")
-    data object Pause : WearPlayerAction
+    @Serializable @SerialName("pause") data object Pause : WearPlayerAction
 
-    @Serializable
-    @SerialName("toggle_play_pause")
-    data object TogglePlayPause : WearPlayerAction
+    @Serializable @SerialName("toggle_play_pause") data object TogglePlayPause : WearPlayerAction
 
     @Serializable
     @SerialName("seek_forward")
@@ -63,25 +75,15 @@ sealed interface WearPlayerAction {
     @SerialName("seek_to")
     data class SeekTo(val positionSeconds: Long) : WearPlayerAction
 
-    @Serializable
-    @SerialName("skip_intro")
-    data object SkipIntro : WearPlayerAction
+    @Serializable @SerialName("skip_intro") data object SkipIntro : WearPlayerAction
 
-    @Serializable
-    @SerialName("skip_outro")
-    data object SkipOutro : WearPlayerAction
+    @Serializable @SerialName("skip_outro") data object SkipOutro : WearPlayerAction
 
-    @Serializable
-    @SerialName("next_episode")
-    data object NextEpisode : WearPlayerAction
+    @Serializable @SerialName("next_episode") data object NextEpisode : WearPlayerAction
 
-    @Serializable
-    @SerialName("previous_episode")
-    data object PreviousEpisode : WearPlayerAction
+    @Serializable @SerialName("previous_episode") data object PreviousEpisode : WearPlayerAction
 
-    @Serializable
-    @SerialName("set_speed")
-    data class SetSpeed(val speed: Float) : WearPlayerAction
+    @Serializable @SerialName("set_speed") data class SetSpeed(val speed: Float) : WearPlayerAction
 
     @Serializable
     @SerialName("select_audio_track")
@@ -97,9 +99,7 @@ sealed interface WearPlayerAction {
         val index: Int? = null,
     ) : WearPlayerAction
 
-    @Serializable
-    @SerialName("disable_subtitles")
-    data object DisableSubtitles : WearPlayerAction
+    @Serializable @SerialName("disable_subtitles") data object DisableSubtitles : WearPlayerAction
 
     @Serializable
     @SerialName("adjust_volume")
@@ -126,17 +126,11 @@ sealed interface WearPlayerAction {
     @SerialName("reset_screen_placement")
     data object ResetScreenPlacement : WearPlayerAction
 
-    @Serializable
-    @SerialName("go_home")
-    data object GoHome : WearPlayerAction
+    @Serializable @SerialName("go_home") data object GoHome : WearPlayerAction
 
-    @Serializable
-    @SerialName("close_app")
-    data object CloseApp : WearPlayerAction
+    @Serializable @SerialName("close_app") data object CloseApp : WearPlayerAction
 
-    @Serializable
-    @SerialName("go_back")
-    data object GoBack : WearPlayerAction
+    @Serializable @SerialName("go_back") data object GoBack : WearPlayerAction
 
     @Serializable
     @SerialName("cast_to_fcast_receiver")
@@ -146,29 +140,17 @@ sealed interface WearPlayerAction {
         val port: Int? = null,
     ) : WearPlayerAction
 
-    @Serializable
-    @SerialName("stop_fcast_casting")
-    data object StopFCastCasting : WearPlayerAction
+    @Serializable @SerialName("stop_fcast_casting") data object StopFCastCasting : WearPlayerAction
 
-    @Serializable
-    @SerialName("music_play_pause")
-    data object MusicPlayPause : WearPlayerAction
+    @Serializable @SerialName("music_play_pause") data object MusicPlayPause : WearPlayerAction
 
-    @Serializable
-    @SerialName("music_pause")
-    data object MusicPause : WearPlayerAction
+    @Serializable @SerialName("music_pause") data object MusicPause : WearPlayerAction
 
-    @Serializable
-    @SerialName("music_resume")
-    data object MusicResume : WearPlayerAction
+    @Serializable @SerialName("music_resume") data object MusicResume : WearPlayerAction
 
-    @Serializable
-    @SerialName("music_next")
-    data object MusicNext : WearPlayerAction
+    @Serializable @SerialName("music_next") data object MusicNext : WearPlayerAction
 
-    @Serializable
-    @SerialName("music_previous")
-    data object MusicPrevious : WearPlayerAction
+    @Serializable @SerialName("music_previous") data object MusicPrevious : WearPlayerAction
 
     @Serializable
     @SerialName("music_adjust_volume")
@@ -309,12 +291,10 @@ object WearProtocolCodec {
     fun encodeAction(action: WearPlayerAction): ByteArray =
         json.encodeToString(WearPlayerAction.serializer(), action).encodeToByteArray()
 
-    fun decodeAction(bytes: ByteArray): WearPlayerAction =
-        runCatching {
-            json.decodeFromString(WearPlayerAction.serializer(), bytes.decodeToString())
-        }.getOrElse {
-            WearPlayerAction.Unrecognized(bytes.decodeToString())
-        }
+    fun decodeAction(bytes: ByteArray): WearPlayerAction = runCatching {
+        json.decodeFromString(WearPlayerAction.serializer(), bytes.decodeToString())
+    }
+        .getOrElse { WearPlayerAction.Unrecognized(bytes.decodeToString()) }
 
     fun encodeNowPlaying(state: WearNowPlayingState): ByteArray =
         json.encodeToString(WearNowPlayingState.serializer(), state).encodeToByteArray()

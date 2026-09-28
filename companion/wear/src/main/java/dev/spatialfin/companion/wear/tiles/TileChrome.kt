@@ -12,12 +12,11 @@ import java.nio.ByteBuffer
 /**
  * Shared tile chrome for the redesigned Now Playing and Up Next tiles.
  *
- * ProtoLayout can do artwork, arcs and image buttons; the tiles were three plain
- * text labels because nothing here had been built, not because the surface is
- * limited. Everything below is deliberately hand-built rather than taken from
- * `protolayout-material3`: the redesign's geometry (a 310-degree arc opening at
- * the bottom, a 52dp centre target flanked by 38dp circles) is not one of the
- * Material tile layouts, and bending one into shape costs more than composing it.
+ * ProtoLayout can do artwork, arcs and image buttons; the tiles were three plain text labels
+ * because nothing here had been built, not because the surface is limited. Everything below is
+ * deliberately hand-built rather than taken from `protolayout-material3`: the redesign's geometry
+ * (a 310-degree arc opening at the bottom, a 52dp centre target flanked by 38dp circles) is not one
+ * of the Material tile layouts, and bending one into shape costs more than composing it.
  */
 internal object TileChrome {
 
@@ -37,8 +36,8 @@ internal object TileChrome {
     /**
      * The timeline arc.
      *
-     * Anchored at the arc's own start rather than at 12 o'clock, so progress grows
-     * from the same place the phone and headset draw it from.
+     * Anchored at the arc's own start rather than at 12 o'clock, so progress grows from the same
+     * place the phone and headset draw it from.
      */
     fun progressArcTrack(): LayoutElementBuilders.LayoutElement =
         LayoutElementBuilders.Arc.Builder()
@@ -50,7 +49,7 @@ internal object TileChrome {
                     .setThickness(DimensionBuilders.dp(4f))
                     .setColor(ColorBuilders.argb(COLOR_TRACK))
                     .setStrokeCap(LayoutElementBuilders.STROKE_CAP_ROUND)
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -61,12 +60,12 @@ internal object TileChrome {
             .addContent(
                 LayoutElementBuilders.ArcLine.Builder()
                     .setLength(
-                        DimensionBuilders.degrees(ARC_SWEEP_DEGREES * progress.coerceIn(0f, 1f)),
+                        DimensionBuilders.degrees(ARC_SWEEP_DEGREES * progress.coerceIn(0f, 1f))
                     )
                     .setThickness(DimensionBuilders.dp(4f))
                     .setColor(ColorBuilders.argb(COLOR_PRIMARY))
                     .setStrokeCap(LayoutElementBuilders.STROKE_CAP_ROUND)
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -78,10 +77,10 @@ internal object TileChrome {
             .setFontStyle(
                 LayoutElementBuilders.FontStyle.Builder()
                     .setSize(DimensionBuilders.sp(11f))
-                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
+                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_NORMAL)
                     .setLetterSpacing(DimensionBuilders.em(0.12f))
                     .setColor(ColorBuilders.argb(COLOR_PRIMARY))
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -95,7 +94,7 @@ internal object TileChrome {
                     .setSize(DimensionBuilders.sp(18f))
                     .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
                     .setColor(ColorBuilders.argb(COLOR_TITLE))
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -108,7 +107,7 @@ internal object TileChrome {
                 LayoutElementBuilders.FontStyle.Builder()
                     .setSize(DimensionBuilders.sp(13f))
                     .setColor(ColorBuilders.argb(color))
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -121,10 +120,9 @@ internal object TileChrome {
     /**
      * A round transport target.
      *
-     * [glyph] is text rather than a vector because a tile resource set is the only
-     * way to ship a drawable here, and three glyphs do not justify one — but the
-     * shape, size and colour are the design's, so the target is a real 38/52dp
-     * circle instead of a bare tappable label.
+     * [glyph] is text rather than a vector because a tile resource set is the only way to ship a
+     * drawable here, and three glyphs do not justify one — but the shape, size and colour are the
+     * design's, so the target is a real 38/52dp circle instead of a bare tappable label.
      */
     fun circleButton(
         glyph: String,
@@ -145,17 +143,17 @@ internal object TileChrome {
                             .setCorner(
                                 ModifiersBuilders.Corner.Builder()
                                     .setRadius(DimensionBuilders.dp(sizeDp / 2f))
-                                    .build(),
+                                    .build()
                             )
-                            .build(),
+                            .build()
                     )
                     .setClickable(
                         ModifiersBuilders.Clickable.Builder()
                             .setId(clickableId)
                             .setOnClick(ActionBuilders.LoadAction.Builder().build())
-                            .build(),
+                            .build()
                     )
-                    .build(),
+                    .build()
             )
             .addContent(
                 LayoutElementBuilders.Text.Builder()
@@ -163,11 +161,11 @@ internal object TileChrome {
                     .setFontStyle(
                         LayoutElementBuilders.FontStyle.Builder()
                             .setSize(DimensionBuilders.sp(fontSize))
-                            .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
+                            .setWeight(LayoutElementBuilders.FONT_WEIGHT_NORMAL)
                             .setColor(ColorBuilders.argb(contentColor))
-                            .build(),
+                            .build()
                     )
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -184,23 +182,23 @@ internal object TileChrome {
                             .setCorner(
                                 ModifiersBuilders.Corner.Builder()
                                     .setRadius(DimensionBuilders.dp(19f))
-                                    .build(),
+                                    .build()
                             )
-                            .build(),
+                            .build()
                     )
                     .setClickable(
                         ModifiersBuilders.Clickable.Builder()
                             .setId(clickableId)
                             .setOnClick(ActionBuilders.LoadAction.Builder().build())
-                            .build(),
+                            .build()
                     )
                     .setPadding(
                         ModifiersBuilders.Padding.Builder()
                             .setStart(DimensionBuilders.dp(18f))
                             .setEnd(DimensionBuilders.dp(18f))
-                            .build(),
+                            .build()
                     )
-                    .build(),
+                    .build()
             )
             .addContent(
                 LayoutElementBuilders.Text.Builder()
@@ -208,11 +206,11 @@ internal object TileChrome {
                     .setFontStyle(
                         LayoutElementBuilders.FontStyle.Builder()
                             .setSize(DimensionBuilders.sp(15f))
-                            .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
+                            .setWeight(LayoutElementBuilders.FONT_WEIGHT_NORMAL)
                             .setColor(ColorBuilders.argb(COLOR_ON_PRIMARY))
-                            .build(),
+                            .build()
                     )
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -232,8 +230,8 @@ internal object TileChrome {
     /**
      * The scrim over the art.
      *
-     * Not decoration: 18sp white over an arbitrary poster is unreadable, and a tile
-     * has no chance to re-render once the user has glanced at it.
+     * Not decoration: 18sp white over an arbitrary poster is unreadable, and a tile has no chance
+     * to re-render once the user has glanced at it.
      */
     fun scrim(): LayoutElementBuilders.LayoutElement =
         LayoutElementBuilders.Box.Builder()
@@ -244,18 +242,18 @@ internal object TileChrome {
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
                             .setColor(ColorBuilders.argb(COLOR_SCRIM))
-                            .build(),
+                            .build()
                     )
-                    .build(),
+                    .build()
             )
             .build()
 
     /**
      * Packs [bitmap] into an RGB_565 inline resource.
      *
-     * RGB_565 rather than ARGB_8888 because a tile's resource payload crosses an
-     * IPC boundary on every refresh and the art is opaque anyway — half the bytes
-     * for no visible loss behind a scrim.
+     * RGB_565 rather than ARGB_8888 because a tile's resource payload crosses an IPC boundary on
+     * every refresh and the art is opaque anyway — half the bytes for no visible loss behind a
+     * scrim.
      */
     fun inlineCoverArt(bitmap: Bitmap): ResourceBuilders.ImageResource {
         val scaled = bitmap.scaleToTileArt()
@@ -269,7 +267,7 @@ internal object TileChrome {
                     .setWidthPx(scaled.width)
                     .setHeightPx(scaled.height)
                     .setFormat(ResourceBuilders.IMAGE_FORMAT_RGB_565)
-                    .build(),
+                    .build()
             )
             .build()
     }
@@ -279,14 +277,13 @@ internal object TileChrome {
         return if (width == target && height == target && config == Bitmap.Config.RGB_565) {
             this
         } else {
-            Bitmap.createScaledBitmap(this, target, target, true)
-                .copy(Bitmap.Config.RGB_565, false)
+            Bitmap.createScaledBitmap(this, target, target, true).copy(Bitmap.Config.RGB_565, false)
         }
     }
 
     /**
-     * The arc starts 115 degrees clockwise from 3 o'clock; ProtoLayout measures its
-     * anchor clockwise from 12, so the same opening is 205 degrees here.
+     * The arc starts 115 degrees clockwise from 3 o'clock; ProtoLayout measures its anchor
+     * clockwise from 12, so the same opening is 205 degrees here.
      */
     private const val ARC_ANCHOR_DEGREES = 205f
 

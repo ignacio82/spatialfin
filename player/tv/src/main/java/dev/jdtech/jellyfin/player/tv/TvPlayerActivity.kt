@@ -118,6 +118,7 @@ import dev.jdtech.jellyfin.deeplink.PlayDeepLink
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
+import dev.jdtech.jellyfin.models.SpatialFinSegmentType
 import dev.jdtech.jellyfin.models.SpatialFinSource
 import dev.jdtech.jellyfin.player.beam.LibassRenderer
 import dev.jdtech.jellyfin.player.beam.LibassSubtitleHelper
@@ -860,11 +861,17 @@ private fun TvPlayerScreen(
     LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) { nextUpDismissed = false }
     val nextEpisode = uiState.nextEpisode
     val upNextRemainingMs = (duration - currentPosition).coerceAtLeast(0L)
+    val isInOutro = uiState.currentSegment?.type == SpatialFinSegmentType.OUTRO
+    val upNextThresholdMs = if (isInOutro && upNextRemainingMs > TV_NEXT_EPISODE_THRESHOLD_MS) {
+        upNextRemainingMs.coerceAtMost(60_000L)
+    } else {
+        TV_NEXT_EPISODE_THRESHOLD_MS
+    }
     val showUpNext =
         !nextUpDismissed &&
             nextEpisode != null &&
-            duration > TV_NEXT_EPISODE_THRESHOLD_MS &&
-            upNextRemainingMs in 0L..TV_NEXT_EPISODE_THRESHOLD_MS
+            duration > TV_NEXT_EPISODE_THRESHOLD_MS * 2 &&
+            ((isInOutro && upNextRemainingMs <= 60_000L) || upNextRemainingMs in 0L..TV_NEXT_EPISODE_THRESHOLD_MS)
     val upNextFocusRequester = remember { FocusRequester() }
     LaunchedEffect(showUpNext, controlsVisible) {
         if (showUpNext && !controlsVisible) {
@@ -1203,7 +1210,7 @@ private fun TvPlayerScreen(
                 TvUpNextCard(
                     nextEpisode = ep,
                     secondsRemaining = kotlin.math.ceil(upNextRemainingMs / 1000.0).toInt(),
-                    fraction = (upNextRemainingMs.toFloat() / TV_NEXT_EPISODE_THRESHOLD_MS).coerceIn(0f, 1f),
+                    fraction = (upNextRemainingMs.toFloat() / upNextThresholdMs).coerceIn(0f, 1f),
                     onPlayNow = {
                         viewModel.skipToNextItem()
                         nextUpDismissed = true
@@ -1338,10 +1345,10 @@ private enum class TvPlayerDialog {
     SyncPlay,
 }
 
-// Offer the Up Next card in the last 2 minutes of an episode — same window the
-// XR next-episode panel uses (SpatialPlayerScreen.NEXT_EPISODE_THRESHOLD_MS), so
+// Offer the Up Next card in the last 30 seconds of an episode (or during outro credits) —
+// same window the XR next-episode panel uses (SpatialPlayerScreen.NEXT_EPISODE_THRESHOLD_MS), so
 // the autoplay affordance is consistent across surfaces.
-private const val TV_NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L
+private const val TV_NEXT_EPISODE_THRESHOLD_MS = 30 * 1_000L
 
 /**
  * UpNextCard (design components/tv/UpNextCard.jsx): a glass card that slides in

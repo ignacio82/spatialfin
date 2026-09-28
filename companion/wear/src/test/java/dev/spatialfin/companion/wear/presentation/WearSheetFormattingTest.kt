@@ -8,9 +8,9 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * The redesign's two-line rows and current-chapter marker are pure string and index
- * work, derived rather than pushed over the wire — so they are worth pinning down
- * here rather than discovering on a watch.
+ * The redesign's two-line rows and current-chapter marker are pure string and index work, derived
+ * rather than pushed over the wire — so they are worth pinning down here rather than discovering on
+ * a watch.
  */
 class WearSheetFormattingTest {
 
@@ -37,11 +37,12 @@ class WearSheetFormattingTest {
 
     @Test
     fun `active chapter is the last one at or behind the playhead`() {
-        val chapters = listOf(
-            WearChapterInfo("Opening", 0),
-            WearChapterInfo("The Forest", 108),
-            WearChapterInfo("Campfire", 276),
-        )
+        val chapters =
+            listOf(
+                WearChapterInfo("Opening", 0),
+                WearChapterInfo("The Forest", 108),
+                WearChapterInfo("Campfire", 276),
+            )
         assertEquals(0, chapters.activeIndexAt(positionSeconds = 12, currentChapterName = null))
         assertEquals(1, chapters.activeIndexAt(positionSeconds = 108, currentChapterName = null))
         assertEquals(2, chapters.activeIndexAt(positionSeconds = 999, currentChapterName = null))
@@ -49,10 +50,11 @@ class WearSheetFormattingTest {
 
     @Test
     fun `host's own current chapter wins over the positional guess`() {
-        val chapters = listOf(
-            WearChapterInfo("Opening", 0),
-            WearChapterInfo("The Forest", 108),
-        )
+        val chapters =
+            listOf(
+                WearChapterInfo("Opening", 0),
+                WearChapterInfo("The Forest", 108),
+            )
         // The host knows about segments the start-time arithmetic cannot see.
         assertEquals(
             1,

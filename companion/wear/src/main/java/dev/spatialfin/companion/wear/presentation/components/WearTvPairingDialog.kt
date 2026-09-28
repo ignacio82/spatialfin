@@ -53,12 +53,12 @@ import kotlinx.coroutines.delay
 /**
  * Frame 14 — approve a TV pairing.
  *
- * The countdown becomes the full bezel ring so it reads at a glance rather than as
- * a number you have to find. The manual code gets mono type and real tracking,
- * because its whole job is to be read aloud to someone standing at the TV.
+ * The countdown becomes the full bezel ring so it reads at a glance rather than as a number you
+ * have to find. The manual code gets mono type and real tracking, because its whole job is to be
+ * read aloud to someone standing at the TV.
  *
- * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on
- * smaller watch displays the action buttons never get cut off by screen edges.
+ * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on smaller watch
+ * displays the action buttons never get cut off by screen edges.
  */
 @Composable
 fun WearTvPairingDialog(
@@ -66,9 +66,12 @@ fun WearTvPairingDialog(
     onApprove: () -> Unit,
     onReject: () -> Unit,
 ) {
-    var remainingSeconds by remember(request) {
-        mutableLongStateOf(((request.expiresAtEpochMs - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
-    }
+    var remainingSeconds by
+        remember(request) {
+            mutableLongStateOf(
+                ((request.expiresAtEpochMs - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+            )
+        }
     // Captured once so the ring measures against the window the request actually
     // opened with, not against whatever is left when this screen first composes.
     val totalSeconds = remember(request) { remainingSeconds.coerceAtLeast(1L) }
@@ -76,18 +79,15 @@ fun WearTvPairingDialog(
     LaunchedEffect(request) {
         while (remainingSeconds > 0) {
             delay(1000)
-            remainingSeconds = ((request.expiresAtEpochMs - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+            remainingSeconds =
+                ((request.expiresAtEpochMs - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
             if (remainingSeconds <= 0) {
                 onReject()
             }
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF06070A)),
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF06070A))) {
         ArcCountdownRing(fraction = remainingSeconds.toFloat() / totalSeconds)
 
         val listState = rememberTransformingLazyColumnState()
@@ -102,15 +102,13 @@ fun WearTvPairingDialog(
             item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .padding(horizontal = 4.dp),
+                    modifier = Modifier.scrollTransform(this).padding(horizontal = 4.dp),
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(WearDarkSurfaceVariant),
+                        modifier =
+                            Modifier.size(36.dp)
+                                .clip(CircleShape)
+                                .background(WearDarkSurfaceVariant),
                         contentAlignment = Alignment.Center,
                     ) {
                         WearVectorIcon(
@@ -155,10 +153,8 @@ fun WearTvPairingDialog(
 
             item {
                 Row(
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp),
+                    modifier =
+                        Modifier.scrollTransform(this).fillMaxWidth().padding(horizontal = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     PairingButton(
@@ -198,12 +194,13 @@ private fun PairingButton(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
-            .height(42.dp)
-            .clip(RoundedCornerShape(21.dp))
-            .background(container)
-            .border(1.dp, border, RoundedCornerShape(21.dp))
-            .clickable(onClick = onClick),
+        modifier =
+            modifier
+                .height(42.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .background(container)
+                .border(1.dp, border, RoundedCornerShape(21.dp))
+                .clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

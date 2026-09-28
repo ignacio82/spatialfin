@@ -14,57 +14,62 @@ import dev.spatialfin.companion.protocol.WearPlayerAction
 import dev.spatialfin.companion.wear.presentation.WearMainActivity
 import dev.spatialfin.companion.wear.presentation.formatRemaining
 import dev.spatialfin.companion.wear.transport.WearTransportManager
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.guava.future
 import timber.log.Timber
-import javax.inject.Inject
 
 /**
  * Frame 17 — the Up Next tile.
  *
- * One explicit Resume target rather than a whole-tile tap. The old layout started
- * playback anywhere you touched it, which meant you could not scroll past the tile
- * on the tile carousel without risking a play command on the headset.
+ * One explicit Resume target rather than a whole-tile tap. The old layout started playback anywhere
+ * you touched it, which meant you could not scroll past the tile on the tile carousel without
+ * risking a play command on the headset.
  */
 @AndroidEntryPoint
 class UpNextTileService : TileService() {
 
-    @Inject
-    lateinit var transportManager: WearTransportManager
+    @Inject lateinit var transportManager: WearTransportManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    override fun onTileRequest(requestParams: RequestBuilders.TileRequest) =
-        serviceScope.future {
-            Timber.d("UpNextTileService: onTileRequest received")
-            val firstItem = transportManager.nextUp.value?.items?.firstOrNull()
+    override fun onTileRequest(requestParams: RequestBuilders.TileRequest) = serviceScope.future {
+        Timber.d("UpNextTileService: onTileRequest received")
+        transportManager.refreshForSurface()
+        transportManager.refreshNextUp()
+        val firstItem = transportManager.nextUp.value?.items?.firstOrNull()
 
-            // The tap comes back as a LoadAction clickable id, so the command runs here
-            // and the tile re-renders with the result. Launching the app instead would
-            // defeat the point.
-            var feedback: String? = null
-            if (requestParams.currentState.lastClickableId == ID_PLAY && firstItem != null) {
-                feedback = transportManager.dispatchAction(
-                    WearPlayerAction.PlayMediaItem(
-                        itemId = firstItem.id,
-                        mediaType = firstItem.mediaType,
-                        startPositionMs = firstItem.playbackPositionSeconds * 1000L,
-                    ),
-                ).getOrNull()
-            }
+        // The tap comes back as a LoadAction clickable id, so the command runs here
+        // and the tile re-renders with the result. Launching the app instead would
+        // defeat the point.
+        var feedback: String? = null
+        if (requestParams.currentState.lastClickableId == ID_PLAY && firstItem != null) {
+            feedback =
+                transportManager
+                    .dispatchAction(
+                        WearPlayerAction.PlayMediaItem(
+                            itemId = firstItem.id,
+                            mediaType = firstItem.mediaType,
+                            startPositionMs = firstItem.playbackPositionSeconds * 1000L,
+                        )
+                    )
+                    .getOrElse { it.message ?: "Command failed" }
+        }
 
-            val title = firstItem?.title ?: "Continue Watching"
-            val remaining = firstItem
-                ?.let { it.durationSeconds - it.playbackPositionSeconds }
-                ?.takeIf { it > 0 }
-            val caption = feedback
+        val title = firstItem?.title ?: "Continue Watching"
+        val remaining =
+            firstItem?.let { it.durationSeconds - it.playbackPositionSeconds }?.takeIf { it > 0 }
+        val caption =
+            feedback
                 ?: remaining?.let { formatRemaining(it) }
                 ?: firstItem?.seriesName
                 ?: "Nothing queued"
 
-            val root = LayoutElementBuilders.Box.Builder()
+        val root =
+            LayoutElementBuilders.Box.Builder()
                 .setWidth(DimensionBuilders.expand())
                 .setHeight(DimensionBuilders.expand())
                 // The tile body opens the app; only the Resume pill plays. Scrolling
@@ -80,13 +85,13 @@ class UpNextTileService : TileService() {
                                             ActionBuilders.AndroidActivity.Builder()
                                                 .setPackageName(packageName)
                                                 .setClassName(WearMainActivity::class.java.name)
-                                                .build(),
+                                                .build()
                                         )
-                                        .build(),
+                                        .build()
                                 )
-                                .build(),
+                                .build()
                         )
-                        .build(),
+                        .build()
                 )
                 // No backdrop here: Next Up art arrives as a Jellyfin URL, and a tile's
                 // resource set takes bytes, not URLs — a tile process cannot go and fetch
@@ -109,32 +114,34 @@ class UpNextTileService : TileService() {
                                 addContent(TileChrome.pillButton("Resume", ID_PLAY))
                             }
                         }
-                        .build(),
+                        .build()
                 )
                 .build()
 
-            TileBuilders.Tile.Builder()
-                .setResourcesVersion(RESOURCES_VERSION)
-                .setTileTimeline(
-                    TimelineBuilders.Timeline.Builder()
-                        .addTimelineEntry(
-                            TimelineBuilders.TimelineEntry.Builder()
-                                .setLayout(
-                                    LayoutElementBuilders.Layout.Builder().setRoot(root).build(),
-                                )
-                                .build(),
-                        )
-                        .build(),
-                )
-                .build()
-        }
+        TileBuilders.Tile.Builder()
+            .setFreshnessIntervalMillis(60_000)
+            .setResourcesVersion(RESOURCES_VERSION)
+            .setTileTimeline(
+                TimelineBuilders.Timeline.Builder()
+                    .addTimelineEntry(
+                        TimelineBuilders.TimelineEntry.Builder()
+                            .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(root).build())
+                            .build()
+                    )
+                    .build()
+            )
+            .build()
+    }
 
     override fun onTileResourcesRequest(requestParams: RequestBuilders.ResourcesRequest) =
         serviceScope.future {
-            ResourceBuilders.Resources.Builder()
-                .setVersion(RESOURCES_VERSION)
-                .build()
+            ResourceBuilders.Resources.Builder().setVersion(RESOURCES_VERSION).build()
         }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
 
     companion object {
         private const val RESOURCES_VERSION = "1"

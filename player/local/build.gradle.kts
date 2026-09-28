@@ -24,6 +24,7 @@ android {
 }
 
 dependencies {
+    implementation(projects.companion.protocol)
     implementation(projects.player.core)
     implementation(projects.data)
     implementation(projects.settings)

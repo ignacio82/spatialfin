@@ -147,6 +147,7 @@ class UnifiedApplication : Application(), Configuration.Provider, SingletonImage
             eagerInitializeLlmIfNeeded()
             CompanionLiveSyncClient.from(this@UnifiedApplication).start()
             if (capabilities.hasWearCompanionHost) {
+                wearCredentialPusher.startObserving()
                 wearStatePublisher.startObserving()
                 wearTvPairingBroker.startObserving()
                 wearCredentialPusher.pushCredentials()

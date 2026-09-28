@@ -30,7 +30,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 
 /**
- * "Up Next" panel shown in the last 2 minutes of an episode. Pure presentation:
+ * "Up Next" panel shown in the last 30 seconds of an episode (or during outro credits). Pure presentation:
  * the parent screen owns both the visibility rule and the `onPlayNext` action.
  */
 @Composable

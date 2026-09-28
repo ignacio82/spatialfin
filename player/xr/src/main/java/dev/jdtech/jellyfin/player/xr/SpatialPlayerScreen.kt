@@ -173,7 +173,7 @@ import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.local.R as LocalR
 
 // ── Next-episode panel threshold ───────────────────────────────────────────────────
-private const val NEXT_EPISODE_THRESHOLD_MS = 2 * 60 * 1_000L  // show in last 2 minutes
+private const val NEXT_EPISODE_THRESHOLD_MS = 30 * 1_000L  // show in last 30 seconds (or during outro)
 private const val PAUSED_MASCOT_DELAY_MS = 1_000L
 private const val HAND_TRACKING_PERMISSION = "android.permission.HAND_TRACKING"
 
@@ -506,13 +506,15 @@ fun SpatialPlayerScreen(
     LaunchedEffect(uiState.currentItemId ?: uiState.currentItemTitle) {
         nextEpisodePanelDismissed = false
     }
-    // Show the panel during the last NEXT_EPISODE_THRESHOLD_MS of an episode when a next
-    // episode exists — but not for movies, very short content, or when controls are locked.
+    val isInOutro = uiState.currentSegment?.type == dev.jdtech.jellyfin.models.SpatialFinSegmentType.OUTRO
+    val remainingMs = (duration - currentPosition).coerceAtLeast(0L)
+    // Show the panel during the last NEXT_EPISODE_THRESHOLD_MS of an episode (or during outro credits)
+    // when a next episode exists — but not for movies, very short content, or when controls are locked.
     val showNextEpisodePanel = !nextEpisodePanelDismissed &&
         !isLocked &&
         uiState.nextEpisode != null &&
-        duration > NEXT_EPISODE_THRESHOLD_MS &&
-        (duration - currentPosition) in 0L..NEXT_EPISODE_THRESHOLD_MS
+        duration > NEXT_EPISODE_THRESHOLD_MS * 2 &&
+        ((isInOutro && remainingMs <= 60_000L) || remainingMs in 0L..NEXT_EPISODE_THRESHOLD_MS)
 
     LaunchedEffect(controlsVisible, hideTimestamp, isPlaying) {
         if (controlsVisible && isPlaying) {

@@ -23,14 +23,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** What the crown is currently driving. */
-enum class CrownMode { Scrub, Volume }
+enum class CrownMode {
+    Scrub,
+    Volume,
+}
 
 /**
  * Controller for rotary crown media scrubbing with tactile haptic feedback.
  *
- * Accumulates raw `onRotaryScrollEvent` pixels into 5-second seek steps, updates the
- * local scrubber at frame rate, and debounces the outbound seek at 100 ms so a fast
- * spin does not flood the Data Layer.
+ * Accumulates raw `onRotaryScrollEvent` pixels into 5-second seek steps, updates the local scrubber
+ * at frame rate, and debounces the outbound seek at 100 ms so a fast spin does not flood the Data
+ * Layer.
  */
 class RotaryScrubState(
     initialPositionSeconds: Long,
@@ -44,8 +47,8 @@ class RotaryScrubState(
     private var debounceJob: Job? = null
 
     /**
-     * @param onHapticTick fired once per discrete step. Passed in rather than taking a
-     *   `View` so the accumulator stays free of Android types and unit-testable on the JVM.
+     * @param onHapticTick fired once per discrete step. Passed in rather than taking a `View` so
+     *   the accumulator stays free of Android types and unit-testable on the JVM.
      * @return true when the delta produced at least one seek step and was consumed.
      */
     fun onRotaryDelta(pixels: Float, onHapticTick: () -> Unit, scope: CoroutineScope): Boolean {
@@ -56,7 +59,10 @@ class RotaryScrubState(
         accumulatedPixels -= steps * PIXELS_PER_STEP
         val deltaSeconds = steps * SECONDS_PER_STEP
         currentScrubPositionSeconds =
-            (currentScrubPositionSeconds + deltaSeconds).coerceIn(0L, durationSeconds.coerceAtLeast(1L))
+            (currentScrubPositionSeconds + deltaSeconds).coerceIn(
+                0L,
+                durationSeconds.coerceAtLeast(1L),
+            )
         isScrubbing = true
 
         onHapticTick()
@@ -94,13 +100,14 @@ fun rememberRotaryScrubState(
     onSeek: (Long) -> Unit,
 ): RotaryScrubState {
     val latestOnSeek by rememberUpdatedState(onSeek)
-    val state = remember(durationSeconds) {
-        RotaryScrubState(
-            initialPositionSeconds = positionSeconds,
-            durationSeconds = durationSeconds,
-            onSeekDispatched = { latestOnSeek(it) },
-        )
-    }
+    val state =
+        remember(durationSeconds) {
+            RotaryScrubState(
+                initialPositionSeconds = positionSeconds,
+                durationSeconds = durationSeconds,
+                onSeekDispatched = { latestOnSeek(it) },
+            )
+        }
 
     LaunchedEffect(positionSeconds) {
         if (!state.isScrubbing) {
@@ -114,13 +121,13 @@ fun rememberRotaryScrubState(
 /**
  * Routes crown events to whichever target [mode] selects.
  *
- * Events that do not produce a step — and every event while [enabled] is false, i.e.
- * nothing is playing — fall through to [scrollState] so the crown still scrolls the
- * list instead of being swallowed by a scrubber with nothing to scrub.
+ * Events that do not produce a step — and every event while [enabled] is false, i.e. nothing is
+ * playing — fall through to [scrollState] so the crown still scrolls the list instead of being
+ * swallowed by a scrubber with nothing to scrub.
  *
- * [scrollState] is null on the player, which after the arc-timeline redesign has
- * nothing to scroll: there, an unconsumed event is simply dropped rather than
- * silently nudging a surface the user cannot see move.
+ * [scrollState] is null on the player, which after the arc-timeline redesign has nothing to scroll:
+ * there, an unconsumed event is simply dropped rather than silently nudging a surface the user
+ * cannot see move.
  */
 @Composable
 fun Modifier.rotaryControl(
@@ -136,11 +143,12 @@ fun Modifier.rotaryControl(
 
     return this.onRotaryScrollEvent { event ->
         val pixels = event.verticalScrollPixels
-        val consumed = when {
-            !enabled -> false
-            mode == CrownMode.Volume -> volumeState.onRotaryDelta(pixels, haptics, scope)
-            else -> scrubState.onRotaryDelta(pixels, haptics, scope)
-        }
+        val consumed =
+            when {
+                !enabled -> false
+                mode == CrownMode.Volume -> volumeState.onRotaryDelta(pixels, haptics, scope)
+                else -> scrubState.onRotaryDelta(pixels, haptics, scope)
+            }
         if (!consumed && scrollState != null) {
             scope.launch { scrollState.scrollBy(pixels) }
         }

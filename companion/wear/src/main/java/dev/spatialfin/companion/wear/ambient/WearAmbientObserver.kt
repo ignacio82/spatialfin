@@ -9,8 +9,8 @@ val LocalAmbientMode = compositionLocalOf { false }
 /**
  * Ambient state, driven by `AmbientLifecycleObserver` in `WearMainActivity`.
  *
- * In ambient mode the UI must drop smooth animations, stop rendering the poster, and
- * slow the scrubber to roughly 1 Hz — see the battery rules in docs/wear.md §5.
+ * In ambient mode the UI must drop smooth animations, stop rendering the poster, and slow the
+ * scrubber to roughly 1 Hz — see the battery rules in docs/wear.md §5.
  */
 class AmbientStateHolder {
     val isAmbient = mutableStateOf(false)

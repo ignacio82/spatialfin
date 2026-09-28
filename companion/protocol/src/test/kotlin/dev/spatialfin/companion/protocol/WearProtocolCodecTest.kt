@@ -179,4 +179,14 @@ class WearProtocolCodecTest {
         val decoded = WearProtocolCodec.decodeAction(invalidBytes)
         assertTrue(decoded is WearPlayerAction.Unrecognized)
     }
+
+    @Test
+    fun commandEnvelopeRetainsRequestIdentityAndPayload() {
+        val request = WearCommandRequest("request-123", action = WearPlayerAction.SeekForward(15))
+        val encoded = WearProtocolCodec.json.encodeToString(WearCommandRequest.serializer(), request)
+        assertEquals(request, WearProtocolCodec.json.decodeFromString(WearCommandRequest.serializer(), encoded))
+        val reply = WearCommandResponse(request.requestId, "Nothing is playing", successful = false)
+        val response = WearProtocolCodec.json.encodeToString(WearCommandResponse.serializer(), reply)
+        assertEquals(reply, WearProtocolCodec.json.decodeFromString(WearCommandResponse.serializer(), response))
+    }
 }

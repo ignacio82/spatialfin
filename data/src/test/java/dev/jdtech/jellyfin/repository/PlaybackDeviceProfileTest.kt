@@ -126,9 +126,40 @@ class PlaybackDeviceProfileTest {
             assertTrue(codecs.contains("truehd"))
             // A local DTS decoder means the DTS Express guard would only force a pointless
             // server transcode, so it must not be emitted.
-            assertTrue(profile.codecProfiles.isEmpty())
+            assertTrue(profile.codecProfiles.none { it.codec == "dts" })
         } finally {
             SoftwareAudioDecoders.resetForTest()
+        }
+    }
+
+    @Test
+    fun `device profile excludes pure DOVI when hardware Dolby Vision decoder is absent`() {
+        try {
+            AndroidCodecDetector.dolbyVisionDecoderOverride = false
+            val profile = createPlaybackDeviceProfile(bitrate = 40_000_000L, forceDirectPlay = false)
+            val doviGuard = profile.codecProfiles.firstOrNull { cp ->
+                cp.codec?.contains("hevc") == true && cp.conditions.any { it.value == "DOVI" }
+            }
+            assertNotNull("Device lacking Dolby Vision decoder must guard against pure DOVI", doviGuard)
+            val condition = doviGuard!!.conditions.first { it.value == "DOVI" }
+            assertEquals(org.jellyfin.sdk.model.api.ProfileConditionType.NOT_EQUALS, condition.condition)
+            assertEquals(org.jellyfin.sdk.model.api.ProfileConditionValue.VIDEO_RANGE_TYPE, condition.property)
+        } finally {
+            AndroidCodecDetector.dolbyVisionDecoderOverride = null
+        }
+    }
+
+    @Test
+    fun `device profile allows pure DOVI when hardware Dolby Vision decoder is present`() {
+        try {
+            AndroidCodecDetector.dolbyVisionDecoderOverride = true
+            val profile = createPlaybackDeviceProfile(bitrate = 40_000_000L, forceDirectPlay = false)
+            val doviGuard = profile.codecProfiles.firstOrNull { cp ->
+                cp.codec?.contains("hevc") == true && cp.conditions.any { it.value == "DOVI" }
+            }
+            assertNull("Device with Dolby Vision decoder must not exclude DOVI", doviGuard)
+        } finally {
+            AndroidCodecDetector.dolbyVisionDecoderOverride = null
         }
     }
 

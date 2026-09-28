@@ -1627,7 +1627,7 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                                     }
                                     add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
                                     add(TvOverflowAction("cast", Icons.Rounded.Tv, null, "Cast & audio output", onClick = { menuOpen = false }))
-                                    add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false }))
+                                    add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false; viewModel.load(item.id) }))
                                     add(TvOverflowAction("share", Icons.Rounded.Share, null, "Share", onClick = { menuOpen = false }))
                                     add(TvOverflowAction("delete", Icons.AutoMirrored.Rounded.Backspace, null, "Delete", danger = true, onClick = { menuOpen = false }))
                                 }
@@ -1690,7 +1690,7 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
                                 if (showTrailer != null) add(TvOverflowAction("trailer", Icons.Rounded.Tv, null, "Trailer", onClick = { menuOpen = false; TvPlayerActivity.createIntent(context, show.id, "Series", startFromBeginning = true, trailer = true).let(context::startActivity) }))
                                 add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = { menuOpen = false }))
                                 add(TvOverflowAction("edit_external_ids", Icons.Rounded.Link, null, "Edit external IDs", onClick = { menuOpen = false }))
-                                add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false }))
+                                add(TvOverflowAction("refresh", Icons.Rounded.Refresh, null, "Refresh metadata", onClick = { menuOpen = false; viewModel.load(show.id) }))
                                 add(TvOverflowAction("share", Icons.Rounded.Share, null, "Share", onClick = { menuOpen = false }))
                                 add(TvOverflowAction("delete", Icons.AutoMirrored.Rounded.Backspace, null, "Delete", danger = true, onClick = { menuOpen = false }))
                             }
@@ -1840,12 +1840,135 @@ private fun TvHomeHeroCard(item: SpatialFinItem, eyebrow: String, parkInitialFoc
                     TvIconHeroButton(if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favorite") { detailViewModel.toggleFavorite() }
                     TvIconHeroButton(if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, "Mark watched") { detailViewModel.togglePlayed() }
 
+                    val context = LocalContext.current
                     var showOverflow by remember { mutableStateOf(false) }
                     TvIconHeroButton(Icons.Rounded.MoreVert, "More actions") { showOverflow = true }
                     
                     if (showOverflow) {
                         val actions = buildList {
-                            add(TvOverflowAction("watchlist", Icons.Rounded.Add, null, label = "Watchlist", onClick = {}))
+                            val i = item
+                            if (i is SpatialFinMovie || i is SpatialFinEpisode) {
+                                val kind = if (i is SpatialFinMovie) "Movie" else "Episode"
+                                val trailerUrl = if (i is SpatialFinMovie) i.trailer else null
+                                if (i.playbackPositionTicks > 0L) {
+                                    add(
+                                        TvOverflowAction(
+                                            "restart",
+                                            Icons.Rounded.Replay,
+                                            null,
+                                            "Restart from beginning",
+                                            onClick = {
+                                                showOverflow = false
+                                                TvPlayerActivity.createIntentForSpatialItem(context, i, startFromBeginning = true)?.let(context::startActivity)
+                                            },
+                                        )
+                                    )
+                                }
+                                add(
+                                    TvOverflowAction(
+                                        "syncplay",
+                                        null,
+                                        { Icon(painterResource(dev.jdtech.jellyfin.core.R.drawable.ic_tv), null, Modifier.size(24.dp), tint = Color.White) },
+                                        "SyncPlay",
+                                        "Watch together with others",
+                                        onClick = {
+                                            showOverflow = false
+                                            TvPlayerActivity.createIntentForSpatialItem(context, i, openSyncPlayDialogOnStart = true)?.let(context::startActivity)
+                                        },
+                                    )
+                                )
+                                add(
+                                    TvOverflowAction(
+                                        "playback_options",
+                                        Icons.Rounded.Refresh,
+                                        null,
+                                        "Playback options",
+                                        "Auto Quality",
+                                        onClick = {
+                                            showOverflow = false
+                                            TvPlayerActivity.createIntentForSpatialItem(context, i, maxBitrate = 0L)?.let(context::startActivity)
+                                        },
+                                    )
+                                )
+                                if (trailerUrl != null) {
+                                    add(
+                                        TvOverflowAction(
+                                            "trailer",
+                                            Icons.Rounded.Tv,
+                                            null,
+                                            "Trailer",
+                                            onClick = {
+                                                showOverflow = false
+                                                TvPlayerActivity.createIntent(context, i.id, kind, startFromBeginning = true, trailer = true).let(context::startActivity)
+                                            },
+                                        )
+                                    )
+                                }
+                            } else if (i is SpatialFinShow) {
+                                val showTrailer = i.trailer
+                                if (showTrailer != null) {
+                                    add(
+                                        TvOverflowAction(
+                                            "trailer",
+                                            Icons.Rounded.Tv,
+                                            null,
+                                            "Trailer",
+                                            onClick = {
+                                                showOverflow = false
+                                                TvPlayerActivity.createIntent(context, i.id, "Series", startFromBeginning = true, trailer = true).let(context::startActivity)
+                                            },
+                                        )
+                                    )
+                                }
+                            }
+                            add(
+                                TvOverflowAction(
+                                    "details",
+                                    Icons.Rounded.Info,
+                                    null,
+                                    "More info",
+                                    onClick = {
+                                        showOverflow = false
+                                        onDetails()
+                                    },
+                                )
+                            )
+                            add(
+                                TvOverflowAction(
+                                    "favorite",
+                                    if (item.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                    null,
+                                    if (item.favorite) "Favorited" else "Favorite",
+                                    onClick = {
+                                        showOverflow = false
+                                        detailViewModel.toggleFavorite()
+                                    },
+                                )
+                            )
+                            add(
+                                TvOverflowAction(
+                                    "watched",
+                                    if (item.played) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                    null,
+                                    if (item.played) "Watched" else "Mark watched",
+                                    onClick = {
+                                        showOverflow = false
+                                        detailViewModel.togglePlayed()
+                                    },
+                                )
+                            )
+                            add(
+                                TvOverflowAction(
+                                    "refresh",
+                                    Icons.Rounded.Refresh,
+                                    null,
+                                    "Refresh metadata",
+                                    onClick = {
+                                        showOverflow = false
+                                        detailViewModel.load(item.id)
+                                    },
+                                )
+                            )
                         }
                         TvOverflowSheet(
                             title = "More actions",

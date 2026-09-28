@@ -18,6 +18,7 @@ import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
 import dev.jdtech.jellyfin.player.local.domain.PlaylistManager
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.spatialfin.companion.protocol.WearProtocolPaths
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
@@ -279,7 +280,7 @@ internal class SyncPlayCoordinator(
     fun handlePlayStateMessage(command: PlaystateCommand, seekPositionTicks: Long?) {
         when (command) {
             PlaystateCommand.PAUSE -> applyRemoteSync { host.player.pause() }
-            PlaystateCommand.UNPAUSE,
+            PlaystateCommand.UNPAUSE -> applyRemoteSync { host.player.play() }
             PlaystateCommand.PLAY_PAUSE -> applyRemoteSync {
                 if (host.player.isPlaying) host.player.pause() else host.player.play()
             }
@@ -340,7 +341,8 @@ internal class SyncPlayCoordinator(
     }
 
     suspend fun ensureRemotePlaybackSessionReady(force: Boolean = false) {
-        if (host.currentPlayerItem()?.contentSource != PlayerContentSource.JELLYFIN) return
+        // A signed-in device can accept commands during local/SMB playback too.
+        // Without a Jellyfin account the repository rejects registration below.
 
         val deviceName = buildPreferredDeviceName()
         if (!force && remoteSessionConfigured && configuredDeviceName == deviceName) return
@@ -476,6 +478,18 @@ internal class SyncPlayCoordinator(
     }
 
     private suspend fun handleRemotePlayStateCommand(message: GeneralCommandMessage) {
+        val action = parseRemoteArgument(message, WearProtocolPaths.RELAY_ACTION_ARGUMENT)
+        val transcript = parseRemoteArgument(message, WearProtocolPaths.RELAY_VOICE_ARGUMENT)
+        if (action != null || transcript != null) {
+            // Delivered through Jellyfin's authenticated, permission-checked session endpoint.
+            if ((action != null) == (transcript != null)) return
+            if ((action?.length ?: transcript?.length ?: 0) > 16_384) return
+            val feedback = try { CompanionCommandBridge.dispatch(action, transcript) }
+                catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Exception) { error.message ?: "Watch command failed" }
+            Toast.makeText(application, feedback, Toast.LENGTH_SHORT).show()
+            return
+        }
         val command =
             when (parseRemoteArgument(message, "Command", "PlayCommand", "PlaystateCommand")
                 ?.trim()

@@ -11,6 +11,7 @@ plugins {
 
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
+
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
@@ -67,9 +68,7 @@ android {
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-        }
+        debug { applicationIdSuffix = ".debug" }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -77,11 +76,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = if (hasCustomStore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig =
+                if (hasCustomStore) {
+                    signingConfigs.getByName("release")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
         }
         register("staging") {
             initWith(getByName("release"))
@@ -132,6 +132,7 @@ dependencies {
     // Media3, for Split-A/V audio rendering on the watch. No MediaSession: the sink is
     // driven by FCast ingress, not by a system transport control surface.
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
 
     // Poster art for Continue Watching. The now-playing hero still arrives as a
     // Data Layer Asset (the watch cannot resolve a Jellyfin image URL on the
@@ -148,5 +149,6 @@ dependencies {
     implementation(libs.timber)
 
     testImplementation(libs.junit4)
+    testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
 }

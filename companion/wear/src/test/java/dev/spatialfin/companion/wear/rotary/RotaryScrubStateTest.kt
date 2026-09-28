@@ -11,11 +11,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Exercises the real [RotaryScrubState], not a copy of its constants: these assertions
- * fail if the production step size, clamping, debounce or consumption contract changes.
+ * Exercises the real [RotaryScrubState], not a copy of its constants: these assertions fail if the
+ * production step size, clamping, debounce or consumption contract changes.
  *
- * Haptics are injected as a lambda, so the accumulator carries no Android types and
- * runs on a plain JVM test dispatcher.
+ * Haptics are injected as a lambda, so the accumulator carries no Android types and runs on a plain
+ * JVM test dispatcher.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RotaryScrubStateTest {

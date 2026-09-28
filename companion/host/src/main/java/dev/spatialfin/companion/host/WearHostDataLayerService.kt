@@ -1,14 +1,16 @@
 package dev.spatialfin.companion.host
 
-import android.content.Intent
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
+import dev.spatialfin.companion.protocol.WearCommandRequest
+import dev.spatialfin.companion.protocol.WearCommandResponse
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,19 +18,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
-import javax.inject.Inject
 
 @AndroidEntryPoint
 class WearHostDataLayerService : WearableListenerService() {
 
-    @Inject
-    lateinit var statePublisher: WearStatePublisher
+    @Inject lateinit var statePublisher: WearStatePublisher
 
-    @Inject
-    lateinit var credentialPusher: WearCredentialPusher
+    @Inject lateinit var credentialPusher: WearCredentialPusher
 
-    @Inject
-    lateinit var pairingBroker: WearTvPairingBroker
+    @Inject lateinit var pairingBroker: WearTvPairingBroker
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -48,9 +46,60 @@ class WearHostDataLayerService : WearableListenerService() {
         val data = messageEvent.data
         val sourceNodeId = messageEvent.sourceNodeId
 
-        Timber.d("WearHostDataLayerService: message received on path %s from %s", path, sourceNodeId)
+        Timber.d(
+            "WearHostDataLayerService: message received on path %s from %s",
+            path,
+            sourceNodeId,
+        )
 
         when (path) {
+            WearProtocolPaths.PATH_CREDENTIAL_REFRESH ->
+                serviceScope.launch {
+                    credentialPusher.pushCredentials()
+                    statePublisher.publishNowPlaying()
+                    statePublisher.publishNextUp()
+                }
+
+            WearProtocolPaths.PATH_COMMAND_REQUEST ->
+                serviceScope.launch {
+                    val request =
+                        runCatching {
+                            WearProtocolCodec.json.decodeFromString(
+                                WearCommandRequest.serializer(),
+                                data.decodeToString(),
+                            )
+                        }
+                            .getOrNull() ?: return@launch
+                    val result = runCatching {
+                        require((request.action != null) != (request.transcript != null)) {
+                            "Invalid command"
+                        }
+                        request.action?.let { ActivePlayerSessionHolder.dispatch(it) }
+                            ?: ActivePlayerSessionHolder.dispatchVoiceCommand(request.transcript!!)
+                    }
+                    val response =
+                        WearCommandResponse(
+                            request.requestId,
+                            result.getOrElse { it.message ?: "Command failed" },
+                            result.isSuccess,
+                        )
+                    val payload =
+                        WearProtocolCodec.json.encodeToString(
+                            WearCommandResponse.serializer(),
+                            response,
+                        )
+                    runCatching {
+                        Wearable.getMessageClient(this@WearHostDataLayerService)
+                            .sendMessage(
+                                sourceNodeId,
+                                WearProtocolPaths.PATH_ACTION_RESPONSE,
+                                payload.encodeToByteArray(),
+                            )
+                            .await()
+                    }
+                        .onFailure { Timber.w(it, "Wear command response failed") }
+                }
+
             WearProtocolPaths.PATH_ACTION -> {
                 serviceScope.launch {
                     val action = WearProtocolCodec.decodeAction(data)
@@ -65,7 +114,10 @@ class WearHostDataLayerService : WearableListenerService() {
                 serviceScope.launch {
                     val query = runCatching { WearProtocolCodec.decodeVoiceQuery(data) }.getOrNull()
                     if (query == null) {
-                        Timber.w("WearHostDataLayerService: undecodable voice query from %s", sourceNodeId)
+                        Timber.w(
+                            "WearHostDataLayerService: undecodable voice query from %s",
+                            sourceNodeId,
+                        )
                         return@launch
                     }
                     Timber.i("WearHostDataLayerService: wrist voice command '%s'", query.transcript)
@@ -91,11 +143,16 @@ class WearHostDataLayerService : WearableListenerService() {
     private suspend fun respondTo(nodeId: String, feedback: String) {
         runCatching {
             Wearable.getMessageClient(this@WearHostDataLayerService)
-                .sendMessage(nodeId, WearProtocolPaths.PATH_ACTION_RESPONSE, feedback.encodeToByteArray())
+                .sendMessage(
+                    nodeId,
+                    WearProtocolPaths.PATH_ACTION_RESPONSE,
+                    feedback.encodeToByteArray(),
+                )
                 .await()
-        }.onFailure {
-            Timber.w(it, "WearHostDataLayerService: failed to send response to %s", nodeId)
         }
+            .onFailure {
+                Timber.w(it, "WearHostDataLayerService: failed to send response to %s", nodeId)
+            }
     }
 
     override fun onPeerConnected(peer: Node) {

@@ -9,32 +9,31 @@ import androidx.wear.compose.foundation.LocalReduceMotion
 import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
 
-val WearColorScheme = ColorScheme(
-    primary = WearDarkPrimary,
-    primaryContainer = WearDarkPrimaryContainer,
-    onPrimary = WearDarkOnPrimary,
-    onPrimaryContainer = WearDarkOnPrimaryContainer,
-    secondary = WearDarkSecondary,
-    secondaryContainer = WearDarkSecondaryContainer,
-    onSecondary = WearDarkOnSecondary,
-    onSecondaryContainer = WearDarkOnSecondaryContainer,
-    surfaceContainer = WearDarkSurfaceContainer,
-    surfaceContainerHigh = WearDarkSurfaceVariant,
-    onSurface = WearDarkOnSurface,
-    onSurfaceVariant = WearDarkOnSurfaceVariant,
-    outline = WearDarkOutline,
-    error = WearDarkError,
-    errorContainer = WearDarkErrorContainer,
-    onError = WearDarkOnError,
-    onErrorContainer = WearDarkOnErrorContainer,
-    background = WearDarkSurface, // OLED pure black
-    onBackground = WearDarkOnSurface,
-)
+val WearColorScheme =
+    ColorScheme(
+        primary = WearDarkPrimary,
+        primaryContainer = WearDarkPrimaryContainer,
+        onPrimary = WearDarkOnPrimary,
+        onPrimaryContainer = WearDarkOnPrimaryContainer,
+        secondary = WearDarkSecondary,
+        secondaryContainer = WearDarkSecondaryContainer,
+        onSecondary = WearDarkOnSecondary,
+        onSecondaryContainer = WearDarkOnSecondaryContainer,
+        surfaceContainer = WearDarkSurfaceContainer,
+        surfaceContainerHigh = WearDarkSurfaceVariant,
+        onSurface = WearDarkOnSurface,
+        onSurfaceVariant = WearDarkOnSurfaceVariant,
+        outline = WearDarkOutline,
+        error = WearDarkError,
+        errorContainer = WearDarkErrorContainer,
+        onError = WearDarkOnError,
+        onErrorContainer = WearDarkOnErrorContainer,
+        background = WearDarkSurface, // OLED pure black
+        onBackground = WearDarkOnSurface,
+    )
 
 @Composable
-fun SpatialFinWearTheme(
-    content: @Composable () -> Unit,
-) {
+fun SpatialFinWearTheme(content: @Composable () -> Unit) {
     // LocalReduceMotion MUST be provided, not left to the library default.
     //
     // Wear Compose Foundation's default computes the value by reading the
@@ -48,15 +47,17 @@ fun SpatialFinWearTheme(
     // ANIMATOR_DURATION_SCALE is the publicly readable reduced-motion signal, so
     // the accessibility preference is still honoured rather than hardcoded off.
     val context = LocalContext.current
-    val reduceMotion = remember(context) {
-        runCatching {
-            Settings.Global.getFloat(
-                context.contentResolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f,
-            ) == 0f
-        }.getOrDefault(false)
-    }
+    val reduceMotion =
+        remember(context) {
+            runCatching {
+                    Settings.Global.getFloat(
+                        context.contentResolver,
+                        Settings.Global.ANIMATOR_DURATION_SCALE,
+                        1f,
+                    ) == 0f
+                }
+                .getOrDefault(false)
+        }
 
     CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
         MaterialTheme(

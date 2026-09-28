@@ -165,3 +165,24 @@ private fun launchLibraryItem(
         context.startActivity(buildLocalIntent())
     }
 }
+
+/** Watch/remote launch while the browse activity is visible; no player must already be running. */
+internal suspend fun launchWearLibraryItem(
+    context: Context,
+    repository: dev.jdtech.jellyfin.repository.JellyfinRepository,
+    deviceClass: dev.spatialfin.unified.DeviceClass,
+    itemId: String,
+    positionMs: Long,
+    canLaunch: () -> Boolean,
+): String {
+    val item = repository.getItem(java.util.UUID.fromString(itemId)) ?: error("Item not found")
+    check(canLaunch()) { "Open and unlock SpatialFin on the target device" }
+    val intent = when (deviceClass) {
+        dev.spatialfin.unified.DeviceClass.XR -> XrPlayerActivity.createIntentForItem(context, item)
+        dev.spatialfin.unified.DeviceClass.TV -> dev.jdtech.jellyfin.player.tv.TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = positionMs.takeIf { it > 0 })
+        dev.spatialfin.unified.DeviceClass.PHONE -> dev.jdtech.jellyfin.player.beam.BeamPlayerActivity.createIntentForSpatialItem(
+            context, item, startPositionMs = positionMs.takeIf { it > 0 })
+    } ?: error("This item cannot be played on the target")
+    context.startActivity(intent)
+    return "Opening ${item.name}"
+}

@@ -9,26 +9,51 @@ import dev.jdtech.jellyfin.fcast.sender.FCastSenderClient
 import dev.jdtech.jellyfin.fcast.sender.PlayMessageBuilder
 import dev.spatialfin.companion.protocol.WearNowPlayingState
 import dev.spatialfin.companion.protocol.WearPlayerAction
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
-import javax.inject.Inject
-import javax.inject.Singleton
 
 @Singleton
-class WearDirectLanClient @Inject constructor(
-    @ApplicationContext private val context: Context,
+class WearDirectLanClient
+internal constructor(
+    private val scope: CoroutineScope,
+    private val discover: suspend () -> List<FCastReceiver>,
+    private val createClient: (FCastReceiver, CoroutineScope) -> FCastSenderClient,
 ) {
+    @Inject
+    constructor(
+        @ApplicationContext context: Context
+    ) : this(
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        { FCastDiscovery(context).browse(timeoutMs = 4_000) },
+        { receiver, connectionScope ->
+            FCastSenderClient(
+                receiver = receiver,
+                parentScope = connectionScope,
+                senderInfo =
+                    InitialSenderMessage(displayName = "SpatialFin Watch", appName = "SpatialFin"),
+            )
+        },
+    )
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeClient: FCastSenderClient? = null
     private var discoveryJob: Job? = null
+    private var connectionJob: Job? = null
+    private val connectionMutex = Mutex()
+    private var volume: Float? = null
+    private var castTitle = "Cast playback"
 
     private val _discoveredReceivers = MutableStateFlow<List<FCastReceiver>>(emptyList())
     val discoveredReceivers: StateFlow<List<FCastReceiver>> = _discoveredReceivers.asStateFlow()
@@ -40,17 +65,18 @@ class WearDirectLanClient @Inject constructor(
     val lanPlaybackState: StateFlow<WearNowPlayingState?> = _lanPlaybackState.asStateFlow()
 
     fun startDiscovery() {
-        if (discoveryJob != null) return
+        if (discoveryJob?.isActive == true) return
         discoveryJob = scope.launch {
             Timber.i("WearDirectLanClient: starting mDNS discovery for _fcast._tcp")
-            val discovery = FCastDiscovery(context)
             runCatching {
-                val results = discovery.browse(timeoutMs = 4000)
+                val results = discover()
                 _discoveredReceivers.value = results
                 Timber.i("WearDirectLanClient: discovered %d FCast receivers", results.size)
-            }.onFailure {
-                Timber.w(it, "WearDirectLanClient: discovery failed")
             }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    Timber.w("Wear receiver discovery failed")
+                }
         }
     }
 
@@ -59,50 +85,73 @@ class WearDirectLanClient @Inject constructor(
         discoveryJob = null
     }
 
-    suspend fun connectToReceiver(receiver: FCastReceiver): Boolean {
-        return runCatching {
-            activeClient?.close()
-
-            val client = FCastSenderClient(
-                receiver = receiver,
-                parentScope = scope,
-                senderInfo = InitialSenderMessage(
-                    displayName = "SpatialFin Watch",
-                    appName = "SpatialFin",
-                ),
-            )
+    suspend fun connectToReceiver(receiver: FCastReceiver): Boolean = connectionMutex.withLock {
+        disconnect()
+        val job = SupervisorJob(scope.coroutineContext[Job])
+        connectionJob = job
+        val connectionScope = CoroutineScope(scope.coroutineContext + job)
+        val client = createClient(receiver, connectionScope)
+        activeClient = client
+        try {
             client.connect()
-            activeClient = client
             _connectedReceiver.value = receiver
-
-            scope.launch {
+            connectionScope.launch {
                 client.playbackUpdates.collect { update ->
-                    val isPlaying = update.state == 1 // 1 = Playing
-                    val currentPos = (update.time ?: 0.0).toLong()
-                    val duration = (update.duration ?: 0.0).toLong()
-                    _lanPlaybackState.value = WearNowPlayingState(
-                        isPlaying = isPlaying,
-                        positionSeconds = currentPos,
-                        durationSeconds = duration,
-                        speed = (update.speed ?: 1.0).toFloat(),
-                        targetDeviceName = receiver.name,
-                    )
+                    if (activeClient !== client) return@collect
+                    _lanPlaybackState.value =
+                        if (update.state == 0) null
+                        else
+                            WearNowPlayingState(
+                                title = castTitle,
+                                isPlaying = update.state == 1,
+                                positionSeconds = (update.time ?: 0.0).toLong(),
+                                durationSeconds = (update.duration ?: 0.0).toLong(),
+                                speed = (update.speed ?: 1.0).toFloat(),
+                                volume = volume ?: 1f,
+                                targetDeviceName = receiver.name,
+                                timestampEpochMs = System.currentTimeMillis(),
+                            )
                 }
             }
-
-            Timber.i("WearDirectLanClient: connected to %s (%s:%d)", receiver.name, receiver.host, receiver.port)
+            connectionScope.launch {
+                client.volumeUpdates.collect { update ->
+                    if (activeClient === client) {
+                        volume = update.volume.toFloat()
+                        _lanPlaybackState.value =
+                            _lanPlaybackState.value?.copy(volume = update.volume.toFloat())
+                    }
+                }
+            }
+            connectionScope.launch {
+                client.state.collect { state ->
+                    if (
+                        activeClient === client &&
+                            (state == FCastSenderClient.State.Disconnected ||
+                                state == FCastSenderClient.State.Failed)
+                    )
+                        disconnect()
+                }
+            }
+            connectionScope.launch {
+                client.errors.collect {
+                    // Receiver errors invalidate the cast session. Never report a native player as
+                    // controlled.
+                    if (activeClient === client) disconnect()
+                }
+            }
             true
-        }.onFailure {
-            Timber.w(it, "WearDirectLanClient: failed to connect to receiver %s", receiver.name)
-            _connectedReceiver.value = null
-        }.getOrDefault(false)
+        } catch (error: Exception) {
+            if (activeClient === client) disconnect()
+            if (error is CancellationException) throw error
+            false
+        }
     }
 
     /**
      * Fling the stream the watch is currently showing onto a discovered receiver.
      *
-     * The URL comes from the host's own now-playing state, so this works whenever the
-     * watch can see one — tethered or on the LAN — and needs no Jellyfin credentials.
+     * The URL comes from the host's own now-playing state, so this works whenever the watch can see
+     * one — tethered or on the LAN — and needs no Jellyfin credentials.
      */
     suspend fun castStream(
         receiver: FCastReceiver,
@@ -113,6 +162,7 @@ class WearDirectLanClient @Inject constructor(
     ): Result<String> = runCatching {
         if (!connectToReceiver(receiver)) error("Could not reach ${receiver.name}")
         val client = activeClient ?: error("No sender client")
+        castTitle = title.ifBlank { "Cast playback" }
         client.play(
             PlayMessageBuilder.build(
                 url = streamUrl,
@@ -120,24 +170,36 @@ class WearDirectLanClient @Inject constructor(
                 container = container ?: "application/octet-stream",
                 positionSeconds = positionSeconds,
                 title = title,
-            ),
+            )
         )
         Timber.i("WearDirectLanClient: flung '%s' to %s", title, receiver.name)
         "Casting to ${receiver.name}"
-    }.onFailure {
-        Timber.w(it, "WearDirectLanClient: cast to %s failed", receiver.name)
     }
+        .onFailure {
+            if (it is CancellationException) throw it
+            Timber.w("Wear cast request failed")
+        }
 
     fun disconnect() {
-        activeClient?.close()
+        val oldClient = activeClient
         activeClient = null
+        oldClient?.close()
+        connectionJob?.cancel()
+        connectionJob = null
+        volume = null
+        castTitle = "Cast playback"
         _connectedReceiver.value = null
         _lanPlaybackState.value = null
     }
 
     suspend fun dispatch(action: WearPlayerAction): Result<String> {
-        val client = activeClient ?: return Result.failure(IllegalStateException("No LAN receiver connected"))
+        val client =
+            activeClient
+                ?: return Result.failure(IllegalStateException("No LAN receiver connected"))
         return runCatching {
+            check(_lanPlaybackState.value != null) {
+                "No cast playback. Start a cast stream or select the device under Jellyfin players to control its library playback."
+            }
             when (action) {
                 is WearPlayerAction.Play -> {
                     client.resume()
@@ -171,10 +233,11 @@ class WearDirectLanClient @Inject constructor(
                     "Rewound"
                 }
                 is WearPlayerAction.AdjustVolume -> {
-                    val pct = action.percentage
-                    if (pct != null) {
-                        client.setVolume(pct.toDouble())
-                    }
+                    val next =
+                        action.percentage
+                            ?: volume?.let { it + (action.delta ?: 0f) }
+                            ?: error("Receiver has not reported its volume")
+                    client.setVolume(next.coerceIn(0f, 1f).toDouble())
                     "Volume updated"
                 }
                 is WearPlayerAction.SetSpeed -> {
@@ -186,9 +249,10 @@ class WearDirectLanClient @Inject constructor(
                     "Stopped"
                 }
                 else -> {
-                    "Action not supported in standalone LAN mode"
+                    error("This action is unavailable for cast playback")
                 }
             }
         }
+            .onFailure { if (it is CancellationException) throw it }
     }
 }

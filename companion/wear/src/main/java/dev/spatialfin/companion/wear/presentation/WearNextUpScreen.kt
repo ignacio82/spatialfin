@@ -34,8 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ScrollIndicator
-import androidx.wear.compose.material3.lazy.scrollTransform
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.scrollTransform
 import coil3.compose.AsyncImage
 import dev.spatialfin.companion.protocol.WearNextUpItem
 import dev.spatialfin.companion.protocol.WearPlayerAction
@@ -56,10 +56,10 @@ import kotlinx.coroutines.launch
 /**
  * Frame 10 — Continue Watching.
  *
- * Poster art returns, and progress rides the poster as a ring rather than a 3dp
- * line under the title: on a 227dp round screen a hairline bar under two lines of
- * text is the first thing the bezel eats. "14 min left" replaces the bar's
- * information entirely — it is the number people actually decide on.
+ * Poster art returns, and progress rides the poster as a ring rather than a 3dp line under the
+ * title: on a 227dp round screen a hairline bar under two lines of text is the first thing the
+ * bezel eats. "14 min left" replaces the bar's information entirely — it is the number people
+ * actually decide on.
  */
 @Composable
 fun WearNextUpScreen(
@@ -68,20 +68,22 @@ fun WearNextUpScreen(
 ) {
     val nextUpState by transportManager.nextUp.collectAsState()
     val scope = rememberCoroutineScope()
+    androidx.compose.runtime.LaunchedEffect(Unit) { transportManager.refreshNextUp() }
 
     WearNextUpContent(
         items = nextUpState?.items.orEmpty(),
         onPlay = { item ->
             scope.launch {
-                transportManager.dispatchAction(
-                    WearPlayerAction.PlayMediaItem(
-                        itemId = item.id,
-                        mediaType = item.mediaType,
-                        startPositionMs = item.playbackPositionSeconds * 1000L,
-                    ),
-                )
+                transportManager
+                    .dispatchAction(
+                        WearPlayerAction.PlayMediaItem(
+                            itemId = item.id,
+                            mediaType = item.mediaType,
+                            startPositionMs = item.playbackPositionSeconds * 1000L,
+                        )
+                    )
+                    .onSuccess { onNavigateBack() }
             }
-            onNavigateBack()
         },
         onNavigateBack = onNavigateBack,
     )
@@ -90,9 +92,9 @@ fun WearNextUpScreen(
 /**
  * The list itself, with no transport attached.
  *
- * Split out so the debug-only store-screenshot harness renders this exact composable
- * with representative items instead of a lookalike — a watch with no paired host has
- * an empty Next Up feed and would otherwise only ever screenshot the empty state.
+ * Split out so the debug-only store-screenshot harness renders this exact composable with
+ * representative items instead of a lookalike — a watch with no paired host has an empty Next Up
+ * feed and would otherwise only ever screenshot the empty state.
  */
 @Composable
 internal fun WearNextUpContent(
@@ -153,13 +155,13 @@ internal fun WearNextUpContent(
 
             item {
                 Box(
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .padding(top = 6.dp)
-                        .size(width = 84.dp, height = 34.dp)
-                        .clip(RoundedCornerShape(17.dp))
-                        .background(WearDarkPrimary)
-                        .clickable(onClick = onNavigateBack),
+                    modifier =
+                        Modifier.scrollTransform(this)
+                            .padding(top = 6.dp)
+                            .size(width = 84.dp, height = 34.dp)
+                            .clip(RoundedCornerShape(17.dp))
+                            .background(WearDarkPrimary)
+                            .clickable(onClick = onNavigateBack),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -181,29 +183,29 @@ private fun NextUpRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val progress = if (item.durationSeconds > 0) {
-        (item.playbackPositionSeconds.toFloat() / item.durationSeconds).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+    val progress =
+        if (item.durationSeconds > 0) {
+            (item.playbackPositionSeconds.toFloat() / item.durationSeconds).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(26.dp))
-            .background(WearDarkSurfaceContainer)
-            .border(1.dp, WearGlassBorder, RoundedCornerShape(26.dp))
-            .clickable(onClick = onClick)
-            .padding(start = 4.dp, end = 11.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .background(WearDarkSurfaceContainer)
+                .border(1.dp, WearGlassBorder, RoundedCornerShape(26.dp))
+                .clickable(onClick = onClick)
+                .padding(start = 4.dp, end = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
             Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(WearDarkSurfaceVariant),
+                modifier =
+                    Modifier.size(44.dp).clip(CircleShape).background(WearDarkSurfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
                 if (!item.primaryImageUrl.isNullOrBlank()) {
@@ -248,11 +250,12 @@ private fun NextUpRow(
             val series = item.seriesName
             if (!series.isNullOrBlank()) {
                 Text(
-                    text = if (item.seasonNumber != null && item.episodeNumber != null) {
-                        "S${item.seasonNumber}:E${item.episodeNumber} · $series"
-                    } else {
-                        series
-                    },
+                    text =
+                        if (item.seasonNumber != null && item.episodeNumber != null) {
+                            "S${item.seasonNumber}:E${item.episodeNumber} · $series"
+                        } else {
+                            series
+                        },
                     fontSize = 8.5.sp,
                     color = WearDarkOnSurfaceVariant,
                     maxLines = 1,

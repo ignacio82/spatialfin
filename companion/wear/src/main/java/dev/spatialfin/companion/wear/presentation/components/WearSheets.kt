@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -21,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -29,8 +32,8 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ScrollIndicator
-import androidx.wear.compose.material3.lazy.scrollTransform
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.scrollTransform
 import dev.jdtech.jellyfin.fcast.sender.FCastReceiver
 import dev.spatialfin.companion.protocol.WearChapterInfo
 import dev.spatialfin.companion.protocol.WearPlayerAction
@@ -47,20 +50,19 @@ import dev.spatialfin.companion.wear.presentation.theme.WearIcon
 import dev.spatialfin.companion.wear.presentation.theme.WearIcons
 import dev.spatialfin.companion.wear.presentation.theme.WearTitleBright
 import dev.spatialfin.companion.wear.presentation.theme.WearVectorIcon
+import dev.spatialfin.companion.wear.transport.RelaySession
 
 /**
  * The shared chassis for every picker sheet.
  *
- * A [TransformingLazyColumn] rather than a `verticalScroll` Column: on a round
- * screen the rows at the top and bottom of the viewport are clipped by the bezel,
- * and Wear's scaling list is what shrinks and fades them instead of letting them
- * run off the edge mid-word. The edge [ScrollIndicator] arc replaces the scrollbar
- * a round screen has nowhere to put.
+ * A [TransformingLazyColumn] rather than a `verticalScroll` Column: on a round screen the rows at
+ * the top and bottom of the viewport are clipped by the bezel, and Wear's scaling list is what
+ * shrinks and fades them instead of letting them run off the edge mid-word. The edge
+ * [ScrollIndicator] arc replaces the scrollbar a round screen has nowhere to put.
  *
- * The list does not do that shrinking on its own. Every row has to opt in with
- * [scrollTransform], which is both the graphics transform and the layout height —
- * without it a `TransformingLazyColumn` is just a `LazyColumn` that lets the bezel
- * slice the last row in half.
+ * The list does not do that shrinking on its own. Every row has to opt in with [scrollTransform],
+ * which is both the graphics transform and the layout height — without it a
+ * `TransformingLazyColumn` is just a `LazyColumn` that lets the bezel slice the last row in half.
  */
 @Composable
 private fun WearSheetScaffold(
@@ -107,8 +109,8 @@ private fun WearSheetScaffold(
 /**
  * A selectable row.
  *
- * [secondary] is the codec/format line. It is mono and dimmed on purpose: it is
- * reference detail you scan, not a label you read.
+ * [secondary] is the codec/format line. It is mono and dimmed on purpose: it is reference detail
+ * you scan, not a label you read.
  */
 @Composable
 private fun WearChoiceRow(
@@ -121,13 +123,14 @@ private fun WearChoiceRow(
     leadingIcon: WearIcon? = null,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(if (selected) WearDarkPrimaryContainer else WearDarkSurfaceContainer)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(if (selected) WearDarkPrimaryContainer else WearDarkSurfaceContainer)
+                .clickable(role = Role.Button, onClick = onClick)
+                .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leadingIcon != null) {
@@ -203,7 +206,12 @@ fun WearAudioTracksSheet(
 ) {
     WearSheetScaffold(title = "Audio", icon = WearIcons.VolumeSmall) {
         if (tracks.isEmpty()) {
-            item { WearSheetEmptyState("No additional audio tracks", Modifier.scrollTransform(this)) }
+            item {
+                WearSheetEmptyState(
+                    "Audio track information is unavailable from this target",
+                    Modifier.scrollTransform(this),
+                )
+            }
         } else {
             items(tracks.size) { index ->
                 val track = tracks[index]
@@ -266,9 +274,8 @@ fun WearSubtitleTracksSheet(
 /**
  * Frame 8.
  *
- * The chapter you are *inside* is marked, not merely listed: with only a start
- * timestamp per chapter, "which one am I in" is otherwise arithmetic the user has
- * to do in their head.
+ * The chapter you are *inside* is marked, not merely listed: with only a start timestamp per
+ * chapter, "which one am I in" is otherwise arithmetic the user has to do in their head.
  */
 @Composable
 fun WearChaptersSheet(
@@ -283,7 +290,9 @@ fun WearChaptersSheet(
 
     WearSheetScaffold(title = "Chapters", icon = WearIcons.ListOrdered) {
         if (chapters.isEmpty()) {
-            item { WearSheetEmptyState("No chapter marks available", Modifier.scrollTransform(this)) }
+            item {
+                WearSheetEmptyState("No chapter marks available", Modifier.scrollTransform(this))
+            }
         } else {
             items(chapters.size) { index ->
                 val chapter = chapters[index]
@@ -309,15 +318,14 @@ fun WearChaptersSheet(
 /**
  * Frame 9.
  *
- * Recenter is the biggest thing on screen because it is the one control people
- * actually reach for; scale and distance are steppers underneath it.
+ * Recenter is the biggest thing on screen because it is the one control people actually reach for;
+ * scale and distance are steppers underneath it.
  *
- * The design shows a live "1.4x" / "3.5m" readout beside each stepper. The watch
- * cannot draw one: [WearPlayerAction.AdjustScale] and [WearPlayerAction.AdjustDistance]
- * are delta-only and no panel-geometry state rides the state DataItems, so any
- * number here would be the watch's guess at a value the headset owns and the user
- * can also change from inside XR. Publishing scale/distance in `WearNowPlayingState`
- * is what would earn that readout.
+ * The design shows a live "1.4x" / "3.5m" readout beside each stepper. The watch cannot draw one:
+ * [WearPlayerAction.AdjustScale] and [WearPlayerAction.AdjustDistance] are delta-only and no
+ * panel-geometry state rides the state DataItems, so any number here would be the watch's guess at
+ * a value the headset owns and the user can also change from inside XR. Publishing scale/distance
+ * in `WearNowPlayingState` is what would earn that readout.
  */
 @Composable
 fun WearSpatialControlsSheet(
@@ -327,12 +335,12 @@ fun WearSpatialControlsSheet(
     WearSheetScaffold(title = "Spatial", icon = WearIcons.Glasses) {
         item {
             Column(
-                modifier = Modifier
-                    .scrollTransform(this)
-                    .size(65.dp)
-                    .clip(CircleShape)
-                    .background(WearDarkPrimaryContainer)
-                    .clickable { onDispatchAction(WearPlayerAction.ResetScreenPlacement) },
+                modifier =
+                    Modifier.scrollTransform(this)
+                        .size(65.dp)
+                        .clip(CircleShape)
+                        .background(WearDarkPrimaryContainer)
+                        .clickable { onDispatchAction(WearPlayerAction.ResetScreenPlacement) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
@@ -379,12 +387,13 @@ private fun WearStepperRow(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(42.dp)
-            .clip(RoundedCornerShape(21.dp))
-            .background(WearDarkSurfaceContainer)
-            .padding(start = 13.dp, end = 5.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .background(WearDarkSurfaceContainer)
+                .padding(start = 13.dp, end = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -403,11 +412,11 @@ private fun WearStepperRow(
 @Composable
 private fun StepperButton(icon: WearIcon, contentDescription: String, onClick: () -> Unit) {
     Box(
-        modifier = Modifier
-            .size(32.dp)
-            .clip(CircleShape)
-            .background(WearDarkSurfaceVariant)
-            .clickable(onClick = onClick),
+        modifier =
+            Modifier.size(32.dp)
+                .clip(CircleShape)
+                .background(WearDarkSurfaceVariant)
+                .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         WearVectorIcon(
@@ -422,11 +431,16 @@ private fun StepperButton(icon: WearIcon, contentDescription: String, onClick: (
 @Composable
 fun WearDevicePickerSheet(
     currentDeviceName: String,
+    remoteSessions: List<RelaySession>,
+    selectedRemoteSessionId: String?,
+    onSelectRemoteSession: (String) -> Unit,
     lanReceivers: List<FCastReceiver>,
     canFling: Boolean,
     onSelectLanReceiver: (FCastReceiver) -> Unit,
     onFlingToReceiver: (FCastReceiver) -> Unit,
     onDismiss: () -> Unit,
+    connectionStatus: String? = null,
+    onConnectionDetails: () -> Unit = {},
 ) {
     WearSheetScaffold(title = "Target", icon = WearIcons.Tv) {
         item {
@@ -437,13 +451,42 @@ fun WearDevicePickerSheet(
                 modifier = Modifier.scrollTransform(this).padding(bottom = 4.dp),
             )
         }
-        if (lanReceivers.isEmpty()) {
-            item { WearSheetEmptyState("No LAN receivers found", Modifier.scrollTransform(this)) }
-        } else {
+        item {
+            WearChoiceRow(
+                label = "Connection & account",
+                secondary = connectionStatus,
+                selected = false,
+                onClick = onConnectionDetails,
+                modifier = Modifier.scrollTransform(this),
+            )
+        }
+        items(remoteSessions.size) { index ->
+            val session = remoteSessions[index]
+            WearChoiceRow(
+                label = session.deviceName,
+                secondary = session.nowPlayingTitle,
+                selected = session.sessionId == selectedRemoteSessionId,
+                leadingIcon = WearIcons.Tv,
+                onClick = {
+                    onSelectRemoteSession(session.sessionId)
+                    onDismiss()
+                },
+                modifier = Modifier.scrollTransform(this),
+            )
+        }
+        if (remoteSessions.isEmpty() && lanReceivers.isEmpty()) {
+            item {
+                WearSheetEmptyState(
+                    "No players found. Check Connection & account. Local playback may require an updated target.",
+                    Modifier.scrollTransform(this),
+                )
+            }
+        }
+        if (lanReceivers.isNotEmpty()) {
             items(lanReceivers.size) { index ->
                 val receiver = lanReceivers[index]
                 WearChoiceRow(
-                    label = receiver.name,
+                    label = "Cast: ${receiver.name}",
                     secondary = null,
                     selected = receiver.name == currentDeviceName,
                     leadingIcon = WearIcons.Tv,
@@ -457,16 +500,16 @@ fun WearDevicePickerSheet(
                 // without one there is nothing to fling.
                 if (canFling) {
                     Box(
-                        modifier = Modifier
-                            .scrollTransform(this)
-                            .fillMaxWidth()
-                            .height(32.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(WearDarkSurfaceVariant)
-                            .clickable {
-                                onFlingToReceiver(receiver)
-                                onDismiss()
-                            },
+                        modifier =
+                            Modifier.scrollTransform(this)
+                                .fillMaxWidth()
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(WearDarkSurfaceVariant)
+                                .clickable {
+                                    onFlingToReceiver(receiver)
+                                    onDismiss()
+                                },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -490,12 +533,15 @@ private fun WearSheetBackButton(
     label: String = "Back",
 ) {
     Box(
-        modifier = modifier
-            .padding(top = 6.dp)
-            .size(width = 84.dp, height = 34.dp)
-            .clip(RoundedCornerShape(17.dp))
-            .background(WearDarkPrimary)
-            .clickable(onClick = onClick),
+        modifier =
+            modifier
+                .padding(top = 6.dp)
+                .widthIn(min = 84.dp, max = 180.dp)
+                .heightIn(min = 44.dp)
+                .padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(WearDarkPrimary)
+                .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -510,11 +556,10 @@ private fun WearSheetBackButton(
 /**
  * Splits a Jellyfin stream display name into a title and a format line.
  *
- * Jellyfin hands us one flat string ("English - EAC3 - 5.1"); `WearStreamInfo`
- * carries no codec or channel-layout field of its own. Rather than widen the wire
- * protocol for a cosmetic second line, the separator Jellyfin already uses is
- * split here. A name with no separator keeps the whole string as its title and
- * simply has no second line.
+ * Jellyfin hands us one flat string ("English - EAC3 - 5.1"); `WearStreamInfo` carries no codec or
+ * channel-layout field of its own. Rather than widen the wire protocol for a cosmetic second line,
+ * the separator Jellyfin already uses is split here. A name with no separator keeps the whole
+ * string as its title and simply has no second line.
  */
 internal fun String.splitStreamName(): Pair<String, String?> {
     val separator = SEPARATORS.firstOrNull { contains(it) } ?: return this to null
@@ -528,8 +573,8 @@ private val SEPARATORS = listOf(" - ", " · ", " | ")
 /**
  * Which chapter contains [positionSeconds].
  *
- * Prefers the host's own [currentChapterName] when it sent one; falls back to the
- * last chapter whose start is at or behind the playhead.
+ * Prefers the host's own [currentChapterName] when it sent one; falls back to the last chapter
+ * whose start is at or behind the playhead.
  */
 internal fun List<WearChapterInfo>.activeIndexAt(
     positionSeconds: Long,
@@ -550,5 +595,26 @@ internal fun formatClock(totalSeconds: Long): String {
         String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+@Composable
+fun WearConnectionSheet(
+    status: String,
+    account: String,
+    onSync: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    WearSheetScaffold(title = "Connection", icon = WearIcons.Target) {
+        item { WearSheetEmptyState(account, Modifier.scrollTransform(this)) }
+        item { WearSheetEmptyState(status, Modifier.scrollTransform(this)) }
+        item {
+            WearSheetBackButton(onSync, Modifier.scrollTransform(this), label = "Sync from phone")
+        }
+        item {
+            WearSheetBackButton(onRetry, Modifier.scrollTransform(this), label = "Retry discovery")
+        }
+        item { WearSheetBackButton(onDismiss, Modifier.scrollTransform(this), label = "Done") }
     }
 }

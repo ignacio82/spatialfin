@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.UUID
+import dev.jdtech.jellyfin.player.local.presentation.CompanionCommandBridge
+import dev.spatialfin.companion.protocol.WearProtocolCodec
 
 /**
  * Process-wide holder for the active playback session across XR, Beam (phone),
@@ -25,6 +27,8 @@ import java.util.UUID
  * themselves, so callers on an IO scope — like `WearHostDataLayerService` — are safe.
  */
 object ActivePlayerSessionHolder {
+    /** Bound only by a visible browse activity; avoids blocked background activity launches. */
+    var idleMediaLauncher: (suspend (String, String?, Long) -> String)? = null
 
     data class ActiveSession(
         val id: String = UUID.randomUUID().toString(),
@@ -58,11 +62,16 @@ object ActivePlayerSessionHolder {
     fun bind(session: ActiveSession) {
         Timber.d("ActivePlayerSessionHolder: binding session %s", session.id)
         _activeSession.value = session
+        CompanionCommandBridge.bind(session.id) { action, transcript ->
+            if (action != null) dispatch(WearProtocolCodec.decodeAction(action.encodeToByteArray()))
+            else dispatchVoiceCommand(transcript.orEmpty())
+        }
         rebuildNowPlayingState()
     }
 
     fun unbind(session: ActiveSession) {
         if (_activeSession.value?.id == session.id) {
+            CompanionCommandBridge.unbind(session.id)
             Timber.d("ActivePlayerSessionHolder: unbinding session %s", session.id)
             _activeSession.value = null
             _nowPlayingState.value = null
@@ -71,6 +80,7 @@ object ActivePlayerSessionHolder {
 
     fun unbindById(sessionId: String) {
         if (_activeSession.value?.id == sessionId) {
+            CompanionCommandBridge.unbind(sessionId)
             _activeSession.value = null
             _nowPlayingState.value = null
         }
@@ -155,7 +165,7 @@ object ActivePlayerSessionHolder {
     /** Run a natural-language command through the active form factor's voice pipeline. */
     suspend fun dispatchVoiceCommand(transcript: String): String {
         val handler = _activeSession.value?.onVoiceCommand
-            ?: return "No active player session"
+            ?: error("No active player session")
         return withContext(Dispatchers.Main.immediate) { handler(transcript) }
     }
 
@@ -164,29 +174,14 @@ object ActivePlayerSessionHolder {
         val session = _activeSession.value
 
         if (action is WearPlayerAction.PlayMediaItem) {
-            val handler = session?.onPlayMediaItem
+            val handler = session?.onPlayMediaItem ?: idleMediaLauncher
             if (handler != null) {
                 return@withContext handler(action.itemId, action.mediaType, action.startPositionMs)
             }
-            return@withContext "Open SpatialFin on the target device to start playback"
+            error("Open SpatialFin on the target device to start playback")
         }
 
-        if (session == null) {
-            return@withContext when (action) {
-                is WearPlayerAction.Play,
-                is WearPlayerAction.TogglePlayPause,
-                is WearPlayerAction.Pause,
-                -> "Nothing is playing"
-                is WearPlayerAction.MusicPlayPause,
-                is WearPlayerAction.MusicPause,
-                is WearPlayerAction.MusicResume,
-                is WearPlayerAction.MusicNext,
-                is WearPlayerAction.MusicPrevious,
-                is WearPlayerAction.MusicAdjustVolume,
-                -> "Music player not active"
-                else -> "No active player session"
-            }
-        }
+        check(session != null) { "Nothing is playing on the selected device" }
 
         val xrAction: XrPlayerAction = when (action) {
             is WearPlayerAction.Play -> XrPlayerAction.Play

@@ -1364,6 +1364,8 @@ constructor(
                             )
                         }
 
+                        syncPlay.ensureRemotePlaybackSessionReady()
+
                         if (item.contentSource == PlayerContentSource.JELLYFIN) {
                             if (item.mediaStreams.isNotEmpty()) {
                                 updateCurrentMediaSourceStreams(item.mediaStreams, item.audioStreamIndex)
@@ -1393,7 +1395,6 @@ constructor(
                                     currentTranscodeReason = transcodeReason,
                                 )
                             }
-                            syncPlay.ensureRemotePlaybackSessionReady()
                             repository.postPlaybackStart(item.itemId)
 
                             // Always fetch segments for Jellyfin items: even when the user has
@@ -1772,6 +1773,33 @@ constructor(
             else -> false
         }
         if (isDecodeOrFormatError &&
+            triggerTranscodeFallback("decode/format error code=${error.errorCode} (${error.errorCodeName})", isAudioTrackError)
+        ) {
+            return
+        }
+
+        // Surface the failure instead of swallowing it into the log: without this
+        // an undecodable stream (8K on a 4K decoder, an unsupported codec, a dead
+        // source) just leaves a silent black screen with the Play icon stuck on.
+        val messageRes = playbackErrorMessageRes(error.errorCode)
+        val message = if (messageRes == R.string.player_error_generic) {
+            application.getString(messageRes, error.errorCodeName)
+        } else {
+            application.getString(messageRes)
+        }
+        _uiState.update {
+            it.copy(playbackError = PlaybackError(message = message, detail = error.errorCodeName))
+        }
+    }
+
+    private fun triggerTranscodeFallback(
+        reason: String,
+        isAudioTrackError: Boolean = false,
+    ): Boolean {
+        val currentItem = currentPlayerItem()
+        val currentItemId = _uiState.value.currentItemId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val currentItemKind = _uiState.value.currentItemKind
+        if (
             currentItemId != null &&
             currentItem?.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.JELLYFIN &&
             transcodeFallbackAttemptedItem != currentItemId
@@ -1779,9 +1807,8 @@ constructor(
             transcodeFallbackAttemptedItem = currentItemId
             val resumePos = player.currentPosition.coerceAtLeast(0L)
             Timber.w(
-                "Player decode/format error code=%s (%s) on %s; triggering automatic transcode fallback at %d ms",
-                error.errorCode,
-                error.errorCodeName,
+                "Triggering automatic transcode fallback (%s) on %s at %d ms",
+                reason,
                 currentItemId,
                 resumePos,
             )
@@ -1808,21 +1835,9 @@ constructor(
                 subtitleStreamIndex = requestedSubtitleStreamIndex,
                 subtitlesDisabled = requestedSubtitlesDisabled,
             )
-            return
+            return true
         }
-
-        // Surface the failure instead of swallowing it into the log: without this
-        // an undecodable stream (8K on a 4K decoder, an unsupported codec, a dead
-        // source) just leaves a silent black screen with the Play icon stuck on.
-        val messageRes = playbackErrorMessageRes(error.errorCode)
-        val message = if (messageRes == R.string.player_error_generic) {
-            application.getString(messageRes, error.errorCodeName)
-        } else {
-            application.getString(messageRes)
-        }
-        _uiState.update {
-            it.copy(playbackError = PlaybackError(message = message, detail = error.errorCodeName))
-        }
+        return false
     }
 
     /** Clears the [UiState.playbackError] surface (e.g. on user dismiss / back). */
@@ -1839,6 +1854,34 @@ constructor(
             "type=${group.type} selected=${group.isSelected} supported=${group.isSupported} tracks=[$formats]"
         }
         Timber.i("Player tracks changed: %s", summary.ifBlank { "<none>" })
+
+        // Check if the stream contains video tracks that cannot be played on this device
+        // (e.g. Dolby Vision Profile 5 on hardware without a DV decoder). ExoPlayer does not
+        // throw a fatal PlaybackException if audio can play, causing audio to advance with a blank screen.
+        val hasVideoTracks = tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+        // Media3 can select tracks beyond a decoder's advertised capabilities. Let those
+        // attempt playback; onPlayerError handles an actual decoder failure.
+        val hasPlayableVideoTrack = tracks.groups.any {
+            it.type == C.TRACK_TYPE_VIDEO && (it.isSupported || it.isSelected)
+        }
+        if (hasVideoTracks && !hasPlayableVideoTrack) {
+            Timber.w("Media contains video tracks, but none are supported by this device's decoders")
+            if (triggerTranscodeFallback("unsupported video track (e.g. Dolby Vision Profile 5 without hardware decoder)")) {
+                return
+            }
+            // If transcode fallback is not possible (e.g. local/SMB media or already attempted),
+            // pause playback and surface a clear error rather than playing audio without video.
+            player.pause()
+            _uiState.update {
+                it.copy(
+                    playbackError = PlaybackError(
+                        message = application.getString(R.string.player_error_decode_unsupported),
+                        detail = "NO_SUPPORTED_VIDEO_TRACK",
+                    ),
+                )
+            }
+            return
+        }
 
         // Detect frame rate from the active video track for display refresh rate matching.
         val videoGroup = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }

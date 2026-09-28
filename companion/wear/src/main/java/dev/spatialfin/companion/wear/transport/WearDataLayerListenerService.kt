@@ -8,27 +8,23 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
 import dev.spatialfin.companion.wear.pairing.WearPairingManager
-import timber.log.Timber
 import javax.inject.Inject
+import timber.log.Timber
 
 @AndroidEntryPoint
 class WearDataLayerListenerService : WearableListenerService() {
 
-    @Inject
-    lateinit var transportManager: WearTransportManager
+    @Inject lateinit var transportManager: WearTransportManager
 
-    @Inject
-    lateinit var pairingManager: WearPairingManager
+    @Inject lateinit var pairingManager: WearPairingManager
 
-    @Inject
-    lateinit var dataClientRepository: WearDataClientRepository
+    @Inject lateinit var dataClientRepository: WearDataClientRepository
 
     /**
-     * Data items also arrive here when no activity is alive — which is the normal case
-     * for a tile or complication redraw. Without this override the repository's own
-     * `DataClient` listener (registered only once something constructs the transport
-     * manager) would be the sole path, and background state would never reach the
-     * watch face.
+     * Data items also arrive here when no activity is alive — which is the normal case for a tile
+     * or complication redraw. Without this override the repository's own `DataClient` listener
+     * (registered only once something constructs the transport manager) would be the sole path, and
+     * background state would never reach the watch face.
      */
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         dataClientRepository.onDataChanged(dataEvents)
@@ -42,7 +38,10 @@ class WearDataLayerListenerService : WearableListenerService() {
 
         when (path) {
             WearProtocolPaths.PATH_PAIRING_REQUEST -> {
-                val request = runCatching { WearProtocolCodec.decodePairingRequest(data) }.getOrNull()
+                val request = runCatching {
+                    WearProtocolCodec.decodePairingRequest(data)
+                }
+                    .getOrNull()
                 if (request != null) {
                     pairingManager.offerPairingRequest(request)
                 }
@@ -61,7 +60,11 @@ class WearDataLayerListenerService : WearableListenerService() {
 
     override fun onPeerDisconnected(peer: Node) {
         super.onPeerDisconnected(peer)
-        Timber.i("WearDataLayerListenerService: peer disconnected: %s (%s)", peer.displayName, peer.id)
+        Timber.i(
+            "WearDataLayerListenerService: peer disconnected: %s (%s)",
+            peer.displayName,
+            peer.id,
+        )
         transportManager.checkConnectivity()
     }
 }

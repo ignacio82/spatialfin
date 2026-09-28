@@ -12,6 +12,10 @@ import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.spatialfin.companion.protocol.WearNowPlayingState
 import dev.spatialfin.companion.protocol.WearProtocolCodec
 import dev.spatialfin.companion.protocol.WearProtocolPaths
+import java.io.ByteArrayOutputStream
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,20 +31,18 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
-import java.io.ByteArrayOutputStream
-import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * Mirrors the live player session onto the paired watch.
  *
- * Everything here is gated on [watchConnected]: with no watch paired this class does
- * no periodic work at all, because the host is an XR headset, a phone, or a TV and
- * none of them should burn wakeups replicating state nobody reads.
+ * Everything here is gated on [watchConnected]: with no watch paired this class does no periodic
+ * work at all, because the host is an XR headset, a phone, or a TV and none of them should burn
+ * wakeups replicating state nobody reads.
  */
 @Singleton
-class WearStatePublisher @Inject constructor(
+class WearStatePublisher
+@Inject
+constructor(
     @ApplicationContext private val context: Context,
     private val vitalsCollector: WearVitalsCollector,
     private val nextUpPublisher: WearNextUpPublisher,
@@ -65,6 +67,8 @@ class WearStatePublisher @Inject constructor(
         if (observationJob != null) return
         Timber.i("WearStatePublisher: starting active session state observation")
         observationJob = publisherScope.launch {
+            // Clear persisted playback after a process restart, even when GMS stayed connected.
+            publishNowPlaying()
             launch { refreshWatchPresenceLoop() }
             launch { pumpActiveSession() }
             launch { publishNowPlayingUpdates() }
@@ -86,7 +90,8 @@ class WearStatePublisher @Inject constructor(
     private suspend fun refreshWatchPresence(): Boolean {
         val connected = runCatching {
             Wearable.getNodeClient(context).connectedNodes.await().isNotEmpty()
-        }.getOrDefault(false)
+        }
+            .getOrDefault(false)
         if (watchConnected.value != connected) {
             Timber.i("WearStatePublisher: watch presence -> %b", connected)
         }
@@ -104,9 +109,9 @@ class WearStatePublisher @Inject constructor(
     }
 
     /**
-     * The holder only rebuilds its snapshot on bind and on dispatch, so without this
-     * pump the watch's scrubber would freeze at whatever the position was when the
-     * player bound. Ticks only while a session exists *and* a watch is listening.
+     * The holder only rebuilds its snapshot on bind and on dispatch, so without this pump the
+     * watch's scrubber would freeze at whatever the position was when the player bound. Ticks only
+     * while a session exists *and* a watch is listening.
      */
     private suspend fun pumpActiveSession() {
         ActivePlayerSessionHolder.activeSession.collectLatest { session ->
@@ -115,7 +120,11 @@ class WearStatePublisher @Inject constructor(
                 if (watchConnected.value) {
                     runCatching { ActivePlayerSessionHolder.refresh() }
                         .onFailure { Timber.w(it, "WearStatePublisher: session refresh failed") }
-                    delay(if (ActivePlayerSessionHolder.nowPlayingState.value?.isPlaying == true) PLAYING_TICK_MS else IDLE_TICK_MS)
+                    delay(
+                        if (ActivePlayerSessionHolder.nowPlayingState.value?.isPlaying == true)
+                            PLAYING_TICK_MS
+                        else IDLE_TICK_MS
+                    )
                 } else {
                     delay(IDLE_TICK_MS)
                 }
@@ -143,14 +152,16 @@ class WearStatePublisher @Inject constructor(
     /** Significant changes go out immediately; position ticks are rate-limited. */
     private fun shouldPublish(state: WearNowPlayingState): Boolean {
         val previous = lastPublished ?: return true
-        val significant = state.isPlaying != previous.isPlaying ||
-            state.title != previous.title ||
-            state.itemId != previous.itemId ||
-            state.durationSeconds != previous.durationSeconds ||
-            state.currentAudioTrack != previous.currentAudioTrack ||
-            state.currentSubtitleTrack != previous.currentSubtitleTrack ||
-            state.segmentType != previous.segmentType ||
-            kotlin.math.abs(state.positionSeconds - previous.positionSeconds) > POSITION_JUMP_SECONDS
+        val significant =
+            state.isPlaying != previous.isPlaying ||
+                state.title != previous.title ||
+                state.itemId != previous.itemId ||
+                state.durationSeconds != previous.durationSeconds ||
+                state.currentAudioTrack != previous.currentAudioTrack ||
+                state.currentSubtitleTrack != previous.currentSubtitleTrack ||
+                state.segmentType != previous.segmentType ||
+                kotlin.math.abs(state.positionSeconds - previous.positionSeconds) >
+                    POSITION_JUMP_SECONDS
         if (significant) return true
         return System.currentTimeMillis() - lastPublishAtMs >= MIN_PUBLISH_INTERVAL_MS
     }
@@ -164,15 +175,18 @@ class WearStatePublisher @Inject constructor(
         runCatching {
             val vitals = vitalsCollector.collectVitals()
             val payload = WearProtocolCodec.encodeVitals(vitals)
-            val putDataMap = PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_VITALS).apply {
-                dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
-                dataMap.putLong(WearProtocolPaths.DATA_KEY_TIMESTAMP, System.currentTimeMillis())
-            }
+            val putDataMap =
+                PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_VITALS).apply {
+                    dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
+                    dataMap.putLong(
+                        WearProtocolPaths.DATA_KEY_TIMESTAMP,
+                        System.currentTimeMillis(),
+                    )
+                }
             Wearable.getDataClient(context).putDataItem(putDataMap.asPutDataRequest()).await()
             Timber.d("WearStatePublisher: published vitals (battery=%d%%)", vitals.batteryPercent)
-        }.onFailure {
-            Timber.w(it, "WearStatePublisher: failed to publish vitals")
         }
+            .onFailure { Timber.w(it, "WearStatePublisher: failed to publish vitals") }
     }
 
     suspend fun publishNextUp() {
@@ -198,27 +212,32 @@ class WearStatePublisher @Inject constructor(
             val asset = resolveCoverArt(state.itemId)
             val outgoing = state.copy(hasCoverArtAsset = asset != null)
             val payload = WearProtocolCodec.encodeNowPlaying(outgoing)
-            val putDataMap = PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_NOW_PLAYING).apply {
-                dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
-                dataMap.putLong(WearProtocolPaths.DATA_KEY_TIMESTAMP, System.currentTimeMillis())
-                if (asset != null) {
-                    dataMap.putAsset(WearProtocolPaths.ASSET_KEY_COVER_ART, asset)
+            val putDataMap =
+                PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_NOW_PLAYING).apply {
+                    dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
+                    dataMap.putLong(
+                        WearProtocolPaths.DATA_KEY_TIMESTAMP,
+                        System.currentTimeMillis(),
+                    )
+                    if (asset != null) {
+                        dataMap.putAsset(WearProtocolPaths.ASSET_KEY_COVER_ART, asset)
+                    }
                 }
-            }
 
             val request = putDataMap.asPutDataRequest()
-            if (state.isPlaying) request.setUrgent()
+            request.setUrgent()
 
             Wearable.getDataClient(context).putDataItem(request).await()
             lastPublished = outgoing
             lastPublishAtMs = System.currentTimeMillis()
             Timber.d(
                 "WearStatePublisher: published now playing '%s' (playing=%b, pos=%ds)",
-                state.title, state.isPlaying, state.positionSeconds,
+                state.title,
+                state.isPlaying,
+                state.positionSeconds,
             )
-        }.onFailure {
-            Timber.w(it, "WearStatePublisher: failed to put now playing data item")
         }
+            .onFailure { Timber.w(it, "WearStatePublisher: failed to put now playing data item") }
     }
 
     private suspend fun publishDisconnectedState() {
@@ -227,22 +246,27 @@ class WearStatePublisher @Inject constructor(
             coverArtAsset = null
             val emptyState = WearNowPlayingState(timestampEpochMs = System.currentTimeMillis())
             val payload = WearProtocolCodec.encodeNowPlaying(emptyState)
-            val putDataMap = PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_NOW_PLAYING).apply {
-                dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
-                dataMap.putLong(WearProtocolPaths.DATA_KEY_TIMESTAMP, System.currentTimeMillis())
-            }
-            Wearable.getDataClient(context).putDataItem(putDataMap.asPutDataRequest()).await()
+            val putDataMap =
+                PutDataMapRequest.create(WearProtocolPaths.PATH_STATE_NOW_PLAYING).apply {
+                    dataMap.putByteArray(WearProtocolPaths.DATA_KEY_PAYLOAD, payload)
+                    dataMap.putLong(
+                        WearProtocolPaths.DATA_KEY_TIMESTAMP,
+                        System.currentTimeMillis(),
+                    )
+                }
+            Wearable.getDataClient(context)
+                .putDataItem(putDataMap.asPutDataRequest().setUrgent())
+                .await()
             lastPublishAtMs = System.currentTimeMillis()
             Timber.d("WearStatePublisher: published idle/disconnected state")
-        }.onFailure {
-            Timber.w(it, "WearStatePublisher: failed to publish idle state")
         }
+            .onFailure { Timber.w(it, "WearStatePublisher: failed to publish idle state") }
     }
 
     /**
-     * The watch cannot resolve a Jellyfin image URL — it has no credentials while
-     * tethered and no route to the server at all when the phone is the only link —
-     * so the poster travels as a downscaled `Asset`.
+     * The watch cannot resolve a Jellyfin image URL — it has no credentials while tethered and no
+     * route to the server at all when the phone is the only link — so the poster travels as a
+     * downscaled `Asset`.
      */
     private suspend fun resolveCoverArt(itemId: String?): Asset? {
         if (itemId.isNullOrBlank()) {
@@ -253,26 +277,35 @@ class WearStatePublisher @Inject constructor(
         if (itemId == coverArtItemId) return coverArtAsset
 
         coverArtItemId = itemId
-        coverArtAsset = runCatching {
-            withContext(Dispatchers.IO) {
-                val uuid = UUID.fromString(itemId)
-                val item = repository.getItem(uuid) ?: return@withContext null
-                val url = (item.images.primary ?: item.images.showPrimary)?.toString()
-                    ?: return@withContext null
-                val bytes = httpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                    if (!response.isSuccessful) return@withContext null
-                    response.body?.bytes()
-                } ?: return@withContext null
-                Asset.createFromBytes(downscaleImage(bytes))
+        coverArtAsset =
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val uuid = UUID.fromString(itemId)
+                    val item = repository.getItem(uuid) ?: return@withContext null
+                    val url =
+                        (item.images.primary ?: item.images.showPrimary)?.toString()
+                            ?: return@withContext null
+                    val bytes =
+                        httpClient.newCall(Request.Builder().url(url).build()).execute().use {
+                            response ->
+                            if (!response.isSuccessful) return@withContext null
+                            response.body?.bytes()
+                        } ?: return@withContext null
+                    Asset.createFromBytes(downscaleImage(bytes))
+                }
             }
-        }.getOrElse {
-            Timber.w(it, "WearStatePublisher: cover art fetch failed for %s", itemId)
-            null
-        }
+                .getOrElse {
+                    Timber.w(it, "WearStatePublisher: cover art fetch failed for %s", itemId)
+                    null
+                }
         return coverArtAsset
     }
 
-    private fun downscaleImage(rawBytes: ByteArray, maxDimension: Int = 240, quality: Int = 75): ByteArray {
+    private fun downscaleImage(
+        rawBytes: ByteArray,
+        maxDimension: Int = 240,
+        quality: Int = 75,
+    ): ByteArray {
         val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size) ?: return rawBytes
         val width = bitmap.width
         val height = bitmap.height
@@ -282,11 +315,12 @@ class WearStatePublisher @Inject constructor(
         val targetWidth = (width * scale).toInt().coerceAtLeast(1)
         val targetHeight = (height * scale).toInt().coerceAtLeast(1)
 
-        val scaledBitmap = if (scale < 1.0f) {
-            Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-        } else {
-            bitmap
-        }
+        val scaledBitmap =
+            if (scale < 1.0f) {
+                Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+            } else {
+                bitmap
+            }
 
         val stream = ByteArrayOutputStream()
         scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
@@ -297,11 +331,11 @@ class WearStatePublisher @Inject constructor(
 
     private companion object {
         /**
-         * Position-only replication cadence. Anything the user would notice — play/pause,
-         * a track switch, a seek — bypasses this and goes out immediately, so the only
-         * thing paying the 2 s granularity is the scrubber creeping forward. At 1 Hz a
-         * two-hour film would be ~7 200 Bluetooth puts against a watch battery budget of
-         * a few percentage points per hour; refreshing faster than we publish is pure waste.
+         * Position-only replication cadence. Anything the user would notice — play/pause, a track
+         * switch, a seek — bypasses this and goes out immediately, so the only thing paying the 2 s
+         * granularity is the scrubber creeping forward. At 1 Hz a two-hour film would be ~7 200
+         * Bluetooth puts against a watch battery budget of a few percentage points per hour;
+         * refreshing faster than we publish is pure waste.
          */
         const val PLAYING_TICK_MS = 2_000L
         const val IDLE_TICK_MS = 5_000L

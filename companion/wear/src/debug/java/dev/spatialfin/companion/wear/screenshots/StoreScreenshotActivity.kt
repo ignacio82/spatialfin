@@ -41,18 +41,18 @@ import dev.spatialfin.companion.wear.voice.VoiceRecordingState
  *
  * **Debug source set only** — it is not in the release manifest and cannot ship.
  *
- * Why this exists: the watch app is a remote. With no paired host every screen it
- * can reach on its own is `WearStandaloneSetupScreen`, so a plain emulator capture
- * would produce five identical "Waiting for SpatialFin" shots. Pairing a second
- * emulator running the host would need a matching signing cert, a live Jellyfin
- * server and media actually playing — for a screenshot.
+ * Why this exists: the watch app is a remote. With no paired host every screen it can reach on its
+ * own is `WearStandaloneSetupScreen`, so a plain emulator capture would produce five identical
+ * "Waiting for SpatialFin" shots. Pairing a second emulator running the host would need a matching
+ * signing cert, a live Jellyfin server and media actually playing — for a screenshot.
  *
- * These are the real composables at real density, not redrawn lookalikes; only the
- * media metadata is fixed. Titles are Blender open movies (CC-BY), so the store
- * listing does not show artwork or trademarks we have no licence to.
+ * These are the real composables at real density, not redrawn lookalikes; only the media metadata
+ * is fixed. Titles are Blender open movies (CC-BY), so the store listing does not show artwork or
+ * trademarks we have no licence to.
  *
- * Usage:
- *   adb shell am start -n dev.spatialfin.debug/dev.spatialfin.companion.wear.screenshots.StoreScreenshotActivity --es screen player
+ * Usage: adb shell am start -n
+ * dev.spatialfin.debug/dev.spatialfin.companion.wear.screenshots.StoreScreenshotActivity --es
+ * screen player
  */
 class StoreScreenshotActivity : ComponentActivity() {
 
@@ -67,63 +67,73 @@ class StoreScreenshotActivity : ComponentActivity() {
                         "player" -> PlayerScene()
                         "scrubbing" -> ScrubbingScene()
                         "volume" -> VolumeScene()
-                        "ambient" -> AmbientPlayerSurface(
-                            positionSeconds = 372,
-                            durationSeconds = 630,
-                            title = SPRITE_FRIGHT,
-                        )
-                        "actions" -> WearActionRingScreen(
-                            onOpenAudio = {},
-                            onOpenSubtitles = {},
-                            onOpenChapters = {},
-                            onOpenNextUp = {},
-                            onOpenSpatial = {},
-                            onOpenVoice = {},
-                            onOpenPrivateAudio = {},
-                            onDismiss = {},
-                        )
-                        "audio" -> WearAudioTracksSheet(
-                            tracks = AUDIO_TRACKS,
-                            currentTrack = AUDIO_TRACKS[1].name,
-                            onSelectTrack = {},
-                            onDismiss = {},
-                        )
-                        "subtitles" -> WearSubtitleTracksSheet(
-                            tracks = SUBTITLE_TRACKS,
-                            currentTrack = SUBTITLE_TRACKS[0].name,
-                            onSelectTrack = {},
-                            onDismiss = {},
-                        )
-                        "chapters" -> WearChaptersSheet(
-                            chapters = CHAPTERS,
-                            currentChapterName = "The Forest",
-                            positionSeconds = 372,
-                            durationSeconds = 630,
-                            onSelectChapter = {},
-                            onDismiss = {},
-                        )
-                        "spatial" -> WearSpatialControlsSheet(
-                            onDispatchAction = {},
-                            onDismiss = {},
-                        )
-                        "nextup" -> WearNextUpContent(
-                            items = NEXT_UP,
-                            onPlay = {},
-                            onNavigateBack = {},
-                        )
-                        "voice" -> WearVoiceDialog(
-                            state = VoiceRecordingState.Recording(amplitudeRms = 0.7f),
-                            onStopCapture = {},
-                            onRequestPermission = {},
-                            onDismiss = {},
-                        )
-                        "pairing" -> WearTvPairingDialog(
-                            request = PAIRING_REQUEST,
-                            onApprove = {},
-                            onReject = {},
-                        )
+                        "ambient" ->
+                            AmbientPlayerSurface(
+                                positionSeconds = 372,
+                                durationSeconds = 630,
+                                title = SPRITE_FRIGHT,
+                            )
+                        "actions" ->
+                            WearActionRingScreen(
+                                onOpenAudio = {},
+                                onOpenSubtitles = {},
+                                onOpenChapters = {},
+                                onOpenNextUp = {},
+                                onOpenSpatial = {},
+                                onOpenVoice = {},
+                                onOpenPrivateAudio = {},
+                                onDismiss = {},
+                            )
+                        "audio" ->
+                            WearAudioTracksSheet(
+                                tracks = AUDIO_TRACKS,
+                                currentTrack = AUDIO_TRACKS[1].name,
+                                onSelectTrack = {},
+                                onDismiss = {},
+                            )
+                        "subtitles" ->
+                            WearSubtitleTracksSheet(
+                                tracks = SUBTITLE_TRACKS,
+                                currentTrack = SUBTITLE_TRACKS[0].name,
+                                onSelectTrack = {},
+                                onDismiss = {},
+                            )
+                        "chapters" ->
+                            WearChaptersSheet(
+                                chapters = CHAPTERS,
+                                currentChapterName = "The Forest",
+                                positionSeconds = 372,
+                                durationSeconds = 630,
+                                onSelectChapter = {},
+                                onDismiss = {},
+                            )
+                        "spatial" ->
+                            WearSpatialControlsSheet(
+                                onDispatchAction = {},
+                                onDismiss = {},
+                            )
+                        "nextup" ->
+                            WearNextUpContent(
+                                items = NEXT_UP,
+                                onPlay = {},
+                                onNavigateBack = {},
+                            )
+                        "voice" ->
+                            WearVoiceDialog(
+                                state = VoiceRecordingState.Recording(amplitudeRms = 0.7f),
+                                onStopCapture = {},
+                                onRequestPermission = {},
+                                onDismiss = {},
+                            )
+                        "pairing" ->
+                            WearTvPairingDialog(
+                                request = PAIRING_REQUEST,
+                                onApprove = {},
+                                onReject = {},
+                            )
                         "setup" -> WearStandaloneSetupScreen(onRetry = {})
-                        "privateaudio", "receiver" -> WearReceiverSettingsScreen(onNavigateBack = {})
+                        "privateaudio",
+                        "receiver" -> WearReceiverSettingsScreen(onNavigateBack = {})
                         else -> PlayerScene()
                     }
                 }
@@ -139,7 +149,12 @@ class StoreScreenshotActivity : ComponentActivity() {
             PlayerFace(
                 targetName = "Galaxy XR",
                 transportState = TransportState.ConnectedViaDataLayer("node", "Galaxy XR"),
-                vitals = WearVitalsState(batteryPercent = 84, deviceName = "Galaxy XR", isHeadset = true),
+                vitals =
+                    WearVitalsState(
+                        batteryPercent = 84,
+                        deviceName = "Galaxy XR",
+                        isHeadset = true,
+                    ),
                 title = SPRITE_FRIGHT,
                 subtitle = "Blender Studio · 4K HDR",
                 positionSeconds = 372,
@@ -189,59 +204,74 @@ class StoreScreenshotActivity : ComponentActivity() {
         /** 06:12 of 10:30, the design's reference frame. */
         const val PROGRESS = 372f / 630f
 
-        val AUDIO_TRACKS = listOf(
-            WearStreamInfo(index = 0, name = "Original - TrueHD - 7.1", language = "und"),
-            WearStreamInfo(index = 1, name = "English - EAC3 - 5.1", language = "eng", isSelected = true),
-            WearStreamInfo(index = 2, name = "Español - AAC - 2.0", language = "spa"),
-            WearStreamInfo(index = 3, name = "Commentary - AAC - 2.0", language = "eng"),
-        )
+        val AUDIO_TRACKS =
+            listOf(
+                WearStreamInfo(index = 0, name = "Original - TrueHD - 7.1", language = "und"),
+                WearStreamInfo(
+                    index = 1,
+                    name = "English - EAC3 - 5.1",
+                    language = "eng",
+                    isSelected = true,
+                ),
+                WearStreamInfo(index = 2, name = "Español - AAC - 2.0", language = "spa"),
+                WearStreamInfo(index = 3, name = "Commentary - AAC - 2.0", language = "eng"),
+            )
 
-        val SUBTITLE_TRACKS = listOf(
-            WearStreamInfo(index = 0, name = "English - ASS", language = "eng", isSelected = true),
-            WearStreamInfo(index = 1, name = "English SDH - SRT", language = "eng"),
-            WearStreamInfo(index = 2, name = "Español - SRT", language = "spa"),
-        )
+        val SUBTITLE_TRACKS =
+            listOf(
+                WearStreamInfo(
+                    index = 0,
+                    name = "English - ASS",
+                    language = "eng",
+                    isSelected = true,
+                ),
+                WearStreamInfo(index = 1, name = "English SDH - SRT", language = "eng"),
+                WearStreamInfo(index = 2, name = "Español - SRT", language = "spa"),
+            )
 
-        val CHAPTERS = listOf(
-            WearChapterInfo(name = "Opening", startPositionSeconds = 0),
-            WearChapterInfo(name = "The Forest", startPositionSeconds = 108),
-            WearChapterInfo(name = "Campfire", startPositionSeconds = 276),
-            WearChapterInfo(name = "Sprites", startPositionSeconds = 422),
-        )
+        val CHAPTERS =
+            listOf(
+                WearChapterInfo(name = "Opening", startPositionSeconds = 0),
+                WearChapterInfo(name = "The Forest", startPositionSeconds = 108),
+                WearChapterInfo(name = "Campfire", startPositionSeconds = 276),
+                WearChapterInfo(name = "Sprites", startPositionSeconds = 422),
+            )
 
-        val NEXT_UP = listOf(
-            WearNextUpItem(
-                id = "1",
-                title = "Spring",
-                overview = "",
-                mediaType = "Movie",
-                durationSeconds = 462,
-                playbackPositionSeconds = 0,
-            ),
-            WearNextUpItem(
-                id = "2",
-                title = "Sintel",
-                overview = "",
-                mediaType = "Movie",
-                durationSeconds = 888,
-                playbackPositionSeconds = 708,
-            ),
-            WearNextUpItem(
-                id = "3",
-                title = "Big Buck Bunny",
-                overview = "",
-                mediaType = "Movie",
-                durationSeconds = 596,
-                playbackPositionSeconds = 120,
-            ),
-        )
+        val NEXT_UP =
+            listOf(
+                WearNextUpItem(
+                    id = "1",
+                    title = "Spring",
+                    overview = "",
+                    mediaType = "Movie",
+                    durationSeconds = 462,
+                    playbackPositionSeconds = 0,
+                ),
+                WearNextUpItem(
+                    id = "2",
+                    title = "Sintel",
+                    overview = "",
+                    mediaType = "Movie",
+                    durationSeconds = 888,
+                    playbackPositionSeconds = 708,
+                ),
+                WearNextUpItem(
+                    id = "3",
+                    title = "Big Buck Bunny",
+                    overview = "",
+                    mediaType = "Movie",
+                    durationSeconds = 596,
+                    playbackPositionSeconds = 120,
+                ),
+            )
 
-        val PAIRING_REQUEST = WearTvPairingRequest(
-            deviceName = "Living Room TV",
-            pairingToken = "token",
-            manualCode = "4821",
-            receiverUrl = "",
-            expiresAtEpochMs = System.currentTimeMillis() + 42_000L,
-        )
+        val PAIRING_REQUEST =
+            WearTvPairingRequest(
+                deviceName = "Living Room TV",
+                pairingToken = "token",
+                manualCode = "4821",
+                receiverUrl = "",
+                expiresAtEpochMs = System.currentTimeMillis() + 42_000L,
+            )
     }
 }

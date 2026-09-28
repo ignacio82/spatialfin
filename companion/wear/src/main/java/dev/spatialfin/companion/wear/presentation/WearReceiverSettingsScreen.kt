@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -28,6 +29,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,37 +56,33 @@ import dev.spatialfin.companion.wear.presentation.theme.WearVectorIcon
 /**
  * Frame 13 — the private audio sink.
  *
- * A real switch, not a button labelled "Sink: Enabled 🟢". The old control was a
- * button whose label described a state, which meant the affordance and the status
- * were the same pixel and neither read clearly.
+ * A real switch, not a button labelled "Sink: Enabled 🟢". The old control was a button whose label
+ * described a state, which meant the affordance and the status were the same pixel and neither read
+ * clearly.
  *
- * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on
- * smaller watch displays the controls and "Done" button never get cut off by screen edges.
+ * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on smaller watch
+ * displays the controls and "Done" button never get cut off by screen edges.
  */
 @Composable
-fun WearReceiverSettingsScreen(
-    onNavigateBack: () -> Unit,
-) {
+fun WearReceiverSettingsScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val isSinkActive by WearAudioReceiverService.isSinkActive.collectAsState()
+    val sinkStatus by WearAudioReceiverService.sinkStatus.collectAsState()
     val listState = rememberTransformingLazyColumnState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF06070A)),
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF06070A))) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            WearMint.copy(alpha = if (isSinkActive) 0.14f else 0.05f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors =
+                                listOf(
+                                    WearMint.copy(alpha = if (isSinkActive) 0.14f else 0.05f),
+                                    Color.Transparent,
+                                )
+                        )
+                    )
         )
 
         TransformingLazyColumn(
@@ -95,16 +95,14 @@ fun WearReceiverSettingsScreen(
             item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.scrollTransform(this).padding(horizontal = 6.dp),
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(WearMint.copy(alpha = 0.14f))
-                            .border(1.dp, WearMint.copy(alpha = 0.4f), CircleShape),
+                        modifier =
+                            Modifier.size(46.dp)
+                                .clip(CircleShape)
+                                .background(WearMint.copy(alpha = 0.14f))
+                                .border(1.dp, WearMint.copy(alpha = 0.4f), CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         WearVectorIcon(
@@ -124,8 +122,9 @@ fun WearReceiverSettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "Cinema audio plays through your watch earbuds while video stays " +
-                            "on the headset.",
+                        text =
+                            "Cinema audio plays through your watch earbuds while video stays " +
+                                "on the headset.",
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         color = WearDarkOnSurfaceVariant,
@@ -137,6 +136,7 @@ fun WearReceiverSettingsScreen(
             item {
                 SinkSwitchRow(
                     active = isSinkActive,
+                    status = sinkStatus,
                     onToggle = {
                         if (isSinkActive) {
                             WearAudioReceiverService.stop(context)
@@ -150,13 +150,13 @@ fun WearReceiverSettingsScreen(
 
             item {
                 Box(
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .padding(top = 4.dp)
-                        .size(width = 84.dp, height = 34.dp)
-                        .clip(RoundedCornerShape(17.dp))
-                        .background(WearDarkPrimary)
-                        .clickable(onClick = onNavigateBack),
+                    modifier =
+                        Modifier.scrollTransform(this)
+                            .padding(top = 4.dp)
+                            .size(width = 84.dp, height = 34.dp)
+                            .clip(RoundedCornerShape(17.dp))
+                            .background(WearDarkPrimary)
+                            .clickable(onClick = onNavigateBack),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -176,36 +176,41 @@ fun WearReceiverSettingsScreen(
 @Composable
 private fun SinkSwitchRow(
     active: Boolean,
+    status: String,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val trackColor by animateColorAsState(
-        targetValue = if (active) WearMint else WearDarkOutline.copy(alpha = 0.4f),
-        label = "sink_track",
-    )
-    val thumbOffset by animateDpAsState(
-        targetValue = if (active) 20.dp else 0.dp,
-        label = "sink_thumb",
-    )
+    val trackColor by
+        animateColorAsState(
+            targetValue = if (active) WearMint else WearDarkOutline.copy(alpha = 0.4f),
+            label = "sink_track",
+        )
+    val thumbOffset by
+        animateDpAsState(
+            targetValue = if (active) 20.dp else 0.dp,
+            label = "sink_thumb",
+        )
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(46.dp)
-            .clip(RoundedCornerShape(23.dp))
-            .background(WearDarkSurfaceContainer)
-            .border(
-                width = 1.dp,
-                color = if (active) WearMint.copy(alpha = 0.28f) else Color.Transparent,
-                shape = RoundedCornerShape(23.dp),
-            )
-            .clickable(onClick = onToggle)
-            .padding(start = 13.dp, end = 5.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .clip(RoundedCornerShape(23.dp))
+                .background(WearDarkSurfaceContainer)
+                .border(
+                    width = 1.dp,
+                    color = if (active) WearMint.copy(alpha = 0.28f) else Color.Transparent,
+                    shape = RoundedCornerShape(23.dp),
+                )
+                .toggleable(value = active, role = Role.Switch, onValueChange = { onToggle() })
+                .semantics { stateDescription = status }
+                .padding(start = 13.dp, end = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (active) "Streaming" else "Off",
+                text = status,
                 fontSize = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (active) WearMint else WearDarkOnSurfaceVariant,
@@ -213,19 +218,19 @@ private fun SinkSwitchRow(
         }
 
         Box(
-            modifier = Modifier
-                .size(width = 48.dp, height = 28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(trackColor)
-                .padding(3.dp),
+            modifier =
+                Modifier.size(width = 48.dp, height = 28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(trackColor)
+                    .padding(3.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Box(
-                modifier = Modifier
-                    .offset(x = thumbOffset)
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(if (active) WearOnMint else WearDarkSurfaceContainer),
+                modifier =
+                    Modifier.offset(x = thumbOffset)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(if (active) WearOnMint else WearDarkSurfaceContainer),
                 contentAlignment = Alignment.Center,
             ) {
                 if (active) {

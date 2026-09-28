@@ -46,6 +46,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.collectLatest
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -156,6 +158,17 @@ class UnifiedMainActivity : AppCompatActivity() {
         modelManager.get()
     }
 
+
+    @Inject
+    lateinit var wearSessionBus: dev.jdtech.jellyfin.session.ActiveSessionBus
+
+    private var wearBrowseJob: kotlinx.coroutines.Job? = null
+    private val wearIdleLauncher: suspend (String, String?, Long) -> String = { id, _, position ->
+        dev.spatialfin.launchWearLibraryItem(this, repository, deviceClass, id, position) {
+            lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                appLockManager.lockState.value != AppLockManager.LockState.LOCKED
+        }
+    }
 
     private val xrSessionState = mutableStateOf<Session?>(null)
     private val startupPermissionsLauncher =
@@ -492,8 +505,36 @@ class UnifiedMainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appLockManager.refreshState()
+        dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder.idleMediaLauncher = wearIdleLauncher
+        wearBrowseJob?.cancel()
+        wearBrowseJob = lifecycleScope.launch {
+            kotlinx.coroutines.flow.merge(kotlinx.coroutines.flow.flowOf(Unit), wearSessionBus.events).collectLatest {
+                runCatching { repository.postCapabilities() }
+                repository.observeGeneralCommandMessages().collect { message ->
+                    if (message.data?.name != org.jellyfin.sdk.model.api.GeneralCommandType.PLAY_MEDIA_SOURCE) return@collect
+                    if (dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder.activeSession.value != null) return@collect
+                    val args = message.data?.arguments.orEmpty()
+                    val id = args.entries.firstOrNull { it.key.equals("ItemId", true) }?.value ?: return@collect
+                    val position = args.entries.firstOrNull { it.key.equals("StartPositionTicks", true) }?.value?.toLongOrNull()?.div(10_000) ?: 0L
+                    try { wearIdleLauncher(id, null, position) }
+                    catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                    catch (error: Exception) {
+                        android.widget.Toast.makeText(this@UnifiedMainActivity, error.message ?: "Remote playback failed", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
         // Active-session mutations notify ActiveSessionBus, which MainViewModel already
         // observes. Do not re-query Room and re-emit the full content tree on every resume.
+    }
+
+    override fun onPause() {
+        wearBrowseJob?.cancel()
+        wearBrowseJob = null
+        if (dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder.idleMediaLauncher === wearIdleLauncher) {
+            dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder.idleMediaLauncher = null
+        }
+        super.onPause()
     }
 
     override fun onDestroy() {

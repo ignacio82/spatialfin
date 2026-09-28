@@ -43,34 +43,34 @@ import dev.spatialfin.companion.wear.presentation.theme.WearVectorIcon
 /**
  * Frame 15 — no host yet.
  *
- * The app mark replaces the phone emoji in a blue circle: this is the first screen
- * a new user sees, and it should say which app is waiting.
+ * The app mark replaces the phone emoji in a blue circle: this is the first screen a new user sees,
+ * and it should say which app is waiting.
  *
- * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on
- * smaller watch displays the text and "Retry" control never get cut off by screen edges.
+ * Uses [TransformingLazyColumn] so that with larger accessibility font sizes or on smaller watch
+ * displays the text and "Retry" control never get cut off by screen edges.
  */
 @Composable
 fun WearStandaloneSetupScreen(
     onRetry: () -> Unit,
+    onFindReceiver: () -> Unit = {},
+    onPrivateAudio: () -> Unit = {},
+    onConnection: () -> Unit = {},
 ) {
     val listState = rememberTransformingLazyColumnState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF06070A)),
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF06070A))) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            WearDarkPrimaryContainer.copy(alpha = 0.24f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors =
+                                listOf(
+                                    WearDarkPrimaryContainer.copy(alpha = 0.24f),
+                                    Color.Transparent,
+                                )
+                        )
+                    )
         )
 
         TransformingLazyColumn(
@@ -83,9 +83,7 @@ fun WearStandaloneSetupScreen(
             item {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .padding(horizontal = 6.dp),
+                    modifier = Modifier.scrollTransform(this).padding(horizontal = 6.dp),
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_launcher_wear),
@@ -103,7 +101,8 @@ fun WearStandaloneSetupScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Open the app on your headset, phone, or TV and setup syncs across.",
+                        text =
+                            "Open SpatialFin on your paired phone and sign in to the same Jellyfin server as your headset or TV.",
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         color = WearDarkOnSurfaceVariant,
@@ -112,14 +111,31 @@ fun WearStandaloneSetupScreen(
                 }
             }
 
+            listOf(
+                    "Nearby cast receivers" to onFindReceiver,
+                    "Private audio" to onPrivateAudio,
+                    "Connection details" to onConnection,
+                )
+                .forEach { (label, action) ->
+                    item {
+                        Text(
+                            label,
+                            color = WearDarkPrimary,
+                            modifier =
+                                Modifier.scrollTransform(this)
+                                    .clickable(onClick = action)
+                                    .padding(10.dp),
+                        )
+                    }
+                }
             item {
                 Row(
-                    modifier = Modifier
-                        .scrollTransform(this)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(WearDarkPrimary)
-                        .clickable(onClick = onRetry)
-                        .padding(horizontal = 16.dp, vertical = 9.dp),
+                    modifier =
+                        Modifier.scrollTransform(this)
+                            .clip(RoundedCornerShape(19.dp))
+                            .background(WearDarkPrimary)
+                            .clickable(onClick = onRetry)
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     WearVectorIcon(
@@ -130,7 +146,7 @@ fun WearStandaloneSetupScreen(
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "Retry",
+                        text = "Sync from phone",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = WearDarkOnPrimary,
