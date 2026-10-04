@@ -61,6 +61,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemHeader
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
+import dev.jdtech.jellyfin.presentation.film.components.SeasonEpisodesRow
 import dev.jdtech.jellyfin.film.domain.LanguagePreferences
 import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
 import dev.jdtech.jellyfin.film.domain.languagePreferences
@@ -84,6 +85,7 @@ fun EpisodeScreen(
     navigateHome: () -> Unit,
     navigateToPerson: (personId: UUID) -> Unit,
     navigateToSeason: (seasonId: UUID) -> Unit,
+    navigateToEpisode: (episodeId: UUID) -> Unit,
     onPlay: (PlayRequest) -> Unit,
     viewModel: EpisodeViewModel = hiltViewModel(),
     downloaderViewModel: DownloaderViewModel = hiltViewModel(),
@@ -190,6 +192,7 @@ fun EpisodeScreen(
                 is EpisodeAction.OnHomeClick -> navigateHome()
                 is EpisodeAction.NavigateToPerson -> navigateToPerson(action.personId)
                 is EpisodeAction.NavigateToSeason -> navigateToSeason(action.seasonId)
+                is EpisodeAction.NavigateToEpisode -> navigateToEpisode(action.episodeId)
                 else -> Unit
             }
             viewModel.onAction(action)
@@ -200,7 +203,7 @@ fun EpisodeScreen(
 }
 
 @Composable
-private fun EpisodeScreenLayout(
+internal fun EpisodeScreenLayout(
     state: EpisodeState,
     downloaderState: DownloaderState,
     initialMaxBitrate: Long,
@@ -308,10 +311,9 @@ private fun EpisodeScreenLayout(
                             horizontalArrangement =
                                 Arrangement.spacedBy(MaterialTheme.spacings.small),
                         ) {
-                            itemsIndexed(
-                                episode.sources,
-                                key = { index, source -> source.id.ifEmpty { "$index" } },
-                            ) { index, source ->
+                            // A download keeps its remote source ID. Use positional keys,
+                            // matching selectedSourceIndex, so both copies can be displayed.
+                            itemsIndexed(episode.sources) { index, source ->
                                 FilterChip(
                                     selected = index == state.selectedSourceIndex,
                                     onClick = {
@@ -435,6 +437,15 @@ private fun EpisodeScreenLayout(
                         onActorClick = { personId ->
                             onAction(EpisodeAction.NavigateToPerson(personId))
                         },
+                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                    )
+                }
+                if (state.related.seasonEpisodes.isNotEmpty()) {
+                    if (state.actors.isNotEmpty()) Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                    SeasonEpisodesRow(
+                        current = episode,
+                        episodes = state.related.seasonEpisodes,
+                        onEpisodeClick = { sibling -> onAction(EpisodeAction.NavigateToEpisode(sibling.id)) },
                         contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
                     )
                 }

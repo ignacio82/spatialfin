@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.film.domain.VideoMetadataParser
+import dev.jdtech.jellyfin.film.domain.loadDetailRelatedRows
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
@@ -12,9 +13,11 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.PersonKind
@@ -30,6 +33,7 @@ constructor(
     private val _state = MutableStateFlow(EpisodeState())
     val state = _state.asStateFlow()
     private var hasLoadedEpisode = false
+    private var relatedJob: Job? = null
 
     lateinit var episodeId: UUID
 
@@ -59,10 +63,21 @@ constructor(
                         displayRatings = displayRatings,
                     )
                 )
+                loadRelated(episode)
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
         }
+    }
+
+    /** Off the critical path: the hero renders first, the rows fill in after. */
+    private fun loadRelated(episode: SpatialFinEpisode) {
+        relatedJob?.cancel()
+        relatedJob =
+            viewModelScope.launch {
+                val related = repository.loadDetailRelatedRows(episode)
+                _state.update { if (it.episode?.id == episode.id) it.copy(related = related) else it }
+            }
     }
 
     private fun observeRealtimeEvents() {

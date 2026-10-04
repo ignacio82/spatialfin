@@ -82,6 +82,8 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material.icons.rounded.Refresh
 import dev.jdtech.jellyfin.film.domain.detailHeroMetadata
+import dev.jdtech.jellyfin.film.domain.initialScrollIndexFor
+import dev.jdtech.jellyfin.presentation.film.components.moreFromSeasonTitle
 import dev.jdtech.jellyfin.film.domain.languagePreferences
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.ClosedCaption
@@ -489,7 +491,7 @@ fun TvNavigationRoot(
                             }
                         }
                         TvRoute.Detail -> TvItemDetailScreen(selectedItemId?.let(UUID::fromString), { popBack() }, ::openItem, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, { selectedShowId = it.toString(); navigate(TvRoute.Show) }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) })
-                        TvRoute.Show -> TvShowScreen(selectedShowId?.let(UUID::fromString), { popBack() }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) })
+                        TvRoute.Show -> TvShowScreen(selectedShowId?.let(UUID::fromString), { popBack() }, { selectedSeasonId = it.toString(); navigate(TvRoute.Season) }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) }, { selectedPersonId = it.toString(); navigate(TvRoute.Person) }, ::openItem)
                         TvRoute.Season -> TvSeasonScreen(selectedSeasonId?.let(UUID::fromString), { popBack() }, { selectedItemId = it.toString(); navigate(TvRoute.Detail) })
                         TvRoute.Person -> selectedPersonId?.let(UUID::fromString)?.let { pid -> dev.jdtech.jellyfin.presentation.film.PersonScreen(pid, { popBack() }, { navigate(TvRoute.Home) }, ::openItem) } ?: popBack()
                         TvRoute.Settings -> TvSettingsScreen(state, appPreferences, homeState.server?.name, { navigate(TvRoute.Companion) }, { navigate(TvRoute.Search) }, { navigate(TvRoute.Users) })
@@ -1114,8 +1116,9 @@ private const val TV_NESTED_PREFETCH_COUNT = 4
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun rememberTvShelfListState() =
+private fun rememberTvShelfListState(initialFirstVisibleItemIndex: Int = 0) =
     rememberLazyListState(
+        initialFirstVisibleItemIndex = initialFirstVisibleItemIndex,
         prefetchStrategy = remember { LazyListPrefetchStrategy(TV_NESTED_PREFETCH_COUNT) },
     )
 
@@ -1644,6 +1647,12 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
                     if (state.availableVersions.size > 1) item { TvVersionRow(state.availableVersions, currentId = item.id, onVersionClick = { onOpenItem(it) }) }
                     if (item.chapters.isNotEmpty()) item { TvChaptersRow(item.chapters) { TvPlayerActivity.createIntentForSpatialItem(context, item, startPositionMs = it.startPosition)?.let(context::startActivity) } }
                     if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
+                    if (item is SpatialFinEpisode && state.related.seasonEpisodes.isNotEmpty()) {
+                        item(key = "season-episodes") { TvSeasonEpisodesRow(item, state.related.seasonEpisodes, onOpenItem) }
+                    }
+                    if (state.related.similar.isNotEmpty()) {
+                        item(key = "similar") { TvSimilarRow(state.related.similar, onOpenItem) }
+                    }
                 }
             }
         }
@@ -1651,7 +1660,7 @@ private fun TvItemDetailScreen(itemId: UUID?, onBack: () -> Unit, onOpenItem: (S
 }
 
 @Composable
-private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID) -> Unit, onOpenEpisode: (UUID) -> Unit, onOpenPerson: (UUID) -> Unit, viewModel: TvShowViewModel = hiltViewModel()) {
+private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID) -> Unit, onOpenEpisode: (UUID) -> Unit, onOpenPerson: (UUID) -> Unit, onOpenItem: (SpatialFinItem) -> Unit, viewModel: TvShowViewModel = hiltViewModel()) {
     if (showId == null) { TvPlaceholderScreen("Series unavailable", "No series selected."); return }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -1717,6 +1726,9 @@ private fun TvShowScreen(showId: UUID?, onBack: () -> Unit, onOpenSeason: (UUID)
                         }
                     }
                     if (state.people.isNotEmpty()) item { TvCastRow(state.people, onOpenPerson) }
+                    if (state.related.similar.isNotEmpty()) {
+                        item(key = "similar") { TvSimilarRow(state.related.similar, onOpenItem) }
+                    }
                 }
             }
         }
@@ -2155,6 +2167,44 @@ private fun TvCastCard(person: dev.jdtech.jellyfin.models.SpatialFinItemPerson, 
     }
 }
 
+// "More from Season N" under an episode's cast (Fladder order): the whole season,
+// opened on the current episode and marking it, so hopping to a sibling is one
+// D-pad move instead of Back → season → episode.
+@Composable
+private fun TvSeasonEpisodesRow(current: SpatialFinEpisode, episodes: List<SpatialFinEpisode>, onOpenEpisode: (SpatialFinItem) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(moreFromSeasonTitle(current), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        LazyRow(
+            modifier = Modifier.focusRestorer(),
+            horizontalArrangement = Arrangement.spacedBy(22.dp),
+            state = rememberTvShelfListState(episodes.initialScrollIndexFor(current.id)),
+        ) {
+            items(episodes, key = { it.id }) { episode ->
+                val isCurrent = episode.id == current.id
+                TvEpisodeCard(episode, Modifier.width(330.dp), isCurrent = isCurrent) { if (!isCurrent) onOpenEpisode(episode) }
+            }
+        }
+    }
+}
+
+// "More like this" — server-side similar movies / series as a portrait shelf.
+@Composable
+private fun TvSimilarRow(items: List<SpatialFinItem>, onOpenItem: (SpatialFinItem) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.more_like_this), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        LazyRow(
+            modifier = Modifier.focusRestorer(),
+            contentPadding = PaddingValues(vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            state = rememberTvShelfListState(),
+        ) {
+            items(items, key = { it.id }) { item ->
+                TvMediaCard(item, modifier = Modifier.width(158.dp), portrait = true) { onOpenItem(item) }
+            }
+        }
+    }
+}
+
 @Composable
 private fun TvChaptersRow(chapters: List<dev.jdtech.jellyfin.models.SpatialFinChapter>, onChapterClick: (dev.jdtech.jellyfin.models.SpatialFinChapter) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2286,7 +2336,7 @@ private fun TvSeasonTabs(
 // episode title and watched state in the visible overlay, then runtime and a
 // two-line synopsis below. Used by the show-detail episode shelf and the season grid.
 @Composable
-private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modifier, isCurrent: Boolean = false, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(TV_RADIUS_CARD)
     val runtime = tvRuntimeLabel(episode.runtimeTicks)
@@ -2338,7 +2388,7 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            TvEpisodeWatchStatusPill(played = episode.played)
+            if (isCurrent) TvNowViewingPill() else TvEpisodeWatchStatusPill(played = episode.played)
         }
         Row(
             modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
@@ -2367,6 +2417,21 @@ private fun TvEpisodeCard(episode: SpatialFinEpisode, modifier: Modifier = Modif
             )
         }
     }
+}
+
+@Composable
+private fun TvNowViewingPill() {
+    Text(
+        text = androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.now_viewing),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onPrimary,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

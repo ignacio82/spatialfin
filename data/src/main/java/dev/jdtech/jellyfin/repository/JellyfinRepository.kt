@@ -109,6 +109,12 @@ interface JellyfinRepository {
 
     suspend fun getLatestMedia(parentId: UUID): List<SpatialFinItem>
 
+    /**
+     * Jellyfin's "more like this" (`/Items/{id}/Similar`) — same kind as [itemId] (movies
+     * for a movie, series for a series). Empty offline: similarity is computed server-side.
+     */
+    suspend fun getSimilarItems(itemId: UUID, limit: Int = 16): List<SpatialFinItem>
+
     suspend fun getSeasons(seriesId: UUID, offline: Boolean = false): List<SpatialFinSeason>
 
     suspend fun getNextUp(seriesId: UUID? = null): List<SpatialFinEpisode>

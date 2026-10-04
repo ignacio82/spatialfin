@@ -53,6 +53,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
+import dev.jdtech.jellyfin.presentation.film.components.SimilarItemsRow
 import dev.spatialfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.utils.getShowDateString
@@ -280,6 +281,15 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                             onAction(ShowAction.NavigateToPerson(personId))
                         },
                         contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                    )
+                }
+                if (state.related.similar.isNotEmpty()) {
+                    if (state.actors.isNotEmpty()) Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                    SimilarItemsRow(
+                        items = state.related.similar,
+                        onItemClick = { item -> onAction(ShowAction.NavigateToItem(item)) },
+                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                        displayRatings = state.displayRatings,
                     )
                 }
                 Spacer(Modifier.height(paddingBottom))

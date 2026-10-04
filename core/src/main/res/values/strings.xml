@@ -22,6 +22,9 @@
     <string name="writers">Writers</string>
     <string name="cast_amp_crew"><![CDATA[Cast & Crew]]></string>
     <string name="seasons">Seasons</string>
+    <string name="more_from_season">More from %1$s</string>
+    <string name="more_like_this">More like this</string>
+    <string name="now_viewing">Now viewing</string>
     <string name="play_button_description">Play the media</string>
     <string name="trailer_button_description">Watch the trailer</string>
     <string name="check_button_description">Mark as watched or unwatched</string>

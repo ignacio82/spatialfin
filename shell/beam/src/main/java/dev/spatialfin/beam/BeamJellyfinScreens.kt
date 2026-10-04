@@ -618,10 +618,11 @@ internal fun BeamPosterCarousel(
     items: List<SpatialFinItem>,
     onItemClick: (SpatialFinItem) -> Unit,
     showProgress: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(vertical = 4.dp),
 ) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(vertical = 4.dp),
+        contentPadding = contentPadding,
     ) {
         items(items, key = { it.id }) { item ->
             BeamPosterCard(
@@ -810,6 +811,7 @@ fun BeamShowScreen(
     onOpenSeason: (UUID) -> Unit,
     onOpenItem: (UUID) -> Unit,
     onOpenPerson: (UUID) -> Unit,
+    onOpenShow: (UUID) -> Unit,
     viewModel: BeamShowViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -978,6 +980,23 @@ fun BeamShowScreen(
                             actors = showActors,
                             onActorClick = onOpenPerson,
                             contentPadding = PaddingValues(horizontal = 0.dp),
+                        )
+                    }
+                }
+                if (state.related.similar.isNotEmpty()) {
+                    item {
+                        Text(
+                            androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.more_like_this),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    item {
+                        BeamPosterCarousel(
+                            items = state.related.similar,
+                            onItemClick = { similar ->
+                                openServerItem(context, similar, { _, _, _ -> }, onOpenShow, onOpenSeason, onOpenItem)
+                            },
                         )
                     }
                 }
@@ -1435,13 +1454,7 @@ internal fun BeamCastAndCrew(
     onOpenPerson: (UUID) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = "CAST & CREW",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            letterSpacing = 0.5.sp,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-        )
+        BeamDetailSectionLabel(androidx.compose.ui.res.stringResource(dev.jdtech.jellyfin.core.R.string.cast_amp_crew))
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)

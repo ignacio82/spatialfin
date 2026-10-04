@@ -279,6 +279,12 @@ constructor(
             offline = { offlineRepository.getLatestMedia(parentId) },
         )
 
+    override suspend fun getSimilarItems(itemId: UUID, limit: Int): List<SpatialFinItem> =
+        runWithFallback(
+            online = { onlineRepository.getSimilarItems(itemId, limit) },
+            offline = { offlineRepository.getSimilarItems(itemId, limit) },
+        )
+
     override suspend fun getSeasons(seriesId: UUID, offline: Boolean): List<SpatialFinSeason> =
         if (offline || connectionMonitor.shouldUseOfflineRepository()) {
             offlineRepository.getSeasons(seriesId, true)

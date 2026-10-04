@@ -306,10 +306,7 @@ fun NavigationRoot(
     var pendingInitialSearchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
     var showAudioNowPlaying by remember { mutableStateOf(false) }
 
-    val showBottomBar =
-        navigationItems.any { item ->
-            currentDestination?.hierarchy?.any { it.hasRoute(item.route::class) } == true
-        } && !searchExpanded
+    val showNavigationRail = currentDestination.shouldShowNavigationRail(navigationItems, searchExpanded)
 
     // Re-scope Music Assistant config to the active Jellyfin user whenever the
     // user switches — but only while the SendSpin receiver is actually running,
@@ -525,7 +522,7 @@ fun NavigationRoot(
     }
 
     Box(modifier = panelModifier) {
-        if (xrSpaceMode == XrSpaceMode.FULL && showBottomBar) {
+        if (xrSpaceMode == XrSpaceMode.FULL && showNavigationRail) {
             androidx.xr.compose.spatial.Orbiter(
                 alignment = androidx.xr.compose.spatial.OrbiterAlignment.CenterEnd(
                     offset = androidx.xr.compose.unit.DpVolumeOffset(x = 24.dp),
@@ -547,7 +544,7 @@ fun NavigationRoot(
                 .align(Alignment.Center)
         ) {
             if (xrSpaceMode != XrSpaceMode.FULL) {
-                AnimatedVisibility(visible = showBottomBar) {
+                AnimatedVisibility(visible = showNavigationRail) {
                     railContent()
                 }
             }
@@ -905,6 +902,9 @@ fun NavigationRoot(
                     navigateToPerson = { personId ->
                         navController.safeNavigate(PersonRoute(personId.toString()))
                     },
+                    navigateToItem = { item ->
+                        navigateToItem(navController = navController, item = item)
+                    },
                     onPlay = playbackLauncher,
                 )
             }
@@ -954,6 +954,13 @@ fun NavigationRoot(
                         navController.safeNavigate(SeasonRoute(seasonId = seasonId.toString())) {
                             popUpTo(SeasonRoute(seasonId = seasonId.toString()))
                             launchSingleTop = true
+                        }
+                    },
+                    // Hopping between siblings replaces this entry, so Back returns
+                    // to wherever the user came from instead of replaying the hops.
+                    navigateToEpisode = { episodeId ->
+                        navController.safeNavigate(EpisodeRoute(episodeId = episodeId.toString())) {
+                            popUpTo(route) { inclusive = true }
                         }
                     },
                     onPlay = playbackLauncher,

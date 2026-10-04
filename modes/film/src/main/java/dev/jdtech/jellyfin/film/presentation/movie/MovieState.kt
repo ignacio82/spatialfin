@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.film.presentation.movie
 
+import dev.jdtech.jellyfin.film.domain.DetailRelatedRows
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.VideoMetadata
@@ -11,6 +12,7 @@ data class MovieState(
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val director: SpatialFinItemPerson? = null,
     val writers: List<SpatialFinItemPerson> = emptyList(),
+    val related: DetailRelatedRows = DetailRelatedRows(),
     val displayExtraInfo: Boolean = false,
     val displayRatings: Boolean = true,
     val error: Exception? = null,

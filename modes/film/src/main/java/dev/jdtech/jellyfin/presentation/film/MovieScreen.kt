@@ -48,6 +48,7 @@ import dev.jdtech.jellyfin.core.presentation.dummy.dummyVideoMetadata
 import dev.jdtech.jellyfin.film.presentation.movie.MovieAction
 import dev.jdtech.jellyfin.film.presentation.movie.MovieState
 import dev.jdtech.jellyfin.film.presentation.movie.MovieViewModel
+import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.presentation.film.components.ActorsRow
 import dev.jdtech.jellyfin.film.domain.LanguagePreferences
@@ -63,6 +64,7 @@ import dev.jdtech.jellyfin.presentation.film.components.ItemPoster
 import dev.jdtech.jellyfin.presentation.film.components.ItemTopBar
 import dev.jdtech.jellyfin.presentation.film.components.OverviewText
 import dev.jdtech.jellyfin.presentation.film.components.RatingsRow
+import dev.jdtech.jellyfin.presentation.film.components.SimilarItemsRow
 import dev.jdtech.jellyfin.presentation.film.components.TrackSelectionChips
 import dev.jdtech.jellyfin.presentation.film.components.VideoMetadataBar
 import dev.spatialfin.presentation.theme.SpatialFinTheme
@@ -81,6 +83,7 @@ fun MovieScreen(
     navigateBack: () -> Unit,
     navigateHome: () -> Unit,
     navigateToPerson: (personId: UUID) -> Unit,
+    navigateToItem: (item: SpatialFinItem) -> Unit,
     onPlay: (PlayRequest) -> Unit,
     viewModel: MovieViewModel = hiltViewModel(),
     downloaderViewModel: DownloaderViewModel = hiltViewModel(),
@@ -195,6 +198,7 @@ fun MovieScreen(
                 is MovieAction.OnBackClick -> navigateBack()
                 is MovieAction.OnHomeClick -> navigateHome()
                 is MovieAction.NavigateToPerson -> navigateToPerson(action.personId)
+                is MovieAction.NavigateToItem -> navigateToItem(action.item)
                 is MovieAction.SelectVersion -> viewModel.loadMovie(action.movieId)
                 else -> Unit
             }
@@ -436,6 +440,15 @@ private fun MovieScreenLayout(
                             onAction(MovieAction.NavigateToPerson(personId))
                         },
                         contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                    )
+                }
+                if (state.related.similar.isNotEmpty()) {
+                    if (state.actors.isNotEmpty()) Spacer(Modifier.height(MaterialTheme.spacings.medium))
+                    SimilarItemsRow(
+                        items = state.related.similar,
+                        onItemClick = { item -> onAction(MovieAction.NavigateToItem(item)) },
+                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                        displayRatings = state.displayRatings,
                     )
                 }
                 Spacer(Modifier.height(paddingBottom))

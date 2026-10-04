@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.film.presentation.movie
 
+import dev.jdtech.jellyfin.models.SpatialFinItem
 import java.util.UUID
 
 sealed interface MovieAction {
@@ -31,6 +32,9 @@ sealed interface MovieAction {
     data object OnHomeClick : MovieAction
 
     data class NavigateToPerson(val personId: UUID) : MovieAction
+
+    /** A "More like this" poster was picked. */
+    data class NavigateToItem(val item: SpatialFinItem) : MovieAction
 
     /**
      * Fired after the user saves an IMDb ID from the external-IDs dialog.

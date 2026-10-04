@@ -8,6 +8,8 @@ import dev.jdtech.jellyfin.api.SeerrApi
 import dev.jdtech.jellyfin.api.SeerrMediaInfo
 import dev.jdtech.jellyfin.api.SeerrSearchResult
 import dev.jdtech.jellyfin.core.presentation.downloader.BulkDownloadState
+import dev.jdtech.jellyfin.film.domain.DetailRelatedRows
+import dev.jdtech.jellyfin.film.domain.loadDetailRelatedRows
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
 import dev.jdtech.jellyfin.models.CollectionType
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
@@ -25,6 +27,7 @@ import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,6 +82,7 @@ constructor(
 data class BeamItemDetailState(
     val item: SpatialFinItem? = null,
     val availableVersions: List<SpatialFinMovie> = emptyList(),
+    val related: DetailRelatedRows = DetailRelatedRows(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
 )
@@ -95,6 +99,7 @@ constructor(
 
     private val _state = MutableStateFlow(BeamItemDetailState())
     val state = _state.asStateFlow()
+    private var relatedJob: Job? = null
 
     fun load(itemId: UUID) {
         viewModelScope.launch {
@@ -103,11 +108,22 @@ constructor(
                 .onSuccess { item ->
                     val versions = if (item is SpatialFinMovie) loadAvailableVersions(item) else emptyList()
                     _state.emit(BeamItemDetailState(item = item, availableVersions = versions, isLoading = false))
+                    item?.let(::loadRelated)
                 }
                 .onFailure { error ->
                     _state.emit(BeamItemDetailState(isLoading = false, error = error))
                 }
         }
+    }
+
+    /** Off the critical path: the hero renders first, the rows fill in after. */
+    private fun loadRelated(item: SpatialFinItem) {
+        relatedJob?.cancel()
+        relatedJob =
+            viewModelScope.launch {
+                val related = repository.loadDetailRelatedRows(item)
+                _state.update { if (it.item?.id == item.id) it.copy(related = related) else it }
+            }
     }
 
     fun toggleFavorite() {
@@ -173,6 +189,7 @@ data class BeamShowState(
     val show: SpatialFinShow? = null,
     val seasons: List<SpatialFinSeason> = emptyList(),
     val nextUp: SpatialFinEpisode? = null,
+    val related: DetailRelatedRows = DetailRelatedRows(),
     val isLoading: Boolean = false,
     val error: Throwable? = null,
     val bulkDownload: BulkDownloadState = BulkDownloadState(),
@@ -187,6 +204,7 @@ constructor(
 ) : ViewModel() {
     private val _state = MutableStateFlow(BeamShowState())
     val state = _state.asStateFlow()
+    private var relatedJob: Job? = null
 
     fun load(showId: UUID) {
         viewModelScope.launch {
@@ -206,10 +224,20 @@ constructor(
                         isLoading = false,
                     )
                 )
+                loadRelated(show)
             }.onFailure { error ->
                 _state.emit(BeamShowState(isLoading = false, error = error))
             }
         }
+    }
+
+    private fun loadRelated(show: SpatialFinShow) {
+        relatedJob?.cancel()
+        relatedJob =
+            viewModelScope.launch {
+                val related = repository.loadDetailRelatedRows(show)
+                _state.update { if (it.show?.id == show.id) it.copy(related = related) else it }
+            }
     }
 
     fun toggleFavorite() {

@@ -35,6 +35,7 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **Spatial Audio** — High-fidelity positional audio that pins sound to the screen's location.
 - **Native XR Controls** — Material 3 for XR orbiters that float secondary controls in space, keeping the screen uncluttered.
 - **XR-First Action Layouts** — Detail screens use larger readable typography and labeled action buttons instead of dense icon-only controls.
+- **Browse From Any Detail Page** — An episode lists the rest of its season under the cast (the current episode marked), so hopping to the next one doesn't mean backing out to the season. Movies and series end with a "More like this" row of similar titles from your Jellyfin server. The same rows appear on XR, phone, and TV.
 - **Pixel-Perfect Anime Subtitles** — Integrated `libass` JNI renderer for flawless ASS/SSA subtitle rendering, supporting complex typesetting and animations.
 - **Smart Audio And Subtitle Selection** — Ordered spoken languages, optional original-audio preference, automatic subtitle fallback when the chosen audio is not one you speak, smarter subtitle-track ranking, and per-series memory for manual audio/subtitle corrections.
 - **Version Selection (Media Source)** — Choose between different versions of the same movie or episode (e.g., 3D vs. 2D, 4K vs. 1080p) before playing or during playback.

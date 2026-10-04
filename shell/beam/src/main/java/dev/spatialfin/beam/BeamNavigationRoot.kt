@@ -889,6 +889,9 @@ fun BeamNavigationRoot(
                             personBackRoute = BeamRoute.Show
                             currentRoute = BeamRoute.Person
                         },
+                        // "More like this": swap the series in place; Back still
+                        // returns to wherever the first series was opened from.
+                        onOpenShow = { similarShowId -> selectedShowId = similarShowId.toString() },
                     )
                 }
                     }
@@ -939,6 +942,9 @@ fun BeamNavigationRoot(
                             personBackRoute = BeamRoute.Detail
                             currentRoute = BeamRoute.Person
                         },
+                        // Season siblings and "More like this" swap the item in
+                        // place; Back keeps returning to the original origin.
+                        onOpenItem = { relatedId -> selectedDetailItemId = relatedId.toString() },
                     )
                 }
                     }

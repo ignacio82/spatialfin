@@ -31,6 +31,9 @@ sealed interface EpisodeAction {
 
     data class NavigateToSeason(val seasonId: UUID) : EpisodeAction
 
+    /** A sibling in the "More from this season" row was picked. */
+    data class NavigateToEpisode(val episodeId: UUID) : EpisodeAction
+
     data class SelectSource(val index: Int) : EpisodeAction
 
     /** See MovieAction.ReloadAfterMetadataEdit. */

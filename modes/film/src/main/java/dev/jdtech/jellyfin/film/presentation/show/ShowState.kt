@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.film.presentation.show
 
+import dev.jdtech.jellyfin.film.domain.DetailRelatedRows
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinSeason
@@ -12,6 +13,7 @@ data class ShowState(
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val director: SpatialFinItemPerson? = null,
     val writers: List<SpatialFinItemPerson> = emptyList(),
+    val related: DetailRelatedRows = DetailRelatedRows(),
     val displayRatings: Boolean = true,
     val error: Exception? = null,
 )

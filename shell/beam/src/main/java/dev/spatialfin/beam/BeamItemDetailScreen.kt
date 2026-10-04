@@ -100,6 +100,7 @@ fun BeamItemDetailScreen(
     onOpenShow: (UUID) -> Unit,
     onOpenSeason: (UUID) -> Unit,
     onOpenPerson: (UUID) -> Unit,
+    onOpenItem: (UUID) -> Unit,
     viewModel: BeamItemDetailViewModel = hiltViewModel(),
     downloaderViewModel: DownloaderViewModel = hiltViewModel(),
 ) {
@@ -515,14 +516,9 @@ fun BeamItemDetailScreen(
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
-                val actors = beamPeopleOf(itemData).filter { person ->
-                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
-                }
-                if (actors.isNotEmpty()) {
-                    item {
-                        BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
-                    }
-                }
+                // Chapters sit above the cast (as on TV) so the rows that lead
+                // away from this item — season siblings, "More like this" — come
+                // straight after the people, the Fladder order.
                 if (itemData.chapters.isNotEmpty()) {
                     item {
                         BeamChaptersRow(
@@ -536,6 +532,33 @@ fun BeamItemDetailScreen(
                                         startPositionMs = chapter.startPosition,
                                     )
                                     ?.let(context::startActivity)
+                            },
+                        )
+                    }
+                }
+                val actors = beamPeopleOf(itemData).filter { person ->
+                    person.type == org.jellyfin.sdk.model.api.PersonKind.ACTOR || person.type == org.jellyfin.sdk.model.api.PersonKind.DIRECTOR
+                }
+                if (actors.isNotEmpty()) {
+                    item {
+                        BeamCastAndCrew(actors = actors, onOpenPerson = onOpenPerson)
+                    }
+                }
+                if (itemData is SpatialFinEpisode && state.related.seasonEpisodes.isNotEmpty()) {
+                    item(key = "season-episodes") {
+                        BeamSeasonEpisodesRow(
+                            current = itemData,
+                            episodes = state.related.seasonEpisodes,
+                            onOpenEpisode = { sibling -> onOpenItem(sibling.id) },
+                        )
+                    }
+                }
+                if (state.related.similar.isNotEmpty()) {
+                    item(key = "similar") {
+                        BeamSimilarRow(
+                            items = state.related.similar,
+                            onItemClick = { similar ->
+                                openServerItem(context, similar, onOpenLibrary, onOpenShow, onOpenSeason, onOpenItem)
                             },
                         )
                     }

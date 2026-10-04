@@ -660,6 +660,21 @@ class JellyfinRepositoryImpl(
                 .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
         }
 
+    override suspend fun getSimilarItems(itemId: UUID, limit: Int): List<SpatialFinItem> =
+        withContext(Dispatchers.IO) {
+            jellyfinApi.libraryApi
+                .getSimilarItems(
+                    itemId,
+                    userId = jellyfinApi.userId!!,
+                    limit = limit,
+                    fields = BROWSE_ITEM_FIELDS,
+                )
+                .content
+                .items
+                .let(SeriesFilter::dropEmptyShows)
+                .mapNotNull { it.toSpatialFinItem(this@JellyfinRepositoryImpl, database) }
+        }
+
     override suspend fun getSeasons(seriesId: UUID, offline: Boolean): List<SpatialFinSeason> =
         withContext(Dispatchers.IO) {
             if (!offline) {

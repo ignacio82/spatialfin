@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.film.domain.VideoMetadataParser
+import dev.jdtech.jellyfin.film.domain.loadDetailRelatedRows
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
@@ -14,9 +15,11 @@ import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.PersonKind
@@ -32,6 +35,7 @@ constructor(
     private val _state = MutableStateFlow(MovieState())
     val state = _state.asStateFlow()
     private var hasLoadedMovie = false
+    private var relatedJob: Job? = null
 
     lateinit var movieId: UUID
 
@@ -65,10 +69,21 @@ constructor(
                         displayRatings = displayRatings,
                     )
                 )
+                loadRelated(movie)
             } catch (e: Exception) {
                 _state.emit(_state.value.copy(error = e))
             }
         }
+    }
+
+    /** Off the critical path: the hero renders first, the rows fill in after. */
+    private fun loadRelated(movie: SpatialFinMovie) {
+        relatedJob?.cancel()
+        relatedJob =
+            viewModelScope.launch {
+                val related = repository.loadDetailRelatedRows(movie)
+                _state.update { if (it.movie?.id == movie.id) it.copy(related = related) else it }
+            }
     }
 
     private fun observeRealtimeEvents() {
