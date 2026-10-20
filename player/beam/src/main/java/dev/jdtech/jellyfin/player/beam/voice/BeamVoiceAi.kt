@@ -204,7 +204,7 @@ class BeamCommandCoordinator(
             text.contains("time left") || text.contains("remaining") -> XrPlayerAction.ReportRemainingTime
             text.contains("when does it end") || text.contains("end time") -> XrPlayerAction.ReportEndTime
             text.contains("what am i watching") || text.contains("what is this") -> XrPlayerAction.ReportCurrentMedia
-            text.contains("fast forward") || text.contains("skip ahead") || text.contains("go forward") ->
+            text.contains("fast forward") || text.contains("fast foward") || text.contains("fastforward") || text.contains("skip ahead") || text.contains("go forward") ->
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
             text.contains("rewind") || text.contains("skip back") || text.contains("go back") ->
                 XrPlayerAction.SeekBackward(extractSeconds(text) ?: 10)

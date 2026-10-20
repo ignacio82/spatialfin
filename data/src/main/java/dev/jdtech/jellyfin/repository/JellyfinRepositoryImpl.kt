@@ -48,6 +48,8 @@ import dev.jdtech.jellyfin.models.toSyncPlayGroup
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import java.io.File
 import java.util.UUID
+import okhttp3.Request
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import org.jellyfin.sdk.api.sockets.SocketApiState
@@ -992,19 +994,70 @@ class JellyfinRepositoryImpl(
                 return@withContext databaseSegments
             }
 
+            // Tier 1: Modern Jellyfin MediaSegments API (Intro Skipper 10.10+ / Core Segments)
+            var apiSegments: List<SpatialFinSegment> = emptyList()
             try {
-                val apiSegments =
+                apiSegments =
                     jellyfinApi.mediaSegmentsApi.getItemSegments(itemId).content.items.map {
                         it.toSpatialFinSegment()
                     }
-
-                apiSegments.forEach { database.insertSegment(it.toSpatialFinSegmentsDto(itemId)) }
-
-                return@withContext apiSegments
             } catch (e: Exception) {
-                Timber.e(e)
-                return@withContext emptyList()
+                Timber.d(e, "Jellyfin mediaSegmentsApi not available for %s", itemId)
             }
+
+            if (apiSegments.isNotEmpty()) {
+                apiSegments.forEach { database.insertSegment(it.toSpatialFinSegmentsDto(itemId)) }
+                return@withContext apiSegments
+            }
+
+            // Tier 2: Legacy Intro Skipper plugin endpoint (/Episode/{id}/IntroTimestamps) for older servers
+            val legacySegment = getLegacyIntroSkipperSegment(itemId)
+            if (legacySegment != null) {
+                val legacySegments = listOf(legacySegment)
+                legacySegments.forEach { database.insertSegment(it.toSpatialFinSegmentsDto(itemId)) }
+                return@withContext legacySegments
+            }
+
+            return@withContext emptyList()
+        }
+
+    private suspend fun getLegacyIntroSkipperSegment(itemId: UUID): SpatialFinSegment? =
+        withContext(Dispatchers.IO) {
+            val baseUrl = jellyfinApi.api.baseUrl?.trimEnd('/') ?: return@withContext null
+            val url = "$baseUrl/Episode/$itemId/IntroTimestamps"
+            val token = jellyfinApi.api.accessToken
+            val requestBuilder = Request.Builder().url(url)
+            if (!token.isNullOrBlank()) {
+                requestBuilder.header("Authorization", "MediaBrowser Token=\"$token\"")
+            }
+            try {
+                jellyfinApi.okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val body = response.body.string()
+                    val json = JSONObject(body)
+                    val isValid = json.optBoolean("Valid", false)
+                    val introStart = json.optDouble("IntroStart", -1.0)
+                    val introEnd = json.optDouble("IntroEnd", -1.0)
+                    if (isValid && introStart >= 0.0 && introEnd > introStart) {
+                        val segment =
+                            SpatialFinSegment(
+                                type = dev.jdtech.jellyfin.models.SpatialFinSegmentType.INTRO,
+                                startTicks = (introStart * 1000).toLong(),
+                                endTicks = (introEnd * 1000).toLong(),
+                            )
+                        Timber.i(
+                            "Found legacy Intro Skipper segment for %s: %d-%d ms",
+                            itemId,
+                            segment.startTicks,
+                            segment.endTicks,
+                        )
+                        return@withContext segment
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.d(e, "Legacy intro-skipper endpoint not available for %s", itemId)
+            }
+            null
         }
 
     override suspend fun getTrickplayData(itemId: UUID, width: Int, index: Int): ByteArray? =

@@ -723,6 +723,7 @@ class BeamPlayerActivity : AppCompatActivity() {
                 }
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
+                .setMediaCodecSelector(dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector)
 
         // Disable Media3 in-pipeline subtitle transcoding so raw ASS/SSA bytes reach libass.
         // Transcoding converts tracks to application/x-media3-cues, which libass rejects.

@@ -14,6 +14,7 @@ import dev.jdtech.jellyfin.player.xr.voice.SmartChatEngine
 import dev.jdtech.jellyfin.player.xr.voice.SpatialCommandCoordinator
 import dev.jdtech.jellyfin.player.xr.voice.SpatialVoiceService
 import dev.jdtech.jellyfin.player.xr.voice.VoiceParseResult
+import dev.jdtech.jellyfin.player.xr.voice.VoiceParseStrategy
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryEntry
 import dev.jdtech.jellyfin.settings.voice.VoiceTelemetryStore
 import kotlinx.coroutines.CoroutineScope
@@ -74,7 +75,17 @@ internal fun startVoiceCapture(
         val job = scope.launch {
             try {
                 val commandCoordinator = commandCoordinatorProvider()
-                val parseResult = commandCoordinator.parse(transcript, snapshot)
+                val parseResult = runCatching {
+                    commandCoordinator.parse(transcript, snapshot)
+                }.getOrElse { error ->
+                    Timber.e(error, "VOICE: Failed to parse voice command transcript=%s", transcript)
+                    VoiceParseResult(
+                        action = XrPlayerAction.Unrecognized(transcript),
+                        strategy = VoiceParseStrategy.FALLBACK,
+                        normalizedTranscript = transcript,
+                        debugInfo = "parse error: ${error.message}",
+                    )
+                }
                 val action = parseResult.action
                 if (action is XrPlayerAction.ChatQuery) {
                     onResult("…")
@@ -222,7 +233,12 @@ internal fun startVoiceCapture(
                         )
                     )
                 } else {
-                    val feedback = dispatchVoiceParseResult(controller, parseResult)
+                    val feedback = runCatching {
+                        dispatchVoiceParseResult(controller, parseResult)
+                    }.getOrElse { error ->
+                        Timber.e(error, "VOICE: dispatch failed for %s", parseResult.action)
+                        "Couldn't perform that action"
+                    }
                     onResult(feedback)
                     if (assistantPreferences.spokenRepliesEnabled && shouldSpeakVoiceFeedback(action)) {
                         onSpokenReply(feedback, responseLanguageHint, android.speech.tts.TextToSpeech.QUEUE_FLUSH)

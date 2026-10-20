@@ -55,36 +55,63 @@ class PlayerSessionController(
             }
     }
 
+    private val activePlayer: Player
+        get() = runCatching { viewModel.player }.getOrNull() ?: player
+
     suspend fun dispatch(action: XrPlayerAction): String {
         Timber.d("VOICE: Dispatching %s", action)
         return when (action) {
             is XrPlayerAction.Play -> {
-                player.play()
+                runCatching { activePlayer.play() }.onFailure { Timber.w(it, "Failed to play") }
                 "Playing"
             }
             is XrPlayerAction.Pause -> {
-                player.pause()
+                runCatching { activePlayer.pause() }.onFailure { Timber.w(it, "Failed to pause") }
                 "Paused"
             }
             is XrPlayerAction.TogglePlayPause -> {
-                if (player.isPlaying) {
-                    player.pause()
+                if (activePlayer.isPlaying) {
+                    runCatching { activePlayer.pause() }.onFailure { Timber.w(it, "Failed to pause") }
                     "Paused"
                 } else {
-                    player.play()
+                    runCatching { activePlayer.play() }.onFailure { Timber.w(it, "Failed to play") }
                     "Playing"
                 }
             }
             is XrPlayerAction.SeekForward -> {
-                player.seekTo(player.currentPosition + action.seconds * 1_000L)
+                val p = activePlayer
+                val duration = p.duration
+                val current = p.currentPosition.coerceAtLeast(0L)
+                val target = if (duration != C.TIME_UNSET && duration > 0L) {
+                    (current + action.seconds * 1_000L).coerceAtMost(duration)
+                } else {
+                    current + action.seconds * 1_000L
+                }
+                runCatching {
+                    p.seekTo(target.coerceAtLeast(0L))
+                }.onFailure { Timber.w(it, "Failed to seek forward") }
                 "Skipped forward ${action.seconds}s"
             }
             is XrPlayerAction.SeekBackward -> {
-                player.seekTo((player.currentPosition - action.seconds * 1_000L).coerceAtLeast(0))
+                val p = activePlayer
+                val current = p.currentPosition.coerceAtLeast(0L)
+                val target = (current - action.seconds * 1_000L).coerceAtLeast(0L)
+                runCatching {
+                    p.seekTo(target)
+                }.onFailure { Timber.w(it, "Failed to seek backward") }
                 "Rewound ${action.seconds}s"
             }
             is XrPlayerAction.SeekTo -> {
-                player.seekTo(action.positionSeconds * 1_000L)
+                val p = activePlayer
+                val duration = p.duration
+                val target = if (duration != C.TIME_UNSET && duration > 0L) {
+                    (action.positionSeconds * 1_000L).coerceIn(0L, duration)
+                } else {
+                    (action.positionSeconds * 1_000L).coerceAtLeast(0L)
+                }
+                runCatching {
+                    p.seekTo(target)
+                }.onFailure { Timber.w(it, "Failed to seek to position") }
                 "Seeked to ${action.positionSeconds}s"
             }
             is XrPlayerAction.SkipIntro -> {
@@ -174,12 +201,13 @@ class PlayerSessionController(
                 "Refreshing SyncPlay groups"
             }
             is XrPlayerAction.AdjustVolume -> {
+                val p = activePlayer
                 if (action.percentage != null) {
-                    player.volume = action.percentage.coerceIn(0f, 1f)
-                    "Volume: ${(player.volume * 100).toInt()}%"
+                    p.volume = action.percentage.coerceIn(0f, 1f)
+                    "Volume: ${(p.volume * 100).toInt()}%"
                 } else if (action.delta != null) {
-                    player.volume = (player.volume + action.delta).coerceIn(0f, 1f)
-                    "Volume: ${(player.volume * 100).toInt()}%"
+                    p.volume = (p.volume + action.delta).coerceIn(0f, 1f)
+                    "Volume: ${(p.volume * 100).toInt()}%"
                 } else {
                     "Volume unchanged"
                 }
@@ -424,8 +452,9 @@ class PlayerSessionController(
     }
 
     private fun remainingTimeFeedback(): String {
-        val durationMs = player.duration.takeIf { it > 0L } ?: return "I can't tell how much time is left yet"
-        val remainingSeconds = ((durationMs - player.currentPosition).coerceAtLeast(0L) / 1_000L)
+        val p = activePlayer
+        val durationMs = p.duration.takeIf { it > 0L } ?: return "I can't tell how much time is left yet"
+        val remainingSeconds = ((durationMs - p.currentPosition).coerceAtLeast(0L) / 1_000L)
         return when {
             remainingSeconds < 5L -> "There's only a few seconds left"
             else -> "${formatDuration(remainingSeconds)} left"
@@ -433,8 +462,9 @@ class PlayerSessionController(
     }
 
     private fun endTimeFeedback(): String {
-        val durationMs = player.duration.takeIf { it > 0L } ?: return "I can't tell when this ends yet"
-        val remainingMs = (durationMs - player.currentPosition).coerceAtLeast(0L)
+        val p = activePlayer
+        val durationMs = p.duration.takeIf { it > 0L } ?: return "I can't tell when this ends yet"
+        val remainingMs = (durationMs - p.currentPosition).coerceAtLeast(0L)
         val endTime =
             DateTimeFormatter.ofPattern("h:mm a")
                 .withZone(ZoneId.systemDefault())
@@ -471,7 +501,7 @@ class PlayerSessionController(
                         "VOICE: no skippable %s segment right now requested=%s posMs=%d",
                         defaultSegmentName,
                         preferredSegmentNames.joinToString(),
-                        player.currentPosition,
+                        activePlayer.currentPosition,
                     )
                     return "No skippable $defaultSegmentName right now"
                 }
@@ -545,7 +575,7 @@ class PlayerSessionController(
         language: String?,
         directIndex: Int?,
     ): Int? {
-        val groups = player.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
+        val groups = activePlayer.currentTracks.groups.filter { it.type == trackType && (trackType == C.TRACK_TYPE_TEXT || it.isSupported) }
         if (directIndex != null) return directIndex.takeIf { it in groups.indices }
         if (language == null) {
             val selectedIndex = groups.indexOfFirst(::groupIsSelected)

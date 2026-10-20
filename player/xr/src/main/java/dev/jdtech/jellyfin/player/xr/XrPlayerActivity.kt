@@ -41,6 +41,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.player.core.extractor.mkv.SideloadedSubtitleMediaSourceFactory
 import dev.jdtech.jellyfin.player.core.splitav.PlayerSplitAvAdapter
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
@@ -375,6 +376,7 @@ class XrPlayerActivity : AppCompatActivity() {
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
          .setEnableDecoderFallback(true)
+         .setMediaCodecSelector(SpatialMediaCodecSelector)
 
         // Jellyfin subtitles are sideloaded via MediaItem.SubtitleConfiguration using
         // per-stream delivery URLs (see PlaylistManager). Only those items drop embedded MKV

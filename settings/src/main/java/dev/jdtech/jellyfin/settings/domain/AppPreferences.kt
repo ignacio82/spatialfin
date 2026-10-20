@@ -90,6 +90,12 @@ class AppPreferences @Inject constructor(val sharedPreferences: SharedPreference
     val playerMediaSegmentsNextEpisodeThreshold
         get() = Preference("pref_player_media_segments_next_episode_threshold", 5_000L)
 
+    val playerChapterIntroDetection
+        get() = Preference("pref_player_chapter_intro_detection", true)
+
+    val playerAniSkipEnabled
+        get() = Preference("pref_player_aniskip_enabled", false)
+
     // Player - trickplay
     val playerTrickplay = Preference("pref_player_trickplay", true)
 

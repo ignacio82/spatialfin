@@ -114,11 +114,38 @@ class WearJellyfinRelayClientTest {
     @Test
     fun `play pause is posted to the selected headset session`() = runTest {
         assertTrue(relay.dispatch("xr-session", WearPlayerAction.TogglePlayPause).isSuccess)
-        assertEquals("POST", requests.single().method)
+        val request = requests.single()
+        assertEquals("POST", request.method)
         assertEquals(
             "/base/Sessions/xr-session/Playing/PlayPause",
-            requests.single().url.encodedPath,
+            request.url.encodedPath,
         )
+        assertEquals("test-user", request.url.queryParameter("controllingUserId"))
+    }
+
+    @Test
+    fun `playback controls use authenticated extension when supported`() = runTest {
+        for (action in listOf(
+            WearPlayerAction.Pause,
+            WearPlayerAction.Play,
+            WearPlayerAction.TogglePlayPause,
+            WearPlayerAction.SeekTo(42),
+            WearPlayerAction.SeekForward(10),
+            WearPlayerAction.SeekBackward(10),
+        )) {
+            requests.clear()
+            assertTrue(relay.dispatch("xr-session", action, supportsExtensions = true).isSuccess)
+            val request = requests.single()
+            assertEquals("/base/Sessions/xr-session/Command", request.url.encodedPath)
+            val body = requestBody()
+            assertEquals("PlayState", body["Name"]!!.jsonPrimitive.content)
+            val encoded =
+                body["Arguments"]!!
+                    .jsonObject[WearProtocolPaths.RELAY_ACTION_ARGUMENT]!!
+                    .jsonPrimitive
+                    .content
+            assertEquals(action, WearProtocolCodec.decodeAction(encoded.encodeToByteArray()))
+        }
     }
 
     @Test

@@ -80,6 +80,7 @@ import androidx.xr.scenecore.scene
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.player.local.domain.getTrackNames
 import dev.jdtech.jellyfin.player.local.domain.serverSideAudioTracks
 import dev.jdtech.jellyfin.player.local.presentation.PlayerViewModel
@@ -207,6 +208,7 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 )
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(SpatialMediaCodecSelector)
 
         val player = preloadCoordinator.buildExoPlayer(ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(audioAttributes, true)

@@ -40,6 +40,7 @@ import dev.jdtech.jellyfin.fcast.receiver.FCastInboundBridgeIpcClient
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.player.core.external.ExternalStreamMediaPreparer
 import dev.jdtech.jellyfin.player.local.presentation.PlayerTrackHeuristics
 import dev.jdtech.jellyfin.settings.language.LanguageCatalog
@@ -577,6 +578,7 @@ class XrFCastInboundPlayerActivity : AppCompatActivity() {
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(SpatialMediaCodecSelector)
             
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
             .experimentalParseSubtitlesDuringExtraction(false)

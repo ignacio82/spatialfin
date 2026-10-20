@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import java.util.UUID
@@ -689,6 +690,7 @@ class FCastInboundPlayerActivity : ComponentActivity() {
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(SpatialMediaCodecSelector)
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)

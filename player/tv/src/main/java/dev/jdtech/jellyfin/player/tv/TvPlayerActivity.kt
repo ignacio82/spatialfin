@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
+import dev.jdtech.jellyfin.player.core.audio.SpatialMediaCodecSelector
 import dev.jdtech.jellyfin.player.session.voice.ActivePlayerSessionHolder
 import dev.jdtech.jellyfin.player.local.R as LocalR
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -544,6 +545,7 @@ class TvPlayerActivity : AppCompatActivity() {
                 }
             }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
+                .setMediaCodecSelector(SpatialMediaCodecSelector)
 
         val encryptedDataSourceFactory =
             dev.jdtech.jellyfin.player.core.security.EncryptedLocalDataSourceFactory(

@@ -24,11 +24,13 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.jdtech.jellyfin.api.AniSkipApi
 import dev.jdtech.jellyfin.models.Rating
 import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinSegmentType
 import dev.jdtech.jellyfin.models.SyncPlayGroup
+import dev.jdtech.jellyfin.player.core.domain.models.ChapterSegmentDetector
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerItem
@@ -84,6 +86,8 @@ constructor(
 
     /** Disk-backed subtitle cache used to provide full-video dialogue context to the AI. */
     val subtitleCacheManager = SubtitleCacheManager(application)
+
+    private val aniSkipApi = AniSkipApi()
 
     private val _playerFlow: MutableStateFlow<Player>
     val playerFlow: kotlinx.coroutines.flow.StateFlow<Player>
@@ -301,7 +305,7 @@ constructor(
     var playWhenReady = false
     private var currentMediaItemIndex = savedStateHandle["mediaItemIndex"] ?: 0
     private var playbackPosition: Long = savedStateHandle["position"] ?: 0
-    private var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()
+    internal var currentMediaItemSegments: List<SpatialFinSegment> = emptyList()
     /**
      * Mirror of [UiState.currentMediaStreams] for non-Compose callers
      * ([PlayerTrackSelector], [SyncPlayCoordinator]). Assign through
@@ -602,6 +606,7 @@ constructor(
         requestedSubtitleStreamIndex = subtitleStreamIndex
         requestedSubtitlesDisabled = subtitlesDisabled
         currentItemKind = itemKind
+        _uiState.update { it.copy(currentItemId = itemId.toString(), currentItemKind = itemKind) }
         if (maxBitrate == null && transcodeFallbackAttemptedItem != itemId) {
             transcodeFallbackAttemptedItem = null
         }
@@ -1397,16 +1402,15 @@ constructor(
                             }
                             repository.postPlaybackStart(item.itemId)
 
-                            // Always fetch segments for Jellyfin items: even when the user has
-                            // skip-button/auto-skip off, we use the OUTRO segment to auto-mark
-                            // the item as watched.
-                            getSegments(item.itemId)
+                            // Always fetch segments: uses server MediaSegments / Intro Skipper when available,
+                            // or synthesizes from embedded chapters / AniSkip when the server has no segments.
+                            getSegments(item)
 
                             if (appPreferences.getValue(appPreferences.playerTrickplay)) {
                                 getTrickplay(item)
                             }
                         } else {
-                            currentMediaItemSegments = emptyList()
+                            getSegments(item)
                             updateCurrentMediaSourceStreams(emptyList(), null)
                             _uiState.update {
                                 it.copy(
@@ -1596,6 +1600,7 @@ constructor(
                 _uiState.update { it.copy(fileLoaded = true) }
                 startupWatchdogJob?.cancel()
                 startupWatchdogJob = null
+                refreshChapterSegmentsIfNeeded()
             }
             ExoPlayer.STATE_ENDED -> {
                 stateString = "ExoPlayer.STATE_ENDED     -"
@@ -2052,6 +2057,81 @@ constructor(
         } catch (e: Exception) {
             currentMediaItemSegments = emptyList()
             Timber.e(e)
+        }
+    }
+
+    internal suspend fun getSegments(item: PlayerItem) {
+        var segments = emptyList<SpatialFinSegment>()
+        if (item.contentSource == PlayerContentSource.JELLYFIN) {
+            try {
+                // Tier 1 & 2: Server MediaSegments API and legacy Intro Skipper plugin fallback
+                segments = repository.getSegments(item.itemId)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load server segments for %s", item.itemId)
+            }
+        }
+
+        // Tier 3: Client Chapter Heuristic Detection
+        // If the server returned no segments (or this is a local/downloaded file), and chapter
+        // detection is enabled in preferences, synthesize segments from item.chapters.
+        if (segments.isEmpty() && appPreferences.getValue(appPreferences.playerChapterIntroDetection) && item.chapters.isNotEmpty()) {
+            val durationMs = player.duration.takeIf { it > 0 } ?: 0L
+            val chapterSegments = ChapterSegmentDetector.detectSegments(item.chapters, durationMs)
+            if (chapterSegments.isNotEmpty()) {
+                Timber.i("ChapterSegmentDetector synthesized %d segment(s) for %s", chapterSegments.size, item.name)
+                segments = chapterSegments
+            }
+        }
+
+        // Tier 4: Community Anime Timestamps (AniSkip)
+        // If enabled in preferences and still no segments found, check AniSkip if MAL ID exists
+        val episodeNumber = item.indexNumber
+        if (segments.isEmpty() && appPreferences.getValue(appPreferences.playerAniSkipEnabled) && episodeNumber != null) {
+            try {
+                val providerIds = repository.getItemProviderIds(item.itemId).ifEmpty {
+                    item.seriesId?.let { repository.getItemProviderIds(it) } ?: emptyMap()
+                }
+                val malId = providerIds["Mal"]?.toLongOrNull()
+                    ?: providerIds["MyAnimeList"]?.toLongOrNull()
+                if (malId != null) {
+                    val aniSkipSegments = aniSkipApi.getSkipTimes(
+                        malId = malId,
+                        episodeNumber = episodeNumber,
+                        episodeLengthSeconds = (player.duration.takeIf { it > 0 } ?: 0L) / 1000L,
+                    )
+                    if (aniSkipSegments.isNotEmpty()) {
+                        Timber.i("AniSkip found %d segment(s) for %s (malId=%d ep=%d)", aniSkipSegments.size, item.name, malId, episodeNumber)
+                        segments = aniSkipSegments
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.d(e, "AniSkip check skipped or failed for %s", item.name)
+            }
+        }
+
+        currentMediaItemSegments = segments
+        Timber.d("Active segments for %s: %s", item.name, segments.joinToString { "${it.type}:${it.startTicks}-${it.endTicks}" })
+    }
+
+    internal fun refreshChapterSegmentsIfNeeded() {
+        val item = currentPlayerItem() ?: return
+        if (!appPreferences.getValue(appPreferences.playerChapterIntroDetection)) return
+        if (item.chapters.isEmpty()) return
+        val durationMs = player.duration
+        if (durationMs <= 0) return
+
+        // If no outro segment exists yet, see if chapter detection can now resolve an outro with the known duration
+        if (currentMediaItemSegments.none { it.type == SpatialFinSegmentType.OUTRO }) {
+            val chapterSegments = ChapterSegmentDetector.detectSegments(item.chapters, durationMs)
+            val outroSegment = chapterSegments.firstOrNull { it.type == SpatialFinSegmentType.OUTRO }
+            if (outroSegment != null) {
+                val updated = currentMediaItemSegments.toMutableList()
+                if (updated.none { it.type == SpatialFinSegmentType.OUTRO }) {
+                    updated.add(outroSegment)
+                    currentMediaItemSegments = updated
+                    Timber.i("Augmented outro segment from chapters for %s once duration became known (%d ms)", item.name, durationMs)
+                }
+            }
         }
     }
 

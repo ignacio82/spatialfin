@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -643,7 +644,7 @@ class TabletScreenshotActivity : ComponentActivity() {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     IconButton(onClick = {}) {
-                        Icon(Icons.Rounded.ArrowBack, contentDescription = null, tint = Color.White)
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = null, tint = Color.White)
                     }
                     Column {
                         Text(

@@ -53,6 +53,23 @@ class JellyfinApi(
     connectTimeout: Long = Constants.NETWORK_DEFAULT_CONNECT_TIMEOUT,
     socketTimeout: Long = Constants.NETWORK_DEFAULT_SOCKET_TIMEOUT,
 ) {
+    val okHttpClient: OkHttpClient =
+        OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val originalRequest = chain.request()
+                val headerValue = buildAcceptLanguageHeader()
+                val request =
+                    if (originalRequest.header("Accept-Language") == null && headerValue != null) {
+                        originalRequest.newBuilder()
+                            .header("Accept-Language", headerValue)
+                            .build()
+                    } else {
+                        originalRequest
+                    }
+                chain.proceed(request)
+            }
+            .build()
+
     val jellyfin = createJellyfin {
         clientInfo =
             ClientInfo(
@@ -64,22 +81,6 @@ class JellyfinApi(
             )
         context = androidContext
 
-        val okHttpClient =
-            OkHttpClient.Builder()
-                .addInterceptor { chain ->
-                    val originalRequest = chain.request()
-                    val headerValue = buildAcceptLanguageHeader()
-                    val request =
-                        if (originalRequest.header("Accept-Language") == null && headerValue != null) {
-                            originalRequest.newBuilder()
-                                .header("Accept-Language", headerValue)
-                                .build()
-                        } else {
-                            originalRequest
-                        }
-                    chain.proceed(request)
-                }
-                .build()
         val factory = OkHttpFactory(okHttpClient)
         apiClientFactory = factory
         socketConnectionFactory = factory

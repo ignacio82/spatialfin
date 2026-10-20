@@ -625,6 +625,22 @@ fun BeamSettingsScreen(
                         ),
                         appPreferences = appPreferences,
                     )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_chapter_intro_detection,
+                            descriptionStringRes = SettingsR.string.pref_player_chapter_intro_detection_summary,
+                            backendPreference = appPreferences.playerChapterIntroDetection,
+                        ),
+                        appPreferences = appPreferences,
+                    )
+                    BeamPreferenceRow(
+                        preference = PreferenceSwitch(
+                            nameStringResource = SettingsR.string.pref_player_aniskip_enabled,
+                            descriptionStringRes = SettingsR.string.pref_player_aniskip_enabled_summary,
+                            backendPreference = appPreferences.playerAniSkipEnabled,
+                        ),
+                        appPreferences = appPreferences,
+                    )
                 }
             }
         }

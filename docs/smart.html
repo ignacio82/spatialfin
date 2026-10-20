@@ -49,6 +49,7 @@
                     <span>Original Audio Preference</span>
                     <span>Ordered Spoken Languages</span>
                     <span>Per-Series Memory</span>
+                    <span>Tiered Intro/Outro Skipping</span>
                     <span>Voice + AI Fallback</span>
                 </div>
             </div>
@@ -119,6 +120,15 @@
                                 <li><strong>Deterministic first:</strong> Core playback commands are handled directly for reliability.</li>
                                 <li><strong>On-device path:</strong> Uses LiteRT Gemma or AICore / Gemini Nano where available for private, fast inference.</li>
                                 <li><strong>Cloud fallback:</strong> Optional Gemini API key support for devices where AICore is absent.</li>
+                            </ul>
+                        </div>
+                        <div class="explorer-group">
+                            <h4>Universal Intro & Outro Skipping</h4>
+                            <ul class="explorer-list">
+                                <li><strong>Tier 1 — Server MediaSegments:</strong> Direct integration with Jellyfin 10.10+ MediaSegments and Intro Skipper server plugin for authoritative, pre-computed timestamps.</li>
+                                <li><strong>Tier 2 — Legacy Server Endpoint:</strong> Seamless fallback to <code>/Episode/{id}/IntroTimestamps</code> on Jellyfin 10.8/10.9 servers.</li>
+                                <li><strong>Tier 3 — Embedded Chapter Heuristics:</strong> Instant intro/outro detection from MKV/MP4/Jellyfin chapters for offline media, local files, SMB/NFS shares, or unsegmented servers.</li>
+                                <li><strong>Tier 4 — Community Anime Timestamps:</strong> Optional integration with AniSkip crowdsourced opening/ending/recap timestamps for anime episodes.</li>
                             </ul>
                         </div>
                     </div>

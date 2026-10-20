@@ -234,20 +234,24 @@ class SpatialCommandCoordinator(
         }
 
         if (shouldUseGemma()) {
-            modelManager.ensureInitialized()
-            val instance = modelManager.instance
-            if (instance != null) {
-                // Create a fresh parser each time so it always references the live engine
-                // instance — a cached parser would hold a stale reference after engine re-init.
-                val gemmaAction = GemmaCommandParser(instance).parse(transcript, playerState)
-                if (gemmaAction !is XrPlayerAction.Unrecognized) {
-                    return VoiceParseResult(
-                        action = gemmaAction,
-                        strategy = VoiceParseStrategy.GEMMA,
-                        normalizedTranscript = normalized,
-                        debugInfo = "Gemma command parser matched (${instance.backendName})",
-                    )
+            runCatching {
+                modelManager.ensureInitialized()
+                val instance = modelManager.instance
+                if (instance != null) {
+                    // Create a fresh parser each time so it always references the live engine
+                    // instance — a cached parser would hold a stale reference after engine re-init.
+                    val gemmaAction = GemmaCommandParser(instance).parse(transcript, playerState)
+                    if (gemmaAction !is XrPlayerAction.Unrecognized) {
+                        return VoiceParseResult(
+                            action = gemmaAction,
+                            strategy = VoiceParseStrategy.GEMMA,
+                            normalizedTranscript = normalized,
+                            debugInfo = "Gemma command parser matched (${instance.backendName})",
+                        )
+                    }
                 }
+            }.onFailure { e ->
+                Timber.w(e, "Gemma command parsing threw an exception")
             }
         }
 
@@ -416,6 +420,23 @@ class SpatialCommandCoordinator(
             text.matches(Regex("^(go home|home screen|library|back to home)$")) -> XrPlayerAction.GoHome
             text.matches(Regex("^(close (the )?app|exit (the )?app|quit (the )?app|shut down|close spatial ?fin|exit spatial ?fin|close (the )?application|exit (the )?application)$")) -> XrPlayerAction.CloseApp
             text.matches(Regex("^(exit|quit|back|go back)$")) -> if (text.matches(Regex("^(back|go back)$"))) XrPlayerAction.GoBack else XrPlayerAction.CloseApp
+            playbackActionsAllowed && extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
+            playbackActionsAllowed && text.matches(Regex(".*(next chapter|skip chapter).*")) -> {
+                playerState.chapterNames.takeIf { it.isNotEmpty() }?.let { XrPlayerAction.SeekForward(60) }
+            }
+            playbackActionsAllowed && text.matches(Regex(".*(skip|fast[ -]?for?ward|go forward|jump ahead).*")) -> {
+                XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
+            }
+            playbackActionsAllowed && text.matches(Regex(".*(rewind|go back|skip back|jump back).*")) -> {
+                XrPlayerAction.SeekBackward(extractSeconds(text) ?: 10)
+            }
+            playbackActionsAllowed && text.matches(Regex(".*speed.*(\\d+\\.?\\d*).*")) -> {
+                val speed = Regex("(\\d+\\.?\\d*)").find(text)?.value?.toFloatOrNull()
+                if (speed != null && speed in 0.25f..4.0f) XrPlayerAction.SetSpeed(speed) else null
+            }
+            playbackActionsAllowed && text.matches(Regex(".*(normal speed|reset speed|one ?x|1x).*")) -> XrPlayerAction.SetSpeed(1.0f)
+            playbackActionsAllowed && text.matches(Regex(".*(double speed|two ?x|2x).*")) -> XrPlayerAction.SetSpeed(2.0f)
+            playbackActionsAllowed && text.matches(Regex(".*(half speed|0\\.5x).*")) -> XrPlayerAction.SetSpeed(0.5f)
             else -> null
         }
     }
@@ -543,7 +564,7 @@ class SpatialCommandCoordinator(
             extractVolumeAdjustment(text) != null -> extractVolumeAdjustment(text)
             extractQualityAdjustment(text) != null -> extractQualityAdjustment(text)
             playbackActionsAllowed && extractSeekToPosition(text) != null -> XrPlayerAction.SeekTo(extractSeekToPosition(text)!!)
-            playbackActionsAllowed && text.matches(Regex(".*(skip|fast[ -]?forward|go forward|jump ahead).*")) -> {
+            playbackActionsAllowed && text.matches(Regex(".*(skip|fast[ -]?for?ward|go forward|jump ahead).*")) -> {
                 XrPlayerAction.SeekForward(extractSeconds(text) ?: 15)
             }
             playbackActionsAllowed && text.matches(Regex(".*(rewind|go back|skip back|jump back).*")) -> {

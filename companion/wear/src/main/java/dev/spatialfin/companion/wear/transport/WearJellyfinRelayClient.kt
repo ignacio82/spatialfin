@@ -175,6 +175,16 @@ internal constructor(
     ): Result<String> = ioResult {
         val creds =
             credentialsStore.credentials.value ?: error("Sync your account from the paired phone")
+        if (supportsExtensions && action !is WearPlayerAction.PlayMediaItem) {
+            val payload = WearProtocolCodec.encodeAction(action).decodeToString()
+            command(
+                creds,
+                sessionId,
+                "PlayState",
+                mapOf(WearProtocolPaths.RELAY_ACTION_ARGUMENT to payload),
+            )
+            return@ioResult "Request sent to selected player"
+        }
         when (action) {
             WearPlayerAction.Play -> playstate(creds, sessionId, "Unpause")
             WearPlayerAction.Pause -> playstate(creds, sessionId, "Pause")
@@ -305,6 +315,7 @@ internal constructor(
     ) {
         val url = endpoint(creds, "Sessions", sessionId, "Playing", command).newBuilder()
         ticks?.let { url.addQueryParameter("seekPositionTicks", it.toString()) }
+        url.addQueryParameter("controllingUserId", creds.userId)
         post(creds, url.build(), "", false)
     }
 

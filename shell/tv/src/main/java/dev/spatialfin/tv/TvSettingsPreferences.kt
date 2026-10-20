@@ -282,6 +282,8 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
     var trickplay by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerTrickplay)) }
     var skipButton by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerMediaSegmentsSkipButton)) }
     var autoSkip by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerMediaSegmentsAutoSkip)) }
+    var chapterDetection by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerChapterIntroDetection)) }
+    var aniSkip by rememberSaveable { mutableStateOf(appPreferences.getValue(appPreferences.playerAniSkipEnabled)) }
     var seekBack by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekBackInc) / 1000L) }
     var seekFwd by rememberSaveable { mutableLongStateOf(appPreferences.getValue(appPreferences.playerSeekForwardInc) / 1000L) }
     val currentQuality = QualityOption.fromBps(playerMaxBitrate)
@@ -344,6 +346,16 @@ private fun TvPlaybackPrefs(appPreferences: AppPreferences) {
         title = "Auto-skip intro / outro",
         checked = autoSkip,
         onCheckedChange = { autoSkip = it; appPreferences.setValue(appPreferences.playerMediaSegmentsAutoSkip, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Fallback chapter intro detection",
+        checked = chapterDetection,
+        onCheckedChange = { chapterDetection = it; appPreferences.setValue(appPreferences.playerChapterIntroDetection, it) },
+    )
+    TvPrefSwitchRow(
+        title = "Community anime skip times (AniSkip)",
+        checked = aniSkip,
+        onCheckedChange = { aniSkip = it; appPreferences.setValue(appPreferences.playerAniSkipEnabled, it) },
     )
     TvPrefTextField(
         title = "Seek back seconds",
