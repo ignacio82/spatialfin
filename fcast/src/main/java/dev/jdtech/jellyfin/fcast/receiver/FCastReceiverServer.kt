@@ -161,7 +161,9 @@ class FCastReceiverServer(
                             nowMs = config.clock,
                             onDisconnect = { sessions.remove(it) },
                         )
-                        sessions.add(session)
+                        if (!session.isClosed) {
+                            sessions.add(session)
+                        }
                     } catch (e: Exception) {
                         Timber.tag(TAG).w(e, "FCast session init failed")
                         try { client.close() } catch (_: Exception) {}

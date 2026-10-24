@@ -15,6 +15,8 @@ import java.io.DataOutputStream
 import java.io.IOException
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,13 +48,15 @@ class FCastReceiverSession(
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
     /** Callback invoked when the session reader loop exits or the session is manually closed. */
     private val onDisconnect: (FCastReceiverSession) -> Unit = {},
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
     private val output: DataOutputStream = DataOutputStream(socket.getOutputStream().buffered())
     private val input: DataInputStream = DataInputStream(inputStream)
     private val writeMutex = Mutex()
     private val closed = AtomicBoolean(false)
-    private val readerJob: Job
+    @Volatile
+    private var readerJob: Job? = null
 
     /** True if the session has been closed manually or its reader loop has exited. */
     val isClosed: Boolean get() = closed.get()
@@ -60,7 +64,12 @@ class FCastReceiverSession(
     val remoteAddress: String = socket.remoteSocketAddress?.toString().orEmpty()
 
     init {
-        readerJob = parentScope.launch { runReadLoop() }
+        val job = parentScope.launch { runReadLoop() }
+        readerJob = job
+        if (closed.get()) {
+            job.cancel()
+            readerJob = null
+        }
     }
 
     private suspend fun runReadLoop() {
@@ -70,7 +79,7 @@ class FCastReceiverSession(
             sendInternal(FCastMessage.Initial(receiverInfo))
 
             while (!closed.get()) {
-                val msg = withContext(Dispatchers.IO) {
+                val msg = withContext(ioDispatcher) {
                     try {
                         FCastFrame.read(input, isWebSocket)
                     } catch (e: IOException) {
@@ -80,6 +89,8 @@ class FCastReceiverSession(
                 } ?: break
                 handle(msg)
             }
+        } catch (e: CancellationException) {
+            // Normal cancellation when the session is closed
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "FCast session %s crashed", remoteAddress)
         } finally {
@@ -145,7 +156,7 @@ class FCastReceiverSession(
     private suspend fun sendInternal(message: FCastMessage) {
         if (closed.get()) return
         writeMutex.withLock {
-            withContext(Dispatchers.IO) {
+            withContext(ioDispatcher) {
                 try {
                     FCastFrame.write(output, message, isWebSocket)
                 } catch (e: IOException) {
@@ -158,8 +169,13 @@ class FCastReceiverSession(
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
-        onDisconnect(this)
-        readerJob.cancel()
+        try {
+            onDisconnect(this)
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "Error in onDisconnect callback for %s", remoteAddress)
+        }
+        readerJob?.cancel()
+        readerJob = null
         try { input.close() } catch (_: Exception) {}
         try { output.close() } catch (_: Exception) {}
         try { socket.close() } catch (_: Exception) {}
