@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Looper
 import android.util.Rational
 import android.view.KeyEvent as AndroidKeyEvent
+import dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscodeState
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
@@ -114,8 +115,10 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import android.net.Uri
 import dagger.hilt.android.AndroidEntryPoint
 import dev.jdtech.jellyfin.deeplink.PlayDeepLink
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
@@ -164,6 +167,22 @@ class TvPlayerActivity : AppCompatActivity() {
         const val EXTRA_SUBTITLE_STREAM_INDEX = "subtitleStreamIndex"
         const val EXTRA_SUBTITLES_DISABLED = "subtitlesDisabled"
         const val EXTRA_START_POSITION_MS = "startPositionMs"
+        const val EXTRA_MEDIA_URI = "dev.spatialfin.extra.MEDIA_URI"
+        const val EXTRA_MEDIA_TITLE = "dev.spatialfin.extra.MEDIA_TITLE"
+
+        fun createIntentForUri(
+            context: Context,
+            uri: Uri,
+            title: String? = null,
+            startFromBeginning: Boolean = false,
+        ): Intent =
+            Intent(context, TvPlayerActivity::class.java).apply {
+                data = uri
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra(EXTRA_MEDIA_URI, uri.toString())
+                title?.let { putExtra(EXTRA_MEDIA_TITLE, it) }
+                putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            }
 
         fun createIntent(
             context: Context,
@@ -276,6 +295,12 @@ class TvPlayerActivity : AppCompatActivity() {
     private var mediaSession: MediaSession? = null
     private var libassRenderer: LibassRenderer? = null
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        recreate()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -297,6 +322,9 @@ class TvPlayerActivity : AppCompatActivity() {
         val universalItemId = intent.getStringExtra(EXTRA_UNIVERSAL_ITEM_ID)
         val universalVideoUrl = intent.getStringExtra(EXTRA_UNIVERSAL_VIDEO_URL)
         val universalTitle = intent.getStringExtra(EXTRA_UNIVERSAL_TITLE)
+        val mediaUri = (if (deepLink == null) intent.data else null)
+            ?: intent.getStringExtra(EXTRA_MEDIA_URI)?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        val mediaTitle = intent.getStringExtra(EXTRA_MEDIA_TITLE) ?: mediaUri?.let { VideoUriHelper.resolveDisplayName(this, it) }
         val mediaSourceIndex =
             if (intent.hasExtra(EXTRA_MEDIA_SOURCE_INDEX)) {
                 intent.getIntExtra(EXTRA_MEDIA_SOURCE_INDEX, -1).takeIf { it >= 0 }
@@ -346,6 +374,13 @@ class TvPlayerActivity : AppCompatActivity() {
         replacePlayerForTvSubtitles()
 
         when {
+            mediaUri != null -> {
+                viewModel.initializeUriPlayer(
+                    uri = mediaUri,
+                    title = mediaTitle,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
             localMediaId != null -> {
                 viewModel.initializeLocalPlayer(
                     localMediaId = localMediaId,
@@ -590,6 +625,7 @@ private fun TvPlayerScreen(
 ) {
     val player = viewModel.player
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
     val subtitleBackgroundColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleBackgroundColor) }
     // Scale XR's default 72sp down to ~55% for 1080p TVs (see replacePlayerForTvSubtitles).
@@ -1114,10 +1150,63 @@ private fun TvPlayerScreen(
                     style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
                 )
                 androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
-                androidx.compose.material3.Button(
-                    onClick = { viewModel.dismissPlaybackError(); onBackClick() },
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    androidx.compose.material3.Text(stringResource(CoreR.string.close))
+                    if (error.canTranscodeOffline) {
+                        androidx.compose.material3.Button(
+                            onClick = { viewModel.transcodeCurrentItemForOffline() },
+                        ) {
+                            androidx.compose.material3.Text("Transcode for Offline")
+                        }
+                    }
+                    androidx.compose.material3.Button(
+                        onClick = { viewModel.dismissPlaybackError(); onBackClick() },
+                    ) {
+                        androidx.compose.material3.Text(stringResource(CoreR.string.close))
+                    }
+                }
+            }
+        }
+
+        (transcodeState as? OnDeviceTranscodeState.InProgress)?.let { inProgress ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f))
+                    .padding(48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                androidx.compose.material3.Text(
+                    text = "Transcoding for Offline Playback",
+                    color = Color.White,
+                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.Text(
+                    text = inProgress.title.orEmpty(),
+                    color = Color.White.copy(alpha = 0.85f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { inProgress.progressPercent / 100f },
+                    modifier = Modifier.width(320.dp).height(8.dp),
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.Text(
+                    text = "${inProgress.progressPercent}%",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(24.dp))
+                androidx.compose.material3.Button(
+                    onClick = { viewModel.cancelOnDeviceTranscode() },
+                ) {
+                    androidx.compose.material3.Text(stringResource(CoreR.string.cancel))
                 }
             }
         }

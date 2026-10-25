@@ -4,11 +4,13 @@ import android.Manifest
 import android.os.Build
 import dev.jdtech.jellyfin.player.core.audio.AudioPassthroughSinks
 import dev.jdtech.jellyfin.player.core.splitav.ReceiverAudioCodecs
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -56,6 +58,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -63,6 +66,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscodeState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -174,6 +178,22 @@ class BeamPlayerActivity : AppCompatActivity() {
         const val EXTRA_AUDIO_STREAM_INDEX = "audioStreamIndex"
         const val EXTRA_SUBTITLE_STREAM_INDEX = "subtitleStreamIndex"
         const val EXTRA_SUBTITLES_DISABLED = "subtitlesDisabled"
+        const val EXTRA_MEDIA_URI = "dev.spatialfin.extra.MEDIA_URI"
+        const val EXTRA_MEDIA_TITLE = "dev.spatialfin.extra.MEDIA_TITLE"
+
+        fun createIntentForUri(
+            context: Context,
+            uri: Uri,
+            title: String? = null,
+            startFromBeginning: Boolean = false,
+        ): Intent =
+            Intent(context, BeamPlayerActivity::class.java).apply {
+                data = uri
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra(EXTRA_MEDIA_URI, uri.toString())
+                title?.let { putExtra(EXTRA_MEDIA_TITLE, it) }
+                putExtra(EXTRA_START_FROM_BEGINNING, startFromBeginning)
+            }
 
         /**
          * Boolean Intent extra: when true, this Activity binds itself as the
@@ -446,13 +466,16 @@ class BeamPlayerActivity : AppCompatActivity() {
         val universalItemId = intent.getStringExtra("universalItemId")
         val universalVideoUrl = intent.getStringExtra("universalVideoUrl")
         val universalTitle = intent.getStringExtra("universalTitle")
+        val mediaUri = intent.data ?: intent.getStringExtra(EXTRA_MEDIA_URI)?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        val mediaTitle = intent.getStringExtra(EXTRA_MEDIA_TITLE) ?: mediaUri?.let { VideoUriHelper.resolveDisplayName(this, it) }
 
         Timber.e(
-            "BeamPlayerActivity applyIntent: universalPluginId=%s universalItemId=%s universalVideoUrl=%s universalTitle=%s",
+            "BeamPlayerActivity applyIntent: universalPluginId=%s universalItemId=%s universalVideoUrl=%s universalTitle=%s mediaUri=%s",
             universalPluginId,
             universalItemId,
             universalVideoUrl,
-            universalTitle
+            universalTitle,
+            mediaUri,
         )
 
         Timber.i(
@@ -490,6 +513,13 @@ class BeamPlayerActivity : AppCompatActivity() {
         )
 
         when {
+            mediaUri != null -> {
+                viewModel.initializeUriPlayer(
+                    uri = mediaUri,
+                    title = mediaTitle,
+                    startFromBeginning = startFromBeginning,
+                )
+            }
             localMediaId != null -> {
                 viewModel.initializeLocalPlayer(
                     localMediaId = localMediaId,
@@ -981,6 +1011,7 @@ private fun BeamPlayerScreen(
 ) {
     val player = viewModel.player
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     val syncPlayState by viewModel.syncPlayState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val subtitleTextColor = remember(viewModel.appPreferences) { viewModel.appPreferences.getValue(viewModel.appPreferences.subtitleTextColor) }
@@ -1595,8 +1626,43 @@ private fun BeamPlayerScreen(
                     title = { Text(stringResource(LocalR.string.player_error_title)) },
                     text = { Text(error.message) },
                     confirmButton = {
+                        if (error.canTranscodeOffline) {
+                            TextButton(onClick = { viewModel.transcodeCurrentItemForOffline() }) {
+                                Text("Transcode for Offline")
+                            }
+                        }
+                    },
+                    dismissButton = {
                         TextButton(onClick = { viewModel.dismissPlaybackError(); onBackClick() }) {
                             Text(stringResource(CoreR.string.close))
+                        }
+                    },
+                )
+            }
+
+            (transcodeState as? OnDeviceTranscodeState.InProgress)?.let { inProgress ->
+                AlertDialog(
+                    onDismissRequest = { viewModel.cancelOnDeviceTranscode() },
+                    title = { Text("Transcoding for Offline Playback") },
+                    text = {
+                        Column {
+                            Text(inProgress.title.orEmpty())
+                            Spacer(Modifier.height(12.dp))
+                            LinearProgressIndicator(
+                                progress = { inProgress.progressPercent / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${inProgress.progressPercent}%",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.cancelOnDeviceTranscode() }) {
+                            Text(stringResource(CoreR.string.cancel))
                         }
                     },
                 )

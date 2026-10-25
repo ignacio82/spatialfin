@@ -76,6 +76,9 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem
+import dev.jdtech.jellyfin.player.beam.BeamPlayerActivity
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
+import dev.jdtech.jellyfin.player.tv.TvPlayerActivity
 import dev.jdtech.jellyfin.player.xr.XrPlayerActivity
 import dev.jdtech.jellyfin.player.xr.voice.SecondaryHandPinchDetector
 import dev.jdtech.jellyfin.player.xr.voice.VoiceControlOverlay
@@ -205,6 +208,44 @@ class UnifiedMainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleMaDeepLink(intent)
+        handleViewVideoIntent(intent)
+    }
+
+    private fun handleViewVideoIntent(intent: Intent?): Boolean {
+        if (!ViewVideoPolicy.shouldHandleIntent(this, intent)) return false
+        val uri = intent?.data ?: return false
+
+        val displayName = VideoUriHelper.resolveDisplayName(this, uri)
+        val stereoMode = ViewVideoPolicy.resolveStereoMode(displayName)
+        val projection = ViewVideoPolicy.resolveProjection(displayName)
+
+        Timber.i("handleViewVideoIntent: uri=%s title=%s stereo=%s projection=%s deviceClass=%s",
+            uri, displayName, stereoMode, projection, deviceClass)
+
+        val playerIntent = when (deviceClass) {
+            DeviceClass.XR -> XrPlayerActivity.createIntentForUri(
+                context = this,
+                uri = uri,
+                title = displayName,
+                stereoMode = stereoMode,
+                projection = projection,
+            )
+            DeviceClass.TV -> TvPlayerActivity.createIntentForUri(
+                context = this,
+                uri = uri,
+                title = displayName,
+            )
+            DeviceClass.PHONE -> BeamPlayerActivity.createIntentForUri(
+                context = this,
+                uri = uri,
+                title = displayName,
+            )
+        }
+
+        playerIntent.clipData = intent.clipData ?: android.content.ClipData.newRawUri("video", uri)
+        playerIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(playerIntent)
+        return true
     }
 
     /**
@@ -230,6 +271,11 @@ class UnifiedMainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (handleViewVideoIntent(intent)) {
+            finish()
+            return
+        }
 
         // External display: the browse shell stays on the phone. When the user plays a video and
         // an external display (e.g. Rokid glasses over USB-C) is connected, BeamPlayerActivity

@@ -3,7 +3,7 @@
 This document is the canonical context for any AI assistant working on SpatialFin. It captures the architecture, hard-won XR/voice lessons, build conventions, and known pitfalls.
 
 > **SpatialFin** is a multi-module Kotlin/Android project — a Jellyfin client targeted primarily at Android XR (Samsung Galaxy XR and similar), with secondary phone (`Beam`) and TV form factors built from the same APK.
-> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.66 (167)**, `compileSdk 37`, `targetSdk 36`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000167`) — see [Play Track Bundles](#play-track-bundles).
+> Current version (always re-read `buildSrc/src/main/kotlin/Versions.kt` if in doubt): **2.7.67 (168)**, `compileSdk 37`, `targetSdk 36`, `minSdk 31`, JDK 21. The `tv` flavor uses `APP_CODE + 1_000_000` (currently `1000168`) — see [Play Track Bundles](#play-track-bundles).
 
 ---
 
@@ -66,7 +66,8 @@ These paths are usually not useful for code understanding and should be skipped 
 ### Important Entry Points
 
 - `app/unified/src/main/java/dev/spatialfin/unified/UnifiedApplication.kt` — Hilt application bootstrap. Installs crash logging and FCast ingress synchronously, then defers diagnostics, companion sync, optional LLM warmup, download integrity, and stale-receiver cleanup until the first rendered activity frame (or a two-second fallback for service/worker-only starts).
-- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only UI startup Activity. Branches on `DeviceClass` (XR/PHONE/TV), orchestrates the XR session, panel placement, and gesture wiring, and signals deferred application work after its first Compose frame. Session refreshes are driven by `ActiveSessionBus`, not each `onResume`.
+- `app/unified/src/main/java/dev/spatialfin/unified/UnifiedMainActivity.kt` — the only UI startup Activity. Branches on `DeviceClass` (XR/PHONE/TV), orchestrates the XR session, panel placement, and gesture wiring, handles system-wide "Open with" `ACTION_VIEW` video intents (`content://`, `file://`, `http(s)://`) by routing to the active form factor's player activity with `FLAG_GRANT_READ_URI_PERMISSION`, and signals deferred application work after its first Compose frame. Session refreshes are driven by `ActiveSessionBus`, not each `onResume`. <!-- updated 2026-10-25: handles Open With video intents -->
+- `player/core/src/main/java/dev/jdtech/jellyfin/player/core/VideoUriHelper.kt` + `app/unified/src/main/java/dev/spatialfin/unified/ViewVideoPolicy.kt` — pure helpers for system "Open with" `ACTION_VIEW` video intents (`content://`, `file://`, `http(s)://`, MIME types, and extension fallbacks). Detects supported video URIs and titles, parses stereo 3D (`StereoModeDetector`) and VR projection (`ProjectionModeDetector`) modes from filename heuristics, and dispatches to `XrPlayerActivity`, `BeamPlayerActivity`, or `TvPlayerActivity`. Tested by `ViewVideoPolicyTest` and `VideoUriHelperTest`. <!-- added 2026-10-25: system Open With video playback support -->
 - `app/unified/src/main/java/dev/spatialfin/unified/HomeVoiceController.kt` — owns Home-Space voice services (`SpatialVoiceService`, TTS, Gemini Nano/Cloud, command coordinator, chat engine), the request/interrupt state machine, telemetry, and the Compose effects that drive feedback timeouts, ERROR auto-reset, TTS bookkeeping, and follow-up auto-listen. Delegates TTS transition logic to `AssistantSpeechTransitionEffect`. Pass `LlmModelManager` as a provider/lambda, not an eager instance, or XR Home Space composition will warm LiteRT/GPU at launch. <!-- updated 2026-05-22: lazy LLM provider avoids Galaxy XR startup contention -->
 - `app/unified/src/main/java/dev/spatialfin/unified/HomeVoicePolicy.kt` — pure decision helpers (`isVoiceTurnBusy`, `decideRequest`, `shouldResumeFollowUpAfterInterrupt`, `feedbackTimeoutMs`) that the controller delegates to. Tested by `HomeVoicePolicyTest`.
 - `app/unified/src/main/java/dev/spatialfin/unified/PanelPoseController.kt` — legacy pose persistence helper for the old SceneCore-wrapped XR app panel. The active Galaxy XR browsing panel is now a direct Compose XR `SpatialPanel` with `transformingMovable()` in `UnifiedMainActivity`; do not reintroduce `PanelPoseController` into that path unless a real device proves the DP4 blank-panel regression is gone. Pure policy logic remains covered by `PanelPosePolicyTest`. <!-- updated 2026-05-22: immersive app panel moved off custom SceneCore GroupEntity after Galaxy XR blank Full Space regression -->
@@ -91,6 +92,8 @@ These paths are usually not useful for code understanding and should be skipped 
 - `player/xr/src/main/java/dev/jdtech/jellyfin/player/xr/PlayerSnapshotBuilder.kt` — `buildPlayerStateSnapshot(...)` is the single source of truth for building a `PlayerStateSnapshot` from player + UiState + voice-search + recommendation context. Both `SpatialPlayerScreen.currentRecommendationSnapshot()` and `startVoiceCapture` now call it instead of duplicating the 45-line constructor (which had drifted on `audioTrackNames` / `subtitleTrackNames` / `chapterNames`).
 - `player/core/src/main/java/dev/jdtech/jellyfin/player/core/domain/models/ChapterSegmentDetector.kt` + `player/local/src/main/java/dev/jdtech/jellyfin/player/local/presentation/PlayerViewModel.kt` (`getSegments`): 4-tier intro/outro skip resolution. Authoritative server segments take absolute precedence (Tier 1: Jellyfin `mediaSegmentsApi` / Intro Skipper 10.10+; Tier 2: legacy Intro Skipper `/Episode/{id}/IntroTimestamps`). When server segments are absent, offline, or playing local/SMB media, client heuristics resolve segments: Tier 3 parses embedded MKV/MP4/Jellyfin chapter titles (`ChapterSegmentDetector`, regex matching OP/ED/Intro/Outro with duration guards and async duration refresh on `STATE_READY`), and Tier 4 queries crowdsourced anime timestamps (`AniSkipApi` via MAL ID). Gated by `AppPreferences.playerChapterIntroDetection` and `playerAniSkipEnabled`. <!-- added 2026-10-19: client intro-skipper & tiered segment resolution -->
 - `app/unified/src/main/java/dev/spatialfin/unified/receiver/BootReceiver.kt` + `BootStartPolicy.kt` — handles `BOOT_COMPLETED` broadcast. Skips background `mediaPlayback` FGS auto-start on Android 14+ (API 34+) to comply with OS background launch restrictions and avoid `ForegroundServiceStartNotAllowedException`. Tested by `BootStartPolicyTest`. <!-- updated 2026-07-21: Android 14+ FGS boot launch policy -->
+- `player/core/src/main/java/dev/jdtech/jellyfin/player/core/transcode/OnDeviceTranscoder.kt` — on-device offline transcoding engine wrapping AndroidX Media3 `Transformer`. Converts arbitrary local/offline video containers/codecs into universal H.264/AAC MP4 on-device for airplane mode playback when decode/format errors occur. Exposed in `PlayerViewModel` with progress/cancel and auto-recovery prompt across all form factors. Tested by `OnDeviceTranscoderTest`. <!-- added 2026-10-25: on-device offline transcode recovery -->
+- `core/src/main/java/dev/jdtech/jellyfin/utils/DownloaderImpl.kt` (`verifyDownloadIntegrity`): on-demand deep validation of completed downloads (file existence, byte length match, and `MediaExtractor` container track readability) with auto-requeuing of corrupted tasks and reporting in `DownloadsScreen`. Tested by `DownloadIntegrityVerificationTest`. <!-- added 2026-10-25: deep download integrity verification -->
 
 ### Voice / AI Entry Points
 
@@ -489,67 +492,7 @@ Each result card exposes `Play`, `Trailer`, `More Like This`, `Save`. Reuse the 
 
 ## Debugging Voice / AI
 
-### Wireless ADB Workflow For XR Headsets
-
-1. On the headset: `Developer options` → `Wireless debugging` → `Pair device with pairing code`.
-2. From the workstation: `adb pair <headset-ip>:<pairing-port>` and enter the pairing code.
-3. Find the actual debug endpoint via the wireless debugging screen or `adb mdns services`.
-4. `adb connect <headset-ip>:<debug-port>` and verify with `adb devices -l`.
-
-Notes:
-- Pairing port ≠ debug port. Don't confuse them.
-- XR headsets may appear twice (`<ip>:<port>` and an mDNS alias). Always use the explicit `<ip>:<debug-port>` with `adb -s ...`.
-
-### Install / Logcat Commands
-
-```bash
-./gradlew :app:unified:assembleLibreDebug
-adb -s <ip>:<debug-port> install -r app/unified/build/outputs/apk/libre/debug/spatialfin-libre-arm64-v8a-debug.apk
-
-adb -s <ip>:<debug-port> shell pidof dev.spatialfin.debug
-adb -s <ip>:<debug-port> shell dumpsys package dev.spatialfin.debug
-
-adb -s <ip>:<debug-port> logcat -c
-adb -s <ip>:<debug-port> logcat -b all -v threadtime | tee xr-crash.log
-
-# PID-filtered
-adb -s <ip>:<debug-port> logcat -d -v threadtime --pid $(adb -s <ip>:<debug-port> shell pidof dev.spatialfin.debug)
-```
-
-High-signal log sources: `AndroidRuntime`, `libc`, `SurfaceFlinger`, `BufferQueue`, OpenXR vendor logs, and the app's own `dev.spatialfin.debug` lines (parser, voice, player, subtitle).
-
-### Fast Verification
-
-```bash
-./gradlew :player:xr:testDebugUnitTest                            # cheapest regression check
-./gradlew :player:xr:compileDebugKotlin
-./gradlew :app:unified:compileLibreDebugKotlin
-```
-
-### Where To Look In Logs
-
-User logs land under `Downloads/SpatialFin/`. Tags worth grepping: `SpatialVoiceService`, `SpatialCommandCoordinator`, `GemmaCommandParser`, `LlmChatModelHelper`, `VoiceTelemetryStore`, `SUB:` (libass).
-
-### Failure Triage Order
-
-1. **Speech layer** — did recognition start? soft errors `5`/`7`? did retry happen?
-2. **Parser layer** — was transcript normalized? keyword/replay match? Did the LiteRT tool-call return `interpret_command` with a known `action`? Did the AICore JSON fallback truncate?
-3. **Skill layer** — which `selectedSkill`? `validatedInput` sensible? reply was `DIRECT`/`MODEL`/`FALLBACK`?
-4. **Execution / UI layer** — was `ChatQuery` actually handled on the current screen? did `recommendedItems` populate? did the overlay show feedback?
-
-### Common Real Failure Patterns
-
-- **`TF_LITE_AUX not found in the model`** — NPU unsupported for that model/device. GPU fallback expected. Cache the failing backend.
-- **`GemmaCommandParser: tool-call path failed — falling back to JSON parse`** — the LiteRT tool-call returned null or threw. Expected on AICore (Gemini Nano has no schema support in `mlkit-genai-prompt:1.0.0-beta2`); investigate on LiteRT if the model's been behaving. The JSON-in-text retry still runs behind this, so it's not a user-visible failure on its own.
-- **`GemmaCommandParser: raw response: {"`** — truncated JSON on the fallback path. Rare now that typed tool calling is primary on LiteRT; more likely on AICore. Parser retries once with a stricter instruction before falling through to `Unrecognized`.
-- **Speech soft errors `5` / `7`** — transient recognizer issues. One automatic retry expected.
-- **"Thinking…" never resolves** — usually not a parser problem. Check that `ChatQuery` is handled on the current screen and that feedback / results UI is rendered.
-- **App silently disappears on XR space-mode switch (multitask ↔ immersive) or any Activity lifecycle transition** — **not a code crash**. Logcat fingerprint is `ActivityManager: Killing <pid>:dev.spatialfin.debug ... stop dev.spatialfin.debug due to set debug app` followed by `Zygote: Process <pid> exited due to signal 9 (Killed)`. No Java stack, no tombstone. Cause: `am set-debug-app -w dev.spatialfin.debug` is armed on the device (usually left behind by Android Studio's "Attach debugger to Android process" or a prior `adb shell am set-debug-app -w`). With `-w`, Android waits for a debugger and SIGKILLs the process on lifecycle events when none is attached. Verify with `adb shell settings get global debug_app` (non-null value means armed). Fix: `adb shell am clear-debug-app`. Does not persist across reboots, but Android Studio can re-arm it.
-- **Transport voice commands ("fast forward", "rewind", "seek") crashing on Galaxy XR:** Playback commands must resolve in `exactKeywordMatch()` *before* LiteRT/Gemma inference. On Galaxy XR (Adreno GPU / Snapdragon XR2+ Gen 2), running on-device LLM inference while video decoding and spatial composition run concurrently causes GPU contention, driver crashes, or tool-call failures. In addition: (1) regexes must cover common ASR typos (e.g. `fast[ -]?for?ward`); (2) `PlayerSessionController` must clamp target positions against `duration` and `0L`, and dynamically resolve `activePlayer` via `viewModel.player` to avoid stale/released instances; (3) parsing and dispatch in `PlayerVoiceCapture` must be wrapped in `runCatching` so uncaught exceptions never crash the Android Main looper. <!-- added 2026-10-17: keyword bypass for playback controls & defensive seek clamping -->
-
-### Telemetry Expectations
-
-`VoiceTelemetryStore` records: `transcript`, `normalizedTranscript`, `action`, `strategy`, `selectedSkill`, `validatedInput`, `resultDisposition` (`DIRECT` / `MODEL` / `FALLBACK`), `success`, `details`. This split is critical for "did the parser fail, the skill fail, or the model fail?"
+Moved to [`DEBUGGING_VOICE.md`](DEBUGGING_VOICE.md) — includes wireless ADB setup, logcat command templates, high-signal log tags, layer-by-layer failure triage, common failure patterns (`TF_LITE_AUX`, tool-call fallback, `debug_app` SIGKILL, Galaxy XR keyword bypass), and telemetry contract.
 
 ---
 

@@ -33,6 +33,7 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.dash)
     implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.transformer)
     // Jellyfin's FFmpeg audio-decoder extension. It lives here, not in :player:beam, because
     // this is where the capability probe (FfmpegAudioDecoders) lives — and because it was never
     // beam-only in practice: :player:tv and :app:unified both depend on :player:beam, so the
@@ -45,4 +46,7 @@ dependencies {
     ksp(libs.hilt.compiler)
 }
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation(libs.junit4)
+    testImplementation(libs.mockk)
+}

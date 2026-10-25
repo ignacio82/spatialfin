@@ -61,12 +61,15 @@ Join the [SpatialFin Discord](https://discord.gg/9MHD52r9) for beta updates, tes
 - **Arrange Your Home Screen** — Long-press any row title on Home (or hold the centre button on a card with a TV remote) to move that row up or down, or hide it. The order and the hidden rows are saved and shared by the phone, XR, and TV homes, and stay in step with the per-row switches in the Sources tab.
 - **Every Library Type, Not Just Movies & TV** — Home videos, music videos, trailers, and photo libraries are first-class: loose video files play through the normal player, and stills open in a full-screen viewer with pinch-zoom and pan on XR/phone and D-pad paging on TV. Folder-structured libraries are browsed as their on-disk tree rather than flattened, so the way you filed your media is the way you see it.
 - **Local Library** — Browse and play videos stored directly on the XR device, with filename-based metadata inference plus local watched/resume tracking.
+- **System "Open With" Video Playback** — Tap video files (MKV, MP4, WebM, AVI, TS, etc.) from any file manager, download folder, or external app to play them directly in SpatialFin with automatic 3D stereo and 180°/360° VR projection detection.
 - **Network Shares (SMB/NFS)** — Browse and stream media from SMB and NFS network shares on your local network. Autodiscovery finds shares via mDNS, and TMDB metadata enrichment adds posters, descriptions, ratings, and proper watch tracking — bringing network content close to the Jellyfin experience.
 - **Automatic Offline Mode** — SpatialFin monitors server reachability and automatically switches into offline mode when the selected Jellyfin server is unavailable, then switches back online when the server becomes reachable again.
 - **Offline Playback** — Download media for offline viewing with a new reliable, resumable engine that continues interrupted downloads automatically.
 - **Full Offline Metadata Mirroring** — SpatialFin now downloads everything needed for a complete offline experience, including posters, backdrops, and scrubber thumbnails (trickplay).
 - **Smart Download Reconciliation** — If files disappear from the download folder outside the app, SpatialFin removes the stale entries from its catalog automatically.
-- **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track.
+- **Configurable Downloads** — Download the original server file or request a smaller transcoded version with a selected bitrate, audio track, and subtitle track. Configure default pre-flight transcoding preferences (e.g. 8 Mbps, 6 Mbps) for single and bulk season downloads before travelling.
+- **On-Device Offline Transcoding** — Play any local or downloaded video offline in airplane mode. If an unsupported codec or container produces a playback error, SpatialFin offers on-device transcoding via AndroidX Media3 Transformer directly to a universal H.264/AAC MP4 with live progress and automatic resume.
+- **Download Integrity Verification** — Tap "Verify files" in the Downloads tab to run deep validation (file existence, byte length match, and container track readability) across all downloaded media, automatically requeuing corrupted or missing files for background repair.
 - **In-App Download Management** — Delete downloads from the item screen or directly from the Downloads tab.
 - **SpatialFin Companion Support** — Effortlessly configure your headset by scanning a QR code from the [SpatialFin Companion](https://github.com/ignacio82/SpatialFin-Companion) app. Centrally manage servers, users, and network shares without using the XR keyboard.
 - **Wear OS Companion App** — Control playback right from your smartwatch. Features rotary crown scrubbing with tactile haptic feedback (`SEGMENT_FREQUENT_TICK`), ±10s seeking, live HUD showing headset battery and connection status, quick audio/subtitle/chapter switchers, spatial cinema recentering, Continue Watching ProtoLayout tiles, complications, wrist voice commands, and Split-A/V private audio streaming to watch earbuds.
@@ -122,6 +125,24 @@ Requests a server-side transcode so you can save space by choosing:
 - a lower target bitrate
 - a specific audio track
 - a specific subtitle track
+
+You can configure default pre-flight transcoding in Settings (e.g. automatically prefer transcoded files at 8 Mbps for all single and bulk season downloads before going offline).
+
+### On-Device Offline Transcoding (Airplane Mode)
+
+When you are offline or in airplane mode without access to your Jellyfin server, you might encounter local or downloaded videos with esoteric audio codecs or unsupported video containers that your device hardware cannot decode. SpatialFin includes an integrated on-device transcoding engine powered by AndroidX Media3 `Transformer`:
+- When a playback failure occurs on local or downloaded media, SpatialFin displays a **Transcode for Offline** recovery action.
+- Transcodes the input into a universal, hardware-accelerated H.264 video with AAC audio MP4 container.
+- Displays live progress percentage and allows cancellation at any time.
+- Automatically launches playback of the converted video upon completion.
+
+### Download File Integrity Verification
+
+To ensure your downloaded content is 100% playable before you board a flight:
+- Tap **Verify files** in the Downloads screen to perform an on-demand deep validation pass.
+- Checks file existence, validates byte length against server metadata, and inspects container readability via `MediaExtractor`.
+- If any file is missing, zero-length, truncated, or unreadable, SpatialFin automatically cleans up the broken file and requeues it for a clean background download.
+- Reports a clear summary of healthy and repaired files directly on the screen.
 
 ### Deleting Downloads
 
@@ -189,6 +210,7 @@ SpatialFin can now operate as a local-first XR player, even without a Jellyfin s
 - SpatialFin parses file names to infer cleaner titles and basic season/episode or year metadata when possible.
 - Local watch progress and watched/unwatched state are stored on-device, so resume works without any server.
 - On first app launch, SpatialFin also requests video-library permission so the local library can be populated immediately.
+- **System "Open With" integration**: SpatialFin registers as a system video player across Android (`content://`, `file://`, and streaming URIs), letting you tap video files in file managers, browser downloads, or messaging apps to open directly in SpatialFin with automatic 3D stereo (SBS/OU) and VR projection (180°/360°) detection and form-factor routing (XR Full Space theater, Beam phone player, or Android TV).
 
 ## Voice Control
 

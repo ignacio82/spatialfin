@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.presentation.player
 
+import android.net.Uri
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import java.util.UUID
 
@@ -70,6 +71,16 @@ sealed interface PlayRequest {
         val videoUrl: String,
         val name: String,
         val stereoMode: String? = null,
+        val projection: String? = null,
+    ) : PlayRequest
+
+    /** An arbitrary video Uri (from Open With, external app, or file manager). */
+    data class UriMedia(
+        val uri: Uri,
+        val title: String? = null,
+        val startFromBeginning: Boolean = false,
+        val immersive: Boolean = true,
+        val stereoMode: String = "mono",
         val projection: String? = null,
     ) : PlayRequest
 }

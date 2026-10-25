@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.jdtech.jellyfin.models.BulkDownloadSettings
+import dev.jdtech.jellyfin.models.DownloadMode
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.repository.JellyfinRepository
+import dev.jdtech.jellyfin.settings.domain.AppPreferences
 import dev.jdtech.jellyfin.utils.Downloader
 import java.util.UUID
 import javax.inject.Inject
@@ -22,6 +24,7 @@ class SeasonViewModel
 constructor(
     private val repository: JellyfinRepository,
     private val downloader: Downloader,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SeasonState())
     val state = _state.asStateFlow()
@@ -96,16 +99,29 @@ constructor(
                     loadSeason(seasonId)
                 }
             }
-            is SeasonAction.DownloadEpisodes -> downloadEpisodes(action.episodes)
+            is SeasonAction.DownloadEpisodes -> downloadEpisodes(action.episodes, action.settings)
             else -> Unit
         }
     }
 
-    private fun downloadEpisodes(episodes: List<SpatialFinEpisode>) {
+    private fun downloadEpisodes(
+        episodes: List<SpatialFinEpisode>,
+        customSettings: BulkDownloadSettings? = null,
+    ) {
         if (episodes.isEmpty()) return
         viewModelScope.launch {
             _state.emit(_state.value.copy(isQueuingBulkDownload = true, bulkDownloadResult = null))
-            val result = downloader.downloadItems(episodes, BulkDownloadSettings())
+            val settings = customSettings ?: run {
+                val preferTranscode = appPreferences.getValue(appPreferences.downloadPreferTranscoded)
+                val mode = if (preferTranscode) DownloadMode.TRANSCODED else DownloadMode.ORIGINAL
+                val bitrate = if (mode == DownloadMode.TRANSCODED) {
+                    appPreferences.getValue(appPreferences.downloadTranscodeBitrate)
+                } else {
+                    null
+                }
+                BulkDownloadSettings(mode = mode, videoBitrate = bitrate)
+            }
+            val result = downloader.downloadItems(episodes, settings)
             _state.emit(_state.value.copy(isQueuingBulkDownload = false, bulkDownloadResult = result))
         }
     }

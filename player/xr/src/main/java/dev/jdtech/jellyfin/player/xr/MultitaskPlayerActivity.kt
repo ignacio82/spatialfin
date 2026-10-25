@@ -4,6 +4,8 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
@@ -41,11 +43,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscodeState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -143,6 +147,21 @@ class MultitaskPlayerActivity : ComponentActivity() {
                 putExtra("startFromBeginning", startFromBeginning)
             }
         }
+
+        fun createIntentForUri(
+            context: Context,
+            uri: Uri,
+            title: String? = null,
+            startFromBeginning: Boolean = false,
+        ): Intent {
+            return Intent(context, MultitaskPlayerActivity::class.java).apply {
+                data = uri
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra("mediaUri", uri.toString())
+                title?.let { putExtra("mediaTitle", it) }
+                putExtra("startFromBeginning", startFromBeginning)
+            }
+        }
     }
 
     @OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -159,8 +178,10 @@ class MultitaskPlayerActivity : ComponentActivity() {
         val universalItemId = intent.extras?.getString("universalItemId")
         val universalVideoUrl = intent.extras?.getString("universalVideoUrl")
         val universalTitle = intent.extras?.getString("universalTitle")
+        val mediaUri = intent.data ?: intent.extras?.getString("mediaUri")?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        val mediaTitle = intent.extras?.getString("mediaTitle") ?: mediaUri?.let { VideoUriHelper.resolveDisplayName(this, it) }
 
-        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null) {
+        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null && mediaUri == null) {
             finish()
             return
         }
@@ -217,7 +238,9 @@ class MultitaskPlayerActivity : ComponentActivity() {
 
         viewModel.replacePlayer(player)
         
-        if (localMediaId != null) {
+        if (mediaUri != null) {
+            viewModel.initializeUriPlayer(mediaUri, mediaTitle, startFromBeginning)
+        } else if (localMediaId != null) {
             viewModel.initializeLocalPlayer(localMediaId, startFromBeginning)
         } else if (networkVideoId != null) {
             viewModel.initializeNetworkPlayer(networkVideoId, startFromBeginning)
@@ -365,6 +388,7 @@ private fun MultitaskControllerOverlay(
     var visible by remember { mutableStateOf(true) }
     var activeDialog by remember { mutableStateOf<String?>(null) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val transcodeState by viewModel.onDeviceTranscodeState.collectAsStateWithLifecycle()
     
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -545,8 +569,57 @@ private fun MultitaskControllerOverlay(
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                     Spacer(Modifier.height(20.dp))
-                    Button(onClick = { viewModel.dismissPlaybackError(); onBackClick() }) {
-                        Text(stringResource(CoreR.string.close))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (error.canTranscodeOffline) {
+                            Button(onClick = { viewModel.transcodeCurrentItemForOffline() }) {
+                                Text("Transcode for Offline")
+                            }
+                        }
+                        Button(onClick = { viewModel.dismissPlaybackError(); onBackClick() }) {
+                            Text(stringResource(CoreR.string.close))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (transcodeState as? OnDeviceTranscodeState.InProgress)?.let { inProgress ->
+        Dialog(onDismissRequest = { viewModel.cancelOnDeviceTranscode() }) {
+            Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF1C1C1E)) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = "Transcoding for Offline Playback",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = inProgress.title.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    LinearProgressIndicator(
+                        progress = { inProgress.progressPercent / 100f },
+                        modifier = Modifier.fillMaxWidth().height(8.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "${inProgress.progressPercent}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = { viewModel.cancelOnDeviceTranscode() }) {
+                        Text(stringResource(CoreR.string.cancel))
                     }
                 }
             }

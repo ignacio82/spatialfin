@@ -37,6 +37,7 @@ import dev.jdtech.jellyfin.work.ResumableDownloadWorker
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -291,6 +292,103 @@ class DownloaderImpl(
 
     override fun verifyDownloads() {
         DownloadIntegrityWorker.enqueue(workManager)
+    }
+
+    override suspend fun verifyDownloadIntegrity(): DownloadVerificationReport =
+        withContext(Dispatchers.IO) {
+            val tasks =
+                database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) +
+                    database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE)
+            var intact = 0
+            var broken = 0
+            var requeued = 0
+            val details = mutableListOf<String>()
+
+            for (task in tasks) {
+                if (task.finalPath.isBlank()) continue
+                val finalFile = java.io.File(task.finalPath)
+                val exists = finalFile.exists()
+                val length = if (exists) finalFile.length() else 0L
+                val expected = task.totalBytes
+
+                val isMissing = !exists || length == 0L
+                val isSizeMismatch = expected != null && expected > 0L && length != expected
+                val isCorrupt = if (!isMissing && !isSizeMismatch && task.kind == DownloadTaskKind.PRIMARY && !task.isEncrypted) {
+                    checkMediaFileCorrupted(finalFile)
+                } else {
+                    false
+                }
+
+                if (isMissing || isSizeMismatch || isCorrupt) {
+                    broken++
+                    val reason = when {
+                        isMissing -> "File missing or 0 bytes"
+                        isSizeMismatch -> "Size mismatch ($length vs expected $expected)"
+                        else -> "Corrupt media container (unreadable tracks)"
+                    }
+                    details.add("${finalFile.name}: $reason")
+                    Timber.w("verifyDownloadIntegrity: broken task %s (%s)", task.id, reason)
+                    runCatching {
+                        requeueBrokenTask(task)
+                        requeued++
+                    }.onFailure {
+                        Timber.e(it, "verifyDownloadIntegrity: failed to requeue task %s", task.id)
+                    }
+                } else {
+                    intact++
+                }
+            }
+
+            DownloadVerificationReport(
+                totalChecked = tasks.size,
+                intactCount = intact,
+                missingOrCorruptedCount = broken,
+                requeuedForRepairCount = requeued,
+                details = details,
+            )
+        }
+
+    private fun checkMediaFileCorrupted(file: java.io.File): Boolean {
+        val extractor = android.media.MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            extractor.trackCount == 0
+        } catch (_: Exception) {
+            // Unparseable header or corrupted container
+            true
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
+    private fun requeueBrokenTask(task: DownloadTaskDto) {
+        if (task.tempPath.isNotBlank()) {
+            when (task.kind) {
+                DownloadTaskKind.PRIMARY ->
+                    database.setSourcePath(task.sourceId, task.tempPath)
+                DownloadTaskKind.SUBTITLE ->
+                    task.mediaStreamId?.let { database.setMediaStreamPath(it, task.tempPath) }
+            }
+        }
+        database.updateDownloadTask(
+            id = task.id,
+            downloadId = task.downloadId,
+            bytesDownloaded = 0L,
+            totalBytes = task.totalBytes,
+            eTag = null,
+            lastModified = null,
+            status = DownloadManager.STATUS_PENDING,
+            progress = 0,
+            errorMessage = "Integrity check failed — re-downloading",
+            updatedAt = System.currentTimeMillis(),
+        )
+
+        java.io.File(task.finalPath).takeIf(java.io.File::exists)?.delete()
+        java.io.File(task.tempPath).takeIf(java.io.File::exists)?.delete()
+
+        val title = database.getMovieOrNull(task.itemId)?.name
+            ?: database.getEpisodeOrNull(task.itemId)?.name
+        enqueueResumableDownload(task.id, title)
     }
 
     private fun enqueuePreparationWorker(

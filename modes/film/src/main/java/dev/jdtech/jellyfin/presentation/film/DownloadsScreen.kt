@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,10 +39,12 @@ import dev.jdtech.jellyfin.models.CollectionSection
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.presentation.film.components.ActiveDownloadRow
+import dev.jdtech.jellyfin.presentation.film.components.BrowseHeaderAction
 import dev.jdtech.jellyfin.presentation.film.components.CollectionGrid
 import dev.jdtech.jellyfin.presentation.film.components.DeleteDownloadDialog
 import dev.jdtech.jellyfin.presentation.film.components.XrBrowseHeader
 import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
+import dev.jdtech.jellyfin.utils.DownloadVerificationReport
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.spatialfin.presentation.theme.SpatialFinTheme
 import dev.spatialfin.presentation.theme.spacings
@@ -52,6 +57,8 @@ fun DownloadsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val activeDownloads by viewModel.activeDownloads.collectAsStateWithLifecycle()
     val storageUsedBytes by viewModel.storageUsedBytes.collectAsStateWithLifecycle()
+    val isVerifying by viewModel.isVerifying.collectAsStateWithLifecycle()
+    val verificationReport by viewModel.verificationReport.collectAsStateWithLifecycle()
     var pendingDeleteItem by remember { mutableStateOf<SpatialFinItem?>(null) }
 
     LaunchedEffect(true) { viewModel.loadItems() }
@@ -60,6 +67,10 @@ fun DownloadsScreen(
         state = state,
         activeDownloads = activeDownloads,
         storageUsedBytes = storageUsedBytes,
+        isVerifying = isVerifying,
+        verificationReport = verificationReport,
+        onVerifyClick = { viewModel.verifyDownloadsManually() },
+        onDismissReport = { viewModel.dismissVerificationReport() },
         onDeleteItem = { pendingDeleteItem = it },
         onAction = { action ->
             when (action) {
@@ -85,14 +96,19 @@ private fun DownloadsScreenLayout(
     state: CollectionState,
     activeDownloads: List<ActiveDownloadEntry> = emptyList(),
     storageUsedBytes: Long = 0L,
+    isVerifying: Boolean = false,
+    verificationReport: DownloadVerificationReport? = null,
+    onVerifyClick: () -> Unit = {},
+    onDismissReport: () -> Unit = {},
     onDeleteItem: ((SpatialFinItem) -> Unit)? = null,
     onAction: (CollectionAction) -> Unit,
 ) {
     val safePadding = rememberSafePadding()
     val context = LocalContext.current
+    val reportExtraPadding = if (verificationReport != null) 64.dp else 0.dp
     val gridTopPadding =
-        if (activeDownloads.isEmpty()) safePadding.top + 96.dp
-        else safePadding.top + 116.dp + (88.dp * activeDownloads.size.coerceAtMost(3))
+        if (activeDownloads.isEmpty()) safePadding.top + 96.dp + reportExtraPadding
+        else safePadding.top + 116.dp + (88.dp * activeDownloads.size.coerceAtMost(3)) + reportExtraPadding
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -106,7 +122,46 @@ private fun DownloadsScreenLayout(
         ) {
             XrBrowseHeader(
                 title = stringResource(CoreR.string.title_download),
+                primaryAction = BrowseHeaderAction(
+                    label = if (isVerifying) "Verifying…" else "Verify files",
+                    icon = CoreR.drawable.ic_check,
+                    onClick = onVerifyClick,
+                ),
             )
+            verificationReport?.let { report ->
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (report.missingOrCorruptedCount > 0) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (report.totalChecked == 0) {
+                                    "No completed downloads to verify."
+                                } else if (report.missingOrCorruptedCount > 0) {
+                                    "Integrity check: ${report.missingOrCorruptedCount} corrupted or missing file(s) requeued for re-download (${report.intactCount} healthy)."
+                                } else {
+                                    "Integrity check: All ${report.intactCount} downloaded file(s) verified healthy."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (report.missingOrCorruptedCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                        TextButton(onClick = onDismissReport) {
+                            Text(
+                                stringResource(CoreR.string.close),
+                                color = if (report.missingOrCorruptedCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),

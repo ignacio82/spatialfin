@@ -92,6 +92,26 @@ private fun launchPlayRequest(
                 )
             )
         }
+        is PlayRequest.UriMedia -> {
+            val intent = if (request.immersive) {
+                XrPlayerActivity.createIntentForUri(
+                    context = context,
+                    uri = request.uri,
+                    title = request.title,
+                    startFromBeginning = request.startFromBeginning,
+                    stereoMode = request.stereoMode,
+                    projection = request.projection ?: "flat",
+                )
+            } else {
+                MultitaskPlayerActivity.createIntentForUri(
+                    context = context,
+                    uri = request.uri,
+                    title = request.title,
+                    startFromBeginning = request.startFromBeginning,
+                )
+            }
+            context.startActivity(intent)
+        }
     }
 }
 

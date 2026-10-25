@@ -1,5 +1,6 @@
 package dev.jdtech.jellyfin.player.xr
 import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
+import dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscodeState
 
 import android.Manifest
 import android.app.Activity
@@ -250,6 +251,8 @@ fun SpatialPlayerScreen(
     universalItemId: String? = null,
     universalVideoUrl: String? = null,
     universalTitle: String? = null,
+    mediaUri: Uri? = null,
+    mediaTitle: String? = null,
     itemKind: String,
     startFromBeginning: Boolean,
     mediaSourceIndex: Int? = null,
@@ -280,6 +283,7 @@ fun SpatialPlayerScreen(
     val activity = context as? Activity
     val coroutineScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsState()
+    val transcodeState by viewModel.onDeviceTranscodeState.collectAsState()
     val syncPlayState by viewModel.syncPlayState.collectAsState()
     val player by viewModel.playerFlow.collectAsState()
     val savedPlayerPose = remember(viewModel) { loadSavedPlayerRootPose(viewModel) }
@@ -1794,6 +1798,7 @@ fun SpatialPlayerScreen(
     }
 
     val playerMediaKey = when {
+        mediaUri != null -> "uri:$mediaUri:start=$startFromBeginning"
         localMediaId != null -> "local:$localMediaId:start=$startFromBeginning"
         networkVideoId != null -> "network:$networkVideoId:start=$startFromBeginning"
         itemId != null ->
@@ -1830,6 +1835,13 @@ fun SpatialPlayerScreen(
             firstVideoFrameRendered = false
             Timber.i("XR_VIDEO: initializing player media key=%s", playerMediaKey)
             when {
+                mediaUri != null -> {
+                    viewModel.initializeUriPlayer(
+                        uri = mediaUri,
+                        title = mediaTitle,
+                        startFromBeginning = startFromBeginning,
+                    )
+                }
                 localMediaId != null -> {
                     viewModel.initializeLocalPlayer(
                         localMediaId = localMediaId,
@@ -2885,13 +2897,66 @@ fun SpatialPlayerScreen(
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 )
                                 Spacer(Modifier.height(24.dp))
-                                Button(
-                                    onClick = {
-                                        viewModel.dismissPlaybackError()
-                                        requestExit("playback-error")
-                                    },
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(stringResource(CoreR.string.close))
+                                    if (error.canTranscodeOffline) {
+                                        Button(
+                                            onClick = {
+                                                viewModel.transcodeCurrentItemForOffline()
+                                            },
+                                        ) {
+                                            Text("Transcode for Offline")
+                                        }
+                                    }
+                                    Button(
+                                        onClick = {
+                                            viewModel.dismissPlaybackError()
+                                            requestExit("playback-error")
+                                        },
+                                    ) {
+                                        Text(stringResource(CoreR.string.close))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    (transcodeState as? OnDeviceTranscodeState.InProgress)?.let { inProgress ->
+                        SpatialDialog(
+                            onDismissRequest = { viewModel.cancelOnDeviceTranscode() },
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    text = "Transcoding for Offline Playback",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    text = inProgress.title.orEmpty(),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                LinearProgressIndicator(
+                                    progress = { inProgress.progressPercent / 100f },
+                                    modifier = Modifier.fillMaxWidth().height(8.dp),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "${inProgress.progressPercent}%",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(24.dp))
+                                Button(
+                                    onClick = { viewModel.cancelOnDeviceTranscode() },
+                                ) {
+                                    Text(stringResource(CoreR.string.cancel))
                                 }
                             }
                         }

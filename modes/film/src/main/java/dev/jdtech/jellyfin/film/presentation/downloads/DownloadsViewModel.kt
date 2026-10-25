@@ -16,6 +16,8 @@ import dev.jdtech.jellyfin.models.UiText
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.utils.ActiveDownloadEntry
 import dev.jdtech.jellyfin.utils.Downloader
+import dev.jdtech.jellyfin.utils.DownloadVerificationReport
+import timber.log.Timber
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,9 +75,38 @@ constructor(
     val continueWatchingItems = _continueWatchingItems.asStateFlow()
     private var hasLoadedItems = false
 
+    private val _isVerifying = MutableStateFlow(false)
+    val isVerifying = _isVerifying.asStateFlow()
+
+    private val _verificationReport = MutableStateFlow<DownloadVerificationReport?>(null)
+    val verificationReport = _verificationReport.asStateFlow()
+
     init {
         observeRealtimeEvents()
         downloader.verifyDownloads()
+    }
+
+    /**
+     * Runs an on-demand deep integrity verification on all completed downloads.
+     */
+    fun verifyDownloadsManually() {
+        if (_isVerifying.value) return
+        viewModelScope.launch {
+            _isVerifying.emit(true)
+            try {
+                val report = downloader.verifyDownloadIntegrity()
+                _verificationReport.emit(report)
+                loadItems()
+            } catch (e: Exception) {
+                Timber.e(e, "Manual download verification failed")
+            } finally {
+                _isVerifying.emit(false)
+            }
+        }
+    }
+
+    fun dismissVerificationReport() {
+        _verificationReport.value = null
     }
 
     fun loadItems() {

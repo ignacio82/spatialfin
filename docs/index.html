@@ -292,6 +292,7 @@
                                         <li><strong>Local Storage:</strong> Browse and play videos stored directly on the XR device.</li>
                                         <li><strong>HTTP Proxy Bridge:</strong> High-performance seek support for network streams.</li>
                                         <li><strong>Local Resume:</strong> Progress and unplayed status tracked per video file.</li>
+                                        <li><strong>System "Open With" Support:</strong> SpatialFin appears in Android's system "Open with" chooser when tapping video files (<code>content://</code>, <code>file://</code>, or streaming URIs) in file managers or downloaders, with automatic 3D stereo (SBS/OU) and VR projection (180°/360°) detection and form-factor routing.</li>
                                     </ul>
                                 </div>
                             </div>
@@ -304,13 +305,16 @@
                                     <h4>Downloads</h4>
                                     <ul class="explorer-list">
                                         <li><strong>Resumable Engine:</strong> Downloads survive app restarts and network swaps.</li>
-                                        <li><strong>Configurable Options:</strong> Choose between original files or smaller transcoded versions.</li>
+                                        <li><strong>Configurable Options:</strong> Choose between original files or smaller transcoded versions with custom bitrate.</li>
+                                        <li><strong>Pre-Flight Transcoding:</strong> Bulk season and single downloads support default server transcoding for guaranteed offline playback.</li>
                                         <li><strong>Foreground Tracking:</strong> Monitor download progress in real-time from the system tray.</li>
                                     </ul>
                                 </div>
                                 <div class="explorer-group">
                                     <h4>Offline Experience</h4>
                                     <ul class="explorer-list">
+                                        <li><strong>On-Device Transcoding:</strong> Convert unplayable video codecs directly on-device to universal H.264/AAC MP4 in airplane mode.</li>
+                                        <li><strong>Deep Integrity Verification:</strong> One-tap verification checks file existence, byte size, and container readability with auto-requeue.</li>
                                         <li><strong>Automatic Mode:</strong> Seamlessly switches to offline library when the server is unreachable.</li>
                                         <li><strong>Complete Mirroring:</strong> Offline items include posters, backdrops, and scrubber thumbnails.</li>
                                         <li><strong>Smart Cleanup:</strong> Automatically reconciles library if files are removed manually.</li>

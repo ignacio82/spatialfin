@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.view.Display
@@ -30,6 +31,8 @@ import dev.jdtech.jellyfin.models.SpatialFinMediaStream
 import dev.jdtech.jellyfin.models.SpatialFinSegment
 import dev.jdtech.jellyfin.models.SpatialFinSegmentType
 import dev.jdtech.jellyfin.models.SyncPlayGroup
+import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
 import dev.jdtech.jellyfin.player.core.domain.models.ChapterSegmentDetector
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource
@@ -293,11 +296,21 @@ constructor(
      * User-facing playback failure. [message] is already resolved to a localized,
      * human-readable string; [detail] carries the raw Media3 error-code name for
      * support/log correlation (shown small, optional).
+     * [canTranscodeOffline] indicates whether on-device transcoding is possible for this item.
      */
     data class PlaybackError(
         val message: String,
         val detail: String? = null,
+        val canTranscodeOffline: Boolean = false,
     )
+
+    var currentMediaUri: Uri? = null
+        private set
+    var currentMediaTitle: String? = null
+        private set
+
+    val onDeviceTranscoder = dev.jdtech.jellyfin.player.core.transcode.OnDeviceTranscoder(application, viewModelScope)
+    val onDeviceTranscodeState = onDeviceTranscoder.state
 
     private var items: MutableList<PlayerItem> = mutableListOf()
 
@@ -953,6 +966,86 @@ constructor(
 
             player.setMediaItems(listOf(startItem.toMediaItem()), 0, startPosition)
             Timber.i("initializeLocalPlayer prepared startPosition=%d", startPosition)
+            player.prepare()
+            player.play()
+        }
+    }
+
+    fun initializeUriPlayer(
+        uri: Uri,
+        title: String? = null,
+        startFromBeginning: Boolean = false,
+    ) {
+        player.removeListener(this)
+        player.addListener(this)
+        Timber.i(
+            "initializeUriPlayer uri=%s title=%s startFromBeginning=%b currentPlayer=%s",
+            uri,
+            title,
+            startFromBeginning,
+            player.javaClass.simpleName,
+        )
+
+        currentMediaUri = uri
+        currentMediaTitle = title
+
+        viewModelScope.launch {
+            val displayName = title ?: VideoUriHelper.resolveDisplayName(application, uri)
+            currentMediaTitle = displayName
+            val itemUuid = UUID.nameUUIDFromBytes(uri.toString().toByteArray())
+
+            // Attempt to resolve mediaStoreId if this is a MediaStore URI
+            val mediaStoreId = runCatching {
+                if (uri.authority == "media" || uri.toString().contains("video/media")) {
+                    android.content.ContentUris.parseId(uri).takeIf { it > 0L }
+                } else {
+                    null
+                }
+            }.getOrNull()
+
+            val savedState = mediaStoreId?.let { id ->
+                runCatching { localMediaRepository.getVideo(id) }.getOrNull()
+            }
+
+            val startPosition = if (startFromBeginning) {
+                0L
+            } else {
+                savedState?.playbackPositionTicks?.div(10000L) ?: 0L
+            }
+
+            val startItem = PlayerItem(
+                name = displayName,
+                itemId = itemUuid,
+                mediaSourceId = "uri-$itemUuid",
+                playbackPosition = startPosition,
+                mediaSourceUri = uri.toString(),
+                chapters = emptyList(),
+                people = emptyList(),
+                overview = "",
+                backdropImageUri = null,
+                seriesName = null,
+                contentSource = PlayerContentSource.LOCAL,
+                localMediaId = mediaStoreId,
+            )
+
+            Timber.i(
+                "initializeUriPlayer startItem id=%s uri=%s playbackPosition=%d",
+                startItem.itemId,
+                startItem.mediaSourceUri,
+                startItem.playbackPosition,
+            )
+
+            items = mutableListOf(startItem)
+            currentMediaItemIndex = 0
+
+            val mediaPosition = if (playbackPosition == 0L) {
+                startItem.playbackPosition.takeIf { !startFromBeginning } ?: C.TIME_UNSET
+            } else {
+                playbackPosition
+            }
+
+            player.setMediaItems(listOf(startItem.toMediaItem()), 0, mediaPosition)
+            Timber.i("initializeUriPlayer prepared mediaPosition=%d", mediaPosition)
             player.prepare()
             player.play()
         }
@@ -1783,6 +1876,11 @@ constructor(
             return
         }
 
+        val isLocalOrOfflineSource = currentItem?.contentSource == dev.jdtech.jellyfin.player.core.domain.models.PlayerContentSource.LOCAL ||
+            currentMediaUri != null ||
+            (currentItem?.mediaSourceUri?.let { it.startsWith("content://") || it.startsWith("file://") } == true)
+        val canTranscodeOffline = isDecodeOrFormatError && isLocalOrOfflineSource
+
         // Surface the failure instead of swallowing it into the log: without this
         // an undecodable stream (8K on a 4K decoder, an unsupported codec, a dead
         // source) just leaves a silent black screen with the Play icon stuck on.
@@ -1793,8 +1891,58 @@ constructor(
             application.getString(messageRes)
         }
         _uiState.update {
-            it.copy(playbackError = PlaybackError(message = message, detail = error.errorCodeName))
+            it.copy(
+                playbackError = PlaybackError(
+                    message = message,
+                    detail = error.errorCodeName,
+                    canTranscodeOffline = canTranscodeOffline,
+                )
+            )
         }
+    }
+
+    /**
+     * Converts the current offline/local media item to universal H.264/AAC MP4 on-device
+     * using [OnDeviceTranscoder], enabling smooth offline playback in airplane mode.
+     */
+    fun transcodeCurrentItemForOffline() {
+        val currentItem = currentPlayerItem()
+        val mediaUri = currentMediaUri
+            ?: currentItem?.mediaSourceUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+            ?: return
+
+        val title = currentItem?.name ?: currentMediaTitle ?: "video"
+        Timber.i("Starting on-device offline transcode for %s (%s)", mediaUri, title)
+        _uiState.update { it.copy(playbackError = null) }
+
+        onDeviceTranscoder.startTranscode(
+            inputUri = mediaUri,
+            title = title,
+            onComplete = { outputFile ->
+                Timber.i("On-device transcode completed: %s, initializing playback", outputFile.absolutePath)
+                initializeUriPlayer(
+                    uri = Uri.fromFile(outputFile),
+                    title = title,
+                    startFromBeginning = false,
+                )
+            },
+            onError = { error ->
+                Timber.e(error, "On-device transcode failed")
+                _uiState.update {
+                    it.copy(
+                        playbackError = PlaybackError(
+                            message = application.getString(R.string.player_error_generic, error.localizedMessage ?: "Transcoding failed"),
+                            detail = "ON_DEVICE_TRANSCODE_FAILED",
+                            canTranscodeOffline = false,
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    fun cancelOnDeviceTranscode() {
+        onDeviceTranscoder.cancel()
     }
 
     private fun triggerTranscodeFallback(
@@ -1906,6 +2054,7 @@ constructor(
 
     override fun onCleared() {
         super.onCleared()
+        onDeviceTranscoder.cancel()
         Timber.d("Clearing Player ViewModel")
         // viewModelScope is cancelled before onCleared() is called, so use a detached scope.
         if (syncPlay.isActive()) {

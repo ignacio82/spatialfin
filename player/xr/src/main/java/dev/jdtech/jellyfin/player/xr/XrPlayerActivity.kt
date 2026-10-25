@@ -1,7 +1,10 @@
 package dev.jdtech.jellyfin.player.xr
 import dev.jdtech.jellyfin.player.core.ProjectionModeDetector
+import dev.jdtech.jellyfin.player.core.StereoModeDetector
+import dev.jdtech.jellyfin.player.core.VideoUriHelper
 
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.Looper
 import android.graphics.Color as AndroidColor
@@ -161,6 +164,25 @@ class XrPlayerActivity : AppCompatActivity() {
             }
         }
 
+        fun createIntentForUri(
+            context: android.content.Context,
+            uri: Uri,
+            title: String? = null,
+            startFromBeginning: Boolean = false,
+            stereoMode: String = "mono",
+            projection: String = ProjectionModeDetector.PROJECTION_FLAT,
+        ): android.content.Intent {
+            return android.content.Intent(context, XrPlayerActivity::class.java).apply {
+                data = uri
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra("mediaUri", uri.toString())
+                title?.let { putExtra("mediaTitle", it) }
+                putExtra("startFromBeginning", startFromBeginning)
+                putExtra("stereoMode", stereoMode)
+                putExtra("projection", projection)
+            }
+        }
+
         fun createIntentForUniversalMedia(
             context: android.content.Context,
             pluginId: String,
@@ -242,9 +264,11 @@ class XrPlayerActivity : AppCompatActivity() {
         val universalItemId = extras?.getString("universalItemId")
         val universalVideoUrl = extras?.getString("universalVideoUrl")
         val universalTitle = extras?.getString("universalTitle")
+        val mediaUri = intent.data ?: extras?.getString("mediaUri")?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        val mediaTitle = extras?.getString("mediaTitle") ?: mediaUri?.let { VideoUriHelper.resolveDisplayName(this, it) }
 
-        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null) {
-            Timber.w("Player launch rejected: missing itemId/localMediaId/networkVideoId/universalVideoUrl extras")
+        if (itemIdString == null && localMediaId == null && networkVideoId == null && universalVideoUrl == null && mediaUri == null) {
+            Timber.w("Player launch rejected: missing itemId/localMediaId/networkVideoId/universalVideoUrl/mediaUri extras")
             finish()
             return
         }
@@ -258,7 +282,7 @@ class XrPlayerActivity : AppCompatActivity() {
             finish()
             return
         }
-        val itemKind = extras.getString("itemKind").orEmpty()
+        val itemKind = extras?.getString("itemKind").orEmpty()
         val startFromBeginning = intent.getBooleanExtra("startFromBeginning", false)
         val mediaSourceIndex = if (intent.hasExtra("mediaSourceIndex")) intent.getIntExtra("mediaSourceIndex", -1).takeIf { it >= 0 } else null
         val audioStreamIndex = if (intent.hasExtra("audioStreamIndex")) intent.getIntExtra("audioStreamIndex", -1).takeIf { it >= 0 } else null
@@ -266,8 +290,17 @@ class XrPlayerActivity : AppCompatActivity() {
         val subtitlesDisabled = intent.getBooleanExtra("subtitlesDisabled", false)
         val maxBitrate = if (intent.hasExtra("maxBitrate")) intent.getLongExtra("maxBitrate", 0L).takeIf { it > 0L } else null
         val openSyncPlayDialogOnStart = intent.getBooleanExtra("openSyncPlayDialogOnStart", false)
-        currentStereoMode = extras.getString("stereoMode") ?: "mono"
-        currentProjection = extras.getString("projection") ?: ProjectionModeDetector.PROJECTION_FLAT
+        currentStereoMode = extras?.getString("stereoMode") ?: mediaTitle?.let { title ->
+            when (StereoModeDetector.detect(title, null, listOf(title))) {
+                StereoModeDetector.StereoMode.SIDE_BY_SIDE -> "sbs"
+                StereoModeDetector.StereoMode.TOP_BOTTOM -> "top_bottom"
+                StereoModeDetector.StereoMode.MULTIVIEW -> "multiview"
+                else -> "mono"
+            }
+        } ?: "mono"
+        currentProjection = extras?.getString("projection") ?: mediaTitle?.let { title ->
+            ProjectionModeDetector.asExtra(ProjectionModeDetector.detect(title, listOf(title)))
+        } ?: ProjectionModeDetector.PROJECTION_FLAT
         val immersiveProjection = isImmersiveProjection(currentProjection)
         // libass renders a flat ASS overlay panel that can't map onto a sphere/
         // hemisphere; immersive 180/360 falls back to Media3 subtitles, same as the
@@ -607,6 +640,8 @@ class XrPlayerActivity : AppCompatActivity() {
                         universalItemId = universalItemId,
                         universalVideoUrl = universalVideoUrl,
                         universalTitle = universalTitle,
+                        mediaUri = mediaUri,
+                        mediaTitle = mediaTitle,
                         itemKind = itemKind,
                         startFromBeginning = startFromBeginning,
                         mediaSourceIndex = mediaSourceIndex,

@@ -74,4 +74,27 @@ interface Downloader {
      * download. Idempotent — safe to call from app start and from screen open.
      */
     fun verifyDownloads()
+
+    /**
+     * Performs an on-demand comprehensive integrity check on all completed downloads.
+     *
+     * Validates:
+     * 1. Physical file existence and non-zero length.
+     * 2. Byte size match against expected metadata.
+     * 3. Media container readability (header/track presence).
+     *
+     * Missing or corrupted files are automatically repaired by requeuing them
+     * for download.
+     */
+    suspend fun verifyDownloadIntegrity(): DownloadVerificationReport
+}
+
+data class DownloadVerificationReport(
+    val totalChecked: Int,
+    val intactCount: Int,
+    val missingOrCorruptedCount: Int,
+    val requeuedForRepairCount: Int,
+    val details: List<String> = emptyList(),
+) {
+    val allHealthy: Boolean get() = missingOrCorruptedCount == 0 && totalChecked > 0
 }
