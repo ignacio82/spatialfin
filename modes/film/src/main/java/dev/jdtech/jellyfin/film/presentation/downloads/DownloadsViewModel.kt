@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.core.Constants
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.film.presentation.collection.CollectionState
 import dev.jdtech.jellyfin.models.CollectionSection
+import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItem
 import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
@@ -50,8 +51,9 @@ constructor(
     val state = combine(_rawSections, _searchQuery, _sortOrder, _isLoading, _error) { sections, query, sort, loading, error ->
         val filtered = if (query.isBlank()) sections else {
             sections.mapNotNull { section ->
-                val filteredItems = section.items.filter {
-                    it.name.contains(query, ignoreCase = true)
+                val filteredItems = section.items.filter { item ->
+                    item.name.contains(query, ignoreCase = true) ||
+                        (item is SpatialFinEpisode && item.seriesName.contains(query, ignoreCase = true))
                 }
                 if (filteredItems.isNotEmpty()) section.copy(items = filteredItems) else null
             }
@@ -138,6 +140,16 @@ constructor(
                             Constants.FAVORITE_TYPE_SHOWS,
                             UiText.StringResource(CoreR.string.shows_label),
                             items.filterIsInstance<SpatialFinShow>(),
+                        )
+                        .let {
+                            if (it.items.isNotEmpty()) {
+                                sections.add(it)
+                            }
+                        }
+                    CollectionSection(
+                            Constants.FAVORITE_TYPE_EPISODES,
+                            UiText.StringResource(CoreR.string.episodes_label),
+                            items.filterIsInstance<SpatialFinEpisode>(),
                         )
                         .let {
                             if (it.items.isNotEmpty()) {

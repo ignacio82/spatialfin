@@ -105,7 +105,15 @@ class DownloaderImpl(
         val storageShortfall = run {
             val pendingEpisodes = episodes.filter { !it.isDownloaded() }
             val estimatedBytes = pendingEpisodes.sumOf { ep ->
-                ep.sources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }?.size ?: 0L
+                if (settings.mode == dev.jdtech.jellyfin.models.DownloadMode.TRANSCODED) {
+                    val durationSec = if (ep.runtimeTicks > 0L) ep.runtimeTicks / 10_000_000.0 else 2700.0
+                    val bps = (settings.videoBitrate ?: DownloadPreparationWorker.DEFAULT_TRANSCODE_VIDEO_BITRATE) + 192_000
+                    val rawEstimate = (durationSec * (bps / 8.0)).toLong()
+                    val originalSize = ep.sources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }?.size ?: 0L
+                    if (originalSize > 0L) rawEstimate.coerceAtMost(originalSize) else rawEstimate
+                } else {
+                    ep.sources.firstOrNull { it.type == SpatialFinSourceType.REMOTE }?.size ?: 0L
+                }
             }
             if (estimatedBytes > 0L) {
                 val downloadDir = downloadStorageManager.downloadsRoot()
@@ -312,7 +320,31 @@ class DownloaderImpl(
                 val expected = task.totalBytes
 
                 val isMissing = !exists || length == 0L
-                val isSizeMismatch = expected != null && expected > 0L && length != expected
+                val isTranscodedCompleted =
+                    !isMissing &&
+                        (task.finalPath.endsWith("_transcoded.mp4", ignoreCase = true) ||
+                            task.requestUrl.contains("Static=false", ignoreCase = true)) &&
+                        (length == task.bytesDownloaded ||
+                            (task.status == DownloadManager.STATUS_SUCCESSFUL &&
+                                (task.tempPath.isBlank() || !java.io.File(task.tempPath).exists())))
+                if (isTranscodedCompleted && expected != null && expected != length) {
+                    database.updateDownloadTask(
+                        id = task.id,
+                        downloadId = task.downloadId,
+                        bytesDownloaded = length,
+                        totalBytes = length,
+                        eTag = task.eTag,
+                        lastModified = task.lastModified,
+                        status = task.status,
+                        progress = 100,
+                        errorMessage = null,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    if (task.kind == DownloadTaskKind.PRIMARY) {
+                        database.setSourcePath(task.sourceId, task.finalPath)
+                    }
+                }
+                val isSizeMismatch = !isTranscodedCompleted && expected != null && expected > 0L && length != expected
                 val isCorrupt = if (!isMissing && !isSizeMismatch && task.kind == DownloadTaskKind.PRIMARY && !task.isEncrypted) {
                     checkMediaFileCorrupted(finalFile)
                 } else {

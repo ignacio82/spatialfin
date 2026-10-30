@@ -225,7 +225,7 @@ internal fun BeamDownloadOptionsDialog(
                             subtitleStreamIndex = if (selectedMode == DownloadMode.TRANSCODED) selectedSubtitleStreamIndex else null,
                             subtitleDeliveryMethod =
                                 if (selectedMode == DownloadMode.TRANSCODED && selectedSubtitleStreamIndex != null) {
-                                    SubtitleDeliveryMethod.EMBED
+                                    SubtitleDeliveryMethod.ENCODE
                                 } else {
                                     SubtitleDeliveryMethod.DROP
                                 },
@@ -369,11 +369,11 @@ internal fun BeamChoiceRow(
 
 internal val DEFAULT_DOWNLOAD_BITRATES =
     listOf(
-        8_000_000 to "8 Mbps",
-        5_000_000 to "5 Mbps",
-        3_000_000 to "3 Mbps",
-        2_000_000 to "2 Mbps",
-        1_000_000 to "1 Mbps",
+        5_000_000 to "5 Mbps (1080p, ~2.3 GB/h)",
+        3_000_000 to "3 Mbps (1080p, ~1.4 GB/h)",
+        2_000_000 to "2 Mbps (720p, ~950 MB/h)",
+        1_000_000 to "1 Mbps (720p, ~480 MB/h)",
+        8_000_000 to "8 Mbps (1080p High, ~3.6 GB/h)",
     )
 
 @Composable

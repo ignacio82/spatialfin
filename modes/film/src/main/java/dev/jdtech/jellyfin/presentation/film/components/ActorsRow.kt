@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -31,7 +31,7 @@ fun ActorsRow(
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.medium),
     ) {
-        items(items = actors, key = { person -> person.id }) { person ->
+        itemsIndexed(items = actors, key = { index, person -> "${person.id}_$index" }) { _, person ->
             PersonItem(person = person, onClick = { onActorClick(person.id) })
         }
     }

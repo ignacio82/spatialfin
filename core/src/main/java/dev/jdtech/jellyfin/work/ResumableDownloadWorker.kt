@@ -94,7 +94,16 @@ constructor(
                 finalFile.exists(),
             )
 
-            val existingBytes = tempFile.takeIf(File::exists)?.length() ?: 0L
+            val isTranscoded =
+                task.finalPath.endsWith("_transcoded.mp4", ignoreCase = true) ||
+                    task.requestUrl.contains("Static=false", ignoreCase = true)
+            val existingBytes = if (isTranscoded) {
+                // Live progressive transcode streams from Jellyfin cannot resume via Range byte offset.
+                // Reset existing bytes so the transcode runs cleanly from 0.
+                0L
+            } else {
+                tempFile.takeIf(File::exists)?.length() ?: 0L
+            }
 
             // Pre-check free space before opening a network connection. Without
             // this, a storage-full device burns MAX_AUTO_RETRIES on the same
@@ -134,7 +143,7 @@ constructor(
             task.accessToken?.takeIf { it.isNotBlank() }?.let {
                 requestBuilder.header("X-Emby-Token", it)
             }
-            if (existingBytes > 0L) {
+            if (existingBytes > 0L && !isTranscoded) {
                 requestBuilder.header("Range", "bytes=$existingBytes-")
                 task.eTag?.takeIf { it.isNotBlank() }?.let { requestBuilder.header("If-Range", it) }
                     ?: task.lastModified?.takeIf { it.isNotBlank() }?.let {
@@ -142,7 +151,10 @@ constructor(
                     }
             }
 
-            val client = okHttpClient
+            val client = okHttpClient.newBuilder()
+                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
             val response =
                 try {
                     Timber.i(
@@ -188,7 +200,7 @@ constructor(
                     }
                 }
 
-                val append = existingBytes > 0L && httpResponse.code == 206
+                val append = existingBytes > 0L && httpResponse.code == 206 && !isTranscoded
                 if (!append && existingBytes > 0L && tempFile.exists()) {
                     tempFile.delete()
                 }
@@ -345,10 +357,11 @@ constructor(
                 }
             }
         }
+        val finalizedSize = finalFile.length().takeIf { it > 0L } ?: bytesDownloaded
         updateTask(
             taskId = taskId,
-            bytesDownloaded = bytesDownloaded,
-            totalBytes = task.totalBytes ?: bytesDownloaded,
+            bytesDownloaded = finalizedSize,
+            totalBytes = finalizedSize,
             eTag = task.eTag,
             lastModified = task.lastModified,
             status = DownloadManager.STATUS_SUCCESSFUL,
@@ -517,7 +530,7 @@ constructor(
     }
 
     private fun progressFor(downloadedBytes: Long, totalBytes: Long?): Int =
-        ResumableDownloadFileOps.progressFor(downloadedBytes, totalBytes)
+        ResumableDownloadFileOps.progressFor(downloadedBytes, totalBytes).coerceIn(0, 99)
 
     private fun currentNetworkRestrictionMessage(hasAuthenticatedRequest: Boolean): String? {
         val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)

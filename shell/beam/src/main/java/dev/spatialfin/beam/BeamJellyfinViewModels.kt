@@ -18,6 +18,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinSeason
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.browsableItemKinds
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.movieVersionGroupKey
 import dev.jdtech.jellyfin.models.versionOptionsFrom
 import dev.jdtech.jellyfin.repository.JellyfinRepository
@@ -188,6 +189,7 @@ constructor(
 data class BeamShowState(
     val show: SpatialFinShow? = null,
     val seasons: List<SpatialFinSeason> = emptyList(),
+    val downloadedEpisodes: List<SpatialFinEpisode> = emptyList(),
     val nextUp: SpatialFinEpisode? = null,
     val related: DetailRelatedRows = DetailRelatedRows(),
     val isLoading: Boolean = false,
@@ -210,26 +212,56 @@ constructor(
         viewModelScope.launch {
             _state.emit(BeamShowState(isLoading = true))
             runCatching {
-                Triple(
-                    repository.getShow(showId),
-                    repository.getSeasons(showId),
-                    repository.getNextUp(showId).firstOrNull(),
+                val show = repository.getShow(showId)
+                val seasons = repository.getSeasons(showId)
+                val offlineSeasons =
+                    runCatching { repository.getSeasons(showId, offline = true) }
+                        .getOrDefault(emptyList())
+                val downloadedEpisodes =
+                    offlineSeasons
+                        .flatMap { season ->
+                            runCatching {
+                                repository.getEpisodes(
+                                    seriesId = showId,
+                                    seasonId = season.id,
+                                    offline = true,
+                                )
+                            }.getOrDefault(emptyList())
+                        }
+                        .filter { it.isDownloaded() }
+                val nextUp =
+                    repository.getNextUp(showId).firstOrNull()
+                        ?: downloadedEpisodes.firstOrNull { !it.played }
+                        ?: downloadedEpisodes.firstOrNull()
+                LoadedShow(
+                    show = show,
+                    seasons = seasons.ifEmpty { offlineSeasons }.distinctBy { it.id },
+                    downloadedEpisodes = downloadedEpisodes.distinctBy { it.id },
+                    nextUp = nextUp,
                 )
-            }.onSuccess { (show, seasons, nextUp) ->
+            }.onSuccess { loaded ->
                 _state.emit(
                     BeamShowState(
-                        show = show,
-                        seasons = seasons,
-                        nextUp = nextUp,
+                        show = loaded.show,
+                        seasons = loaded.seasons,
+                        downloadedEpisodes = loaded.downloadedEpisodes,
+                        nextUp = loaded.nextUp,
                         isLoading = false,
                     )
                 )
-                loadRelated(show)
+                loadRelated(loaded.show)
             }.onFailure { error ->
                 _state.emit(BeamShowState(isLoading = false, error = error))
             }
         }
     }
+
+    private data class LoadedShow(
+        val show: SpatialFinShow,
+        val seasons: List<SpatialFinSeason>,
+        val downloadedEpisodes: List<SpatialFinEpisode>,
+        val nextUp: SpatialFinEpisode?,
+    )
 
     private fun loadRelated(show: SpatialFinShow) {
         relatedJob?.cancel()
@@ -278,6 +310,10 @@ constructor(
             }
         }
     }
+
+    fun clearBulkDownloadResult() {
+        _state.update { it.copy(bulkDownload = it.bulkDownload.copy(result = null)) }
+    }
 }
 
 data class BeamSeasonState(
@@ -303,7 +339,17 @@ constructor(
             _state.emit(BeamSeasonState(isLoading = true))
             runCatching {
                 val season = repository.getSeason(seasonId)
-                season to repository.getEpisodes(seriesId = season.seriesId, seasonId = seasonId, limit = 200)
+                val episodes =
+                    repository.getEpisodes(seriesId = season.seriesId, seasonId = seasonId, limit = 200)
+                        .ifEmpty {
+                            repository.getEpisodes(
+                                seriesId = season.seriesId,
+                                seasonId = seasonId,
+                                offline = true,
+                            )
+                        }
+                        .distinctBy { it.id }
+                season to episodes
             }.onSuccess { (season, episodes) ->
                 _state.emit(BeamSeasonState(season = season, episodes = episodes, isLoading = false))
             }.onFailure { error ->
@@ -318,6 +364,10 @@ constructor(
             val result = downloader.downloadItems(episodes, settings)
             _state.update { it.copy(bulkDownload = BulkDownloadState(isQueuing = false, result = result)) }
         }
+    }
+
+    fun clearBulkDownloadResult() {
+        _state.update { it.copy(bulkDownload = it.bulkDownload.copy(result = null)) }
     }
 }
 

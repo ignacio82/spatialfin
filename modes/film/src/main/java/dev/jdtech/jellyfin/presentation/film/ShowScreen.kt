@@ -203,9 +203,36 @@ private fun ShowScreenLayout(state: ShowState, onAction: (ShowAction) -> Unit) {
                         onDownloadDeleteClick = {},
                         onMetadataSaved = { onAction(ShowAction.ReloadAfterMetadataEdit) },
                         modifier = Modifier.fillMaxWidth(),
-                        canPlay = state.seasons.isNotEmpty(),
+                        canPlay = state.seasons.isNotEmpty() || state.downloadedEpisodes.isNotEmpty(),
                     )
                     Spacer(Modifier.height(MaterialTheme.spacings.small))
+                }
+
+                if (state.downloadedEpisodes.isNotEmpty()) {
+                    Column(modifier = Modifier.padding(start = paddingStart, end = paddingEnd)) {
+                        Text(
+                            text = "${stringResource(CoreR.string.title_download)} • ${stringResource(CoreR.string.episodes_label)}",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(Modifier.height(MaterialTheme.spacings.small))
+                    }
+                    LazyRow(
+                        contentPadding = PaddingValues(start = paddingStart, end = paddingEnd),
+                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacings.default),
+                    ) {
+                        items(
+                            items = state.downloadedEpisodes,
+                            key = { item -> "downloaded_${item.id}" },
+                        ) { episode ->
+                            ItemCard(
+                                item = episode,
+                                direction = Direction.HORIZONTAL,
+                                displayRatings = state.displayRatings,
+                                onClick = { onAction(ShowAction.NavigateToItem(episode)) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(MaterialTheme.spacings.medium))
                 }
 
                 if (state.seasons.isNotEmpty()) {

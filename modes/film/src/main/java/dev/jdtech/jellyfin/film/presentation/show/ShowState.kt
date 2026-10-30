@@ -10,6 +10,7 @@ data class ShowState(
     val show: SpatialFinShow? = null,
     val nextUp: SpatialFinEpisode? = null,
     val seasons: List<SpatialFinSeason> = emptyList(),
+    val downloadedEpisodes: List<SpatialFinEpisode> = emptyList(),
     val actors: List<SpatialFinItemPerson> = emptyList(),
     val director: SpatialFinItemPerson? = null,
     val writers: List<SpatialFinItemPerson> = emptyList(),

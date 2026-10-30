@@ -230,5 +230,68 @@ class DownloadIntegrityVerificationTest {
         assertEquals(0, report.requeuedForRepairCount)
         assertTrue(intactFile.exists())
     }
+
+    @Test
+    fun verifyDownloadIntegrityHealsTranscodedSizeDifferenceWhenBytesDownloadedMatches() = runTest {
+        val transcodedFile = tempFolder.newFile("Episode_1_transcoded.mp4").apply {
+            writeBytes(ByteArray(640))
+        }
+        val task = DownloadTaskDto(
+            id = "task-transcoded",
+            itemId = UUID.randomUUID(),
+            sourceId = "source-transcoded",
+            kind = DownloadTaskKind.PRIMARY,
+            mediaStreamId = null,
+            downloadId = null,
+            requestUrl = "https://example.com/Videos/123/stream.mp4?Static=false",
+            accessToken = null,
+            tempPath = File(tempFolder.root, "Episode_1_transcoded.mp4.download").absolutePath,
+            finalPath = transcodedFile.absolutePath,
+            bytesDownloaded = 640L,
+            totalBytes = 2048L, // Original server source size before transcoding
+            eTag = null,
+            lastModified = null,
+            status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+            progress = 100,
+            errorMessage = null,
+            updatedAt = System.currentTimeMillis(),
+            isEncrypted = true, // Skip Robolectric MediaExtractor stub check while testing size healing
+        )
+
+        every { database.getCompletedDownloadTasks(DownloadTaskKind.PRIMARY) } returns listOf(task)
+        every { database.getCompletedDownloadTasks(DownloadTaskKind.SUBTITLE) } returns emptyList()
+
+        val downloader = DownloaderImpl(
+            context = context,
+            database = database,
+            jellyfinRepository = repository,
+            appPreferences = appPreferences,
+            workManager = workManager,
+            downloadStorageManager = storageManager,
+        )
+
+        val report = downloader.verifyDownloadIntegrity()
+
+        assertEquals(1, report.totalChecked)
+        assertEquals(1, report.intactCount)
+        assertEquals(0, report.missingOrCorruptedCount)
+        assertEquals(0, report.requeuedForRepairCount)
+        assertTrue(transcodedFile.exists())
+        verify {
+            database.updateDownloadTask(
+                id = "task-transcoded",
+                downloadId = null,
+                bytesDownloaded = 640L,
+                totalBytes = 640L,
+                eTag = null,
+                lastModified = null,
+                status = android.app.DownloadManager.STATUS_SUCCESSFUL,
+                progress = 100,
+                errorMessage = null,
+                updatedAt = any(),
+            )
+        }
+        verify { database.setSourcePath("source-transcoded", transcodedFile.absolutePath) }
+    }
 }
 

@@ -120,6 +120,7 @@ constructor(
             key == appPreferences.homeContinueWatching.backendName ||
             key == appPreferences.homeNextUp.backendName ||
             key == appPreferences.homeLatest.backendName ||
+            key == appPreferences.homeRowLayout.backendName ||
             key == appPreferences.displayRatings.backendName ||
             key == appPreferences.displayExtraInfo.backendName ||
             (key != null && key.startsWith("home_ma_")) -> {
@@ -353,7 +354,7 @@ constructor(
 
     private suspend fun loadSuggestions() {
         Timber.i("Loading suggestions")
-        if (!appPreferences.getValue(appPreferences.homeSuggestions)) {
+        if (!homeRowPreferences.isVisible(HomeRowIds.SUGGESTIONS)) {
             _state.emit(_state.value.copy(suggestionsSection = null))
             return
         }
@@ -372,7 +373,7 @@ constructor(
 
     private suspend fun loadResumeItems() {
         Timber.i("Loading resume items")
-        if (!appPreferences.getValue(appPreferences.homeContinueWatching)) {
+        if (!homeRowPreferences.isVisible(HomeRowIds.CONTINUE_WATCHING)) {
             _state.emit(_state.value.copy(resumeSection = null))
             return
         }
@@ -398,7 +399,7 @@ constructor(
 
     private suspend fun loadNextUpItems() {
         Timber.i("Loading next up items")
-        if (!appPreferences.getValue(appPreferences.homeNextUp)) {
+        if (!homeRowPreferences.isVisible(HomeRowIds.NEXT_UP)) {
             _state.emit(_state.value.copy(nextUpSection = null))
             return
         }
@@ -435,7 +436,7 @@ constructor(
     private suspend fun loadViews() {
         Timber.i("Loading views")
         val items =
-            if (appPreferences.getValue(appPreferences.homeLatest)) {
+            if (homeRowPreferences.isVisible(HomeRowIds.ALL_LATEST)) {
                 repository
                     .getUserViews()
                     .filter { view ->

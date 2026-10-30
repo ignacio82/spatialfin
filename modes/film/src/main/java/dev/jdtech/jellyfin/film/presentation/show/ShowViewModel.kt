@@ -7,6 +7,7 @@ import dev.jdtech.jellyfin.film.domain.loadDetailRelatedRows
 import dev.jdtech.jellyfin.models.SpatialFinEpisode
 import dev.jdtech.jellyfin.models.SpatialFinItemPerson
 import dev.jdtech.jellyfin.models.SpatialFinShow
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.repository.JellyfinRealtimeEvent
 import dev.jdtech.jellyfin.repository.JellyfinRepository
 import dev.jdtech.jellyfin.settings.domain.AppPreferences
@@ -44,8 +45,26 @@ class ShowViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val show = repository.getShow(showId)
-                val nextUp = getNextUp(showId)
                 val seasons = repository.getSeasons(showId)
+                val offlineSeasons =
+                    runCatching { repository.getSeasons(showId, offline = true) }
+                        .getOrDefault(emptyList())
+                val downloadedEpisodes =
+                    offlineSeasons
+                        .flatMap { season ->
+                            runCatching {
+                                repository.getEpisodes(
+                                    seriesId = showId,
+                                    seasonId = season.id,
+                                    offline = true,
+                                )
+                            }.getOrDefault(emptyList())
+                        }
+                        .filter { it.isDownloaded() }
+                val nextUp =
+                    getNextUp(showId)
+                        ?: downloadedEpisodes.firstOrNull { !it.played }
+                        ?: downloadedEpisodes.firstOrNull()
                 val actors = getActors(show)
                 val director = getDirector(show)
                 val writers = getWriters(show)
@@ -54,7 +73,8 @@ class ShowViewModel @Inject constructor(
                     _state.value.copy(
                         show = show,
                         nextUp = nextUp,
-                        seasons = seasons,
+                        seasons = seasons.ifEmpty { offlineSeasons }.distinctBy { it.id },
+                        downloadedEpisodes = downloadedEpisodes.distinctBy { it.id },
                         actors = actors,
                         director = director,
                         writers = writers,

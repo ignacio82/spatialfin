@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 class SmbFileClient : NetworkFileClient {
+    init {
+        SmbCryptoBridge.ensureInitialized()
+    }
+
     override suspend fun listFiles(
         host: String,
         shareName: String,
@@ -171,6 +175,7 @@ class SmbFileClient : NetworkFileClient {
         credentials: NetworkCredentials,
         anonymous: Boolean,
     ): CIFSContext {
+        SmbCryptoBridge.ensureInitialized()
         val properties = Properties().apply {
             setProperty("jcifs.smb.client.minVersion", DialectVersion.SMB202.name)
             setProperty("jcifs.smb.client.maxVersion", DialectVersion.SMB311.name)

@@ -18,6 +18,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -163,6 +165,7 @@ class PluginRepository @Inject constructor(
                 File(pluginDir, "manifest.json").writeText(manifestJson)
                 File(pluginDir, "script.js").writeText(scriptContent)
                 recordInstalledManifestUrl(targetDir, manifestUrl)
+                notifySettingsChanged()
 
                 android.util.Log.e("CRITICAL_ERROR", "Step 6: Plugin files saved")
                 Result.success(config)
@@ -212,9 +215,13 @@ class PluginRepository @Inject constructor(
 
     fun uninstallPlugin(pluginId: String): Boolean {
         val pluginDir = File(pluginsDir(), pluginId)
-        return if (pluginDir.exists()) {
+        val deleted = if (pluginDir.exists()) {
             pluginDir.deleteRecursively()
         } else false
+        if (deleted) {
+            notifySettingsChanged()
+        }
+        return deleted
     }
 
     fun getPluginScript(pluginId: String?): String? {
@@ -305,7 +312,8 @@ class PluginRepository @Inject constructor(
             id = rowId,
             name = trimmedName.ifBlank { template.name },
             type = template.type,
-            defaultEnabled = true
+            defaultEnabled = true,
+            options = JsonObject(options.mapValues { JsonPrimitive(it.value) }),
         )
         val rows = getCustomPluginHomeRows(pluginId) + row
         updatePluginSetting(pluginId, CUSTOM_HOME_ROWS_KEY, json.encodeToString(rows))

@@ -12,6 +12,7 @@ android {
 
     defaultConfig {
         minSdk = Versions.MIN_SDK
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         consumerProguardFile("proguard-rules.pro")
 
@@ -82,4 +83,7 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.robolectric)
     testImplementation(libs.turbine)
+    androidTestImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

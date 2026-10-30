@@ -34,6 +34,7 @@ constructor(
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Loading)
     val uiState = _uiState.asStateFlow()
+    private var hasCompletedInitialCheck = false
 
     sealed class UiState {
         data class Normal(val server: Server?, val user: User?) : UiState()
@@ -42,14 +43,16 @@ constructor(
     }
 
     init {
-        check()
+        check(showLoading = true)
         observeOfflineState()
         observeSessionChanges()
     }
 
-    private fun check() {
+    private fun check(showLoading: Boolean = !hasCompletedInitialCheck) {
         viewModelScope.launch {
-            _state.emit(MainState(isLoading = true))
+            if (showLoading) {
+                _state.emit(MainState(isLoading = true))
+            }
             val serverId = appPreferences.getValue(appPreferences.currentServer)
             val loadedSession = withContext(Dispatchers.IO) {
                 val serverData = serverId?.let { database.getServerWithAddressAndUser(it) }
@@ -90,6 +93,7 @@ constructor(
                 }
             }
 
+            hasCompletedInitialCheck = true
             val mainState =
                 MainState(
                     isLoading = false,
@@ -110,7 +114,7 @@ constructor(
      * Call after the active user changes (e.g. on return from UsersScreen)
      * so the navigation rail's profile avatar refreshes without an Activity recreate.
      */
-    fun refresh() = check()
+    fun refresh() = check(showLoading = false)
 
     private fun observeOfflineState() {
         viewModelScope.launch {
@@ -124,7 +128,7 @@ constructor(
                 // re-apply the current address + token to the live API and refresh session
                 // state, so content reloads against the working address without a manual tap.
                 if (!previousAccessible && connectionState.serverAccessible) {
-                    check()
+                    check(showLoading = false)
                 }
                 previousAccessible = connectionState.serverAccessible
             }
@@ -133,12 +137,12 @@ constructor(
 
     private fun observeSessionChanges() {
         viewModelScope.launch {
-            activeSessionBus.events.collect { check() }
+            activeSessionBus.events.collect { check(showLoading = false) }
         }
     }
 
     fun reconnect() {
-        check()
+        check(showLoading = false)
         connectionMonitor.reconnect()
     }
 

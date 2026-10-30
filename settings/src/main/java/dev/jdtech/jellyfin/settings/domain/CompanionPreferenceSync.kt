@@ -37,10 +37,10 @@ fun AppPreferences.applyCompanionPreference(key: String, value: String?): Boolea
         }
         theme.backendName -> applyString(theme, value)
         dynamicColors.backendName -> applyBoolean(dynamicColors, value)
-        homeSuggestions.backendName -> applyBoolean(homeSuggestions, value)
-        homeContinueWatching.backendName -> applyBoolean(homeContinueWatching, value)
-        homeNextUp.backendName -> applyBoolean(homeNextUp, value)
-        homeLatest.backendName -> applyBoolean(homeLatest, value)
+        // Home row visibility (home_suggestions, home_continue_watching, home_next_up, home_latest)
+        // is managed locally per device via HomeRowPreferences. The companion app only contains
+        // static defaults from default-preferences.js without an editor; applying them here would
+        // clobber the user's hidden row choices on every background sync.
         displayExtraInfo.backendName -> applyBoolean(displayExtraInfo, value)
         displayRatings.backendName -> applyBoolean(displayRatings, value)
         playerSeekBackInc.backendName -> applyLong(playerSeekBackInc, value)

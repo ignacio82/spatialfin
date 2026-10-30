@@ -82,6 +82,17 @@ internal fun openServerItem(
     onOpenJellyfinAudioDetail: ((UUID, String, JellyfinAudioDetailType) -> Unit)? = null,
 ) {
     when (item) {
+        is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> {
+            context.startActivity(
+                BeamPlayerActivity.createIntentForUniversalMedia(
+                    context = context,
+                    pluginId = item.universalMediaItem.pluginId,
+                    itemId = item.universalMediaItem.id,
+                    videoUrl = item.universalMediaItem.videoUrl,
+                    title = item.name,
+                )
+            )
+        }
         is SpatialFinCollection -> onOpenLibrary(item.id, item.name, item.type)
         is SpatialFinFolder -> onOpenLibrary(item.id, item.name, CollectionType.Folders)
         is SpatialFinShow -> onOpenShow(item.id)
@@ -396,6 +407,18 @@ internal fun launchServerItem(
     subtitleStreamIndex: Int? = null,
     subtitlesDisabled: Boolean = false,
 ) {
+    if (item is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem) {
+        context.startActivity(
+            BeamPlayerActivity.createIntentForUniversalMedia(
+                context = context,
+                pluginId = item.universalMediaItem.pluginId,
+                itemId = item.universalMediaItem.id,
+                videoUrl = item.universalMediaItem.videoUrl,
+                title = item.name,
+            )
+        )
+        return
+    }
     val kind =
         when (item) {
             is SpatialFinMovie -> "Movie"

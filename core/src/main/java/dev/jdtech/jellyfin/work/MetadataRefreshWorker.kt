@@ -46,16 +46,31 @@ constructor(
                     }
                 }
 
-                val episodeDtos = database.getEpisodesByServerId(serverId)
+                val episodeIdsToRefresh = buildSet {
+                    database.getEpisodesByServerId(serverId).forEach { add(it.id) }
+                    // Self-heal any downloaded sources whose episode/movie row was previously
+                    // cascade-deleted when updating parent show/season metadata.
+                    database.getAllSources().forEach { source ->
+                        if (database.getMovieOrNull(source.itemId) == null && database.getEpisodeOrNull(source.itemId) == null) {
+                            add(source.itemId)
+                        }
+                    }
+                }
                 val refreshedShowIds = mutableSetOf<java.util.UUID>()
                 val refreshedSeasonIds = mutableSetOf<java.util.UUID>()
 
-                for (dto in episodeDtos) {
+                for (itemId in episodeIdsToRefresh) {
                     try {
-                        val fresh = repository.getItem(dto.id) as? SpatialFinEpisode ?: continue
-                        database.upsertEpisode(fresh.toSpatialFinEpisodeDto(serverId))
+                        val freshItem = repository.getItem(itemId) ?: continue
+                        if (freshItem is SpatialFinMovie) {
+                            database.upsertMovie(freshItem.toSpatialFinMovieDto(serverId))
+                            continue
+                        }
+                        val fresh = freshItem as? SpatialFinEpisode ?: continue
 
-                        if (refreshedShowIds.add(fresh.seriesId)) {
+                        // Always upsert parent show and season BEFORE the child episode so
+                        // foreign key constraints are satisfied even when recovering missing rows.
+                        if (refreshedShowIds.add(fresh.seriesId) || database.getShowOrNull(fresh.seriesId) == null) {
                             try {
                                 val show = repository.getShow(fresh.seriesId)
                                 database.upsertShow(show.toSpatialFinShowDto(serverId))
@@ -64,7 +79,7 @@ constructor(
                             }
                         }
 
-                        if (refreshedSeasonIds.add(fresh.seasonId)) {
+                        if (refreshedSeasonIds.add(fresh.seasonId) || database.getSeasonOrNull(fresh.seasonId) == null) {
                             try {
                                 val season = repository.getSeason(fresh.seasonId)
                                 database.upsertSeason(season.toSpatialFinSeasonDto())
@@ -72,8 +87,10 @@ constructor(
                                 Timber.w(e, "MetadataRefresh: failed to refresh season %s", fresh.seasonId)
                             }
                         }
+
+                        database.upsertEpisode(fresh.toSpatialFinEpisodeDto(serverId))
                     } catch (e: Exception) {
-                        Timber.w(e, "MetadataRefresh: failed to refresh episode %s", dto.id)
+                        Timber.w(e, "MetadataRefresh: failed to refresh episode %s", itemId)
                     }
                 }
             }

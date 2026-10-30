@@ -121,6 +121,16 @@ constructor(private val appPreferences: AppPreferences) {
     private val listener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == null || affectsLayout(key)) {
+                when (key) {
+                    appPreferences.homeSuggestions.backendName ->
+                        writeHidden(HomeRowIds.SUGGESTIONS, hidden = !appPreferences.getValue(appPreferences.homeSuggestions))
+                    appPreferences.homeContinueWatching.backendName ->
+                        writeHidden(HomeRowIds.CONTINUE_WATCHING, hidden = !appPreferences.getValue(appPreferences.homeContinueWatching))
+                    appPreferences.homeNextUp.backendName ->
+                        writeHidden(HomeRowIds.NEXT_UP, hidden = !appPreferences.getValue(appPreferences.homeNextUp))
+                    appPreferences.homeLatest.backendName ->
+                        writeHidden(HomeRowIds.ALL_LATEST, hidden = !appPreferences.getValue(appPreferences.homeLatest))
+                }
                 _layout.value = read()
             }
         }
@@ -152,16 +162,16 @@ constructor(private val appPreferences: AppPreferences) {
         }
         legacyPreference(rowId)?.let { preference ->
             appPreferences.setValue(preference, visible)
-            // A legacy row can also carry a stale entry in the JSON hidden set
-            // (e.g. hidden before it gained a boolean); clear it either way.
-            writeHidden(rowId, hidden = false)
+            // Persist hidden state to the JSON layout blob as well so storedHidden
+            // remains in sync and survives restarts or companion config syncs.
+            writeHidden(rowId, hidden = !visible)
             _layout.value = read()
             Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
             return
         }
         musicAssistantKeyOf(rowId)?.let { maKey ->
             sharedPreferences.edit().putBoolean(maPreferenceKey(maKey), visible).apply()
-            writeHidden(rowId, hidden = false)
+            writeHidden(rowId, hidden = !visible)
             _layout.value = read()
             Timber.d("Home row %s -> %s", rowId, if (visible) "shown" else "hidden")
             return

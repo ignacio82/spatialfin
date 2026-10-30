@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import dev.jdtech.jellyfin.models.SpatialFinEpisodeDto
 import dev.jdtech.jellyfin.models.LocalMediaPlaybackStateDto
 import dev.jdtech.jellyfin.models.DownloadTaskDto
@@ -127,9 +128,9 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertMovie(movie: SpatialFinMovieDto)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertMovie(movie: SpatialFinMovieDto)
+    @Upsert fun upsertMovie(movie: SpatialFinMovieDto)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) fun insertSource(source: SpatialFinSourceDto)
+    @Upsert fun insertSource(source: SpatialFinSourceDto)
 
     @Query("SELECT * FROM movies WHERE id = :id") fun getMovie(id: UUID): SpatialFinMovieDto
 
@@ -142,6 +143,9 @@ interface ServerDatabaseDao {
 
     @Query("SELECT * FROM sources WHERE itemId = :itemId")
     fun getSources(itemId: UUID): List<SpatialFinSourceDto>
+
+    @Query("SELECT * FROM sources")
+    fun getAllSources(): List<SpatialFinSourceDto>
 
     @Query("SELECT * FROM sources WHERE downloadId = :downloadId")
     fun getSourceByDownloadId(downloadId: Long): SpatialFinSourceDto?
@@ -275,9 +279,11 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertShow(show: SpatialFinShowDto)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertShow(show: SpatialFinShowDto)
+    @Upsert fun upsertShow(show: SpatialFinShowDto)
 
     @Query("SELECT * FROM shows WHERE id = :id") fun getShow(id: UUID): SpatialFinShowDto
+
+    @Query("SELECT * FROM shows WHERE id = :id") fun getShowOrNull(id: UUID): SpatialFinShowDto?
 
     @Query("SELECT * FROM shows ORDER BY name ASC") fun getShows(): List<SpatialFinShowDto>
 
@@ -288,9 +294,11 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertSeason(show: SpatialFinSeasonDto)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertSeason(season: SpatialFinSeasonDto)
+    @Upsert fun upsertSeason(season: SpatialFinSeasonDto)
 
     @Query("SELECT * FROM seasons WHERE id = :id") fun getSeason(id: UUID): SpatialFinSeasonDto
+
+    @Query("SELECT * FROM seasons WHERE id = :id") fun getSeasonOrNull(id: UUID): SpatialFinSeasonDto?
 
     @Query("SELECT * FROM seasons WHERE seriesId = :seriesId ORDER BY indexNumber ASC")
     fun getSeasonsByShowId(seriesId: UUID): List<SpatialFinSeasonDto>
@@ -299,7 +307,7 @@ interface ServerDatabaseDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertEpisode(episode: SpatialFinEpisodeDto)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE) fun upsertEpisode(episode: SpatialFinEpisodeDto)
+    @Upsert fun upsertEpisode(episode: SpatialFinEpisodeDto)
 
     @Query("SELECT * FROM episodes WHERE id = :id") fun getEpisode(id: UUID): SpatialFinEpisodeDto
 

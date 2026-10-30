@@ -38,7 +38,7 @@ suspend fun BaseItemDto.toSpatialFinItem(
         BaseItemKind.VIDEO,
         BaseItemKind.MUSIC_VIDEO,
         BaseItemKind.TRAILER -> toSpatialFinMovie(jellyfinRepository, serverDatabase)
-        BaseItemKind.EPISODE -> toSpatialFinEpisode(jellyfinRepository)
+        BaseItemKind.EPISODE -> toSpatialFinEpisode(jellyfinRepository, serverDatabase)
         BaseItemKind.SEASON -> toSpatialFinSeason(jellyfinRepository)
         BaseItemKind.SERIES -> toSpatialFinShow(jellyfinRepository)
         BaseItemKind.BOX_SET -> toSpatialFinBoxSet(jellyfinRepository)

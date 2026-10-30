@@ -45,33 +45,50 @@ class DownloaderViewModel @Inject constructor(private val downloader: Downloader
         lastTerminalStatus = null
         observeJob =
             viewModelScope.launch {
+                var isInitialEmission = true
                 downloader.observeDownloadStatus(item.id).collectLatest { snapshot ->
                     if (snapshot == null) {
+                        isInitialEmission = false
                         downloadId = null
                         lastTerminalStatus = null
                         _state.emit(DownloaderState())
                         return@collectLatest
                     }
 
+                    val previousStatus = lastTerminalStatus
+                    val currentStatus = snapshot.state.status
+                    val wasInitial = isInitialEmission
+                    isInitialEmission = false
+                    lastTerminalStatus = currentStatus
+
                     downloadId = snapshot.downloadId
                     _state.emit(snapshot.state)
 
-                    if (snapshot.state.status != lastTerminalStatus &&
-                        snapshot.state.status == DownloadManager.STATUS_SUCCESSFUL
+                    if (!wasInitial &&
+                        previousStatus != DownloadManager.STATUS_SUCCESSFUL &&
+                        currentStatus == DownloadManager.STATUS_SUCCESSFUL
                     ) {
-                        lastTerminalStatus = snapshot.state.status
                         eventsChannel.trySend(DownloaderEvent.Successful)
                     }
                 }
             }
     }
 
+    fun clear() {
+        observeJob?.cancel()
+        observeJob = null
+        downloadId = null
+        lastTerminalStatus = null
+        _state.value = DownloaderState()
+    }
+
     private fun download(item: SpatialFinItem, request: dev.jdtech.jellyfin.models.DownloadRequest) {
         viewModelScope.launch {
-            lastTerminalStatus = null
+            lastTerminalStatus = DownloadManager.STATUS_PENDING
             _state.emit(DownloaderState(status = DownloadManager.STATUS_PENDING))
             val uiText = downloader.downloadItem(item = item, request = request)
             if (uiText != null) {
+                lastTerminalStatus = DownloadManager.STATUS_FAILED
                 _state.emit(
                     DownloaderState(status = DownloadManager.STATUS_FAILED, errorText = uiText)
                 )

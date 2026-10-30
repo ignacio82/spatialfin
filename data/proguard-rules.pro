@@ -40,3 +40,22 @@
 #}
 
 -keepnames class dev.jdtech.jellyfin.models.CollectionType
+
+# Bouncy Castle provider and MD4 digest classes needed for SMB NTLM authentication (jcifs-ng).
+# BouncyCastleProvider loads algorithm mappings dynamically by reflection using class name concatenation
+# (e.g. "org.bouncycastle.jcajce.provider.digest.MD4$Mappings"), which R8 cannot detect statically.
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider {
+    public <init>();
+    public <init>(...);
+}
+-keep class org.bouncycastle.jcajce.provider.digest.MD4** {
+    public <init>();
+    *;
+}
+-keep class org.bouncycastle.crypto.digests.MD4Digest {
+    public <init>();
+    public <init>(org.bouncycastle.crypto.digests.MD4Digest);
+    *;
+}
+-keep class org.bouncycastle.jcajce.provider.digest.DigestAlgorithmProvider { *; }
+-keep class org.bouncycastle.jcajce.provider.util.AlgorithmProvider { *; }

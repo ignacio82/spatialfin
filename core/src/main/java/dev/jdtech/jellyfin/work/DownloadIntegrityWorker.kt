@@ -82,9 +82,36 @@ constructor(
         if (task.finalPath.isBlank()) return false
         val finalFile = File(task.finalPath)
         if (!finalFile.exists()) return true
+        val actualLength = finalFile.length()
+        if (actualLength <= 0L) return true
         val expected = task.totalBytes ?: return false
         if (expected <= 0L) return false
-        return finalFile.length() != expected
+        if (actualLength != expected) {
+            val isTranscoded =
+                task.finalPath.endsWith("_transcoded.mp4", ignoreCase = true) ||
+                    task.requestUrl.contains("Static=false", ignoreCase = true)
+            val isCompletedOnDisk =
+                actualLength == task.bytesDownloaded ||
+                    (task.status == DownloadManager.STATUS_SUCCESSFUL &&
+                        (task.tempPath.isBlank() || !File(task.tempPath).exists()))
+            if (isTranscoded && isCompletedOnDisk) {
+                database.updateDownloadTask(
+                    id = task.id,
+                    downloadId = task.downloadId,
+                    bytesDownloaded = actualLength,
+                    totalBytes = actualLength,
+                    eTag = task.eTag,
+                    lastModified = task.lastModified,
+                    status = task.status,
+                    progress = 100,
+                    errorMessage = null,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                return false
+            }
+            return true
+        }
+        return false
     }
 
     private fun requeueBrokenTask(task: DownloadTaskDto) {

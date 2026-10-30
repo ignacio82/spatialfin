@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,15 +138,20 @@ fun BeamItemDetailScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            downloaderViewModel.clear()
+        }
+    }
+
     LaunchedEffect(itemId) {
         viewModel.load(itemId)
     }
 
-    LaunchedEffect(state.item?.id) {
-        state.item?.let {
-            downloaderViewModel.update(it)
-            setBackground(beamBackdropArtwork(it))
-        }
+    LaunchedEffect(itemId, state.item?.id) {
+        val currentItem = state.item?.takeIf { it.id == itemId } ?: return@LaunchedEffect
+        downloaderViewModel.update(currentItem)
+        setBackground(beamBackdropArtwork(currentItem))
     }
 
     LaunchedEffect(Unit) {
@@ -159,7 +165,19 @@ fun BeamItemDetailScreen(
         }
     }
 
-    state.item?.let { itemData ->
+    state.item?.takeIf { it.id == itemId }?.let { itemData ->
+        if (itemData is SpatialFinShow) {
+            LaunchedEffect(itemData.id) {
+                onOpenShow(itemData.id)
+            }
+            return
+        }
+        if (itemData is SpatialFinSeason) {
+            LaunchedEffect(itemData.id) {
+                onOpenSeason(itemData.id)
+            }
+            return
+        }
         itemData.jellyfinAudioDetailType()?.let { detailType ->
             JellyfinAudioDetailScreen(
                 itemId = itemData.id,
@@ -188,10 +206,12 @@ fun BeamItemDetailScreen(
         }
     }
 
+    val currentItem = state.item?.takeIf { it.id == itemId }
+
     // Resolved once, above the list: the hero chips, the Play buttons and the
     // two track dialogs must all act on the same answer, and deriving it more
     // than once is how they drift apart.
-    val heroMetadata = state.item?.detailHeroMetadata(
+    val heroMetadata = currentItem?.detailHeroMetadata(
         languagePreferences = languagePreferences,
         selectedAudioStreamIndex = selectedAudioStreamIndex,
         selectedSubtitleStreamIndex = selectedSubtitleStreamIndex,
@@ -210,7 +230,8 @@ fun BeamItemDetailScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         when {
-            state.isLoading -> item { LoadingCard("Loading...") }
+            state.isLoading || (currentItem == null && state.error == null) ->
+                item { LoadingCard("Loading...") }
             state.error != null -> item {
                 ErrorCard(
                     title = "Couldn't load this item",
@@ -218,9 +239,9 @@ fun BeamItemDetailScreen(
                     onRetry = { viewModel.load(itemId) },
                 )
             }
-            state.item == null -> item { BeamEmptyCard("This item is no longer available.") }
+            currentItem == null -> item { BeamEmptyCard("This item is no longer available.") }
             else -> {
-                val itemData = state.item ?: return@LazyColumn
+                val itemData = currentItem
                 val supportingLine =
                     when (itemData) {
                         is SpatialFinMovie ->

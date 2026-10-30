@@ -129,6 +129,64 @@ class HomeRowPreferencesTest {
         homeRows.setVisible(pluginRow, true)
         assertTrue(homeRows.isVisible(pluginRow))
     }
+
+    @Test
+    fun `hiding suggestions row hides it and persists in layout and preferences`() {
+        assertTrue(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+
+        homeRows.setVisible(HomeRowIds.SUGGESTIONS, false)
+
+        assertFalse(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+        assertFalse(AppPreferences(prefs).getValue(AppPreferences(prefs).homeSuggestions))
+        // Verify it is recorded in the layout's hidden set as well
+        assertTrue(homeRows.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+        // Survives a fresh instance / restart: reads both boolean and storedHidden
+        val restarted = HomeRowPreferences(AppPreferences(prefs))
+        assertFalse(restarted.isVisible(HomeRowIds.SUGGESTIONS))
+        assertTrue(restarted.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+    }
+
+    @Test
+    fun `unhiding suggestions row restores visibility and persists`() {
+        homeRows.setVisible(HomeRowIds.SUGGESTIONS, false)
+        assertFalse(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+
+        homeRows.setVisible(HomeRowIds.SUGGESTIONS, true)
+        assertTrue(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+        assertTrue(AppPreferences(prefs).getValue(AppPreferences(prefs).homeSuggestions))
+        assertFalse(homeRows.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+
+        val restarted = HomeRowPreferences(AppPreferences(prefs))
+        assertTrue(restarted.isVisible(HomeRowIds.SUGGESTIONS))
+        assertFalse(restarted.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+    }
+
+    @Test
+    fun `toggling home suggestions via shared preferences syncs layout hidden set`() {
+        val appPrefs = AppPreferences(prefs)
+        assertTrue(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+
+        appPrefs.setValue(appPrefs.homeSuggestions, false)
+        assertFalse(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+        assertTrue(homeRows.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+
+        appPrefs.setValue(appPrefs.homeSuggestions, true)
+        assertTrue(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+        assertFalse(homeRows.layout.value.hidden.contains(HomeRowIds.SUGGESTIONS))
+    }
+
+    @Test
+    fun `companion sync does not overwrite home row visibility`() {
+        val appPrefs = AppPreferences(prefs)
+        homeRows.setVisible(HomeRowIds.SUGGESTIONS, false)
+        assertFalse(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+
+        // When companion sync provides home_suggestions = "true", it must not be applied
+        val applied = appPrefs.applyCompanionPreference("home_suggestions", "true")
+        assertFalse(applied)
+        assertFalse(homeRows.isVisible(HomeRowIds.SUGGESTIONS))
+        assertFalse(appPrefs.getValue(appPrefs.homeSuggestions))
+    }
 }
 
 private class FakeSharedPreferences : SharedPreferences {

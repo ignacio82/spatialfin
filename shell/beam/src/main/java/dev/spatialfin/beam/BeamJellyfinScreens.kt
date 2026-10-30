@@ -828,8 +828,8 @@ fun BeamShowScreen(
         viewModel.load(showId)
     }
 
-    LaunchedEffect(state.show?.id) {
-        state.show?.let { show ->
+    LaunchedEffect(showId, state.show?.id) {
+        state.show?.takeIf { it.id == showId }?.let { show ->
             setBackground(beamBackdropArtwork(show))
         }
     }
@@ -852,11 +852,15 @@ fun BeamShowScreen(
             }
         }
         if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        viewModel.clearBulkDownloadResult()
     }
+
+    val currentShow = state.show?.takeIf { it.id == showId }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         when {
-            state.isLoading -> item { LoadingCard("Loading series...") }
+            state.isLoading || (currentShow == null && state.error == null) ->
+                item { LoadingCard("Loading series...") }
             state.error != null -> item {
                 ErrorCard(
                     title = "Couldn't load this series",
@@ -864,9 +868,9 @@ fun BeamShowScreen(
                     onRetry = { viewModel.load(showId) },
                 )
             }
-            state.show == null -> item { BeamEmptyCard("This series is no longer available.") }
+            currentShow == null -> item { BeamEmptyCard("This series is no longer available.") }
             else -> {
-                val show = state.show ?: return@BeamScaffoldBody
+                val show = currentShow
                 val supportingLine =
                     show.originalTitle?.takeIf { !it.isNullOrBlank() && it != show.name }
                         ?: show.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" • ")
@@ -946,6 +950,22 @@ fun BeamShowScreen(
                                 }
                             )
                         }
+                    }
+                }
+                if (state.downloadedEpisodes.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Downloaded Episodes",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    items(state.downloadedEpisodes, key = { "downloaded_${it.id}" }) { episode ->
+                        BeamServerItemCard(
+                            item = episode,
+                            onPlay = { launchServerItem(context, fcastSession, scope, episode) },
+                            onOpen = { onOpenItem(episode.id) },
+                        )
                     }
                 }
                 if (state.seasons.isNotEmpty()) {
@@ -1060,8 +1080,8 @@ fun BeamSeasonScreen(
         viewModel.load(seasonId)
     }
 
-    LaunchedEffect(state.season?.id) {
-        state.season?.let { season ->
+    LaunchedEffect(seasonId, state.season?.id) {
+        state.season?.takeIf { it.id == seasonId }?.let { season ->
             setBackground(beamBackdropArtwork(season))
         }
     }
@@ -1084,11 +1104,15 @@ fun BeamSeasonScreen(
             }
         }
         if (msg.isNotBlank()) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        viewModel.clearBulkDownloadResult()
     }
+
+    val currentSeason = state.season?.takeIf { it.id == seasonId }
 
     BeamScaffoldBody(contentPadding = contentPadding) {
         when {
-            state.isLoading -> item { LoadingCard("Loading season...") }
+            state.isLoading || (currentSeason == null && state.error == null) ->
+                item { LoadingCard("Loading season...") }
             state.error != null -> item {
                 ErrorCard(
                     title = "Couldn't load this season",
@@ -1096,9 +1120,9 @@ fun BeamSeasonScreen(
                     onRetry = { viewModel.load(seasonId) },
                 )
             }
-            state.season == null -> item { BeamEmptyCard("This season is no longer available.") }
+            currentSeason == null -> item { BeamEmptyCard("This season is no longer available.") }
             else -> {
-                val season = state.season ?: return@BeamScaffoldBody
+                val season = currentSeason
                 val downloadableEpisodes = state.episodes.filter { !it.isDownloaded() }
                 item {
                     BeamDetailHeroCard(
@@ -1607,12 +1631,16 @@ internal fun BeamSeasonCard(
 @Composable
 internal fun BeamMediaFeatureCard(
     item: SpatialFinItem,
+    onClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit,
 ) {
     val subtitle = remember(item) { buildServerItemSubtitle(item) }
     val badge = remember(item) { buildPrimaryBadge(item) }
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier.fillMaxWidth().let {
+                if (onClick != null) it.clickable(onClick = onClick) else it
+            },
         shape = RoundedCornerShape(20.dp),
         colors =
             CardDefaults.cardColors(

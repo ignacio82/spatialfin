@@ -151,8 +151,17 @@ constructor(
         val finalPath = downloadStorageManager.completedPathFor(targetFile.path)
         val path = Uri.fromFile(targetFile)
         val stats = android.os.StatFs(downloadsRoot.path)
-        if (stats.availableBytes < source.size) {
-            error("Not enough storage for ${source.size} bytes (available ${stats.availableBytes})")
+
+        val estimatedTranscodeBytes = if (request.mode == DownloadMode.TRANSCODED) {
+            val durationSec = if (item.runtimeTicks > 0L) item.runtimeTicks / 10_000_000.0 else 5400.0
+            val bps = (request.videoBitrate ?: DEFAULT_TRANSCODE_VIDEO_BITRATE) + 192_000
+            val rawEstimate = (durationSec * (bps / 8.0)).toLong()
+            if (source.size > 0L) rawEstimate.coerceAtMost(source.size) else rawEstimate
+        } else null
+
+        val requiredBytes = estimatedTranscodeBytes ?: source.size
+        if (stats.availableBytes < requiredBytes) {
+            error("Not enough storage for $requiredBytes bytes (available ${stats.availableBytes})")
         }
         val requestUrl = buildDownloadUrl(item, source, request)
         val currentServerId = appPreferences.getValue(appPreferences.currentServer)
@@ -182,7 +191,11 @@ constructor(
             tempPath = targetFile.path,
             finalPath = finalPath,
             bytesDownloaded = targetFile.takeIf(File::exists)?.length() ?: 0L,
-            totalBytes = source.size.takeIf { it > 0L },
+            totalBytes = if (request.mode == DownloadMode.ORIGINAL) {
+                source.size.takeIf { it > 0L }
+            } else {
+                estimatedTranscodeBytes
+            },
             eTag = existingTask?.eTag,
             lastModified = existingTask?.lastModified,
             status =
@@ -192,14 +205,9 @@ constructor(
             errorMessage = waitingReason,
         )
 
-        if (waitingReason != null) {
-            Timber.i("DownloadPreparationWorker: paused taskId=%s reason=%s", taskId, waitingReason)
-            return waitingReason
-        }
-
         when (item) {
             is SpatialFinMovie -> {
-                database.insertMovie(
+                database.upsertMovie(
                     item.toSpatialFinMovieDto(
                         appPreferences.getValue(appPreferences.currentServer),
                     ),
@@ -207,14 +215,14 @@ constructor(
             }
             is SpatialFinEpisode -> {
                 val show = jellyfinRepository.getShow(item.seriesId)
-                database.insertShow(
+                database.upsertShow(
                     show.toSpatialFinShowDto(
                         appPreferences.getValue(appPreferences.currentServer),
                     ),
                 )
                 val season = jellyfinRepository.getSeason(item.seasonId)
-                database.insertSeason(season.toSpatialFinSeasonDto())
-                database.insertEpisode(
+                database.upsertSeason(season.toSpatialFinSeasonDto())
+                database.upsertEpisode(
                     item.toSpatialFinEpisodeDto(
                         appPreferences.getValue(appPreferences.currentServer),
                     ),
@@ -228,7 +236,12 @@ constructor(
         database.insertSource(sourceDto.copy(downloadId = null))
         database.insertUserData(item.toSpatialFinUserDataDto(jellyfinRepository.getUserId()))
 
-        if (request.mode == DownloadMode.ORIGINAL) {
+        if (waitingReason != null) {
+            Timber.i("DownloadPreparationWorker: paused taskId=%s reason=%s", taskId, waitingReason)
+            return waitingReason
+        }
+
+        if (request.mode == DownloadMode.ORIGINAL || request.subtitleStreamIndex == null) {
             downloadExternalMediaStreams(item, source)
         }
 
@@ -284,17 +297,34 @@ constructor(
         if (request.mode == DownloadMode.ORIGINAL) {
             return source.path
         }
+        val targetBitrate = request.videoBitrate ?: DEFAULT_TRANSCODE_VIDEO_BITRATE
+        val (maxWidth, maxHeight) = when {
+            targetBitrate <= 2_500_000 -> 1280 to 720
+            targetBitrate <= 8_000_000 -> 1920 to 1080
+            else -> null to null
+        }
+        val subtitleMethod = if (request.subtitleStreamIndex != null) {
+            SubtitleDeliveryMethod.ENCODE
+        } else {
+            SubtitleDeliveryMethod.DROP
+        }
         return jellyfinApi.videosApi.getVideoStreamUrl(
             itemId = item.id,
             container = "mp4",
-            static = true,
+            static = false,
             mediaSourceId = source.id,
+            videoCodec = "h264",
             audioCodec = "aac",
+            audioBitRate = 192_000,
+            maxAudioChannels = 2,
+            transcodingMaxAudioChannels = 2,
             allowVideoStreamCopy = false,
             allowAudioStreamCopy = false,
-            videoBitRate = request.videoBitrate,
+            maxWidth = maxWidth,
+            maxHeight = maxHeight,
+            videoBitRate = targetBitrate,
             subtitleStreamIndex = request.subtitleStreamIndex,
-            subtitleMethod = request.subtitleDeliveryMethod ?: SubtitleDeliveryMethod.DROP,
+            subtitleMethod = subtitleMethod,
             audioStreamIndex = request.audioStreamIndex,
             context = EncodingContext.STREAMING,
             enableAudioVbrEncoding = true,
@@ -545,6 +575,8 @@ constructor(
 
         private const val INT_UNSET = Int.MIN_VALUE
         private const val MAX_AUTO_RETRIES = 3
+
+        const val DEFAULT_TRANSCODE_VIDEO_BITRATE = 5_000_000
 
         fun uniqueWorkName(taskId: String): String = "download-prep:$taskId"
     }

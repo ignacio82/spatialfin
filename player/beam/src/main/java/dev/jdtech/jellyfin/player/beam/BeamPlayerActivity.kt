@@ -294,6 +294,14 @@ class BeamPlayerActivity : AppCompatActivity() {
                         startPositionMs = startPositionMs,
                         splitAvVideoRole = splitAvVideoRole,
                     )
+                is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem ->
+                    createIntentForUniversalMedia(
+                        context = context,
+                        pluginId = item.universalMediaItem.pluginId,
+                        itemId = item.universalMediaItem.id,
+                        videoUrl = item.universalMediaItem.videoUrl,
+                        title = item.name,
+                    )
                 else -> null
             }
 

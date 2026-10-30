@@ -13,6 +13,7 @@ import dev.jdtech.jellyfin.models.SpatialFinMovie
 import dev.jdtech.jellyfin.models.SpatialFinShow
 import dev.jdtech.jellyfin.models.SpatialFinSourceType
 import dev.jdtech.jellyfin.models.SpatialFinSources
+import dev.jdtech.jellyfin.models.isDownloaded
 import dev.jdtech.jellyfin.models.toSpatialFinItem
 import dev.jdtech.jellyfin.player.core.domain.models.ExternalSubtitle
 import dev.jdtech.jellyfin.player.core.domain.models.PlayerChapter
@@ -82,31 +83,51 @@ class PlaylistManager @Inject internal constructor(
                 BaseItemKind.SERIES -> {
                     val nextUpEpisode = repository.getNextUp(itemId).firstOrNull()
 
-                    val season =
+                    val episodes =
                         if (nextUpEpisode != null) {
-                            repository.getSeason(nextUpEpisode.seasonId)
+                            val season = repository.getSeason(nextUpEpisode.seasonId)
+                            repository
+                                .getEpisodes(
+                                    seriesId = itemId,
+                                    seasonId = season.id,
+                                    fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
+                                )
+                                .filter { !it.missing }
                         } else {
                             val seasons = repository.getSeasons(itemId)
                             if (seasons.isEmpty()) {
                                 return null
                             }
-                            seasons.first()
+                            var resolvedEpisodes: List<SpatialFinEpisode> = emptyList()
+                            for (season in seasons) {
+                                val seasonEpisodes =
+                                    repository
+                                        .getEpisodes(
+                                            seriesId = itemId,
+                                            seasonId = season.id,
+                                            fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
+                                        )
+                                        .filter { !it.missing }
+                                if (seasonEpisodes.any { it.isDownloaded() }) {
+                                    resolvedEpisodes = seasonEpisodes
+                                    break
+                                }
+                                if (resolvedEpisodes.isEmpty() && seasonEpisodes.isNotEmpty()) {
+                                    resolvedEpisodes = seasonEpisodes
+                                }
+                            }
+                            resolvedEpisodes
                         }
-
-                    val episodes =
-                        repository
-                            .getEpisodes(
-                                seriesId = itemId,
-                                seasonId = season.id,
-                                fields = listOf(ItemFields.CHAPTERS, ItemFields.TRICKPLAY),
-                            )
-                            .filter { !it.missing }
 
                     if (episodes.isEmpty()) {
                         return null
                     }
 
-                    val episode = nextUpEpisode ?: episodes.first()
+                    val episode =
+                        nextUpEpisode
+                            ?: episodes.firstOrNull { it.isDownloaded() && !it.played }
+                            ?: episodes.firstOrNull { it.isDownloaded() }
+                            ?: episodes.first()
 
                     items = episodes
                     episode
@@ -126,7 +147,10 @@ class PlaylistManager @Inject internal constructor(
                         return null
                     }
 
-                    val episode = episodes.first()
+                    val episode =
+                        episodes.firstOrNull { it.isDownloaded() && !it.played }
+                            ?: episodes.firstOrNull { it.isDownloaded() }
+                            ?: episodes.first()
 
                     items = episodes
                     episode
@@ -423,16 +447,28 @@ class PlaylistManager @Inject internal constructor(
                 appPreferences.getValue(appPreferences.nonAnimeAudioLanguage)
                     ?: appPreferences.getValue(appPreferences.preferredAudioLanguage)
             }
+        val completedLocalSources =
+            discoveredSources.filter {
+                it.type == SpatialFinSourceType.LOCAL &&
+                    !it.path.endsWith(".download") &&
+                    java.io.File(it.path).exists()
+            }
         val discoveredSource =
             if (mediaSourceIndex == null) {
                 chooseBestMediaSource(
-                    mediaSources = discoveredSources,
+                    mediaSources = completedLocalSources.ifEmpty { discoveredSources },
                     preferredAudioLanguage = preferredAudioLanguage,
                     preferStyledSubtitles = inferredAnime,
                     requestedAudioStreamIndex = audioStreamIndex,
                 )
             } else {
-                discoveredSources.getOrNull(mediaSourceIndex)
+                val indexed = discoveredSources.getOrNull(mediaSourceIndex)
+                completedLocalSources.firstOrNull { it.id == indexed?.id }
+                    ?: if (mediaSourceIndex == 0 && completedLocalSources.isNotEmpty()) {
+                        completedLocalSources.first()
+                    } else {
+                        indexed
+                    }
             } ?: throw PlaylistConversionException("No media sources available for item $id")
 
         // An explicit pick wins; otherwise fall back to the preferred language,
@@ -453,11 +489,15 @@ class PlaylistManager @Inject internal constructor(
             }
 
         // Phase 2 — re-request the chosen source by id so the stream indices are
-        // honoured. Skipped when there is nothing to ask for beyond phase 1.
+        // honoured. Skipped when playing a local downloaded source or when there is
+        // nothing to ask for beyond phase 1.
         val needsStreamSelection =
             effectiveAudioStreamIndex != null || subtitleStreamIndex != null
         val mediaSource =
-            if (!needsStreamSelection && effectiveMaxBitrate == maxBitrate) {
+            if (
+                discoveredSource.type == SpatialFinSourceType.LOCAL ||
+                    (!needsStreamSelection && effectiveMaxBitrate == maxBitrate)
+            ) {
                 discoveredSource
             } else {
                 val resolvedSources = repository.getMediaSources(

@@ -45,6 +45,7 @@ dependencies {
     implementation(projects.player.session)
     implementation(projects.data)
     implementation(projects.settings)
+    implementation(projects.plugins)
 
     implementation(libs.androidx.activity)
     implementation(libs.androidx.activity.compose)
@@ -69,4 +70,7 @@ dependencies {
     implementation(libs.timber)
 
     ksp(libs.hilt.compiler)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
 }

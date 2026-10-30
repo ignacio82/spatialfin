@@ -324,6 +324,46 @@ fun BeamNavigationRoot(
         }
     }
 
+    val navigateBack: () -> Unit = {
+        currentRoute =
+            when (currentRoute) {
+                BeamRoute.Detail -> detailBackRoute
+                BeamRoute.Season -> seasonBackRoute
+                BeamRoute.Show -> showBackRoute
+                BeamRoute.Person -> personBackRoute
+                BeamRoute.AudioDetail -> audioBackRoute
+                BeamRoute.MaDetail -> maDetailBackRoute
+                BeamRoute.Library,
+                BeamRoute.PluginBrowse,
+                BeamRoute.MaSearch -> BeamRoute.Home
+                BeamRoute.NetworkShare,
+                BeamRoute.NetworkAddShare -> BeamRoute.Network
+                BeamRoute.AddServer -> BeamRoute.Servers
+                BeamRoute.Login -> BeamRoute.Users
+                BeamRoute.Companion -> BeamRoute.Welcome
+                else -> BeamRoute.Home
+            }
+    }
+
+    val isRootRoute =
+        currentRoute in
+            setOf(
+                BeamRoute.Welcome,
+                BeamRoute.Servers,
+                BeamRoute.Users,
+                BeamRoute.Home,
+                BeamRoute.Search,
+                BeamRoute.Downloads,
+                BeamRoute.Plugins,
+                BeamRoute.Settings,
+                BeamRoute.Local,
+                BeamRoute.Network,
+            )
+
+    BackHandler(enabled = !showNowPlaying && !showJellyfinAudioNowPlaying && !isRootRoute) {
+        navigateBack()
+    }
+
     val navigation = remember(context, fcastSession, jellyfinAudioDispatcher, maPlayDispatcher) {
         object : HomeVoiceNavigation {
             override fun launchItem(item: SpatialFinItem): Boolean {
@@ -341,6 +381,18 @@ fun BeamNavigationRoot(
                 if (routed) return true
                 // Non-playable (Show/Season/BoxSet) or playback couldn't start — jump to detail.
                 return when (item) {
+                    is dev.jdtech.jellyfin.plugins.model.UniversalSpatialFinItem -> {
+                        context.startActivity(
+                            BeamPlayerActivity.createIntentForUniversalMedia(
+                                context = context,
+                                pluginId = item.universalMediaItem.pluginId,
+                                itemId = item.universalMediaItem.id,
+                                videoUrl = item.universalMediaItem.videoUrl,
+                                title = item.name,
+                            )
+                        )
+                        true
+                    }
                     is SpatialFinMovie -> {
                         selectedDetailItemId = item.id.toString()
                         detailBackRoute = currentRoute
@@ -423,7 +475,7 @@ fun BeamNavigationRoot(
             }
 
             override fun goHome() { currentRoute = BeamRoute.Home }
-            override fun goBack() { currentRoute = BeamRoute.Home }
+            override fun goBack() { navigateBack() }
             override fun closeApp() { onFinishApp() }
         }
     }
@@ -515,10 +567,28 @@ fun BeamNavigationRoot(
                 state.hasServers -> BeamRoute.Servers
                 else -> BeamRoute.Local
             }
-        timber.log.Timber.d("[UserSwitch] LaunchedEffect: resolved newRoute=$newRoute, currentRoute=$currentRoute, hasCurrentUser=${state.hasCurrentUser}")
-        currentRoute = newRoute
+        val isInitialOrAuthRoute =
+            currentRoute in
+                setOf(
+                    BeamRoute.Welcome,
+                    BeamRoute.Companion,
+                    BeamRoute.Servers,
+                    BeamRoute.AddServer,
+                    BeamRoute.Users,
+                    BeamRoute.Login,
+                )
+        val isAuthInvalidated =
+            !onboardingCompleted ||
+                !state.hasServers ||
+                !state.hasCurrentServer ||
+                !state.hasCurrentUser
+        if (isInitialOrAuthRoute || isAuthInvalidated) {
+            timber.log.Timber.d("[UserSwitch] LaunchedEffect: resolved newRoute=$newRoute, currentRoute=$currentRoute, hasCurrentUser=${state.hasCurrentUser}")
+            currentRoute = newRoute
+        }
     }
 
+    var previousEffectiveOffline by rememberSaveable { mutableStateOf(effectiveOffline) }
     // When going offline (and MA isn't reachable either), redirect away from Home/Search
     // (unusable without a server). When coming back online — or once MA remote becomes
     // reachable — return to Home so the MA rows show.
@@ -526,10 +596,11 @@ fun BeamNavigationRoot(
         if (!state.isLoading && appPreferences.getValue(appPreferences.onboardingCompleted)) {
             if (effectiveOffline && (currentRoute == BeamRoute.Home || currentRoute == BeamRoute.Search)) {
                 currentRoute = BeamRoute.Downloads
-            } else if (!effectiveOffline && currentRoute == BeamRoute.Downloads) {
+            } else if (previousEffectiveOffline && !effectiveOffline && currentRoute == BeamRoute.Downloads) {
                 currentRoute = BeamRoute.Home
             }
         }
+        previousEffectiveOffline = effectiveOffline
     }
 
     val showPrimaryNavigation =
@@ -929,12 +1000,16 @@ fun BeamNavigationRoot(
                         },
                         onOpenShow = { showId ->
                             selectedShowId = showId.toString()
-                            showBackRoute = BeamRoute.Detail
+                            if (detailBackRoute != BeamRoute.Show && detailBackRoute != BeamRoute.Season) {
+                                showBackRoute = BeamRoute.Detail
+                            }
                             currentRoute = BeamRoute.Show
                         },
                         onOpenSeason = { seasonId ->
                             selectedSeasonId = seasonId.toString()
-                            seasonBackRoute = BeamRoute.Detail
+                            if (detailBackRoute != BeamRoute.Season) {
+                                seasonBackRoute = BeamRoute.Detail
+                            }
                             currentRoute = BeamRoute.Season
                         },
                         onOpenPerson = { personId ->

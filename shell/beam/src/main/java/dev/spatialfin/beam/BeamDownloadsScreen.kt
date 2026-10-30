@@ -139,7 +139,7 @@ fun BeamDownloadsScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            items(continueWatchingItems, key = { it.id }) { item ->
+            items(continueWatchingItems, key = { "continue_${it.id}" }) { item ->
                 BeamDownloadedItemCard(
                     item = item,
                     onPlay = { launchServerItem(context, fcastSession, scope,item) },
@@ -199,7 +199,7 @@ fun BeamDownloadsScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
-                    items(section.items, key = { it.id }) { item ->
+                    items(section.items, key = { "${section.id}_${it.id}" }) { item ->
                         BeamDownloadedItemCard(
                             item = item,
                             onPlay = { launchServerItem(context, fcastSession, scope,item) },
@@ -232,6 +232,8 @@ internal fun BeamActiveDownloadCard(
             val total = entry.totalBytes
             val sizeStr = if (total != null && total > 0) {
                 "${android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)} / ${android.text.format.Formatter.formatFileSize(context, total)}"
+            } else if (entry.bytesDownloaded > 0) {
+                android.text.format.Formatter.formatFileSize(context, entry.bytesDownloaded)
             } else {
                 "${entry.progress}%"
             }
@@ -313,6 +315,7 @@ internal fun BeamServerItemCard(
 ) {
     BeamMediaFeatureCard(
         item = item,
+        onClick = onOpen,
         actions = {
             when (item) {
                 is SpatialFinMovie,
@@ -346,6 +349,7 @@ internal fun BeamDownloadedItemCard(
 ) {
     BeamMediaFeatureCard(
         item = item,
+        onClick = onOpen,
         actions = {
             BeamPrimaryActionButton(label = "Play", onClick = onPlay)
             BeamSecondaryActionButton(label = "Details", onClick = onOpen)
